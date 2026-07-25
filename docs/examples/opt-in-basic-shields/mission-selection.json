@@ -1,0 +1,7 @@
+{
+  "mechanics": {
+    "profiles": {
+      "combat": "basic_regenerating_shields"
+    }
+  }
+}
