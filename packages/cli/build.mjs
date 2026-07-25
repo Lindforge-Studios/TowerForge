@@ -66,6 +66,7 @@ try {
 
   await loadEngine();
   const files = loadProjectFiles(PROJECT_DIR);
+  const initialGridKind = resolveInitialGridKind(files);
   const tileCoverage = projectTileCoverage(files);
   if (!tileCoverage.ok) {
     const error = new Error(`Build stopped because ${tileCoverage.missingCount} reachable tileset signature(s) are missing.`);
@@ -86,6 +87,12 @@ try {
 
   const renderer = target.renderer === "phaser" ? "phaser" : "canvas";
   copyDir(path.join(repoRoot, "packages", "engine", "dist"), path.join(outDir, "engine"));
+  const playerRuntimeSource = path.join(repoRoot, "packages", "player-runtime", "src");
+  const playerRuntimeOutput = path.join(outDir, "player-runtime");
+  fs.mkdirSync(playerRuntimeOutput, { recursive: true });
+  for (const fileName of ["index.mjs", "player-profile-store.mjs"]) {
+    fs.copyFileSync(path.join(playerRuntimeSource, fileName), path.join(playerRuntimeOutput, fileName));
+  }
   // Renderer dir ships for both players — the canvas player needs index.mjs, both need audio.mjs.
   copyDir(path.join(repoRoot, "packages", "renderer", "src"), path.join(outDir, "renderer"));
   if (renderer === "phaser") {
@@ -104,14 +111,15 @@ try {
     worldMap: files.worldMap,
     maps: files.maps,
     scripts: files.scripts,
+    ...(files.mechanicsAuthored ? { mechanics: files.mechanics } : {}),
     visuals: files.visuals,
     storyComics: files.storyComics,
     battleBackgrounds: files.battleBackgrounds,
     buildTarget: target
   });
-  fs.writeFileSync(path.join(outDir, "index.html"), htmlTemplate(files.manifest, target, renderer), "utf8");
+  fs.writeFileSync(path.join(outDir, "index.html"), htmlTemplate(files.manifest, target, renderer, initialGridKind), "utf8");
   fs.writeFileSync(path.join(outDir, "styles.css"), cssTemplate(target), "utf8");
-  fs.writeFileSync(path.join(outDir, "boot.js"), bootRecoveryTemplate(), "utf8");
+  fs.writeFileSync(path.join(outDir, "boot.js"), bootRecoveryTemplate(files.manifest, target, files.storyComics), "utf8");
   fs.writeFileSync(path.join(outDir, "player.mjs"), renderer === "phaser" ? phaserPlayerTemplate() : playerTemplate(), "utf8");
   fs.writeFileSync(path.join(outDir, "manifest.webmanifest"), JSON.stringify(webManifest(files.manifest, target), null, 2) + "\n", "utf8");
 
@@ -139,12 +147,13 @@ try {
       worldMap: files.worldMap,
       maps: files.maps,
       scripts: files.scripts,
+      ...(files.mechanicsAuthored ? { mechanics: files.mechanics } : {}),
       visuals: embedVisualAssets(PROJECT_DIR, files.visuals),
       storyComics: files.storyComics,
       battleBackgrounds: files.battleBackgrounds,
       buildTarget: target
     };
-    fs.writeFileSync(singleFilePath, singleFileHtml(outDir, files.manifest, target, renderer, embeddedProject), "utf8");
+    fs.writeFileSync(singleFilePath, singleFileHtml(outDir, files.manifest, target, renderer, embeddedProject, initialGridKind), "utf8");
   }
 
   // Phaser now shares topology and terrain tileset resolution with Canvas. Entity sprites still use
@@ -258,20 +267,20 @@ function mimeType(filePath) {
   })[ext] ?? "application/octet-stream";
 }
 
-function singleFileHtml(outDir, manifest, target, renderer, projectData) {
+function singleFileHtml(outDir, manifest, target, renderer, projectData, initialGridKind) {
   const virtual = new Map([
     [path.resolve(outDir, "project-data.js"), `export default ${JSON.stringify(projectData)};\n`]
   ]);
   const entryPath = path.resolve(outDir, "player.mjs");
   const entry = rewriteModuleImports(entryPath, outDir, virtual, new Map(), []);
-  let html = htmlTemplate(manifest, target, renderer);
+  let html = htmlTemplate(manifest, target, renderer, initialGridKind);
   html = html.replace(/\s*<link rel="manifest"[^>]*>/, "");
   html = html.replace('  <link rel="stylesheet" href="./styles.css">', `  <style>${escapeInlineStyle(cssTemplate(target))}</style>`);
   if (renderer === "phaser") {
     const phaser = fs.readFileSync(path.join(outDir, "vendor", "phaser.min.js"), "utf8");
     html = html.replace('  <script src="./vendor/phaser.min.js"></script>', `  <script>${escapeInlineScript(phaser)}</script>`);
   }
-  html = html.replace('  <script src="./boot.js"></script>', `  <script>${escapeInlineScript(bootRecoveryTemplate())}</script>`);
+  html = html.replace('  <script src="./boot.js"></script>', `  <script>${escapeInlineScript(bootRecoveryTemplate(manifest, target, projectData.storyComics))}</script>`);
   html = html.replace('  <script type="module" src="./player.mjs"></script>', `  <script type="module">${escapeInlineScript(entry)}</script>`);
   return html;
 }
@@ -313,11 +322,19 @@ function webManifest(manifest, target) {
   };
 }
 
-function htmlTemplate(manifest, target, renderer = "canvas") {
+function resolveInitialGridKind(project) {
+  const missions = project.balance?.missions ?? {};
+  const missionId = project.balance?.defaultMissionId ?? Object.keys(missions)[0];
+  const mapId = missions[missionId]?.mapId;
+  return project.maps?.[mapId]?.grid?.kind === "square" ? "square" : "hex";
+}
+
+function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "hex") {
   const title = esc(target.appTitle ?? manifest.name ?? "TowerForge TD");
+  const battlefieldKind = initialGridKind === "square" ? "Square" : "Hex";
   const playfield = renderer === "phaser"
-    ? `<div id="playfield" tabindex="0" role="application" aria-label="Hex battlefield. Use arrow keys to move the tile cursor and Enter to act."></div>`
-    : `<canvas id="playfield" tabindex="0" role="application" aria-label="Hex battlefield. Use arrow keys to move the tile cursor and Enter to act."></canvas>`;
+    ? `<div id="playfield" tabindex="0" role="application" aria-label="${battlefieldKind} battlefield. Use arrow keys to move the tile cursor and Enter to act."></div>`
+    : `<canvas id="playfield" tabindex="0" role="application" aria-label="${battlefieldKind} battlefield. Use arrow keys to move the tile cursor and Enter to act."></canvas>`;
   const phaserScript = renderer === "phaser" ? `\n  <script src="./vendor/phaser.min.js"></script>` : "";
   return `<!doctype html>
 <html lang="en">
@@ -408,7 +425,10 @@ function htmlTemplate(manifest, target, renderer = "canvas") {
 `;
 }
 
-function bootRecoveryTemplate() {
+function bootRecoveryTemplate(manifest = {}, target = {}, storyComics = {}) {
+  const scope = target.appId || manifest.name || "game";
+  const profileKey = `towerforge:progress:${scope}`;
+  const storyNamespace = `${storyComics.seenStoragePrefix || "story_seen_"}${scope}:`;
   return `(() => {
   const reveal = (reason) => {
     const overlay = document.getElementById("boot-error");
@@ -421,7 +441,7 @@ function bootRecoveryTemplate() {
       try {
         for (let i = localStorage.length - 1; i >= 0; i -= 1) {
           const key = localStorage.key(i) || "";
-          if (key.startsWith("towerforge:progress:") || key.startsWith("story_seen_")) localStorage.removeItem(key);
+          if (key === ${JSON.stringify(profileKey)} || key.startsWith(${JSON.stringify(storyNamespace)})) localStorage.removeItem(key);
         }
       } catch {}
       location.reload();
@@ -443,12 +463,196 @@ function cssTemplate(target) {
 body{overflow:hidden;overscroll-behavior:none;touch-action:manipulation;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
 .hud{padding-top:calc(12px + env(safe-area-inset-top))}
 .panel{padding-bottom:calc(14px + env(safe-area-inset-bottom))}
-button,select,input{font:inherit}button,select{border:1px solid var(--border);border-radius:6px;background:#111611;color:var(--text);padding:8px 10px}button{cursor:pointer}button:hover{border-color:var(--accent)}button:focus-visible,select:focus-visible,input:focus-visible,#playfield:focus-visible{outline:2px solid var(--accent);outline-offset:2px}button[aria-pressed="true"]{border-color:var(--danger);color:var(--danger)}#app{height:100%;display:flex;flex-direction:column}.hud{display:flex;gap:18px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface)}h1{font-size:18px;line-height:1.1;margin:0;color:var(--accent);letter-spacing:0}p{margin:4px 0 0;color:var(--muted)}.controls{margin-left:auto;display:flex;gap:10px;align-items:end;flex-wrap:wrap}.controls label{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:12px}.play-shell{min-height:0;flex:1;display:grid;grid-template-columns:minmax(0,1fr) 280px}#playfield{width:100%;height:100%;display:block;background:#101410;overflow:hidden;background-position:center;background-size:cover;background-repeat:no-repeat}#playfield canvas{display:block}.panel{border-left:1px solid var(--border);background:var(--panel);padding:14px;display:flex;flex-direction:column;gap:10px;overflow:auto}.stat{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)}.stat span{color:var(--muted)}.stat strong{font-variant-numeric:tabular-nums}.targeting{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:center;color:var(--muted);font-size:13px}.targeting select{min-width:0}.speed{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;color:var(--muted);margin-top:8px}#message{min-height:42px;padding:10px;border:1px solid var(--border);border-radius:6px;background:#161a16;color:var(--text)}.ability-bar{display:flex;flex-wrap:wrap;gap:6px}.ability-bar:empty{display:none}.ability-bar button{padding:6px 9px;font-size:12px}.ability-bar button.armed{border-color:var(--accent);color:var(--accent)}.ability-bar button:disabled{opacity:.45;cursor:default}.meta-panel{border-top:1px solid var(--border);padding-top:10px}.meta-title{display:flex;justify-content:space-between;gap:8px;color:var(--muted);font-size:12px;text-transform:uppercase}.meta-upgrades{display:grid;gap:6px;margin-top:8px}.meta-upgrade{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center;padding:7px;border:1px solid var(--border);border-radius:6px;background:#161a16}.meta-upgrade span{min-width:0;font-size:12px}.meta-upgrade button{padding:5px 7px;font-size:11px}.boot-error,.story-overlay{position:fixed;inset:0;z-index:20;display:grid;place-items:center;padding:24px;background:#0b0e0bdd}.boot-error[hidden],.story-overlay[hidden]{display:none}.boot-error-panel{width:min(460px,100%);padding:22px;border:1px solid var(--danger);border-radius:6px;background:var(--surface);box-shadow:0 20px 60px #0009}.boot-error-panel h2{margin:0 0 8px;font-size:20px}.boot-error-actions,.story-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}.story-panel{width:min(820px,100%);max-height:min(680px,90vh);display:grid;grid-template-columns:minmax(0,1.2fr) minmax(280px,.8fr);overflow:hidden;border:1px solid var(--border);border-radius:6px;background:var(--surface);box-shadow:0 20px 60px #0009}.story-art{min-height:360px;background-position:center;background-size:cover;background-repeat:no-repeat;background-color:#101410}.story-copy{padding:24px;align-self:end}.story-copy h2{margin:0 0 18px;font-size:24px}.story-speaker{min-height:18px;color:var(--accent);font-weight:700}.story-text{color:var(--text);font-size:16px;line-height:1.55;white-space:pre-wrap}@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}}@media(max-width:820px){body{overflow:auto}.hud{align-items:flex-start;flex-direction:column}.controls{margin-left:0}.play-shell{grid-template-columns:1fr;grid-template-rows:65vh auto}.panel{border-left:0;border-top:1px solid var(--border)}.story-panel{grid-template-columns:1fr}.story-art{min-height:220px}.story-copy{padding:18px}}`;
+button,select,input{font:inherit}button,select{border:1px solid var(--border);border-radius:6px;background:#111611;color:var(--text);padding:8px 10px}button{cursor:pointer}button:hover{border-color:var(--accent)}button:focus-visible,select:focus-visible,input:focus-visible,#playfield:focus-visible{outline:2px solid var(--accent);outline-offset:2px}button[aria-pressed="true"]{border-color:var(--danger);color:var(--danger)}#app{height:100%;display:flex;flex-direction:column}.hud{display:flex;gap:18px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface)}h1{font-size:18px;line-height:1.1;margin:0;color:var(--accent);letter-spacing:0}p{margin:4px 0 0;color:var(--muted)}.controls{margin-left:auto;display:flex;gap:10px;align-items:end;flex-wrap:wrap}.controls label{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:12px}.play-shell{min-height:0;flex:1;display:grid;grid-template-columns:minmax(0,1fr) 280px}#playfield{width:100%;height:100%;display:block;background:#101410;overflow:hidden;background-position:center;background-size:cover;background-repeat:no-repeat;touch-action:none}#playfield canvas{display:block}.panel{border-left:1px solid var(--border);background:var(--panel);padding:14px;display:flex;flex-direction:column;gap:10px;overflow:auto}.stat{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)}.stat span{color:var(--muted)}.stat strong{font-variant-numeric:tabular-nums}.targeting{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:center;color:var(--muted);font-size:13px}.targeting select{min-width:0}.speed{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;color:var(--muted);margin-top:8px}#message{min-height:42px;padding:10px;border:1px solid var(--border);border-radius:6px;background:#161a16;color:var(--text)}.ability-bar{display:flex;flex-wrap:wrap;gap:6px}.ability-bar:empty{display:none}.ability-bar button{padding:6px 9px;font-size:12px}.ability-bar button.armed{border-color:var(--accent);color:var(--accent)}.ability-bar button:disabled{opacity:.45;cursor:default}.meta-panel{border-top:1px solid var(--border);padding-top:10px}.meta-title{display:flex;justify-content:space-between;gap:8px;color:var(--muted);font-size:12px;text-transform:uppercase}.meta-upgrades{display:grid;gap:6px;margin-top:8px}.meta-upgrade{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center;padding:7px;border:1px solid var(--border);border-radius:6px;background:#161a16}.meta-upgrade span{min-width:0;font-size:12px}.meta-upgrade button{padding:5px 7px;font-size:11px}.boot-error,.story-overlay{position:fixed;inset:0;z-index:20;display:grid;place-items:center;padding:24px;background:#0b0e0bdd}.boot-error[hidden],.story-overlay[hidden]{display:none}.boot-error-panel{width:min(460px,100%);padding:22px;border:1px solid var(--danger);border-radius:6px;background:var(--surface);box-shadow:0 20px 60px #0009}.boot-error-panel h2{margin:0 0 8px;font-size:20px}.boot-error-actions,.story-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}.story-panel{width:min(820px,100%);max-height:min(680px,90vh);display:grid;grid-template-columns:minmax(0,1.2fr) minmax(280px,.8fr);overflow:hidden;border:1px solid var(--border);border-radius:6px;background:var(--surface);box-shadow:0 20px 60px #0009}.story-art{min-height:360px;background-position:center;background-size:cover;background-repeat:no-repeat;background-color:#101410}.story-copy{padding:24px;align-self:end}.story-copy h2{margin:0 0 18px;font-size:24px}.story-speaker{min-height:18px;color:var(--accent);font-weight:700}.story-text{color:var(--text);font-size:16px;line-height:1.55;white-space:pre-wrap}@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}}@media(max-width:820px){body{overflow:auto}.hud{align-items:flex-start;flex-direction:column}.controls{margin-left:0}.play-shell{grid-template-columns:1fr;grid-template-rows:65vh auto}.panel{border-left:0;border-top:1px solid var(--border)}.story-panel{grid-template-columns:1fr}.story-art{min-height:220px}.story-copy{padding:18px}}`;
+}
+
+function playerProfileRuntimeTemplate() {
+  return `// TOWERFORGE_PROFILE_RUNTIME_BEGIN
+const playerProfileCodec = Object.freeze({
+  createEmptyPlayerProfile,
+  parsePlayerProfileJson,
+  serializePlayerProfile
+});
+const playerProfileKey = derivePlayerProfileStorageKey({
+  appId: project.buildTarget && project.buildTarget.appId,
+  manifestName: project.manifest && project.manifest.name
+});
+const playerProfileScope = playerProfileKey.slice("towerforge:progress:".length);
+
+function createBrowserProfileStoragePort() {
+  let storage;
+  try { storage = globalThis.localStorage; } catch { return undefined; }
+  if (!storage) return undefined;
+  return Object.freeze({
+    getItem: (key) => storage.getItem(key),
+    setItem: (key, value) => storage.setItem(key, value),
+    removeItem: (key) => storage.removeItem(key)
+  });
+}
+
+const playerProfileStore = createPlayerProfileStore({
+  storage: createBrowserProfileStoragePort(),
+  key: playerProfileKey,
+  content,
+  codec: playerProfileCodec
+});
+const playerProfileLoadResult = playerProfileStore.load();
+let progress = playerProfileLoadResult.profile;
+let playerProfileStorageWarning = profileStorageWarningFor(playerProfileLoadResult.code);
+
+function profileStorageWarningFor(code) {
+  if (code === "profile_version_unsupported") return "Saved progress belongs to a newer game version; session changes will not overwrite it.";
+  if (code === "profile_corrupt") return "Saved progress could not be loaded; this session uses a safe profile.";
+  if (code === "storage_unavailable" || code === "storage_read_failed" || code === "storage_write_failed" || code === "storage_remove_failed") {
+    return "Progress storage is unavailable; changes remain available for this session only.";
+  }
+  return "";
+}
+
+function rememberProfileStorageResult(result) {
+  playerProfileStorageWarning = profileStorageWarningFor(result && result.code);
+  return result;
+}
+
+function playerProfileStatusText(text) {
+  return playerProfileStorageWarning ? String(text || "") + " " + playerProfileStorageWarning : String(text || "");
+}
+
+function persistPlayerProfile() {
+  return rememberProfileStorageResult(playerProfileStore.save(progress));
+}
+
+function currentPlayerLaunchOptions() {
+  return getPlayerProfileLaunchOptions(progress);
+}
+
+function profileRecordNumber(record, id) {
+  if (!record || !Object.prototype.hasOwnProperty.call(record, id)) return 0;
+  const value = record[id];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function isUnlocked(id) {
+  return isPlayerMissionUnlocked(progress, content, id);
+}
+
+function metaCostText(cost) {
+  return Object.entries(cost || {}).map(([id, amount]) => amount + " " + ((content.metaProgression.currencies || []).find((item) => item.id === id)?.label || id)).join(" · ");
+}
+
+function buyMetaUpgrade(id) {
+  const result = purchasePlayerMetaUpgrade(progress, content, id);
+  if (!result.ok) {
+    message = result.code === "insufficient_meta_resources"
+      ? "Not enough permanent currency."
+      : result.code === "upgrade_max_level" ? "Upgrade is at max level." : "Upgrade could not be purchased.";
+    renderMetaPanel();
+    return result;
+  }
+  progress = result.profile;
+  persistPlayerProfile();
+  game = createGame();
+  clearNavigationOverlay();
+  victoryRewarded = false;
+  selectedTowerId = null;
+  renderMetaPanel();
+  const upgrade = content.metaProgression.upgrades && content.metaProgression.upgrades[id];
+  message = ((upgrade && upgrade.label) || id) + " upgraded to level " + result.newLevel + ".";
+  return result;
+}
+
+function renderMetaPanel() {
+  const panel = $("meta-panel");
+  const upgrades = Object.values(content.metaProgression.upgrades || {});
+  const currencies = content.metaProgression.currencies || [];
+  if (!panel) return;
+  panel.hidden = upgrades.length === 0 && currencies.length === 0;
+  $("meta-resources").textContent = currencies.map((item) => profileRecordNumber(progress.metaResources, item.id) + " " + item.label).join(" · ");
+  $("meta-upgrades").innerHTML = upgrades.map((upgrade) => {
+    const level = profileRecordNumber(progress.upgradeLevels, upgrade.id);
+    const cost = upgrade.costs && upgrade.costs[level];
+    const preview = purchasePlayerMetaUpgrade(progress, content, upgrade.id);
+    return '<div class="meta-upgrade"><span><b>' + escapeHtml(upgrade.label || upgrade.id)
+      + '</b><br>Lv ' + level + '/' + upgrade.maxLevel + '</span><button type="button" data-meta-upgrade="'
+      + escapeHtml(upgrade.id) + '"' + (preview.ok ? "" : " disabled") + '>'
+      + (cost ? escapeHtml(metaCostText(cost)) : "Max") + '</button></div>';
+  }).join("");
+  for (const button of document.querySelectorAll("[data-meta-upgrade]")) button.onclick = () => buyMetaUpgrade(button.dataset.metaUpgrade);
+}
+
+function refreshMissionOptions() {
+  const select = $("mission-select");
+  if (!select) return;
+  select.innerHTML = Object.values(content.missions).map((mission) => {
+    const unlocked = isUnlocked(mission.id);
+    const cleared = progress.clearedMissionIds.includes(mission.id);
+    const mark = cleared ? "✓ " : (unlocked ? "" : "🔒 ");
+    return '<option value="' + escapeHtml(mission.id) + '"' + (unlocked ? "" : " disabled") + '>'
+      + mark + escapeHtml(mission.label || mission.id) + '</option>';
+  }).join("");
+  select.value = missionId;
+}
+
+function choosePlayerDifficulty(id) {
+  const result = selectPlayerDifficulty(progress, content, id);
+  if (!result.ok) return result;
+  progress = result.profile;
+  persistPlayerProfile();
+  return result;
+}
+
+function recordPlayerVictory(id, stars) {
+  const result = recordPlayerMissionClear(progress, content, id, stars);
+  if (!result.ok) {
+    message = "Mission clear could not be recorded.";
+    return result;
+  }
+  progress = result.profile;
+  persistPlayerProfile();
+  renderMetaPanel();
+  const unlocked = result.newlyUnlockedMissionIds.map((missionId) => (content.missions[missionId] && content.missions[missionId].label) || missionId);
+  message = (result.firstClear ? "Mission cleared!" : "Mission cleared again!") + (unlocked.length ? " Unlocked: " + unlocked.join(", ") : "");
+  return result;
+}
+
+function resetPlayerProgress() {
+  const result = rememberProfileStorageResult(playerProfileStore.reset());
+  progress = result.profile;
+  if (!isUnlocked(missionId)) missionId = Object.keys(content.missions).find(isUnlocked) || content.defaultMissionId;
+  towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
+  refreshMissionOptions();
+  initDifficultySelector();
+  initTowerSelector();
+  game = createGame();
+  clearNavigationOverlay();
+  initAbilityBar();
+  setSellMode(false);
+  applyBattleBackground();
+  selectMissionMusic();
+  renderMetaPanel();
+  selectedTowerId = null;
+  victoryRewarded = false;
+  message = "Campaign progress reset.";
+  return result;
+}
+// TOWERFORGE_PROFILE_RUNTIME_END`;
 }
 
 function playerTemplate() {
-  return `import { createGameContentRegistry, TowerDefenseGame } from "./engine/index.js";
-import { createCanvasRenderer } from "./renderer/index.mjs";
+  return `import {
+  createEmptyPlayerProfile,
+  createGameContentRegistry,
+  getPlayerProfileLaunchOptions,
+  isPlayerMissionUnlocked,
+  parsePlayerProfileJson,
+  purchasePlayerMetaUpgrade,
+  recordPlayerMissionClear,
+  selectPlayerDifficulty,
+  serializePlayerProfile,
+  TowerDefenseGame
+} from "./engine/index.js";
+import { createPlayerProfileStore, derivePlayerProfileStorageKey } from "./player-runtime/index.mjs";
+import { createCanvasRenderer, projectElevationCues, projectNavigationPlacementCues, projectPhysicsPresentationCues } from "./renderer/index.mjs";
 import { createAudioPlayer } from "./renderer/audio.mjs";
 import project from "./project-data.js";
 
@@ -457,21 +661,19 @@ const content = createGameContentRegistry({
   maps: project.maps,
   worldMap: project.worldMap,
   scripts: project.scripts,
+  mechanics: project.mechanics,
   visuals: project.visuals,
   storyComics: project.storyComics,
   battleBackgrounds: project.battleBackgrounds
 });
 
+${playerProfileRuntimeTemplate()}
+
 const $ = (id) => document.getElementById(id);
 applyProjectTheme();
 const audio = createAudioPlayer({ audio: project.visuals && project.visuals.audio });
 const canvas = $("playfield");
-const PROGRESS_KEY = "towerforge:progress:" + ((project.buildTarget && project.buildTarget.appId) || (project.manifest && project.manifest.name) || "game");
-const PROGRESS_VERSION = 2;
-let progress = loadProgress();
-let cleared = new Set(progress.clearedMissionIds);
 let missionId = content.defaultMissionId || Object.keys(content.missions)[0];
-let difficultyId = content.difficulties.some((item) => item.id === progress.selectedDifficultyId) ? progress.selectedDifficultyId : content.defaultDifficultyId;
 let towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
 let game = createGame();
 const renderer = createCanvasRenderer({ canvas, content, theme: content.visuals?.theme?.renderer });
@@ -481,6 +683,9 @@ let armedAbility = null;
 let sellMode = false;
 let selectedTowerId = null;
 let keyboardCoord = null;
+let navigationHoverCoord = null;
+let navigationOverlayPlacementState = null;
+let navigationOverlayFieldState = null;
 let lastRunningSpeed = 1;
 let activeStory = null;
 let storyWasRunning = false;
@@ -488,6 +693,7 @@ let victoryRewarded = false;
 const shownStories = new Set();
 
 initSelectors();
+syncKeyboardCursor(null);
 initAbilityBar();
 renderMetaPanel();
 resize();
@@ -506,8 +712,8 @@ if ("serviceWorker" in navigator) {
 $("start-wave").addEventListener("click", () => { audio.resume(); report(game.startNextWave()); });
 $("pause-run").addEventListener("click", () => setPaused(Number($("speed").value) > 0));
 $("sell-mode").addEventListener("click", () => setSellMode(!sellMode));
-$("reset-run").addEventListener("click", () => { game = createGame(); victoryRewarded = false; selectedTowerId = null; initAbilityBar(); setSellMode(false); message = "Run reset."; });
-$("reset-progress")?.addEventListener("click", () => { progress = emptyProgress(); cleared = new Set(); difficultyId = content.defaultDifficultyId; saveProgress(); refreshMissionOptions(); initDifficultySelector(); renderMetaPanel(); game = createGame(); victoryRewarded = false; message = "Campaign progress reset."; });
+$("reset-run").addEventListener("click", () => { game = createGame(); victoryRewarded = false; selectedTowerId = null; initAbilityBar(); setSellMode(false); clearNavigationOverlay(); message = "Run reset."; });
+$("reset-progress")?.addEventListener("click", resetPlayerProgress);
 $("speed").addEventListener("input", syncSpeedUi);
 $("snd").addEventListener("change", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
 $("sfx-volume").addEventListener("input", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
@@ -542,8 +748,20 @@ window.__towerforgeTilePoint = (coord) => {
 };
 window.__towerforgePickPoint = (point) => renderer.pickTile({ clientX: point.x, clientY: point.y }, game.getRenderSnapshot().tiles);
 window.__towerforgeBootOk = true;
+const bootError = document.getElementById("boot-error");
+if (bootError) bootError.hidden = true;
 canvas.addEventListener("focus", () => syncKeyboardCursor(ensureKeyboardCoord()));
-canvas.addEventListener("click", (event) => {
+canvas.addEventListener("pointermove", (event) => {
+  const coord = pickTile(event);
+  if (coord?.q === navigationHoverCoord?.q && coord?.r === navigationHoverCoord?.r) return;
+  navigationHoverCoord = coord;
+  refreshNavigationOverlay(navigationHoverCoord);
+});
+canvas.addEventListener("pointerleave", () => {
+  navigationHoverCoord = null;
+  refreshNavigationOverlay(keyboardCoord);
+});
+canvas.addEventListener("pointerdown", (event) => {
   audio.resume();
   const coord = pickTile(event);
   if (!coord) return;
@@ -551,6 +769,84 @@ canvas.addEventListener("click", (event) => {
   syncKeyboardCursor(coord);
   actAtCoord(coord);
 });
+
+function clearNavigationOverlay() {
+  navigationOverlayPlacementState = null;
+  navigationOverlayFieldState = null;
+  projectNavigationPlacementCues(undefined);
+  renderer.clearNavigationOverlay();
+}
+
+function captureNavigationOverlayPlacementState(snapshot) {
+  // Allocation belongs to successful overlay refreshes, never animation-frame comparison.
+  navigationOverlayPlacementState = snapshot.towers.map((tower) => ({
+    id: tower.id,
+    typeId: tower.typeId,
+    q: tower.coord.q,
+    r: tower.coord.r
+  }));
+  navigationOverlayFieldState = snapshot.navigation.fields.map((field) => ({
+    movementProfileId: field.movementProfileId,
+    revision: field.revision
+  }));
+}
+
+function navigationSnapshotRevision(snapshot) {
+  if (snapshot?.navigation?.schemaVersion !== 1 || snapshot.navigation.mode !== "dynamic_flow") return "";
+  const fields = snapshot.navigation.fields;
+  if (navigationOverlayFieldState === null || fields.length !== navigationOverlayFieldState.length) return true;
+  for (let index = 0; index < fields.length; index += 1) {
+    const field = fields[index];
+    const retained = navigationOverlayFieldState[index];
+    if (field.movementProfileId !== retained.movementProfileId || field.revision !== retained.revision) return true;
+  }
+  const towers = snapshot.towers;
+  if (navigationOverlayPlacementState === null || towers.length !== navigationOverlayPlacementState.length) return true;
+  // Engine snapshot order is deterministic, so exact positional comparison is
+  // collision-free and catches create/destroy/move/type changes without allocation.
+  for (let index = 0; index < towers.length; index += 1) {
+    const tower = towers[index];
+    const retained = navigationOverlayPlacementState[index];
+    if (tower.id !== retained.id
+      || tower.typeId !== retained.typeId
+      || tower.coord.q !== retained.q
+      || tower.coord.r !== retained.r) return true;
+  }
+  return false;
+}
+
+function syncNavigationOverlaySnapshot(snapshot) {
+  if (snapshot.outcome !== "playing") { clearNavigationOverlay(); return; }
+  const revisionChanged = navigationSnapshotRevision(snapshot);
+  if (revisionChanged === "") {
+    if (navigationOverlayPlacementState !== null || navigationOverlayFieldState !== null) clearNavigationOverlay();
+    return;
+  }
+  if (revisionChanged && (navigationHoverCoord || keyboardCoord)) refreshNavigationOverlay();
+}
+
+function refreshNavigationOverlay(coord = navigationHoverCoord || keyboardCoord) {
+  if (!coord || !towerId || sellMode || armedAbility) {
+    clearNavigationOverlay();
+    return;
+  }
+  let analysis;
+  try {
+    analysis = game.analyzeNavigation({ towerTypeId: towerId, coordinates: [{ q: coord.q, r: coord.r }] });
+  } catch {
+    clearNavigationOverlay();
+    return;
+  }
+  const presentation = projectNavigationPlacementCues(analysis);
+  if (!presentation.active) {
+    clearNavigationOverlay();
+    return;
+  }
+  renderer.setNavigationOverlay(analysis);
+  captureNavigationOverlayPlacementState(game.getRenderSnapshot());
+  const blocked = presentation.cues.find((cue) => cue.state === "blocked");
+  if (blocked?.reasonKey === "reason.lastPathBlocked") message = "That tower would block the last path.";
+}
 
 function actAtCoord(coord) {
   if (!coord) return;
@@ -565,9 +861,12 @@ function actAtCoord(coord) {
   const towerAt = game.getTowerIdAt(coord);
   if (towerAt) { selectedTowerId = towerAt; message = "Tower selected."; return; }
   if (!towerId) return;
+  const preflight = game.canPlaceTower(towerId, coord);
+  if (!preflight.ok) { report(preflight); refreshNavigationOverlay(coord); return; }
   const result = game.placeTower(towerId, coord);
   report(result);
   if (result.ok) selectedTowerId = game.getTowerIdAt(coord);
+  refreshNavigationOverlay(coord);
 }
 
 function ensureKeyboardCoord() {
@@ -581,8 +880,11 @@ function ensureKeyboardCoord() {
 function syncKeyboardCursor(coord) {
   keyboardCoord = coord ? { q: coord.q, r: coord.r } : null;
   renderer.setFocusCoord(keyboardCoord);
-  const tile = keyboardCoord && game.getSnapshot().tiles.find((item) => item.q === keyboardCoord.q && item.r === keyboardCoord.r);
-  canvas.setAttribute("aria-label", tile ? "Hex battlefield. Selected tile q " + tile.q + ", r " + tile.r + ", " + tile.terrain + ". Arrow keys move; Enter acts; Escape cancels." : "Hex battlefield.");
+  const snapshot = game.getSnapshot();
+  const tile = keyboardCoord && snapshot.tiles.find((item) => item.q === keyboardCoord.q && item.r === keyboardCoord.r);
+  const battlefieldLabel = snapshot.grid.kind === "square" ? "Square battlefield" : "Hex battlefield";
+  canvas.setAttribute("aria-label", tile ? battlefieldLabel + ". Selected tile q " + tile.q + ", r " + tile.r + ", " + tile.terrain + ". Arrow keys move; Enter acts; Escape cancels." : battlefieldLabel + ".");
+  refreshNavigationOverlay(keyboardCoord);
 }
 
 function moveKeyboardCursor(dq, dr) {
@@ -595,13 +897,14 @@ function moveKeyboardCursor(dq, dr) {
 }
 
 function createGame() {
-  return new TowerDefenseGame({ missionId, content, difficultyId, metaUpgradeLevels: progress.upgradeLevels });
+  return new TowerDefenseGame({ missionId, content, ...currentPlayerLaunchOptions() });
 }
 
 function setSellMode(active) {
   sellMode = Boolean(active);
   $("sell-mode").setAttribute("aria-pressed", String(sellMode));
   if (sellMode) { setArmed(null); message = "Click a tower to sell it."; }
+  if (sellMode) clearNavigationOverlay(); else refreshNavigationOverlay();
 }
 
 function setPaused(paused) {
@@ -650,6 +953,8 @@ function initSelectors() {
     missionId = missionSelect.value;
     towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
     game = createGame();
+    syncKeyboardCursor(null);
+    clearNavigationOverlay();
     victoryRewarded = false;
     selectedTowerId = null;
     setSellMode(false);
@@ -666,16 +971,17 @@ function initDifficultySelector() {
   const select = $("difficulty-select");
   if (!select) return;
   select.innerHTML = content.difficulties.map((item) => \`<option value="\${escapeHtml(item.id)}">\${escapeHtml(item.label || item.id)}</option>\`).join("");
-  select.value = difficultyId;
+  select.value = currentPlayerLaunchOptions().difficultyId;
   select.onchange = () => {
-    difficultyId = select.value;
-    progress.selectedDifficultyId = difficultyId;
-    saveProgress();
+    const result = choosePlayerDifficulty(select.value);
+    if (!result.ok) { select.value = currentPlayerLaunchOptions().difficultyId; return; }
     game = createGame();
+    clearNavigationOverlay();
     victoryRewarded = false;
     selectedTowerId = null;
     initAbilityBar();
-    message = "Difficulty changed to " + (content.difficulties.find((item) => item.id === difficultyId)?.label || difficultyId) + ".";
+    const selectedDifficultyId = currentPlayerLaunchOptions().difficultyId;
+    message = "Difficulty changed to " + (content.difficulties.find((item) => item.id === selectedDifficultyId)?.label || selectedDifficultyId) + ".";
   };
 }
 
@@ -690,12 +996,13 @@ function initTowerSelector() {
   towerId = ids[0] || "";
   towerSelect.value = towerId;
   // Assigning onchange (vs addEventListener) keeps a single handler when missions switch.
-  towerSelect.onchange = () => { towerId = towerSelect.value; };
+  towerSelect.onchange = () => { towerId = towerSelect.value; refreshNavigationOverlay(); };
 }
 
 function setArmed(id) {
   armedAbility = id;
   if (id) message = "Click the map to use " + ((game.getSnapshot().abilities[id] || {}).label || id) + ".";
+  if (id) clearNavigationOverlay(); else refreshNavigationOverlay();
   for (const btn of document.querySelectorAll("#ability-bar button")) btn.classList.toggle("armed", btn.dataset.aid === id);
 }
 function initAbilityBar() {
@@ -717,103 +1024,6 @@ function updateAbilityBar(snap) {
     btn.textContent = ((a && a.label) || btn.dataset.aid) + (cd > 0 ? " (" + cd + ")" : "");
     if (!ready && armedAbility === btn.dataset.aid) setArmed(null);
   }
-}
-
-// ── Campaign progress (persisted per app in localStorage) ──────────────────────
-function emptyProgress() {
-  return { version: PROGRESS_VERSION, clearedMissionIds: [], starsByMission: {}, metaResources: {}, upgradeLevels: {}, selectedDifficultyId: content.defaultDifficultyId };
-}
-function loadProgress() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(PROGRESS_KEY) || "null");
-    const base = emptyProgress();
-    if (Array.isArray(saved)) base.clearedMissionIds = saved;
-    else if (saved && typeof saved === "object") Object.assign(base, saved);
-    base.version = PROGRESS_VERSION;
-    base.clearedMissionIds = (Array.isArray(base.clearedMissionIds) ? base.clearedMissionIds : []).filter((id) => typeof id === "string" && content.missions[id]);
-    base.starsByMission = base.starsByMission && typeof base.starsByMission === "object" ? base.starsByMission : {};
-    base.metaResources = normalizeMetaBag(base.metaResources);
-    base.upgradeLevels = normalizeUpgradeLevels(base.upgradeLevels);
-    return base;
-  } catch (e) { return emptyProgress(); }
-}
-function saveProgress() {
-  progress.clearedMissionIds = [...cleared];
-  progress.version = PROGRESS_VERSION;
-  try { localStorage.setItem(PROGRESS_KEY, JSON.stringify(progress)); }
-  catch (e) { /* storage unavailable */ }
-}
-function normalizeMetaBag(input) {
-  const bag = {};
-  for (const currency of content.metaProgression.currencies || []) bag[currency.id] = Math.max(0, Number(input?.[currency.id]) || 0);
-  return bag;
-}
-function normalizeUpgradeLevels(input) {
-  const levels = {};
-  for (const [id, upgrade] of Object.entries(content.metaProgression.upgrades || {})) levels[id] = Math.max(0, Math.min(upgrade.maxLevel || 0, Math.floor(Number(input?.[id]) || 0)));
-  return levels;
-}
-function addMetaResources(bag, multiplier = 1) {
-  for (const currency of content.metaProgression.currencies || []) progress.metaResources[currency.id] = (progress.metaResources[currency.id] || 0) + (Number(bag?.[currency.id]) || 0) * multiplier;
-}
-function metaCostText(cost) {
-  return Object.entries(cost || {}).map(([id, amount]) => amount + " " + ((content.metaProgression.currencies || []).find((item) => item.id === id)?.label || id)).join(" · ");
-}
-function canAffordMeta(cost) { return Object.entries(cost || {}).every(([id, amount]) => (progress.metaResources[id] || 0) >= Number(amount || 0)); }
-function buyMetaUpgrade(id) {
-  const upgrade = content.metaProgression.upgrades?.[id];
-  if (!upgrade) return;
-  const level = progress.upgradeLevels[id] || 0;
-  const cost = upgrade.costs?.[level];
-  if (!cost || !canAffordMeta(cost)) { message = cost ? "Not enough permanent currency." : "Upgrade is at max level."; return; }
-  for (const [currencyId, amount] of Object.entries(cost)) progress.metaResources[currencyId] = (progress.metaResources[currencyId] || 0) - Number(amount || 0);
-  progress.upgradeLevels[id] = level + 1;
-  saveProgress();
-  game = createGame();
-  victoryRewarded = false;
-  selectedTowerId = null;
-  renderMetaPanel();
-  message = upgrade.label + " upgraded to level " + (level + 1) + ".";
-}
-function renderMetaPanel() {
-  const panel = $("meta-panel");
-  const upgrades = Object.values(content.metaProgression.upgrades || {});
-  const currencies = content.metaProgression.currencies || [];
-  if (!panel) return;
-  panel.hidden = upgrades.length === 0 && currencies.length === 0;
-  $("meta-resources").textContent = currencies.map((item) => (progress.metaResources[item.id] || 0) + " " + item.label).join(" · ");
-  $("meta-upgrades").innerHTML = upgrades.map((upgrade) => {
-    const level = progress.upgradeLevels[upgrade.id] || 0;
-    const cost = upgrade.costs?.[level];
-    return \`<div class="meta-upgrade"><span><b>\${escapeHtml(upgrade.label || upgrade.id)}</b><br>Lv \${level}/\${upgrade.maxLevel}</span><button type="button" data-meta-upgrade="\${escapeHtml(upgrade.id)}"\${cost && canAffordMeta(cost) ? "" : " disabled"}>\${cost ? escapeHtml(metaCostText(cost)) : "Max"}</button></div>\`;
-  }).join("");
-  for (const button of document.querySelectorAll("[data-meta-upgrade]")) button.onclick = () => buyMetaUpgrade(button.dataset.metaUpgrade);
-}
-function unlockReqs(id) { const n = ((content.worldMap && content.worldMap.missionNodes) || []).find((x) => x.missionId === id); return (n && n.unlockRequiresMissionIds) || []; }
-function isUnlocked(id) { return unlockReqs(id).every((r) => cleared.has(r)); }
-function rewardMissionClear(id, stars) {
-  const firstClear = !cleared.has(id);
-  cleared.add(id);
-  const reward = content.metaProgression.rewardsByMission?.[id] || {};
-  addMetaResources(firstClear ? reward.firstClear : reward.repeatClear);
-  const previousStars = Math.max(0, Number(progress.starsByMission[id]) || 0);
-  const earnedStars = Math.max(previousStars, stars);
-  addMetaResources(reward.perStar, earnedStars - previousStars);
-  progress.starsByMission[id] = earnedStars;
-  saveProgress();
-  renderMetaPanel();
-  return firstClear;
-}
-function newlyUnlockedBy(id) { return Object.keys(content.missions).filter((mid) => !cleared.has(mid) && unlockReqs(mid).includes(id) && isUnlocked(mid)).map((mid) => (content.missions[mid] && content.missions[mid].label) || mid); }
-function refreshMissionOptions() {
-  const sel = $("mission-select");
-  if (!sel) return;
-  sel.innerHTML = Object.values(content.missions).map((mission) => {
-    const unlocked = isUnlocked(mission.id);
-    const mark = cleared.has(mission.id) ? "✓ " : (unlocked ? "" : "🔒 ");
-    return \`<option value="\${escapeHtml(mission.id)}"\${unlocked ? "" : " disabled"}>\${mark}\${escapeHtml(mission.label || mission.id)}</option>\`;
-  }).join("");
-  sel.value = missionId;
 }
 
 function resolveStandaloneSprite(spriteId) {
@@ -846,7 +1056,7 @@ function showStoryForMission(trigger) {
   const [comicId, comic] = entry;
   const runKey = trigger + ":" + comicId;
   if (shownStories.has(runKey)) return;
-  const seenKey = content.storySeenStoragePrefix + PROGRESS_KEY.slice("towerforge:progress:".length) + ":" + comicId;
+  const seenKey = content.storySeenStoragePrefix + playerProfileScope + ":" + comicId;
   if (comic.replay !== "always") {
     try { if (localStorage.getItem(seenKey) === "1") return; } catch {}
   }
@@ -906,6 +1116,7 @@ function loop(now) {
     game.tick((dtSeconds / timeUnitSeconds) * speed);
     snap = game.getRenderSnapshot();
   }
+  syncNavigationOverlaySnapshot(snap);
   const events = ticked ? pending.concat(snap.lastEvents) : pending;
   game.lastEvents = []; // consumed this frame — clear so nothing replays on the next frame
   draw(snap, events);
@@ -919,6 +1130,7 @@ function resize() {
 
 function draw(snap, events) {
   snap.lastEvents = events;
+  projectPhysicsPresentationCues(snap);
   renderer.drawSnapshot(snap);
   if ($("snd")?.checked) audio.handleEvents(events);
 }
@@ -928,9 +1140,7 @@ function updateHud(snap) {
   updateTargetMode(snap);
   if (snap.outcome === "victory" && !victoryRewarded) {
     victoryRewarded = true;
-    const firstClear = rewardMissionClear(missionId, (snap.stars || []).filter((item) => item.achieved).length);
-    const unlocked = firstClear ? newlyUnlockedBy(missionId) : [];
-    message = (firstClear ? "Mission cleared!" : "Mission cleared again!") + (unlocked.length ? " Unlocked: " + unlocked.join(", ") : "");
+    recordPlayerVictory(missionId, (snap.stars || []).filter((item) => item.achieved).length);
     refreshMissionOptions();
     showStoryForMission("afterVictory");
   }
@@ -945,7 +1155,7 @@ function updateHud(snap) {
   const stars = snap.stars || [];
   $("stat-objectives").textContent = objectives.filter((item) => item.complete).length + "/" + objectives.length
     + (stars.length ? " | " + stars.filter((item) => item.achieved).length + "/" + stars.length + " stars" : "");
-  $("message").textContent = message;
+  $("message").textContent = playerProfileStatusText(message);
 }
 
 function updateTargetMode(snap) {
@@ -986,8 +1196,35 @@ function applyProjectTheme() {
 }
 
 function phaserPlayerTemplate() {
-  return `import { createGameContentRegistry, TowerDefenseGame } from "./engine/index.js";
+  return `import {
+  createEmptyPlayerProfile,
+  createGameContentRegistry,
+  getPlayerProfileLaunchOptions,
+  isPlayerMissionUnlocked,
+  parsePlayerProfileJson,
+  purchasePlayerMetaUpgrade,
+  recordPlayerMissionClear,
+  selectPlayerDifficulty,
+  serializePlayerProfile,
+  TowerDefenseGame
+} from "./engine/index.js";
+import { createPlayerProfileStore, derivePlayerProfileStorageKey } from "./player-runtime/index.mjs";
 import { createAudioPlayer } from "./renderer/audio.mjs";
+import {
+  projectElevationCues,
+  projectEnemyNavigationPoint,
+  projectLegacyPresentationEvents,
+  projectExposurePresentationCues,
+  projectMarkPresentationCues,
+  projectNavigationPlacementCues,
+  projectPhysicsPresentationCues,
+  projectReactionPresentationCues,
+  projectSnapshotSpawnCoord,
+  projectShieldPresentationCues,
+  resolveExposurePresentation,
+  resolveMarkPresentation,
+  resolveShieldPresentation
+} from "./renderer/index.mjs";
 import { resolveAutotile } from "./renderer/autotile.mjs";
 import project from "./project-data.js";
 
@@ -996,20 +1233,18 @@ const content = createGameContentRegistry({
   maps: project.maps,
   worldMap: project.worldMap,
   scripts: project.scripts,
+  mechanics: project.mechanics,
   visuals: project.visuals,
   storyComics: project.storyComics,
   battleBackgrounds: project.battleBackgrounds
 });
 
+${playerProfileRuntimeTemplate()}
+
 const $ = (id) => document.getElementById(id);
 applyProjectTheme();
 const audio = createAudioPlayer({ audio: project.visuals && project.visuals.audio });
-const PROGRESS_KEY = "towerforge:progress:" + ((project.buildTarget && project.buildTarget.appId) || (project.manifest && project.manifest.name) || "game");
-const PROGRESS_VERSION = 2;
-let progress = loadProgress();
-let cleared = new Set(progress.clearedMissionIds);
 let missionId = content.defaultMissionId || Object.keys(content.missions)[0];
-let difficultyId = content.difficulties.some((item) => item.id === progress.selectedDifficultyId) ? progress.selectedDifficultyId : content.defaultDifficultyId;
 let towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
 let game = createGame();
 let message = "Choose a tower, click a buildable tile, then start the wave.";
@@ -1017,6 +1252,10 @@ let armedAbility = null;
 let sellMode = false;
 let selectedTowerId = null;
 let keyboardCoord = null;
+let navigationHoverCoord = null;
+let navigationOverlay = projectNavigationPlacementCues(undefined);
+let navigationOverlayPlacementState = null;
+let navigationOverlayFieldState = null;
 let lastRunningSpeed = 1;
 let activeStory = null;
 let storyWasRunning = false;
@@ -1034,13 +1273,14 @@ const TERRAIN_COLORS = {
 };
 
 initSelectors();
+syncKeyboardCursor(null);
 initAbilityBar();
 renderMetaPanel();
 $("start-wave").addEventListener("click", () => { audio.resume(); report(game.startNextWave()); });
 $("pause-run").addEventListener("click", () => setPaused(Number($("speed").value) > 0));
 $("sell-mode").addEventListener("click", () => setSellMode(!sellMode));
-$("reset-run").addEventListener("click", () => { game = createGame(); victoryRewarded = false; selectedTowerId = null; initAbilityBar(); setSellMode(false); message = "Run reset."; });
-$("reset-progress")?.addEventListener("click", () => { progress = emptyProgress(); cleared = new Set(); difficultyId = content.defaultDifficultyId; saveProgress(); refreshMissionOptions(); initDifficultySelector(); renderMetaPanel(); game = createGame(); victoryRewarded = false; message = "Campaign progress reset."; });
+$("reset-run").addEventListener("click", () => { game = createGame(); victoryRewarded = false; selectedTowerId = null; initAbilityBar(); setSellMode(false); clearNavigationOverlay(); message = "Run reset."; });
+$("reset-progress")?.addEventListener("click", resetPlayerProgress);
 $("speed").addEventListener("input", syncSpeedUi);
 $("snd").addEventListener("change", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
 $("sfx-volume").addEventListener("input", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
@@ -1068,7 +1308,83 @@ selectMissionMusic();
 showStoryForMission("beforeMission");
 $("playfield").addEventListener("focus", () => syncKeyboardCursor(ensureKeyboardCoord()));
 
-function createGame() { return new TowerDefenseGame({ missionId, content, difficultyId, metaUpgradeLevels: progress.upgradeLevels }); }
+function createGame() { return new TowerDefenseGame({ missionId, content, ...currentPlayerLaunchOptions() }); }
+
+function clearNavigationOverlay() {
+  navigationOverlay = projectNavigationPlacementCues(undefined);
+  navigationOverlayPlacementState = null;
+  navigationOverlayFieldState = null;
+}
+
+function captureNavigationOverlayPlacementState(snapshot) {
+  // Allocation belongs to successful overlay refreshes, never animation-frame comparison.
+  navigationOverlayPlacementState = snapshot.towers.map((tower) => ({
+    id: tower.id,
+    typeId: tower.typeId,
+    q: tower.coord.q,
+    r: tower.coord.r
+  }));
+  navigationOverlayFieldState = snapshot.navigation.fields.map((field) => ({
+    movementProfileId: field.movementProfileId,
+    revision: field.revision
+  }));
+}
+
+function navigationSnapshotRevision(snapshot) {
+  if (snapshot?.navigation?.schemaVersion !== 1 || snapshot.navigation.mode !== "dynamic_flow") return "";
+  const fields = snapshot.navigation.fields;
+  if (navigationOverlayFieldState === null || fields.length !== navigationOverlayFieldState.length) return true;
+  for (let index = 0; index < fields.length; index += 1) {
+    const field = fields[index];
+    const retained = navigationOverlayFieldState[index];
+    if (field.movementProfileId !== retained.movementProfileId || field.revision !== retained.revision) return true;
+  }
+  const towers = snapshot.towers;
+  if (navigationOverlayPlacementState === null || towers.length !== navigationOverlayPlacementState.length) return true;
+  // Engine snapshot order is deterministic, so exact positional comparison is
+  // collision-free and catches create/destroy/move/type changes without allocation.
+  for (let index = 0; index < towers.length; index += 1) {
+    const tower = towers[index];
+    const retained = navigationOverlayPlacementState[index];
+    if (tower.id !== retained.id
+      || tower.typeId !== retained.typeId
+      || tower.coord.q !== retained.q
+      || tower.coord.r !== retained.r) return true;
+  }
+  return false;
+}
+
+function syncNavigationOverlaySnapshot(snapshot) {
+  if (snapshot.outcome !== "playing") { clearNavigationOverlay(); return; }
+  const revisionChanged = navigationSnapshotRevision(snapshot);
+  if (revisionChanged === "") {
+    if (navigationOverlayPlacementState !== null || navigationOverlayFieldState !== null) clearNavigationOverlay();
+    return;
+  }
+  if (revisionChanged && (navigationHoverCoord || keyboardCoord)) refreshNavigationOverlay();
+}
+
+function refreshNavigationOverlay(coord = navigationHoverCoord || keyboardCoord) {
+  if (!coord || !towerId || sellMode || armedAbility) {
+    clearNavigationOverlay();
+    return;
+  }
+  let analysis;
+  try {
+    analysis = game.analyzeNavigation({ towerTypeId: towerId, coordinates: [{ q: coord.q, r: coord.r }] });
+  } catch {
+    clearNavigationOverlay();
+    return;
+  }
+  navigationOverlay = projectNavigationPlacementCues(analysis);
+  if (!navigationOverlay.active) {
+    clearNavigationOverlay();
+    return;
+  }
+  captureNavigationOverlayPlacementState(game.getRenderSnapshot());
+  const blocked = navigationOverlay.cues.find((cue) => cue.state === "blocked");
+  if (blocked?.reasonKey === "reason.lastPathBlocked") message = "That tower would block the last path.";
+}
 
 function actAtCoord(coord) {
   if (!coord) return;
@@ -1083,9 +1399,12 @@ function actAtCoord(coord) {
   const towerAt = game.getTowerIdAt(coord);
   if (towerAt) { selectedTowerId = towerAt; message = "Tower selected."; return; }
   if (!towerId) return;
+  const preflight = game.canPlaceTower(towerId, coord);
+  if (!preflight.ok) { report(preflight); refreshNavigationOverlay(coord); return; }
   const result = game.placeTower(towerId, coord);
   report(result);
   if (result.ok) selectedTowerId = game.getTowerIdAt(coord);
+  refreshNavigationOverlay(coord);
 }
 
 function ensureKeyboardCoord() {
@@ -1098,8 +1417,11 @@ function ensureKeyboardCoord() {
 
 function syncKeyboardCursor(coord) {
   keyboardCoord = coord ? { q: coord.q, r: coord.r } : null;
-  const tile = keyboardCoord && game.getSnapshot().tiles.find((item) => item.q === keyboardCoord.q && item.r === keyboardCoord.r);
-  $("playfield").setAttribute("aria-label", tile ? "Hex battlefield. Selected tile q " + tile.q + ", r " + tile.r + ", " + tile.terrain + ". Arrow keys move; Enter acts; Escape cancels." : "Hex battlefield.");
+  const snapshot = game.getSnapshot();
+  const tile = keyboardCoord && snapshot.tiles.find((item) => item.q === keyboardCoord.q && item.r === keyboardCoord.r);
+  const battlefieldLabel = snapshot.grid.kind === "square" ? "Square battlefield" : "Hex battlefield";
+  $("playfield").setAttribute("aria-label", tile ? battlefieldLabel + ". Selected tile q " + tile.q + ", r " + tile.r + ", " + tile.terrain + ". Arrow keys move; Enter acts; Escape cancels." : battlefieldLabel + ".");
+  refreshNavigationOverlay(keyboardCoord);
 }
 
 function moveKeyboardCursor(dq, dr) {
@@ -1114,6 +1436,7 @@ function setSellMode(active) {
   sellMode = Boolean(active);
   $("sell-mode").setAttribute("aria-pressed", String(sellMode));
   if (sellMode) { setArmed(null); message = "Click a tower to sell it."; }
+  if (sellMode) clearNavigationOverlay(); else refreshNavigationOverlay();
 }
 
 function setPaused(paused) {
@@ -1168,6 +1491,12 @@ class PlayScene extends Phaser.Scene {
     this.tileImages = new Map();
     this.tileTerrainState = new Map();
     this.tileImageKey = "";
+    this.previousEnemyPositions = new Map();
+    this.previousTowerPositions = new Map();
+    this.previousCombat = null;
+    this.markLabels = new Map();
+    this.exposureLabels = new Map();
+    this.elevationLabels = new Map();
     this.registerAtlasFrames();
     this.input.on("pointerdown", (p) => {
       audio.resume();
@@ -1176,6 +1505,16 @@ class PlayScene extends Phaser.Scene {
       window.__towerforgeLastPointerCoord = coord;
       syncKeyboardCursor(coord);
       actAtCoord(coord);
+    });
+    this.input.on("pointermove", (p) => {
+      const coord = this.pickTile(p.worldX, p.worldY);
+      if (coord?.q === navigationHoverCoord?.q && coord?.r === navigationHoverCoord?.r) return;
+      navigationHoverCoord = coord;
+      refreshNavigationOverlay(navigationHoverCoord);
+    });
+    this.input.on("pointerout", () => {
+      navigationHoverCoord = null;
+      refreshNavigationOverlay(keyboardCoord);
     });
   }
   registerAtlasFrames() {
@@ -1222,7 +1561,9 @@ class PlayScene extends Phaser.Scene {
     const prog = Math.max(0, Math.min(track.length - 1, enemy.pathProgress));
     const i = Math.floor(prog), f = prog - i;
     const a = this.center(track[i], g), b = this.center(track[Math.min(i + 1, track.length - 1)], g);
-    return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+    const legacyPoint = { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+    // enemy.navigation stays opaque here; the shared renderer projector validates it.
+    return projectEnemyNavigationPoint(enemy, legacyPoint, (coord) => this.center(coord, g));
   }
   hex(gr, x, y, r, fill, alpha) {
     gr.fillStyle(fill, alpha == null ? 1 : alpha);
@@ -1240,6 +1581,17 @@ class PlayScene extends Phaser.Scene {
       return;
     }
     this.hex(gr, x, y, r, fill, alpha);
+  }
+  shieldRing(gr, x, y, radius, shield) {
+    if (!shield) return;
+    const width = Math.max(2, radius * 0.12);
+    gr.lineStyle(width, 0x63d9ff, 0.2);
+    gr.strokeCircle(x, y, radius);
+    if (shield.ratio <= 0) return;
+    gr.lineStyle(width, 0x63d9ff, 0.95);
+    gr.beginPath();
+    gr.arc(x, y, radius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * shield.ratio, false);
+    gr.strokePath();
   }
   syncTileImages(snap, g) {
     const stateKey = [snap.mapId, snap.grid?.kind, this.scale.width, this.scale.height].join("|");
@@ -1331,10 +1683,22 @@ class PlayScene extends Phaser.Scene {
       game.tick((Math.min(50, delta) / 1000 / tu) * speed);
       snap = game.getRenderSnapshot();
     }
+    syncNavigationOverlaySnapshot(snap);
     const events = ticked ? pending.concat(snap.lastEvents) : pending;
     game.lastEvents = []; // consumed this frame — clear so nothing replays next frame
     if ($("snd")?.checked) audio.handleEvents(events);
     const g = this.geometry(snap.tiles, snap.grid);
+    const enemyPositions = new Map();
+    for (const enemy of snap.enemies) {
+      const point = this.enemyPos(enemy, snap, g);
+      if (point) enemyPositions.set(enemy.id, point);
+    }
+    const towerPositions = new Map(snap.towers.map((tower) => [tower.id, this.center(tower.coord, g)]));
+    const presentationSnapshot = {
+      ...snap,
+      ...(snap.combat === undefined && this.previousCombat !== null ? { combat: this.previousCombat } : {}),
+      lastEvents: events
+    };
     this.syncTileImages(snap, g);
     const map = { id: snap.mapId || snap.missionId, grid: snap.grid, tiles: snap.tiles, pathRoutes: snap.pathRoutes || [] };
 
@@ -1350,6 +1714,21 @@ class PlayScene extends Phaser.Scene {
       }
     }
     for (const w of snap.temporaryWaterTiles) { const p = this.center(w, g); this.cell(this.tileG, p.x, p.y, g.r * 0.74, 0x427b88, 0.55, g.grid); }
+    this.drawElevationCues(snap.elevation, g);
+    if (navigationOverlay.active) {
+      for (const cue of navigationOverlay.cues) {
+        const p = this.center(cue.coord, g);
+        this.cell(
+          this.tileG,
+          p.x,
+          p.y,
+          g.r * 0.76,
+          cue.state === "blocked" ? 0xdf6a59 : 0x8ac783,
+          cue.state === "blocked" ? 0.28 : 0.2,
+          g.grid
+        );
+      }
+    }
     if (keyboardCoord) {
       const p = this.center(keyboardCoord, g);
       this.tileG.lineStyle(Math.max(2, g.r * 0.12), 0xe8f4db, 1);
@@ -1358,11 +1737,79 @@ class PlayScene extends Phaser.Scene {
     }
 
     this.fxG.clear();
-    for (const ev of events) {
+    const presentationEvents = projectLegacyPresentationEvents(presentationSnapshot);
+    const placedTowerPositions = new Map();
+    for (const ev of presentationEvents) {
+      if (ev.type === "towerPlaced") {
+        placedTowerPositions.set(ev.towerId, this.center(ev.coord, g));
+        continue;
+      }
       if (ev.type !== "towerFired") continue;
       const tw = snap.towers.find((t) => t.id === ev.towerId);
       const en = snap.enemies.find((e) => e.id === ev.enemyId);
-      if (tw && en) { const a = this.center(tw.coord, g), b = this.enemyPos(en, snap, g); this.fxG.lineStyle(2, 0xffe2a8, 0.85); this.fxG.lineBetween(a.x, a.y, b.x, b.y); }
+      if (tw && en) { const a = this.center(tw.coord, g), b = this.enemyPos(en, snap, g); if (b) { this.fxG.lineStyle(2, 0xffe2a8, 0.85); this.fxG.lineBetween(a.x, a.y, b.x, b.y); } }
+    }
+    for (const cue of projectShieldPresentationCues(presentationSnapshot)) {
+      let p;
+      if (cue.kind === "enemy") {
+        p = enemyPositions.get(cue.runtimeId) || this.previousEnemyPositions.get(cue.runtimeId);
+        if (!p && cue.change === "break") {
+          const spawnCoord = projectSnapshotSpawnCoord(presentationSnapshot);
+          if (spawnCoord) p = this.center(spawnCoord, g);
+        }
+      } else {
+        p = towerPositions.get(cue.runtimeId)
+          || this.previousTowerPositions.get(cue.runtimeId)
+          || placedTowerPositions.get(cue.runtimeId);
+      }
+      if (!p) continue;
+      const color = cue.change === "break" ? 0xb6ebff
+        : cue.change === "damage" ? 0x5cc6ff
+          : cue.change === "regeneration" ? 0x6deed5 : 0xab8eff;
+      this.fxG.lineStyle(Math.max(2, g.r * 0.1), color, 0.9);
+      this.fxG.strokeCircle(p.x, p.y, g.r * (cue.kind === "tower" ? 0.78 : 0.62));
+    }
+    for (const cue of projectMarkPresentationCues(presentationSnapshot)) {
+      let p = enemyPositions.get(cue.runtimeId) || this.previousEnemyPositions.get(cue.runtimeId);
+      if (!p) {
+        const spawnCoord = projectSnapshotSpawnCoord(presentationSnapshot);
+        if (spawnCoord) p = this.center(spawnCoord, g);
+      }
+      if (!p) continue;
+      const color = cue.cause === "expiration" ? 0xbeafda
+        : cue.cause === "consume" ? 0xffbe70 : 0xc48bff;
+      this.fxG.lineStyle(Math.max(2, g.r * 0.09), color, 0.9);
+      this.fxG.strokeCircle(p.x, p.y, g.r * 0.68);
+    }
+    for (const cue of projectExposurePresentationCues(presentationSnapshot)) {
+      let p = enemyPositions.get(cue.runtimeId) || this.previousEnemyPositions.get(cue.runtimeId);
+      if (!p) {
+        const spawnCoord = projectSnapshotSpawnCoord(presentationSnapshot);
+        if (spawnCoord) p = this.center(spawnCoord, g);
+      }
+      if (!p) continue;
+      const color = cue.cause === "consume" ? 0xffd680
+        : cue.cause === "expiration" ? 0x97becd : 0x69d3ff;
+      this.fxG.lineStyle(Math.max(2, g.r * 0.09), color, 0.9);
+      this.fxG.strokeCircle(p.x, p.y, g.r * 0.74);
+    }
+    for (const cue of projectReactionPresentationCues(presentationSnapshot)) {
+      const p = enemyPositions.get(cue.originEnemyId)
+        || this.previousEnemyPositions.get(cue.originEnemyId)
+        || this.center(cue.originCoord, g);
+      this.fxG.lineStyle(Math.max(2, g.r * 0.13), 0xffe674, 0.92);
+      this.fxG.strokeCircle(p.x, p.y, g.r * 0.9);
+    }
+    for (const cue of projectPhysicsPresentationCues(presentationSnapshot)) {
+      const from = this.center(cue.from, g);
+      const to = this.center(cue.to, g);
+      if (cue.kind === "displacement") {
+        this.fxG.lineStyle(Math.max(2, g.r * 0.11), 0x7bdcff, 0.9);
+        this.fxG.lineBetween(from.x, from.y, to.x, to.y);
+      } else {
+        this.fxG.lineStyle(Math.max(2, g.r * 0.12), 0xff8b5c, 0.92);
+        this.fxG.strokeCircle(to.x, to.y, g.r * 0.78);
+      }
     }
 
     this.entG.clear();
@@ -1380,6 +1827,7 @@ class PlayScene extends Phaser.Scene {
         this.entG.fillStyle(0x1b1d18, 1); this.entG.fillRect(p.x - g.r * 0.45, p.y + g.r * 0.5, g.r * 0.9, 4);
         this.entG.fillStyle(frac > 0.35 ? 0x8ac783 : 0xdf6a59, 1); this.entG.fillRect(p.x - g.r * 0.45, p.y + g.r * 0.5, g.r * 0.9 * frac, 4);
       }
+      this.shieldRing(this.entG, p.x, p.y, g.r * 0.66, resolveShieldPresentation(snap, "tower", tw.id));
       let label = this.towerLabels.get(tw.id);
       const text = (content.towers[tw.typeId]?.label || tw.typeId).slice(0, 2);
       if (!label) { label = this.add.text(0, 0, text, { fontFamily: "sans-serif", color: "#101410" }).setOrigin(0.5).setDepth(10); this.towerLabels.set(tw.id, label); }
@@ -1387,14 +1835,62 @@ class PlayScene extends Phaser.Scene {
     }
     for (const [id, lbl] of this.towerLabels) { if (!seen.has(id)) { lbl.destroy(); this.towerLabels.delete(id); } }
 
+    const seenMarkLabels = new Set();
+    const seenExposureLabels = new Set();
     for (const en of snap.enemies) {
       const p = this.enemyPos(en, snap, g);
+      if (!p) continue;
       const color = Number(content.enemies[en.typeId]?.color ?? 0xaaaaaa);
       this.entG.fillStyle(color, 1); this.entG.fillCircle(p.x, p.y, g.r * 0.38);
       this.entG.lineStyle(2, 0x111111, 1); this.entG.strokeCircle(p.x, p.y, g.r * 0.38);
       const ratio = Math.max(0, en.hp / en.maxHp);
       this.entG.fillStyle(0x1b1d18, 1); this.entG.fillRect(p.x - g.r * 0.45, p.y - g.r * 0.62, g.r * 0.9, 4);
       this.entG.fillStyle(ratio > 0.35 ? 0x8ac783 : 0xdf6a59, 1); this.entG.fillRect(p.x - g.r * 0.45, p.y - g.r * 0.62, g.r * 0.9 * ratio, 4);
+      this.shieldRing(this.entG, p.x, p.y, g.r * 0.52, resolveShieldPresentation(snap, "enemy", en.id));
+      const exposurePresentation = resolveExposurePresentation(snap, en.id);
+      const exposureBadges = exposurePresentation.entries.map((entry) => ({ key: entry.exposureId, label: String(entry.stacks) }));
+      if (exposurePresentation.overflowCount > 0) exposureBadges.push({ key: "overflow", label: "+" + exposurePresentation.overflowCount });
+      const exposureRadius = Math.max(3, g.r * 0.12), exposureStep = exposureRadius * 2.25;
+      for (let index = 0; index < exposureBadges.length; index += 1) {
+        const row = Math.floor(index / 4), rowCount = Math.min(4, exposureBadges.length - row * 4), column = index % 4;
+        const x = p.x + (column - (rowCount - 1) / 2) * exposureStep;
+        const y = p.y - g.r * 0.86 - row * exposureStep;
+        this.entG.fillStyle(0x1c6982, 0.94); this.entG.fillCircle(x, y, exposureRadius);
+        this.entG.lineStyle(Math.max(1, exposureRadius * 0.18), 0x9de9ff, 0.95); this.entG.strokeCircle(x, y, exposureRadius);
+        const labelKey = en.id + "|" + exposureBadges[index].key;
+        seenExposureLabels.add(labelKey);
+        let label = this.exposureLabels.get(labelKey);
+        if (!label) {
+          label = this.add.text(0, 0, "", { fontFamily: "sans-serif", fontStyle: "bold", color: "#effcff" }).setOrigin(0.5).setDepth(12);
+          this.exposureLabels.set(labelKey, label);
+        }
+        label.setText(exposureBadges[index].label).setFontSize(Math.max(7, Math.round(exposureRadius * 1.2))).setPosition(x, y).setVisible(true);
+      }
+      const markPresentation = resolveMarkPresentation(snap, en.id);
+      const badges = markPresentation.entries.map((entry) => ({ key: entry.markId, label: String(entry.stacks) }));
+      if (markPresentation.overflowCount > 0) badges.push({ key: "overflow", label: "+" + markPresentation.overflowCount });
+      const radius = Math.max(3, g.r * 0.13), step = radius * 2.25;
+      for (let index = 0; index < badges.length; index += 1) {
+        const row = Math.floor(index / 4), rowCount = Math.min(4, badges.length - row * 4), column = index % 4;
+        const x = p.x + (column - (rowCount - 1) / 2) * step;
+        const y = p.y + g.r * 0.64 + row * step;
+        this.entG.fillStyle(0x5b3580, 0.92); this.entG.fillCircle(x, y, radius);
+        this.entG.lineStyle(Math.max(1, radius * 0.18), 0xe0c4ff, 0.92); this.entG.strokeCircle(x, y, radius);
+        const labelKey = en.id + "|" + badges[index].key;
+        seenMarkLabels.add(labelKey);
+        let label = this.markLabels.get(labelKey);
+        if (!label) {
+          label = this.add.text(0, 0, "", { fontFamily: "sans-serif", fontStyle: "bold", color: "#fff5ff" }).setOrigin(0.5).setDepth(12);
+          this.markLabels.set(labelKey, label);
+        }
+        label.setText(badges[index].label).setFontSize(Math.max(7, Math.round(radius * 1.2))).setPosition(x, y).setVisible(true);
+      }
+    }
+    for (const [key, label] of this.markLabels) {
+      if (!seenMarkLabels.has(key)) { label.destroy(); this.markLabels.delete(key); }
+    }
+    for (const [key, label] of this.exposureLabels) {
+      if (!seenExposureLabels.has(key)) { label.destroy(); this.exposureLabels.delete(key); }
     }
 
     // Outcome banner (VICTORY/DEFEAT), matching the canvas renderer so the phaser build doesn't
@@ -1415,7 +1911,66 @@ class PlayScene extends Phaser.Scene {
       }
     }
 
+    this.previousEnemyPositions = enemyPositions;
+    this.previousTowerPositions = towerPositions;
+    this.previousCombat = snap.combat ?? null;
     updateHud(snap);
+  }
+
+  drawElevationCues(section, g) {
+    const presentation = projectElevationCues(section);
+    const retained = new Set();
+    if (presentation?.active) {
+      for (const cue of presentation.cues) {
+        const key = cue.coord.q + "," + cue.coord.r;
+        const p = this.center(cue.coord, g);
+        const color = cue.elevation > 0 ? 0xffdd84 : 0x75caf1;
+        retained.add(key);
+        this.tileG.lineStyle(Math.max(1, g.r * 0.08), color, 0.88);
+        if (g.grid.kind === "square") {
+          const size = g.r * 1.45;
+          this.tileG.strokeRect(p.x - size / 2, p.y - size / 2, size, size);
+        } else {
+          this.tileG.strokeCircle(p.x, p.y, g.r * 0.69);
+        }
+        let label = this.elevationLabels.get(key);
+        if (!label) {
+          label = this.add.text(0, 0, cue.label, {
+            fontFamily: "sans-serif",
+            fontStyle: "bold",
+            color: "#fff8df",
+            backgroundColor: cue.elevation > 0 ? "#5c4712" : "#14435b",
+            padding: { x: 3, y: 1 }
+          }).setOrigin(0.5).setDepth(4);
+          this.elevationLabels.set(key, label);
+        }
+        label.setText(cue.label).setPosition(p.x + g.r * 0.28, p.y - g.r * 0.7).setVisible(true);
+        label.setFontSize(Math.max(8, g.r * 0.3));
+      }
+      if (presentation.overflowCount > 0) {
+        const key = "__overflow__";
+        const text = "+" + presentation.overflowCount + " elevation cues";
+        retained.add(key);
+        let label = this.elevationLabels.get(key);
+        if (!label) {
+          label = this.add.text(0, 0, text, {
+            fontFamily: "sans-serif",
+            fontStyle: "bold",
+            color: "#fff8df",
+            backgroundColor: "#141814",
+            padding: { x: 6, y: 3 }
+          }).setOrigin(1, 0).setDepth(5);
+          this.elevationLabels.set(key, label);
+        }
+        label.setText(text).setPosition(this.scale.width - 12, 12).setVisible(true);
+        label.setFontSize(Math.max(10, g.r * 0.32));
+      }
+    }
+    for (const [key, label] of this.elevationLabels) {
+      if (retained.has(key)) continue;
+      label.destroy();
+      this.elevationLabels.delete(key);
+    }
   }
 }
 
@@ -1447,6 +2002,8 @@ window.__towerforgePickPoint = (point) => {
   return scene.pickTile((point.x - rect.left) * scene.scale.width / rect.width, (point.y - rect.top) * scene.scale.height / rect.height);
 };
 window.__towerforgeBootOk = true;
+const bootError = document.getElementById("boot-error");
+if (bootError) bootError.hidden = true;
 
 // Free the audio hardware while the app is backgrounded (the scene's update() already bails on
 // document.hidden). Saves battery in a wrapped APK; no-op on desktop.
@@ -1472,6 +2029,8 @@ function initSelectors() {
     missionId = missionSelect.value;
     towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
     game = createGame();
+    syncKeyboardCursor(null);
+    clearNavigationOverlay();
     victoryRewarded = false;
     selectedTowerId = null;
     setSellMode(false);
@@ -1488,16 +2047,17 @@ function initDifficultySelector() {
   const select = $("difficulty-select");
   if (!select) return;
   select.innerHTML = content.difficulties.map((item) => \`<option value="\${escapeHtml(item.id)}">\${escapeHtml(item.label || item.id)}</option>\`).join("");
-  select.value = difficultyId;
+  select.value = currentPlayerLaunchOptions().difficultyId;
   select.onchange = () => {
-    difficultyId = select.value;
-    progress.selectedDifficultyId = difficultyId;
-    saveProgress();
+    const result = choosePlayerDifficulty(select.value);
+    if (!result.ok) { select.value = currentPlayerLaunchOptions().difficultyId; return; }
     game = createGame();
+    clearNavigationOverlay();
     victoryRewarded = false;
     selectedTowerId = null;
     initAbilityBar();
-    message = "Difficulty changed to " + (content.difficulties.find((item) => item.id === difficultyId)?.label || difficultyId) + ".";
+    const selectedDifficultyId = currentPlayerLaunchOptions().difficultyId;
+    message = "Difficulty changed to " + (content.difficulties.find((item) => item.id === selectedDifficultyId)?.label || selectedDifficultyId) + ".";
   };
 }
 
@@ -1511,12 +2071,13 @@ function initTowerSelector() {
   }).join("");
   towerId = ids[0] || "";
   towerSelect.value = towerId;
-  towerSelect.onchange = () => { towerId = towerSelect.value; };
+  towerSelect.onchange = () => { towerId = towerSelect.value; refreshNavigationOverlay(); };
 }
 
 function setArmed(id) {
   armedAbility = id;
   if (id) message = "Click the map to use " + ((game.getSnapshot().abilities[id] || {}).label || id) + ".";
+  if (id) clearNavigationOverlay(); else refreshNavigationOverlay();
   for (const btn of document.querySelectorAll("#ability-bar button")) btn.classList.toggle("armed", btn.dataset.aid === id);
 }
 function initAbilityBar() {
@@ -1538,103 +2099,6 @@ function updateAbilityBar(snap) {
     btn.textContent = ((a && a.label) || btn.dataset.aid) + (cd > 0 ? " (" + cd + ")" : "");
     if (!ready && armedAbility === btn.dataset.aid) setArmed(null);
   }
-}
-
-// ── Campaign progress (persisted per app in localStorage) ──────────────────────
-function emptyProgress() {
-  return { version: PROGRESS_VERSION, clearedMissionIds: [], starsByMission: {}, metaResources: {}, upgradeLevels: {}, selectedDifficultyId: content.defaultDifficultyId };
-}
-function loadProgress() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(PROGRESS_KEY) || "null");
-    const base = emptyProgress();
-    if (Array.isArray(saved)) base.clearedMissionIds = saved;
-    else if (saved && typeof saved === "object") Object.assign(base, saved);
-    base.version = PROGRESS_VERSION;
-    base.clearedMissionIds = (Array.isArray(base.clearedMissionIds) ? base.clearedMissionIds : []).filter((id) => typeof id === "string" && content.missions[id]);
-    base.starsByMission = base.starsByMission && typeof base.starsByMission === "object" ? base.starsByMission : {};
-    base.metaResources = normalizeMetaBag(base.metaResources);
-    base.upgradeLevels = normalizeUpgradeLevels(base.upgradeLevels);
-    return base;
-  } catch (e) { return emptyProgress(); }
-}
-function saveProgress() {
-  progress.clearedMissionIds = [...cleared];
-  progress.version = PROGRESS_VERSION;
-  try { localStorage.setItem(PROGRESS_KEY, JSON.stringify(progress)); }
-  catch (e) { /* storage unavailable */ }
-}
-function normalizeMetaBag(input) {
-  const bag = {};
-  for (const currency of content.metaProgression.currencies || []) bag[currency.id] = Math.max(0, Number(input?.[currency.id]) || 0);
-  return bag;
-}
-function normalizeUpgradeLevels(input) {
-  const levels = {};
-  for (const [id, upgrade] of Object.entries(content.metaProgression.upgrades || {})) levels[id] = Math.max(0, Math.min(upgrade.maxLevel || 0, Math.floor(Number(input?.[id]) || 0)));
-  return levels;
-}
-function addMetaResources(bag, multiplier = 1) {
-  for (const currency of content.metaProgression.currencies || []) progress.metaResources[currency.id] = (progress.metaResources[currency.id] || 0) + (Number(bag?.[currency.id]) || 0) * multiplier;
-}
-function metaCostText(cost) {
-  return Object.entries(cost || {}).map(([id, amount]) => amount + " " + ((content.metaProgression.currencies || []).find((item) => item.id === id)?.label || id)).join(" · ");
-}
-function canAffordMeta(cost) { return Object.entries(cost || {}).every(([id, amount]) => (progress.metaResources[id] || 0) >= Number(amount || 0)); }
-function buyMetaUpgrade(id) {
-  const upgrade = content.metaProgression.upgrades?.[id];
-  if (!upgrade) return;
-  const level = progress.upgradeLevels[id] || 0;
-  const cost = upgrade.costs?.[level];
-  if (!cost || !canAffordMeta(cost)) { message = cost ? "Not enough permanent currency." : "Upgrade is at max level."; return; }
-  for (const [currencyId, amount] of Object.entries(cost)) progress.metaResources[currencyId] = (progress.metaResources[currencyId] || 0) - Number(amount || 0);
-  progress.upgradeLevels[id] = level + 1;
-  saveProgress();
-  game = createGame();
-  victoryRewarded = false;
-  selectedTowerId = null;
-  renderMetaPanel();
-  message = upgrade.label + " upgraded to level " + (level + 1) + ".";
-}
-function renderMetaPanel() {
-  const panel = $("meta-panel");
-  const upgrades = Object.values(content.metaProgression.upgrades || {});
-  const currencies = content.metaProgression.currencies || [];
-  if (!panel) return;
-  panel.hidden = upgrades.length === 0 && currencies.length === 0;
-  $("meta-resources").textContent = currencies.map((item) => (progress.metaResources[item.id] || 0) + " " + item.label).join(" · ");
-  $("meta-upgrades").innerHTML = upgrades.map((upgrade) => {
-    const level = progress.upgradeLevels[upgrade.id] || 0;
-    const cost = upgrade.costs?.[level];
-    return \`<div class="meta-upgrade"><span><b>\${escapeHtml(upgrade.label || upgrade.id)}</b><br>Lv \${level}/\${upgrade.maxLevel}</span><button type="button" data-meta-upgrade="\${escapeHtml(upgrade.id)}"\${cost && canAffordMeta(cost) ? "" : " disabled"}>\${cost ? escapeHtml(metaCostText(cost)) : "Max"}</button></div>\`;
-  }).join("");
-  for (const button of document.querySelectorAll("[data-meta-upgrade]")) button.onclick = () => buyMetaUpgrade(button.dataset.metaUpgrade);
-}
-function unlockReqs(id) { const n = ((content.worldMap && content.worldMap.missionNodes) || []).find((x) => x.missionId === id); return (n && n.unlockRequiresMissionIds) || []; }
-function isUnlocked(id) { return unlockReqs(id).every((r) => cleared.has(r)); }
-function rewardMissionClear(id, stars) {
-  const firstClear = !cleared.has(id);
-  cleared.add(id);
-  const reward = content.metaProgression.rewardsByMission?.[id] || {};
-  addMetaResources(firstClear ? reward.firstClear : reward.repeatClear);
-  const previousStars = Math.max(0, Number(progress.starsByMission[id]) || 0);
-  const earnedStars = Math.max(previousStars, stars);
-  addMetaResources(reward.perStar, earnedStars - previousStars);
-  progress.starsByMission[id] = earnedStars;
-  saveProgress();
-  renderMetaPanel();
-  return firstClear;
-}
-function newlyUnlockedBy(id) { return Object.keys(content.missions).filter((mid) => !cleared.has(mid) && unlockReqs(mid).includes(id) && isUnlocked(mid)).map((mid) => (content.missions[mid] && content.missions[mid].label) || mid); }
-function refreshMissionOptions() {
-  const sel = $("mission-select");
-  if (!sel) return;
-  sel.innerHTML = Object.values(content.missions).map((mission) => {
-    const unlocked = isUnlocked(mission.id);
-    const mark = cleared.has(mission.id) ? "✓ " : (unlocked ? "" : "🔒 ");
-    return \`<option value="\${escapeHtml(mission.id)}"\${unlocked ? "" : " disabled"}>\${mark}\${escapeHtml(mission.label || mission.id)}</option>\`;
-  }).join("");
-  sel.value = missionId;
 }
 
 function resolveStandaloneSprite(spriteId) {
@@ -1667,7 +2131,7 @@ function showStoryForMission(trigger) {
   const [comicId, comic] = entry;
   const runKey = trigger + ":" + comicId;
   if (shownStories.has(runKey)) return;
-  const seenKey = content.storySeenStoragePrefix + PROGRESS_KEY.slice("towerforge:progress:".length) + ":" + comicId;
+  const seenKey = content.storySeenStoragePrefix + playerProfileScope + ":" + comicId;
   if (comic.replay !== "always") {
     try { if (localStorage.getItem(seenKey) === "1") return; } catch {}
   }
@@ -1716,9 +2180,7 @@ function updateHud(snap) {
   updateTargetMode(snap);
   if (snap.outcome === "victory" && !victoryRewarded) {
     victoryRewarded = true;
-    const firstClear = rewardMissionClear(missionId, (snap.stars || []).filter((item) => item.achieved).length);
-    const unlocked = firstClear ? newlyUnlockedBy(missionId) : [];
-    message = (firstClear ? "Mission cleared!" : "Mission cleared again!") + (unlocked.length ? " Unlocked: " + unlocked.join(", ") : "");
+    recordPlayerVictory(missionId, (snap.stars || []).filter((item) => item.achieved).length);
     refreshMissionOptions();
     showStoryForMission("afterVictory");
   }
@@ -1733,7 +2195,7 @@ function updateHud(snap) {
   const stars = snap.stars || [];
   $("stat-objectives").textContent = objectives.filter((item) => item.complete).length + "/" + objectives.length
     + (stars.length ? " | " + stars.filter((item) => item.achieved).length + "/" + stars.length + " stars" : "");
-  $("message").textContent = message;
+  $("message").textContent = playerProfileStatusText(message);
 }
 
 function updateTargetMode(snap) {

@@ -1,0 +1,302 @@
+import type { TowerScriptJson } from "../scripting/types.js";
+import type { TowerDefenseGame } from "./TowerDefenseGame.js";
+import {
+  TOWER_TARGET_MODES,
+  type ActionResult,
+  type GridCoord,
+  type MissionAbilityId,
+  type TowerTargetMode
+} from "./types.js";
+
+export const GAME_COMMAND_SCHEMA_VERSION = 1 as const;
+
+export type GameCommandV1 =
+  | { readonly schemaVersion: 1; readonly type: "tick"; readonly units: number }
+  | { readonly schemaVersion: 1; readonly type: "startWave" }
+  | {
+      readonly schemaVersion: 1;
+      readonly type: "placeTower";
+      readonly towerTypeId: string;
+      readonly coord: Readonly<GridCoord>;
+    }
+  | {
+      readonly schemaVersion: 1;
+      readonly type: "moveTower";
+      readonly towerId: string;
+      readonly coord: Readonly<GridCoord>;
+    }
+  | { readonly schemaVersion: 1; readonly type: "sellTower"; readonly towerId: string }
+  | { readonly schemaVersion: 1; readonly type: "upgradeTower"; readonly towerId: string }
+  | {
+      readonly schemaVersion: 1;
+      readonly type: "setTargetMode";
+      readonly towerId: string;
+      readonly mode: TowerTargetMode;
+    }
+  | {
+      readonly schemaVersion: 1;
+      readonly type: "useAbility";
+      readonly abilityId: MissionAbilityId;
+      readonly center: Readonly<GridCoord>;
+    }
+  | {
+      readonly schemaVersion: 1;
+      readonly type: "emitSignal";
+      readonly signal: string;
+      readonly payload?: TowerScriptJson;
+    };
+
+export type GameCommand = GameCommandV1;
+
+const MAX_PAYLOAD_DEPTH = 32;
+const MAX_PAYLOAD_NODES = 4_096;
+const MAX_PAYLOAD_BYTES = 64 * 1_024;
+const SAFE_SIGNAL_RE = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/;
+
+type DataFields = Map<string, unknown>;
+
+type PayloadCloneResult =
+  | { readonly ok: true; readonly value: TowerScriptJson }
+  | { readonly ok: false };
+
+export function invalidGameCommandResult(): ActionResult {
+  return {
+    ok: false,
+    reason: "Invalid game command.",
+    reasonKey: "reason.invalidGameCommand"
+  };
+}
+
+function snapshotPlainDataFields(value: unknown): DataFields | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return undefined;
+
+  const fields: DataFields = new Map();
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string") return undefined;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) return undefined;
+    fields.set(key, descriptor.value);
+  }
+  return fields;
+}
+
+function hasClosedFields(
+  fields: DataFields,
+  requiredKeys: readonly string[],
+  optionalKeys: readonly string[] = []
+): boolean {
+  const allowedKeys = new Set([...requiredKeys, ...optionalKeys]);
+  return requiredKeys.every((key) => fields.has(key))
+    && [...fields.keys()].every((key) => allowedKeys.has(key));
+}
+
+function isTrimmedId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value === value.trim();
+}
+
+function canonicalNumber(value: number): number {
+  return Object.is(value, -0) ? 0 : value;
+}
+
+function parseCoord(value: unknown): GridCoord | undefined {
+  const fields = snapshotPlainDataFields(value);
+  if (!fields || !hasClosedFields(fields, ["q", "r"])) return undefined;
+  const q = fields.get("q");
+  const r = fields.get("r");
+  if (typeof q !== "number" || !Number.isFinite(q) || !Number.isInteger(q)) return undefined;
+  if (typeof r !== "number" || !Number.isFinite(r) || !Number.isInteger(r)) return undefined;
+  return { q: canonicalNumber(q), r: canonicalNumber(r) };
+}
+
+function isTowerTargetMode(value: unknown): value is TowerTargetMode {
+  return typeof value === "string" && (TOWER_TARGET_MODES as readonly string[]).includes(value);
+}
+
+function utf8ByteLength(value: string): number {
+  let bytes = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit <= 0x7f) {
+      bytes += 1;
+    } else if (codeUnit <= 0x7ff) {
+      bytes += 2;
+    } else if (
+      codeUnit >= 0xd800
+      && codeUnit <= 0xdbff
+      && index + 1 < value.length
+      && value.charCodeAt(index + 1) >= 0xdc00
+      && value.charCodeAt(index + 1) <= 0xdfff
+    ) {
+      bytes += 4;
+      index += 1;
+    } else {
+      bytes += 3;
+    }
+  }
+  return bytes;
+}
+
+function cloneJsonSafePayload(value: unknown): TowerScriptJson | undefined {
+  let nodes = 0;
+  const ancestors = new Set<object>();
+
+  const visit = (candidate: unknown, depth: number): PayloadCloneResult => {
+    nodes += 1;
+    if (nodes > MAX_PAYLOAD_NODES || depth > MAX_PAYLOAD_DEPTH) return { ok: false };
+    if (candidate === null || typeof candidate === "boolean" || typeof candidate === "string") {
+      return { ok: true, value: candidate };
+    }
+    if (typeof candidate === "number") {
+      return Number.isFinite(candidate)
+        ? { ok: true, value: canonicalNumber(candidate) }
+        : { ok: false };
+    }
+    if (typeof candidate !== "object" || ancestors.has(candidate)) return { ok: false };
+
+    ancestors.add(candidate);
+    try {
+      if (Array.isArray(candidate)) {
+        if (Object.getPrototypeOf(candidate) !== Array.prototype) return { ok: false };
+        const descriptors = new Map<PropertyKey, PropertyDescriptor>();
+        for (const key of Reflect.ownKeys(candidate)) {
+          const descriptor = Object.getOwnPropertyDescriptor(candidate, key);
+          if (!descriptor) return { ok: false };
+          descriptors.set(key, descriptor);
+        }
+        const lengthDescriptor = descriptors.get("length");
+        if (!lengthDescriptor || !("value" in lengthDescriptor)) return { ok: false };
+        const length = lengthDescriptor.value;
+        if (typeof length !== "number" || !Number.isSafeInteger(length) || length < 0) return { ok: false };
+        if (descriptors.size !== length + 1) return { ok: false };
+
+        const clone: TowerScriptJson[] = [];
+        for (let index = 0; index < length; index += 1) {
+          const key = String(index);
+          const descriptor = descriptors.get(key);
+          if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) return { ok: false };
+          const child = visit(descriptor.value, depth + 1);
+          if (!child.ok) return child;
+          clone.push(child.value);
+        }
+        return { ok: true, value: clone };
+      }
+
+      const fields = snapshotPlainDataFields(candidate);
+      if (!fields) return { ok: false };
+      const clone: Record<string, TowerScriptJson> = {};
+      for (const [key, childValue] of fields) {
+        const child = visit(childValue, depth + 1);
+        if (!child.ok) return child;
+        Object.defineProperty(clone, key, {
+          value: child.value,
+          enumerable: true,
+          configurable: true,
+          writable: true
+        });
+      }
+      return { ok: true, value: clone };
+    } finally {
+      ancestors.delete(candidate);
+    }
+  };
+
+  const result = visit(value, 0);
+  if (!result.ok) return undefined;
+  const serialized = JSON.stringify(result.value);
+  return serialized !== undefined && utf8ByteLength(serialized) <= MAX_PAYLOAD_BYTES
+    ? result.value
+    : undefined;
+}
+
+/**
+ * Strict descriptor-safe parser shared by direct dispatch and command journals.
+ * The returned command is a detached canonical data object.
+ */
+export function parseGameCommand(input: unknown): GameCommandV1 | undefined {
+  const fields = snapshotPlainDataFields(input);
+  if (!fields) return undefined;
+  const schemaVersion = fields.get("schemaVersion");
+  const type = fields.get("type");
+  if (schemaVersion !== GAME_COMMAND_SCHEMA_VERSION || typeof type !== "string") return undefined;
+
+  if (type === "tick") {
+    if (!hasClosedFields(fields, ["schemaVersion", "type", "units"])) return undefined;
+    const units = fields.get("units");
+    return typeof units === "number" && Number.isFinite(units) && units >= 0
+      ? { schemaVersion: 1, type, units: canonicalNumber(units) }
+      : undefined;
+  }
+  if (type === "startWave") {
+    return hasClosedFields(fields, ["schemaVersion", "type"]) ? { schemaVersion: 1, type } : undefined;
+  }
+  if (type === "placeTower") {
+    if (!hasClosedFields(fields, ["schemaVersion", "type", "towerTypeId", "coord"])) return undefined;
+    const towerTypeId = fields.get("towerTypeId");
+    const coord = parseCoord(fields.get("coord"));
+    return isTrimmedId(towerTypeId) && coord ? { schemaVersion: 1, type, towerTypeId, coord } : undefined;
+  }
+  if (type === "moveTower") {
+    if (!hasClosedFields(fields, ["schemaVersion", "type", "towerId", "coord"])) return undefined;
+    const towerId = fields.get("towerId");
+    const coord = parseCoord(fields.get("coord"));
+    return isTrimmedId(towerId) && coord ? { schemaVersion: 1, type, towerId, coord } : undefined;
+  }
+  if (type === "sellTower" || type === "upgradeTower") {
+    if (!hasClosedFields(fields, ["schemaVersion", "type", "towerId"])) return undefined;
+    const towerId = fields.get("towerId");
+    return isTrimmedId(towerId) ? { schemaVersion: 1, type, towerId } : undefined;
+  }
+  if (type === "setTargetMode") {
+    if (!hasClosedFields(fields, ["schemaVersion", "type", "towerId", "mode"])) return undefined;
+    const towerId = fields.get("towerId");
+    const mode = fields.get("mode");
+    return isTrimmedId(towerId) && isTowerTargetMode(mode)
+      ? { schemaVersion: 1, type, towerId, mode }
+      : undefined;
+  }
+  if (type === "useAbility") {
+    if (!hasClosedFields(fields, ["schemaVersion", "type", "abilityId", "center"])) return undefined;
+    const abilityId = fields.get("abilityId");
+    const center = parseCoord(fields.get("center"));
+    return isTrimmedId(abilityId) && center ? { schemaVersion: 1, type, abilityId, center } : undefined;
+  }
+  if (type === "emitSignal") {
+    if (!hasClosedFields(fields, ["schemaVersion", "type", "signal"], ["payload"])) return undefined;
+    const signal = fields.get("signal");
+    if (!isTrimmedId(signal) || !SAFE_SIGNAL_RE.test(signal)) return undefined;
+    if (!fields.has("payload")) return { schemaVersion: 1, type, signal };
+    const payload = cloneJsonSafePayload(fields.get("payload"));
+    return payload === undefined ? undefined : { schemaVersion: 1, type, signal, payload };
+  }
+  return undefined;
+}
+
+/** Execute a command that has already passed the strict parser exactly once. */
+export function executeParsedGameCommand(
+  game: TowerDefenseGame,
+  command: GameCommandV1
+): ActionResult {
+  switch (command.type) {
+    case "tick":
+      game.tick(command.units);
+      return { ok: true };
+    case "startWave":
+      return game.startNextWave();
+    case "placeTower":
+      return game.placeTower(command.towerTypeId, command.coord);
+    case "moveTower":
+      return game.moveTower(command.towerId, command.coord);
+    case "sellTower":
+      return game.sellTower(command.towerId);
+    case "upgradeTower":
+      return game.upgradeTower(command.towerId);
+    case "setTargetMode":
+      return game.setTowerTargetMode(command.towerId, command.mode);
+    case "useAbility":
+      return game.useAbility(command.abilityId, command.center);
+    case "emitSignal":
+      return game.emitScriptSignal(command.signal, command.payload);
+  }
+}

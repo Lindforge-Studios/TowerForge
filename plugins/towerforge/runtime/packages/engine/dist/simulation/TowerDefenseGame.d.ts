@@ -1,6 +1,10 @@
 import { type GameContentRegistry } from "../content/registry.js";
 import type { TowerScriptJson } from "../scripting/types.js";
 import { GridMap } from "./map.js";
+import { type NavigationAnalysisRequestV1, type NavigationAnalysisV1 } from "./navigation-analysis.js";
+import { type LineOfSightAnalysisRequestV1, type LineOfSightAnalysisV1 } from "./line-of-sight.js";
+import { type GameCheckpointV1 } from "./checkpoint.js";
+import { type GameSeed } from "./rng.js";
 import type { ActionResult, CurrencyDefinition, DifficultyDefinition, EnemyState, GameEvent, GameSnapshot, HexCoord, MissionAbilityId, ResourceBag, ResourceCost, TowerTargetMode, TowerState, WaveState } from "./types.js";
 export interface TowerDefenseGameOptions {
     missionId: string;
@@ -8,6 +12,11 @@ export interface TowerDefenseGameOptions {
     difficultyId?: string;
     /** Persistent profile input. The pure engine consumes levels but never reads or writes storage. */
     metaUpgradeLevels?: Record<string, number>;
+    /** Deterministic simulation seed. Omitted legacy games use the stable numeric seed 0. */
+    seed?: GameSeed;
+}
+interface TowerDefenseGameInternalOptions {
+    skipGameStarted?: boolean;
 }
 export declare class TowerDefenseGame {
     readonly content: GameContentRegistry;
@@ -30,6 +39,25 @@ export declare class TowerDefenseGame {
     private readonly maxCoreHp;
     private readonly towerDamageMultiplier;
     private readonly towerFireRateMetaMultiplier;
+    private readonly activeCombatMechanics;
+    private readonly activeReactionsMechanics;
+    private readonly activeNavigationProfile;
+    private readonly activeNavigationProfileId;
+    private readonly activeElevation;
+    private readonly activeLineOfSightProfile;
+    private readonly activeHighGroundProfile;
+    private readonly activePhysicsMechanics;
+    private readonly activeTerraformingMechanics;
+    private readonly navigationMandatoryPairs;
+    private readonly navigationKnownPairs;
+    private navigationResolver;
+    private navigationFieldLookupCache;
+    private navigationEnemyFields;
+    private readonly combatShieldDefinitions;
+    private enemyShields;
+    private towerShields;
+    private enemyMarks;
+    private enemyExposures;
     private enemyCounter;
     private towerCounter;
     private clearedWaveCount;
@@ -52,6 +80,8 @@ export declare class TowerDefenseGame {
     private readonly staticPathRoutesSnapshot;
     private readonly staticSpawnCoordSnapshot;
     private readonly staticCoreCoordSnapshot;
+    private readonly staticElevationSnapshot;
+    private readonly derivedMapIntegrityBaseline;
     private scriptValues;
     private scriptDiagnostics;
     private scriptHandlerLastRun;
@@ -59,7 +89,10 @@ export declare class TowerDefenseGame {
     private scriptActionsRemaining;
     private scriptTerrainChangesRemaining;
     private scriptSignalDepth;
-    constructor(options: TowerDefenseGameOptions);
+    private displacementStepAttemptsThisTick;
+    private initialRngState;
+    private rng;
+    constructor(options: TowerDefenseGameOptions, internal?: TowerDefenseGameInternalOptions);
     get coins(): number;
     set coins(value: number);
     get towerTypes(): Record<string, import("./types.js").TowerType>;
@@ -87,6 +120,9 @@ export declare class TowerDefenseGame {
      * validation/failure modes are tile-specific, not enemy-targeted).
      */
     private builtinAbilityEffects;
+    private displacementEffectRanks;
+    private reserveDisplacementEffect;
+    private safeAbilityEffectsForEvent;
     private applyAbilityEffect;
     /**
      * Trigger a mission ability at a target coord. `path_water` routes to its own handler (a
@@ -105,6 +141,45 @@ export declare class TowerDefenseGame {
     tick(deltaUnits: number): void;
     getSnapshot(): GameSnapshot;
     getRenderSnapshot(): GameSnapshot;
+    /** Pure, bounded diagnostics for active opt-in elevation v2 line of sight. */
+    analyzeLineOfSight(request: LineOfSightAnalysisRequestV1): LineOfSightAnalysisV1 | undefined;
+    /** Pure, bounded diagnostics for active opt-in dynamic-flow navigation. */
+    analyzeNavigation(request: NavigationAnalysisRequestV1): NavigationAnalysisV1 | undefined;
+    createCheckpoint(): GameCheckpointV1;
+    getStateDigest(): string;
+    /**
+     * Strictly validate and detach a checkpoint without constructing a map or
+     * executing simulation behavior. Restore and journal decoders share this path.
+     */
+    static validateCheckpoint(options: {
+        content: GameContentRegistry;
+        checkpoint: GameCheckpointV1;
+    }): GameCheckpointV1;
+    static fromCheckpoint(options: {
+        content: GameContentRegistry;
+        checkpoint: GameCheckpointV1;
+    }): TowerDefenseGame;
+    private captureDerivedMapIntegrityBaseline;
+    /**
+     * Validate every mutable GridMap projection against authoritative game state.
+     * This intentionally reads untrusted public structures through descriptors so
+     * integrity checks never invoke a getter installed by a caller.
+     */
+    private assertDerivedMapIntegrity;
+    private checkpointIdentity;
+    private buildCombatState;
+    private buildReactionState;
+    private consumeNavigationAnalysisField;
+    private buildNavigationAnalysisFields;
+    private navigationDiagnosticPairs;
+    private groupNavigationDiagnosticPairs;
+    private buildNavigationFieldDiagnostics;
+    private buildNavigationSnapshot;
+    private buildElevationSnapshot;
+    private buildCheckpointState;
+    private static validateCheckpointIdentity;
+    private static validateCheckpointState;
+    private restoreCheckpointState;
     private buildSnapshot;
     private initializeScripts;
     private beginScriptTransaction;
@@ -117,6 +192,13 @@ export declare class TowerDefenseGame {
     private scriptExpressionContext;
     private applyScriptAction;
     private resolveScriptTileTarget;
+    private applyTerraformTilesAction;
+    private inspectTerraformOperationArray;
+    private inspectTerraformOperation;
+    private resolveTerraformTarget;
+    private planPersistentTerrainCandidate;
+    private planDynamicPersistentTerrainNavigation;
+    private publishPersistentTerrainCandidate;
     private applyTerrainOverride;
     private restoreTerrainOverride;
     private restoreTerrainOverrideByKey;
@@ -129,16 +211,36 @@ export declare class TowerDefenseGame {
     private cloneScriptJsonObject;
     private cloneScriptValues;
     enemyCoord(enemy: EnemyState): HexCoord;
+    private coordEquals;
+    /** Resolve one opt-in displacement effect without adding persistent physics state. */
+    private applyDisplacementEffect;
+    private navigationMovementProfileId;
+    private navigationField;
+    private createEnemyNavigationState;
+    private createDynamicChildEnemyState;
+    private stabilizeDynamicEnemyNavigation;
     private startWave;
     private startScheduledWaves;
     private buildSpawnQueue;
     private spawnDueEnemies;
     private createEnemyState;
+    private initializeEnemyShield;
+    private initializeTowerShield;
+    private runtimeMarkApplicationCount;
+    private applyEnemyMark;
+    private clearEnemyMark;
+    private updateEnemyMarks;
+    private activeMarkDamageContext;
+    private consumeResolvedMarks;
+    private applySourceMarkBindings;
+    private updateShieldRegeneration;
     private updateAbilities;
     private updateEnemyStatuses;
     private buildAbilitySnapshot;
     private buildSunlightTilesSnapshot;
     private moveEnemies;
+    private moveDynamicEnemies;
+    private leakDynamicEnemy;
     private applyDotDamage;
     private isPulseTower;
     private firstPulseTowerTypeId;
@@ -173,8 +275,13 @@ export declare class TowerDefenseGame {
     private findSplashTarget;
     private towerSupportsTargetMode;
     private selectTargets;
+    private towerHasLineOfSight;
     private compareTargets;
+    private compareDynamicTargets;
+    private dynamicEnemyRemainingCost;
     private enemyInRange;
+    private highGroundPair;
+    private enemyInTowerAcquisitionRange;
     private towerRange;
     private slipperyJackInterval;
     private towerPulseRate;
@@ -185,14 +292,17 @@ export declare class TowerDefenseGame {
     private enemyTerrainSpeedFactor;
     private enemyStatusSpeedFactor;
     private isEnemyInSunlight;
-    private aoeDamageAfterSunlight;
+    private applyResolvedEnemyDamage;
+    private applyResolvedCoreDamage;
+    private applyResolvedTowerEntityDamage;
+    private resolveAndApplyDamage;
+    private planAndApplyReactions;
+    private applyEnemyExposure;
+    private updateEnemyExposures;
     private applyTowerDamage;
-    private resolveEffectiveTowerDamage;
+    private applyResolvedTowerDamage;
     /** The (author-defined) damage type a tower deals; defaults to "physical". */
     private damageTypeOf;
-    /** Enemy's incoming-damage multiplier for a damage type (unlisted types = 1, clamped >= 0). */
-    private resistanceMultiplier;
-    private isDamageBlockedByArmor;
     /** "pierce_only" armor is fully pierced by any sniper-kind weapon, regardless of its tower id. */
     private piercesSniperArmor;
     private armoredChipDamageForTower;
@@ -217,12 +327,28 @@ export declare class TowerDefenseGame {
     private isTemporaryWaterTile;
     private isInsideAnyPulse;
     private isInsideSupportAura;
+    private buildNavigationWavePairs;
+    private buildNavigationMandatoryPairs;
+    private resolveDynamicNavigationRoute;
+    private navigationHandlerAppliesToMission;
+    private navigationTerrainByCoord;
+    private navigationTerrainByCoordForOverrides;
+    private navigationOccupiedCoords;
+    private createNavigationResolver;
+    private navigationPlacementPairs;
+    private navigationPairIsReachable;
+    private createNavigationPlacementAnalysisContext;
+    private canPreserveDynamicNavigation;
+    private syncNavigationTerrain;
+    private syncNavigationOccupancy;
+    private syncNavigationResolver;
     private canOccupyTowerFootprint;
     private dependentsKeepSupportAfterMove;
     private dependentsKeepSupportAfterRemoval;
     private applyPassiveIncome;
     private awardClearedWaveIncome;
     private removeDeadEnemies;
+    private dynamicEnemyAtGoal;
     private spawnOnDeathChildren;
     private resolveWaveState;
     private victoryObjectives;
@@ -252,3 +378,4 @@ export declare class TowerDefenseGame {
     private fail;
     private costReasonParams;
 }
+export {};

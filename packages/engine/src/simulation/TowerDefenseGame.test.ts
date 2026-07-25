@@ -1,12 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createGameContentRegistry, type GameContentInput } from "../content/registry.js";
+import { DamageResolver, type DamagePacket } from "./damage.js";
 import { runHeadlessMission } from "./headless.js";
 import { TowerDefenseGame } from "./TowerDefenseGame.js";
-import type { SingleAttackModel } from "./types.js";
+import type { GameEvent, SingleAttackModel } from "./types.js";
 
 // A compact registry whose tower/enemy ids deliberately do NOT match attack kinds, so the tests
 // double as regressions against hardcoded-id behavior in the engine.
-function buildContent(): ReturnType<typeof createGameContentRegistry> {
+interface BuildContentOptions {
+  mechanics?: GameContentInput["mechanics"];
+  basicMechanics?: NonNullable<GameContentInput["balance"]["missions"][string]["mechanics"]>;
+}
+
+function buildContent(options: BuildContentOptions = {}): ReturnType<typeof createGameContentRegistry> {
   const input: GameContentInput = {
     balance: {
       defaultMissionId: "basic",
@@ -83,7 +89,10 @@ function buildContent(): ReturnType<typeof createGameContentRegistry> {
         ]
       },
       missions: {
-        basic: mission("basic", "oneGrunt", 20),
+        basic: {
+          ...mission("basic", "oneGrunt", 20),
+          ...(options.basicMechanics === undefined ? {} : { mechanics: options.basicMechanics })
+        },
         leak: mission("leak", "oneTank", 3),
         dot: mission("dot", "oneSponge", 50),
         blocker: mission("blocker", "blockerLine", 50),
@@ -104,6 +113,7 @@ function buildContent(): ReturnType<typeof createGameContentRegistry> {
         terrainOverrides: []
       }
     },
+    ...(options.mechanics === undefined ? {} : { mechanics: options.mechanics }),
     worldMap: {
       width: 100,
       height: 100,
@@ -136,24 +146,183 @@ function mission(id: string, waveSetId: string, startingCoreHp: number) {
   };
 }
 
-function tickFor(game: TowerDefenseGame, units: number, step = 0.25): void {
+function tickFor(game: TowerDefenseGame, units: number, step = 0.25): GameEvent[] {
+  const events: GameEvent[] = [];
   for (let elapsed = 0; elapsed < units; elapsed += step) {
     game.tick(Math.min(step, units - elapsed));
+    events.push(...game.lastEvents);
   }
+  return events;
 }
 
+afterEach(() => vi.restoreAllMocks());
+
 describe("TowerDefenseGame", () => {
+  type MutableDamageTarget =
+    | { kind: "enemy"; enemy: TowerDefenseGame["enemies"][number] }
+    | { kind: "core" }
+    | { kind: "tower"; tower: TowerDefenseGame["towers"][number] };
+  type PrivateDamageBoundary = {
+    resolveAndApplyDamage(
+      packet: DamagePacket,
+      context: undefined,
+      mutableTarget: MutableDamageTarget
+    ): unknown;
+  };
+
+  const incoherentBoundaryCases = [
+    ["core packet with enemy mutable target", (enemy: TowerDefenseGame["enemies"][number]) => ({
+      packet: { amount: 1, source: { kind: "ability", abilityId: "strike" }, target: { kind: "core" } } as DamagePacket,
+      mutableTarget: { kind: "enemy", enemy } as MutableDamageTarget
+    })],
+    ["enemy packet with core mutable target", (enemy: TowerDefenseGame["enemies"][number]) => ({
+      packet: { amount: 1, source: { kind: "ability", abilityId: "strike" }, target: { kind: "enemy", enemyId: enemy.id, enemyTypeId: enemy.typeId } } as DamagePacket,
+      mutableTarget: { kind: "core" } as MutableDamageTarget
+    })],
+    ["wrong enemy id", (enemy: TowerDefenseGame["enemies"][number]) => ({
+      packet: { amount: 1, source: { kind: "ability", abilityId: "strike" }, target: { kind: "enemy", enemyId: "enemy_other", enemyTypeId: enemy.typeId } } as DamagePacket,
+      mutableTarget: { kind: "enemy", enemy } as MutableDamageTarget
+    })],
+    ["wrong enemy type", (enemy: TowerDefenseGame["enemies"][number]) => ({
+      packet: { amount: 1, source: { kind: "ability", abilityId: "strike" }, target: { kind: "enemy", enemyId: enemy.id, enemyTypeId: "tank" } } as DamagePacket,
+      mutableTarget: { kind: "enemy", enemy } as MutableDamageTarget
+    })],
+    ["wrong tower id", (_enemy: TowerDefenseGame["enemies"][number], tower: TowerDefenseGame["towers"][number]) => ({
+      packet: { amount: 1, source: { kind: "enemy", enemyId: "enemy_1", enemyTypeId: "grunt" }, target: { kind: "tower", towerId: "tower_other", towerTypeId: tower.typeId } } as DamagePacket,
+      mutableTarget: { kind: "tower", tower } as MutableDamageTarget
+    })],
+    ["wrong tower type", (_enemy: TowerDefenseGame["enemies"][number], tower: TowerDefenseGame["towers"][number]) => ({
+      packet: { amount: 1, source: { kind: "enemy", enemyId: "enemy_1", enemyTypeId: "grunt" }, target: { kind: "tower", towerId: tower.id, towerTypeId: "sniper" } } as DamagePacket,
+      mutableTarget: { kind: "tower", tower } as MutableDamageTarget
+    })]
+  ] as const;
+
+  it.each(incoherentBoundaryCases)("rejects %s before resolution or mutation", (_label, makeCase) => {
+    const game = new TowerDefenseGame({ missionId: "basic", content: buildContent() });
+    expect(game.startNextWave().ok).toBe(true);
+    game.tick(0.05);
+    expect(game.placeTower("pelter", { q: 1, r: 0 }).ok).toBe(true);
+    const enemy = game.enemies[0]!;
+    const tower = game.towers[0]!;
+    const { packet, mutableTarget } = makeCase(enemy, tower);
+    const before = { enemyHp: enemy.hp, towerHp: tower.hp, coreHp: game.coreHp };
+    const resolveSpy = vi.spyOn(DamageResolver, "resolve");
+    const boundary = game as unknown as PrivateDamageBoundary;
+
+    let thrown: unknown;
+    try {
+      boundary.resolveAndApplyDamage(packet, undefined, mutableTarget);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect.soft(thrown, "incoherent target must throw").toBeInstanceOf(Error);
+    expect.soft(resolveSpy, "coherence must be checked before DamageResolver").not.toHaveBeenCalled();
+    expect.soft(enemy.hp).toBe(before.enemyHp);
+    expect.soft(tower.hp).toBe(before.towerHp);
+    expect.soft(game.coreHp).toBe(before.coreHp);
+  });
+
+  it("keeps absent, disabled, and active-empty combat snapshots equivalent", () => {
+    const selectedCombat = { profiles: { combat: "empty" } } as const;
+    const disabled = buildContent({
+      mechanics: {
+        schemaVersion: 1,
+        modules: { combat: { schemaVersion: 1, enabled: false, profiles: { empty: {} } } }
+      },
+      basicMechanics: selectedCombat
+    });
+    const activeEmpty = buildContent({
+      mechanics: {
+        schemaVersion: 1,
+        modules: { combat: { schemaVersion: 1, enabled: true, profiles: { empty: {} } } }
+      },
+      basicMechanics: selectedCombat
+    });
+    const absent = buildContent();
+
+    expect(absent.missions.basic!.capabilities.combat.reason).toBe("module_missing");
+    expect(disabled.missions.basic!.capabilities.combat.reason).toBe("module_disabled");
+    expect(disabled.missions.basic!.capabilities.combat.moduleEnabled).toBe(false);
+    expect(activeEmpty.missions.basic!.capabilities.combat.reason).toBe("active");
+    expect(activeEmpty.missions.basic!.capabilities.combat.active).toBe(true);
+    expect(activeEmpty.missions.basic!.capabilities.combat.moduleEnabled).toBe(true);
+
+    const run = (content: ReturnType<typeof buildContent>) => {
+      const game = new TowerDefenseGame({ missionId: "basic", content, seed: "r1-equivalence" });
+      expect(game.placeTower("pelter", { q: 1, r: 0 }).ok).toBe(true);
+      expect(game.startNextWave().ok).toBe(true);
+      game.tick(0.1);
+      game.tick(0.25);
+      return game.getSnapshot();
+    };
+
+    const baseline = run(absent);
+    expect(run(disabled)).toEqual(baseline);
+    expect(run(activeEmpty)).toEqual(baseline);
+  });
+
   it("spawns enemies, fires towers, and awards coins on kill", () => {
+    const resolveSpy = vi.spyOn(DamageResolver, "resolve");
     const game = new TowerDefenseGame({ missionId: "basic", content: buildContent() });
     expect(game.placeTower("pelter", { q: 1, r: 0 }).ok).toBe(true);
     const coinsAfterBuild = game.coins;
     expect(game.startNextWave().ok).toBe(true);
 
-    tickFor(game, 20);
+    const events = tickFor(game, 20);
     const snap = game.getSnapshot();
 
     expect(snap.outcome).toBe("victory");
-    expect(game.coins).toBeGreaterThan(coinsAfterBuild); // grunt kill paid out
+    expect(game.coins).toBe(coinsAfterBuild + 2); // grunt kill paid out exactly once
+    expect(events.filter((event) => event.type === "enemyKilled")).toHaveLength(1);
+    expect(events).toContainEqual({
+      type: "enemyHit",
+      towerId: "tower_1",
+      enemyId: "enemy_1",
+      enemyTypeId: "grunt",
+      damage: 15
+    });
+    expect(resolveSpy.mock.calls.map(([packet]) => packet)).toContainEqual(
+      expect.objectContaining<Partial<DamagePacket>>({
+        amount: 15,
+        source: { kind: "tower", towerId: "tower_1", towerTypeId: "pelter" },
+        target: { kind: "enemy", enemyId: "enemy_1", enemyTypeId: "grunt" }
+      })
+    );
+    expect(resolveSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves the exact legacy floating-point multiplication for aggregated meta tower damage", () => {
+    const content = buildContent();
+    const attack = content.towers.pelter!.attack;
+    if (attack.kind !== "single") throw new Error("pelter fixture must remain a single attack");
+    attack.damagePerStack = 4.2;
+    attack.startingStacks = 1;
+    content.metaProgression = {
+      currencies: [{ id: "shards", label: "Shards" }],
+      rewardsByMission: {},
+      upgrades: {
+        calibrated_damage: {
+          id: "calibrated_damage",
+          label: "Calibrated damage",
+          maxLevel: 1,
+          costs: [{ shards: 1 }],
+          effects: [{ kind: "towerDamage", multiplierPerLevel: 0.42 }]
+        }
+      }
+    };
+
+    const game = new TowerDefenseGame({
+      missionId: "basic",
+      content,
+      metaUpgradeLevels: { calibrated_damage: 1 }
+    });
+    expect(game.placeTower("pelter", { q: 1, r: 0 }).ok).toBe(true);
+    expect(game.startNextWave().ok).toBe(true);
+    game.tick(0.1);
+
+    const hit = game.lastEvents.find((event) => event.type === "enemyHit");
+    expect(hit?.damage).toBe(4.2 * 1.42);
   });
 
   it("rejects placing a tower the player cannot afford", () => {
@@ -364,18 +533,39 @@ describe("TowerDefenseGame", () => {
   });
 
   it("poisons enemies via attack.statusOnHit — DoT keeps damaging and can kill after hits stop", () => {
+    const resolveSpy = vi.spyOn(DamageResolver, "resolve");
     // Tiny direct damage but strong poison: the kill is only possible via the lingering DoT.
     const reg = statusContent({ kind: "single", fireRate: 0.5, damagePerStack: 2, startingStacks: 1, maxStacks: 1, upgradeCost: 1, statusOnHit: { poison: { dps: 12, duration: 40 } } }, 100, 0.5);
     const game = new TowerDefenseGame({ missionId: "m", content: reg });
     expect(game.placeTower("t", { q: 2, r: 0 }).ok).toBe(true);
     game.startNextWave();
     // After the first hit (~t=2) the enemy carries poison; confirm DoT is ticking its HP down.
-    tickFor(game, 4);
+    const events = tickFor(game, 4);
     const mid = game.getSnapshot().enemies[0];
     expect(mid?.statuses?.poison?.remaining ?? 0).toBeGreaterThan(0);
     expect(mid!.hp).toBeLessThan(96); // > the ~2 direct damage dealt so far → poison contributed
-    tickFor(game, 16);
+    resolveSpy.mockClear();
+    game.tick(0.01); // shorter than the next tower shot: exactly one status tick is delivered
+    expect(resolveSpy.mock.calls.filter(([packet]) => (
+      packet.source.kind === "status"
+      && packet.source.statusId === "poison"
+      && packet.target.kind === "enemy"
+      && packet.target.enemyId === "enemy_1"
+      && packet.damageType === undefined
+      && packet.tags?.length === 1
+      && packet.tags[0] === "over_time"
+    ))).toHaveLength(1);
+    events.push(...tickFor(game, 16));
     expect(game.getSnapshot().enemies.length).toBe(0); // poison finished it off before it leaked
+    expect(game.coins).toBe(100); // 100 start - 1 build + 1 reward, exactly once
+    expect(events.filter((event) => event.type === "enemyKilled")).toHaveLength(1);
+    expect(resolveSpy.mock.calls.map(([packet]) => packet)).toContainEqual(
+      expect.objectContaining<Partial<DamagePacket>>({
+        source: { kind: "status", statusId: "poison" },
+        target: { kind: "enemy", enemyId: "enemy_1", enemyTypeId: "tank" },
+        tags: ["over_time"]
+      })
+    );
   });
 
   it("lets an author opt flying enemies into splash damage and slow without changing the ground-only default", () => {
@@ -485,6 +675,7 @@ describe("TowerDefenseGame", () => {
   });
 
   it("lets a boss enemy damage towers via towerAttack and destroy them at 0 HP", () => {
+    const resolveSpy = vi.spyOn(DamageResolver, "resolve");
     const reg = createGameContentRegistry({
       balance: {
         defaultMissionId: "m",
@@ -506,8 +697,10 @@ describe("TowerDefenseGame", () => {
 
     let attacked = false;
     let destroyed = false;
+    const combatEvents: GameEvent[] = [];
     for (let i = 0; i < 60; i++) {
       game.tick(0.5);
+      combatEvents.push(...game.lastEvents);
       for (const e of game.lastEvents) {
         if (e.type === "towerAttacked" && e.towerId === "tower_1") attacked = true;
         if (e.type === "towerDestroyed" && e.towerId === "tower_1") destroyed = true;
@@ -517,9 +710,25 @@ describe("TowerDefenseGame", () => {
     expect(destroyed).toBe(true); // and destroyed it once hp hit 0
     expect(game.getSnapshot().towers.length).toBe(0); // removed from the board
     expect(game.getTowerIdAt({ q: 2, r: 0 })).toBeUndefined(); // tile freed for rebuilding
+    expect(combatEvents.filter((event) => event.type === "towerAttacked")).toEqual([
+      { type: "towerAttacked", enemyId: "enemy_1", enemyTypeId: "boss", towerId: "tower_1", damage: 50 },
+      { type: "towerAttacked", enemyId: "enemy_1", enemyTypeId: "boss", towerId: "tower_1", damage: 50 }
+    ]);
+    expect(combatEvents.filter((event) => event.type === "towerDestroyed")).toHaveLength(1);
+    expect(resolveSpy.mock.calls.map(([packet]) => packet)).toContainEqual(
+      expect.objectContaining<Partial<DamagePacket>>({
+        amount: 50,
+        source: { kind: "enemy", enemyId: "enemy_1", enemyTypeId: "boss" },
+        target: { kind: "tower", towerId: "tower_1", towerTypeId: "t" }
+      })
+    );
+    expect(resolveSpy.mock.calls.filter(([packet]) => (
+      packet.source.kind === "enemy" && packet.target.kind === "tower"
+    ))).toHaveLength(2);
   });
 
   it("supports strike (AoE damage) and freeze (AoE stun) mission abilities with cooldowns", () => {
+    const resolveSpy = vi.spyOn(DamageResolver, "resolve");
     const reg = createGameContentRegistry({
       balance: {
         defaultMissionId: "m",
@@ -545,6 +754,18 @@ describe("TowerDefenseGame", () => {
     const before = game.getSnapshot().enemies[0]!.hp;
     expect(game.useAbility("strike", at).ok).toBe(true);
     expect(game.getSnapshot().enemies[0]!.hp).toBe(before - 50); // AoE damage applied
+    expect(game.lastEvents.some((event) => event.type === "enemyHit")).toBe(false); // abilities do not impersonate tower hits
+    expect(resolveSpy.mock.calls.map(([packet]) => packet)).toContainEqual(
+      expect.objectContaining<Partial<DamagePacket>>({
+        amount: 50,
+        source: { kind: "ability", abilityId: "strike" },
+        target: { kind: "enemy", enemyId: "enemy_1", enemyTypeId: "mob" },
+        tags: ["area"]
+      })
+    );
+    expect(resolveSpy.mock.calls.filter(([packet]) => (
+      packet.source.kind === "ability" && packet.source.abilityId === "strike" && packet.target.kind === "enemy"
+    ))).toHaveLength(1);
     expect(game.useAbility("strike", at).ok).toBe(false);        // now on cooldown
 
     expect(game.useAbility("freeze", at).ok).toBe(true);
@@ -587,12 +808,31 @@ describe("TowerDefenseGame", () => {
   });
 
   it("lets the core take damage and declares defeat when enemies leak", () => {
-    const game = new TowerDefenseGame({ missionId: "leak", content: buildContent() });
+    const resolveSpy = vi.spyOn(DamageResolver, "resolve");
+    const content = buildContent();
+    content.difficulties = [
+      { id: "normal", label: "Normal" },
+      { id: "veteran", label: "Veteran", coreDamageMultiplier: 2 }
+    ];
+    const game = new TowerDefenseGame({ missionId: "leak", content, difficultyId: "veteran" });
     expect(game.startNextWave().ok).toBe(true);
-    tickFor(game, 30);
+    const events = tickFor(game, 30);
     const snap = game.getSnapshot();
-    expect(snap.coreHp).toBeLessThan(game.mission.startingCoreHp);
+    expect(snap.coreHp).toBe(0);
     expect(snap.outcome).toBe("defeat");
+    expect(events.filter((event) => event.type === "enemyLeaked")).toEqual([
+      { type: "enemyLeaked", enemyId: "enemy_1", enemyTypeId: "tank", damage: 10 }
+    ]);
+    expect(resolveSpy.mock.calls.map(([packet]) => packet)).toContainEqual(
+      expect.objectContaining<Partial<DamagePacket>>({
+        amount: 10,
+        source: { kind: "leak", enemyId: "enemy_1", enemyTypeId: "tank" },
+        target: { kind: "core" }
+      })
+    );
+    expect(resolveSpy.mock.calls.filter(([packet]) => (
+      packet.source.kind === "leak" && packet.target.kind === "core"
+    ))).toHaveLength(1);
   });
 
   // Regression for #1: target mode keyed on attack.kind, not the literal id "sniper".
@@ -642,6 +882,7 @@ describe("TowerDefenseGame", () => {
 
   // Regression for #2: dots from a renamed pulse tower keep ticking after the enemy leaves the aura.
   it("applies lingering dot damage from a pulse-kind tower with a custom id", () => {
+    const resolveSpy = vi.spyOn(DamageResolver, "resolve");
     const game = new TowerDefenseGame({ missionId: "dot", content: buildContent() });
     expect(game.placeTower("sprayer", { q: 0, r: 0 }).ok).toBe(true);
     expect(game.startNextWave().ok).toBe(true);
@@ -663,11 +904,32 @@ describe("TowerDefenseGame", () => {
     expect(recordedSource).toBe("sprayer");
     expect(recordedDamage).toBe(5);
 
-    // Keep ticking; once the sponge is out of the (range-1) aura, dots must still erode its HP.
-    tickFor(game, 6);
-    const enemy = game.getSnapshot().enemies.find((e) => e.typeId === "sponge");
-    expect(enemy).toBeDefined();
-    expect(enemy!.hp).toBeLessThan(hpWhenDotd);
+    // Advance until the target has left the range-1 aura while its authored DoT is still active.
+    let outside = game.getSnapshot().enemies.find((candidate) => (
+      candidate.typeId === "sponge" && candidate.pathProgress > 2 && candidate.dotRemaining > 0
+    ));
+    for (let i = 0; i < 20 && !outside; i += 1) {
+      game.tick(0.25);
+      outside = game.getSnapshot().enemies.find((candidate) => (
+        candidate.typeId === "sponge" && candidate.pathProgress > 2 && candidate.dotRemaining > 0
+      ));
+    }
+    expect(outside).toBeDefined();
+    const hpBeforeLingeringTick = outside!.hp;
+    resolveSpy.mockClear();
+    game.tick(0.05);
+    const lingeringPackets = resolveSpy.mock.calls.map(([packet]) => packet).filter((packet) => (
+      packet.source.kind === "tower"
+      && packet.source.towerTypeId === "sprayer"
+      && packet.target.kind === "enemy"
+      && packet.target.enemyTypeId === "sponge"
+      && packet.damageType === "physical"
+      && packet.tags?.length === 1
+      && packet.tags[0] === "over_time"
+    ));
+    expect(lingeringPackets).toHaveLength(1);
+    expect(game.getSnapshot().enemies.find((candidate) => candidate.typeId === "sponge")!.hp).toBeLessThan(hpBeforeLingeringTick);
+    expect(hpBeforeLingeringTick).toBeLessThan(hpWhenDotd);
   });
 
   // Regression: pierce_only armor is pierced by attack.kind, not the literal tower id "sniper".
@@ -683,6 +945,19 @@ describe("TowerDefenseGame", () => {
     expect(blocked.startNextWave().ok).toBe(true);
     tickFor(blocked, 20);
     expect(blocked.getSnapshot().outcome).toBe("defeat");
+  });
+
+  it("uses resolver armor diagnostics instead of reporting armor when resistance already nullified damage", () => {
+    const content = buildContent();
+    content.enemies.armored!.resistances = { physical: 0 };
+    const game = new TowerDefenseGame({ missionId: "armored", content });
+    expect(game.placeTower("pelter", { q: 4, r: 0 }).ok).toBe(true);
+    expect(game.startNextWave().ok).toBe(true);
+    const events = tickFor(game, 2);
+
+    expect(events.some((event) => event.type === "towerFired")).toBe(true);
+    expect(events.some((event) => event.type === "enemyHit")).toBe(false);
+    expect(events.some((event) => event.type === "enemyArmorBlocked")).toBe(false);
   });
 
   // Regression for #3: path blocking is driven by the isPathBlocker flag, not hardcoded enemy ids.
@@ -702,6 +977,7 @@ describe("TowerDefenseGame", () => {
   });
 
   it("executes declarative tower targeting, area delivery, and ordered effects", () => {
+    const resolveSpy = vi.spyOn(DamageResolver, "resolve");
     const content = buildContent();
     content.towers.conduit = {
       id: "conduit",
@@ -731,6 +1007,145 @@ describe("TowerDefenseGame", () => {
     expect(enemies.every((enemy) => enemy.hp < enemy.maxHp)).toBe(true);
     expect(enemies.every((enemy) => (enemy.statuses?.stun?.remaining ?? 0) > 0)).toBe(true);
     expect(game.lastEvents.filter((event) => event.type === "towerFired")).toHaveLength(2);
+    expect(resolveSpy.mock.calls.filter(([packet]) => (
+      packet.source.kind === "tower" && packet.source.towerTypeId === "conduit" && packet.target.kind === "enemy"
+    ))).toHaveLength(2);
+  });
+
+  it("resolves one single-chain shot once per primary and chained target", () => {
+    const resolveSpy = vi.spyOn(DamageResolver, "resolve");
+    const content = buildContent();
+    const attack = content.towers.pelter!.attack;
+    if (attack.kind !== "single") throw new Error("pelter fixture must remain single");
+    attack.damagePerStack = 1;
+    attack.startingStacks = 1;
+    attack.chain = { maxJumps: 1, jumpRadius: 2, damageFalloff: 0.5 };
+    const game = new TowerDefenseGame({ missionId: "targeting", content });
+    expect(game.placeTower("pelter", { q: 1, r: 0 }).ok).toBe(true);
+    expect(game.startNextWave().ok).toBe(true);
+    resolveSpy.mockClear();
+    game.tick(0.05);
+
+    const packets = resolveSpy.mock.calls.map(([packet]) => packet).filter((packet) => (
+      packet.source.kind === "tower"
+      && packet.source.towerTypeId === "pelter"
+      && packet.target.kind === "enemy"
+      && packet.damageType === "physical"
+      && packet.tags === undefined
+    ));
+    expect(packets).toHaveLength(2);
+    expect(new Set(packets.map((packet) => packet.target.kind === "enemy" ? packet.target.enemyId : ""))).toEqual(
+      new Set(["enemy_1", "enemy_2"])
+    );
+  });
+
+  it("resolves one pulse once for its single delivered target", () => {
+    const resolveSpy = vi.spyOn(DamageResolver, "resolve");
+    const game = new TowerDefenseGame({ missionId: "dot", content: buildContent() });
+    expect(game.placeTower("sprayer", { q: 0, r: 0 }).ok).toBe(true);
+    expect(game.startNextWave().ok).toBe(true);
+    resolveSpy.mockClear();
+    game.tick(0.05);
+
+    expect(resolveSpy.mock.calls.map(([packet]) => packet).filter((packet) => (
+      packet.source.kind === "tower"
+      && packet.source.towerTypeId === "sprayer"
+      && packet.target.kind === "enemy"
+      && packet.target.enemyTypeId === "sponge"
+      && packet.damageType === "physical"
+      && packet.tags?.length === 1
+      && packet.tags[0] === "area"
+    ))).toHaveLength(1);
+  });
+
+  it("resolves one sniper shot once for its single delivered target", () => {
+    const resolveSpy = vi.spyOn(DamageResolver, "resolve");
+    const game = new TowerDefenseGame({ missionId: "basic", content: buildContent() });
+    expect(game.placeTower("sniper", { q: 2, r: 0 }).ok).toBe(true);
+    expect(game.startNextWave().ok).toBe(true);
+    resolveSpy.mockClear();
+    game.tick(0.05);
+
+    expect(resolveSpy.mock.calls.map(([packet]) => packet).filter((packet) => (
+      packet.source.kind === "tower"
+      && packet.source.towerTypeId === "sniper"
+      && packet.target.kind === "enemy"
+      && packet.target.enemyTypeId === "grunt"
+      && packet.damageType === "physical"
+      && packet.tags === undefined
+    ))).toHaveLength(1);
+  });
+
+  it("resolves one antiair volley only for its flying delivered target", () => {
+    const resolveSpy = vi.spyOn(DamageResolver, "resolve");
+    const content = buildContent();
+    content.enemies.flier = {
+      id: "flier", label: "Flier", maxHp: 100, speed: 0.2, reward: { coins: 1 }, coinReward: 1,
+      coreDamage: 1, color: 0x99aaff, movementKind: "direct_flying", targetClass: "flying"
+    };
+    content.towers.skyguard = {
+      id: "skyguard", label: "Skyguard", cost: { coins: 1 }, footprintRadius: 0, range: 8,
+      attack: { kind: "antiair", fireRate: 1, damage: 7, maxTargetsByLevel: [1, 1, 1, 1], upgradeCosts: [] }
+    };
+    content.waveSets.mixed = [{ id: "w1", label: "W1", groups: [
+      { enemyId: "grunt", count: 1, spawnInterval: 1, startDelay: 0 },
+      { enemyId: "flier", count: 1, spawnInterval: 1, startDelay: 0 }
+    ] }];
+    const baseMission = content.missions.basic!;
+    content.missions.mixed = {
+      ...baseMission,
+      id: "mixed",
+      label: "Mixed",
+      waveSetId: "mixed",
+      waves: content.waveSets.mixed,
+      buildTowerIds: ["skyguard"]
+    };
+    const game = new TowerDefenseGame({ missionId: "mixed", content });
+    expect(game.placeTower("skyguard", { q: 1, r: 0 }).ok).toBe(true);
+    expect(game.startNextWave().ok).toBe(true);
+    resolveSpy.mockClear();
+    game.tick(0.05);
+
+    const packets = resolveSpy.mock.calls.map(([packet]) => packet).filter((packet) => (
+      packet.source.kind === "tower"
+      && packet.source.towerTypeId === "skyguard"
+      && packet.target.kind === "enemy"
+      && packet.damageType === "physical"
+      && packet.tags === undefined
+    ));
+    expect(packets).toHaveLength(1);
+    expect(packets[0]!.target).toEqual({ kind: "enemy", enemyId: "enemy_2", enemyTypeId: "flier" });
+    expect(game.getSnapshot().enemies.find((enemy) => enemy.typeId === "grunt")!.hp).toBe(6);
+  });
+
+  it("resolves one splash shot once per clustered delivered target", () => {
+    const resolveSpy = vi.spyOn(DamageResolver, "resolve");
+    const content = buildContent();
+    content.towers.mortar = {
+      id: "mortar", label: "Mortar", cost: { coins: 1 }, footprintRadius: 0, range: 8,
+      attack: {
+        kind: "splash", interval: 1, damage: 2, splashDamage: 1, armoredChipDamage: 0,
+        splashRadius: 2, slowFactor: 0.5, slowDuration: 1
+      }
+    };
+    content.missions.targeting!.buildTowerIds.push("mortar");
+    const game = new TowerDefenseGame({ missionId: "targeting", content });
+    expect(game.placeTower("mortar", { q: 1, r: 0 }).ok).toBe(true);
+    expect(game.startNextWave().ok).toBe(true);
+    resolveSpy.mockClear();
+    game.tick(0.05);
+
+    const packets = resolveSpy.mock.calls.map(([packet]) => packet).filter((packet) => (
+      packet.source.kind === "tower"
+      && packet.source.towerTypeId === "mortar"
+      && packet.target.kind === "enemy"
+      && packet.damageType === "physical"
+      && packet.tags === undefined
+    ));
+    expect(packets).toHaveLength(2);
+    expect(new Set(packets.map((packet) => packet.target.kind === "enemy" ? packet.target.enemyId : ""))).toEqual(
+      new Set(["enemy_1", "enemy_2"])
+    );
   });
 
   it("applies selected difficulty and persistent meta upgrades as launch-time inputs", () => {
@@ -762,7 +1177,13 @@ describe("TowerDefenseGame", () => {
   });
 
   it("executes deterministic global and object-bound TowerScripts", () => {
+    const resolveSpy = vi.spyOn(DamageResolver, "resolve");
     const content = buildContent();
+    // Keep the first grunt alive through the ordinary tower update so the enemy-bound tick
+    // handler below, rather than the tower shot, exercises TowerScript damageEnemy.
+    if (content.towers.pelter!.attack.kind === "single") {
+      content.towers.pelter!.attack.damagePerStack = 1;
+    }
     content.scripts = {
       authored_rules: {
         schemaVersion: 1,
@@ -770,7 +1191,10 @@ describe("TowerDefenseGame", () => {
         bindings: [{ scope: "global" }, { scope: "tower", ids: ["pelter"] }, { scope: "enemy", ids: ["grunt"] }],
         initialState: { executions: 0 },
         handlers: {
-          gameStarted: [{ actions: [{ action: "grantResource", resourceId: "coins", amount: 5 }] }],
+          gameStarted: [{ actions: [
+            { action: "grantResource", resourceId: "coins", amount: 5 },
+            { action: "damageCore", amount: 1 }
+          ] }],
           towerPlaced: [{
             when: { $op: "eq", args: [{ $get: "self.typeId" }, "pelter"] },
             actions: [{ action: "grantResource", resourceId: "coins", amount: 3 }, { action: "incrementState", key: "executions" }]
@@ -804,6 +1228,7 @@ describe("TowerDefenseGame", () => {
 
     const game = new TowerDefenseGame({ missionId: "basic", content });
     expect(game.coins).toBe(105);
+    expect(game.coreHp).toBe(19);
     expect(game.placeTower("pelter", { q: 1, r: 0 }).ok).toBe(true);
     expect(game.coins).toBe(107);
     expect(game.startNextWave().ok).toBe(true);
@@ -820,6 +1245,24 @@ describe("TowerDefenseGame", () => {
     expect(snapshot.scriptState.diagnostics).toEqual([]);
     expect(game.coins).toBe(129); // +11 external signal, +2 normal kill reward, +7 scripted reward
     expect(game.lastEvents.some((event) => event.type === "scriptSignal" && event.signal === "wave_bonus")).toBe(false); // action events reset on tick
+    expect(resolveSpy.mock.calls.map(([packet]) => packet)).toEqual(expect.arrayContaining([
+      expect.objectContaining<Partial<DamagePacket>>({
+        amount: 1,
+        source: { kind: "tower_script", scriptId: "authored_rules" },
+        target: { kind: "core" }
+      }),
+      expect.objectContaining<Partial<DamagePacket>>({
+        amount: 100,
+        source: { kind: "tower_script", scriptId: "authored_rules" },
+        target: expect.objectContaining({ kind: "enemy", enemyTypeId: "grunt" })
+      })
+    ]));
+    expect(resolveSpy.mock.calls.filter(([packet]) => (
+      packet.source.kind === "tower_script" && packet.target.kind === "core"
+    ))).toHaveLength(1);
+    expect(resolveSpy.mock.calls.filter(([packet]) => (
+      packet.source.kind === "tower_script" && packet.target.kind === "enemy"
+    ))).toHaveLength(1);
   });
 
   it("applies and expires controlled TowerScript terrain overrides without removing towers", () => {

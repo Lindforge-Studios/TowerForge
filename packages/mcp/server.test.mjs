@@ -69,4 +69,32 @@ describe("mcp server JSON-RPC protocol (review fix #7)", () => {
     ]);
     expect(frames.find((f) => f.id === 1).result.protocolVersion).toBe("2024-11-05");
   });
+
+  it("recognizes navigation across stdio while preserving the legacy-project migration guard", async () => {
+    const frames = await runSession([
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 7,
+        method: "tools/call",
+        params: {
+          name: "preview_mechanics_module",
+          arguments: {
+            moduleId: "navigation",
+            moduleSchemaVersion: 1,
+            profileId: "preview",
+            profile: { mode: "authored_routes" }
+          }
+        }
+      })
+    ]);
+    const result = frames.find((frame) => frame.id === 7)?.result;
+    expect(result?.isError).toBe(true);
+    expect(result?._meta?.["towerforge/errorCode"]).toBe("project_migration_required");
+    expect(JSON.parse(result.content[0].text)).toEqual({
+      error: {
+        code: "project_migration_required",
+        message: expect.stringMatching(/migrate|schema.*v?2/i)
+      }
+    });
+  });
 });

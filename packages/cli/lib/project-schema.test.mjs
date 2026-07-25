@@ -1,7 +1,306 @@
 import { describe, expect, it } from "vitest";
-import { listVisualAssetPaths, normalizeVisuals, validateProjectSchemas, validateSafeAssetPath } from "./project-schema.mjs";
+import {
+  PROJECT_SCHEMA_VERSION,
+  listVisualAssetPaths,
+  normalizeVisuals,
+  validateProjectSchemas,
+  validateSafeAssetPath
+} from "./project-schema.mjs";
+
+function mechanicsSchemaFiles(schemaVersion, mechanics) {
+  return {
+    manifest: { schemaVersion },
+    balance: { missions: {} },
+    maps: {},
+    mapSources: {},
+    mechanics,
+    visuals: normalizeVisuals({}),
+    storyComics: { seenStoragePrefix: "story_seen_", comics: {} },
+    battleBackgrounds: { fallbackMissionId: "", placeholderMissionIds: [], definitions: {} },
+    buildTargets: { schemaVersion: 1, targets: {} }
+  };
+}
 
 describe("project schema", () => {
+  it("supports project schema v3 while keeping v1/v2 projects without mechanics valid", () => {
+    expect(PROJECT_SCHEMA_VERSION).toBe(3);
+
+    for (const schemaVersion of [1, 2]) {
+      const result = validateProjectSchemas(mechanicsSchemaFiles(schemaVersion, undefined));
+      expect(result.issues.filter((issue) => issue.entityKind === "mechanics")).toEqual([]);
+      expect(result.issues.some((issue) => issue.entityKind === "project" && issue.fieldPath === "schemaVersion")).toBe(false);
+    }
+  });
+
+  it("requires project schema v3 whenever content/mechanics.json is authored, even if all modules are disabled", () => {
+    const mechanics = {
+      schemaVersion: 1,
+      modules: {
+        combat: { schemaVersion: 1, enabled: false, profiles: {} }
+      }
+    };
+
+    for (const schemaVersion of [1, 2]) {
+      const legacyResult = validateProjectSchemas(mechanicsSchemaFiles(schemaVersion, mechanics));
+      expect(legacyResult.ok).toBe(false);
+      expect(legacyResult.issues).toContainEqual(expect.objectContaining({
+        severity: "error",
+        entityKind: "project",
+        fieldPath: "schemaVersion"
+      }));
+    }
+
+    const v3Result = validateProjectSchemas(mechanicsSchemaFiles(3, mechanics));
+    expect(v3Result.issues.filter((issue) => issue.entityKind === "mechanics")).toEqual([]);
+    expect(v3Result.issues.some((issue) => issue.entityKind === "project" && issue.fieldPath === "schemaVersion")).toBe(false);
+  });
+
+  it("versions shields, armor, and marks independently from the project and mechanics catalog", () => {
+    const armorProfile = {
+      damageTypes: {
+        physical: { label: "Physical" },
+        fire: { label: "Fire" }
+      },
+      armorTypes: {
+        plated: {
+          label: "Plated",
+          defaultMultiplier: 1,
+          multipliers: { physical: 0.6, fire: 1.25 }
+        }
+      },
+      armorAssignments: { enemies: {} }
+    };
+
+    const markProfile = {
+      marks: {
+        definitions: {
+          exposed: {
+            label: "Exposed",
+            duration: 3,
+            maxStacks: 2,
+            multiplier: 1.25,
+            consumePolicy: "consume_one"
+          }
+        }
+      }
+    };
+
+    for (const moduleSchemaVersion of [1, 2, 3]) {
+      const profile = moduleSchemaVersion === 1
+        ? { shields: { enemies: {}, towers: {} } }
+        : moduleSchemaVersion === 2 ? armorProfile : markProfile;
+      const result = validateProjectSchemas(mechanicsSchemaFiles(3, {
+        schemaVersion: 1,
+        modules: {
+          combat: { schemaVersion: moduleSchemaVersion, enabled: true, profiles: { combat: profile } }
+        }
+      }));
+      expect(result.issues.filter((issue) => issue.entityKind === "mechanics"), `combat v${moduleSchemaVersion}`).toEqual([]);
+    }
+
+    const future = validateProjectSchemas(mechanicsSchemaFiles(3, {
+      schemaVersion: 1,
+      modules: {
+        combat: { schemaVersion: 4, enabled: false, profiles: {} }
+      }
+    }));
+    expect(future.ok).toBe(false);
+    expect(future.issues).toContainEqual(expect.objectContaining({
+      severity: "error",
+      entityKind: "mechanics",
+      fieldPath: "modules.combat.schemaVersion",
+      message: expect.stringMatching(/newer|supported|1|2|3/i)
+    }));
+  });
+
+  it("validates reactions v1 against the mission-selected combat profile without requiring combat v4", () => {
+    const files = mechanicsSchemaFiles(3, {
+      schemaVersion: 1,
+      modules: {
+        combat: {
+          schemaVersion: 3,
+          enabled: true,
+          profiles: {
+            elemental: {
+              damageTypes: {
+                physical: { label: "Physical" },
+                fire: { label: "Fire" },
+                ice: { label: "Ice" }
+              }
+            }
+          }
+        },
+        reactions: {
+          schemaVersion: 1,
+          enabled: true,
+          profiles: {
+            shatter: {
+              exposures: {
+                definitions: {
+                  fire: { label: "Fire", duration: 4, maxStacks: 1 },
+                  ice: { label: "Ice", duration: 4, maxStacks: 1 }
+                },
+                applications: {
+                  damageTypes: {
+                    fire: [{ exposureId: "fire" }],
+                    ice: [{ exposureId: "ice" }]
+                  }
+                }
+              },
+              reactions: {
+                shatter_fire_into_ice: {
+                  label: "Shatter",
+                  trigger: { damageTypes: ["fire"] },
+                  requirements: [{ kind: "exposure", exposureId: "ice", consume: "all" }],
+                  suppressTriggerExposureApplications: true,
+                  effects: {
+                    critical: {
+                      kind: "damage",
+                      amount: { kind: "source_after_modifiers", multiplier: 2 },
+                      damageType: "physical",
+                      target: { kind: "primary" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+    files.balance.missions = {
+      mission: {
+        id: "mission",
+        mechanics: { profiles: { combat: "elemental", reactions: "shatter" } }
+      }
+    };
+
+    const valid = validateProjectSchemas(files);
+    expect(valid.issues.filter((issue) => issue.severity === "error" && (
+      issue.fieldPath?.includes("reactions") || issue.message?.includes("reaction")
+    ))).toEqual([]);
+
+    const missingDependency = structuredClone(files);
+    delete missingDependency.balance.missions.mission.mechanics.profiles.combat;
+    const missingResult = validateProjectSchemas(missingDependency);
+    expect(missingResult.issues).toContainEqual(expect.objectContaining({
+      severity: "error",
+      entityId: "mission",
+      message: expect.stringMatching(/reaction.*combat|combat.*reaction|dependency/i)
+    }));
+
+    const disabledBroken = structuredClone(files);
+    disabledBroken.mechanics.modules.reactions.enabled = false;
+    disabledBroken.mechanics.modules.reactions.profiles.shatter.reactions
+      .shatter_fire_into_ice.effects.critical.damageType = "unknown";
+    const disabledResult = validateProjectSchemas(disabledBroken);
+    expect(disabledResult.issues).toContainEqual(expect.objectContaining({
+      severity: "warning",
+      message: expect.stringMatching(/unknown|damage type|reaction/i)
+    }));
+
+    delete disabledBroken.balance.missions.mission.mechanics.profiles.combat;
+    const disabledWithoutCombat = validateProjectSchemas(disabledBroken);
+    expect(disabledWithoutCombat.ok).toBe(true);
+    expect(disabledWithoutCombat.issues).not.toContainEqual(expect.objectContaining({
+      severity: "error",
+      code: "dependency_missing"
+    }));
+  });
+
+  it("rejects a future mechanics schema instead of silently ignoring it", () => {
+    const result = validateProjectSchemas(mechanicsSchemaFiles(3, {
+      schemaVersion: 2,
+      modules: {}
+    }));
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toContainEqual(expect.objectContaining({
+      severity: "error",
+      entityKind: "mechanics",
+      fieldPath: "schemaVersion",
+      message: expect.stringMatching(/newer|unsupported/i)
+    }));
+  });
+
+  it("structurally rejects non-allowlisted module ids and malformed module profiles", () => {
+    const result = validateProjectSchemas(mechanicsSchemaFiles(3, {
+      schemaVersion: 1,
+      modules: {
+        weather_magic: { schemaVersion: 1, enabled: true, profiles: {} },
+        combat: { schemaVersion: 1, enabled: true, profiles: { bad: 42 } }
+      }
+    }));
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toContainEqual(expect.objectContaining({
+      severity: "error",
+      entityKind: "mechanics",
+      fieldPath: "modules.weather_magic"
+    }));
+    expect(result.issues).toContainEqual(expect.objectContaining({
+      severity: "error",
+      entityKind: "mechanics",
+      fieldPath: "modules.combat.profiles.bad"
+    }));
+  });
+
+  it("errors on enabled missing profiles but only warns for disabled selections", () => {
+    const files = mechanicsSchemaFiles(3, {
+      schemaVersion: 1,
+      modules: {
+        combat: { schemaVersion: 1, enabled: true, profiles: {} },
+        navigation: { schemaVersion: 1, enabled: false, profiles: {} }
+      }
+    });
+    files.balance.missions = {
+      enabled_missing: { id: "enabled_missing", mechanics: { profiles: { combat: "ghost" } } },
+      disabled_missing: { id: "disabled_missing", mechanics: { profiles: { navigation: "ghost" } } }
+    };
+
+    const result = validateProjectSchemas(files);
+    expect(result.issues).toContainEqual(expect.objectContaining({
+      severity: "error",
+      entityKind: "mission",
+      entityId: "enabled_missing",
+      fieldPath: "mechanics.profiles.combat"
+    }));
+    expect(result.issues).toContainEqual(expect.objectContaining({
+      severity: "warning",
+      entityKind: "mission",
+      entityId: "disabled_missing",
+      fieldPath: "mechanics.profiles.navigation"
+    }));
+  });
+
+  it("validates mission mechanics selections even when the optional catalog is absent", () => {
+    const missingCatalog = mechanicsSchemaFiles(2, undefined);
+    missingCatalog.balance.missions = {
+      selected: { id: "selected", mechanics: { profiles: { combat: "ghost" } } }
+    };
+    const missingResult = validateProjectSchemas(missingCatalog);
+    expect(missingResult.ok).toBe(true);
+    expect(missingResult.issues).toContainEqual(expect.objectContaining({
+      severity: "warning",
+      entityKind: "mission",
+      entityId: "selected",
+      fieldPath: "mechanics.profiles.combat"
+    }));
+
+    const malformedCatalog = mechanicsSchemaFiles(2, undefined);
+    malformedCatalog.balance.missions = {
+      malformed: { id: "malformed", mechanics: { profiles: 42 } }
+    };
+    const malformedResult = validateProjectSchemas(malformedCatalog);
+    expect(malformedResult.ok).toBe(false);
+    expect(malformedResult.issues).toContainEqual(expect.objectContaining({
+      severity: "error",
+      entityKind: "mission",
+      entityId: "malformed",
+      fieldPath: "mechanics.profiles"
+    }));
+  });
+
   it("validates authored theme palettes before a renderer consumes them", () => {
     const result = validateProjectSchemas({
       manifest: { schemaVersion: 1 },

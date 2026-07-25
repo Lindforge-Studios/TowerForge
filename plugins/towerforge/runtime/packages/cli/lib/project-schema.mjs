@@ -1,6 +1,24 @@
-import { compileMapSources } from "./map-compiler.mjs";
+import { compileMapSources, normalizeElevationOverrides } from "./map-compiler.mjs";
 
-export const PROJECT_SCHEMA_VERSION = 2;
+export const PROJECT_SCHEMA_VERSION = 3;
+
+const MECHANICS_SCHEMA_VERSION = 1;
+const COMBAT_MODULE_SCHEMA_VERSIONS = new Set([1, 2, 3]);
+const ELEVATION_MODULE_SCHEMA_VERSIONS = new Set([1, 2, 3]);
+const BASE_MODULE_SCHEMA_VERSIONS = new Set([MECHANICS_SCHEMA_VERSION]);
+const MECHANICS_MODULE_IDS = new Set([
+  "combat",
+  "reactions",
+  "navigation",
+  "elevation",
+  "physics",
+  "roguelite",
+  "heroes",
+  "logistics",
+  "director",
+  "scriptingDx",
+  "multiplayer"
+]);
 
 export function defaultVisuals() {
   return {
@@ -110,6 +128,17 @@ export function validateProjectSchemas(files) {
     );
   }
 
+  validateMechanics(files, err, warn);
+
+  if (files.manifest?.schemaVersion !== PROJECT_SCHEMA_VERSION && hasAuthoredElevation(files)) {
+    err(
+      "project",
+      "project.json",
+      "schemaVersion",
+      `Projects that author map elevation must use project schemaVersion ${PROJECT_SCHEMA_VERSION}.`
+    );
+  }
+
   validateMaps(files.maps, err, warn);
   for (const issue of files.scriptIssues ?? []) {
     err("scriptFile", issue.path ?? "scripts", "source", issue.message ?? "Invalid TowerScript file.");
@@ -124,6 +153,227 @@ export function validateProjectSchemas(files) {
     ok: issues.filter((i) => i.severity === "error").length === 0,
     issues
   };
+}
+
+function validateMechanics(files, err, warn) {
+  const authored = files.mechanicsAuthored ?? files.mechanics !== undefined;
+  let modules = {};
+
+  if (authored) {
+    const manifestVersion = files.manifest?.schemaVersion;
+    if (manifestVersion !== PROJECT_SCHEMA_VERSION) {
+      err(
+        "project",
+        "project.json",
+        "schemaVersion",
+        `Projects that author content/mechanics.json must use project schemaVersion ${PROJECT_SCHEMA_VERSION}.`
+      );
+    }
+
+    const mechanics = files.mechanics;
+    if (!isRecord(mechanics)) {
+      err("mechanics", "content/mechanics.json", "root", "mechanics.json must be an object.");
+    } else {
+      if (mechanics.schemaVersion !== MECHANICS_SCHEMA_VERSION) {
+        const message = Number.isInteger(mechanics.schemaVersion) && mechanics.schemaVersion > MECHANICS_SCHEMA_VERSION
+          ? `Mechanics schemaVersion ${mechanics.schemaVersion} is newer than this CLI supports (${MECHANICS_SCHEMA_VERSION}).`
+          : `Mechanics schemaVersion must be ${MECHANICS_SCHEMA_VERSION}.`;
+        err("mechanics", "content/mechanics.json", "schemaVersion", message);
+      }
+      if (!isRecord(mechanics.modules)) {
+        err("mechanics", "content/mechanics.json", "modules", "modules must be an object keyed by mechanics module ID.");
+      } else {
+        modules = mechanics.modules;
+        for (const [moduleId, module] of Object.entries(modules)) {
+          const modulePath = `modules.${moduleId}`;
+          if (!MECHANICS_MODULE_IDS.has(moduleId)) {
+            err("mechanics", moduleId, modulePath, `Mechanics module "${moduleId}" is not supported.`);
+          }
+          if (!isRecord(module)) {
+            err("mechanics", moduleId, modulePath, `Mechanics module "${moduleId}" must be an object.`);
+            continue;
+          }
+          const supportedVersions = moduleId === "combat"
+            ? COMBAT_MODULE_SCHEMA_VERSIONS
+            : moduleId === "elevation"
+              ? ELEVATION_MODULE_SCHEMA_VERSIONS
+              : BASE_MODULE_SCHEMA_VERSIONS;
+          if (!supportedVersions.has(module.schemaVersion)) {
+            const supported = [...supportedVersions].join(" or ");
+            const message = Number.isInteger(module.schemaVersion)
+              && module.schemaVersion > Math.max(...supportedVersions)
+              ? `Module schemaVersion ${module.schemaVersion} is newer than this CLI supports (${supported}).`
+              : `Module schemaVersion must be ${supported}.`;
+            err("mechanics", moduleId, `${modulePath}.schemaVersion`, message);
+          }
+          if (typeof module.enabled !== "boolean") {
+            err("mechanics", moduleId, `${modulePath}.enabled`, "enabled must be a boolean.");
+          }
+          if (!isRecord(module.profiles)) {
+            err("mechanics", moduleId, `${modulePath}.profiles`, "profiles must be an object keyed by profile ID.");
+            continue;
+          }
+          for (const [profileId, profile] of Object.entries(module.profiles)) {
+            if (!isRecord(profile)) {
+              err("mechanics", moduleId, `${modulePath}.profiles.${profileId}`, `Profile "${profileId}" must be an object.`);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  for (const [missionId, mission] of Object.entries(files.balance?.missions ?? {})) {
+    validateMissionMechanicsSelection(
+      missionId,
+      mission?.mechanics,
+      modules,
+      files.balance?.terrainTypes,
+      err,
+      warn
+    );
+  }
+}
+
+function validateMissionMechanicsSelection(missionId, selection, modules, terrainTypes, err, warn) {
+  if (selection === undefined) return;
+  if (!isRecord(selection)) {
+    err("mission", missionId, "mechanics", "Mission mechanics must be an object.");
+    return;
+  }
+  if (selection.profiles === undefined) return;
+  if (!isRecord(selection.profiles)) {
+    err("mission", missionId, "mechanics.profiles", "Mission mechanics profiles must be an object keyed by module ID.");
+    return;
+  }
+
+  for (const [moduleId, profileId] of Object.entries(selection.profiles)) {
+    const fieldPath = `mechanics.profiles.${moduleId}`;
+    if (!MECHANICS_MODULE_IDS.has(moduleId)) {
+      err("mission", missionId, fieldPath, `Mission selects unsupported mechanics module "${moduleId}".`);
+      continue;
+    }
+    if (typeof profileId !== "string" || profileId.trim() === "") {
+      err("mission", missionId, fieldPath, "Selected mechanics profile ID must be a non-empty string.");
+      continue;
+    }
+
+    const module = isRecord(modules) ? modules[moduleId] : undefined;
+    if (!isRecord(module)) {
+      warn("mission", missionId, fieldPath, `Mission selects profile "${profileId}" from missing mechanics module "${moduleId}".`);
+    } else if (module.enabled !== true) {
+      warn("mission", missionId, fieldPath, `Mission selects profile "${profileId}" from disabled mechanics module "${moduleId}".`);
+    } else if (!isRecord(module.profiles) || !Object.prototype.hasOwnProperty.call(module.profiles, profileId)) {
+      err("mission", missionId, fieldPath, `Mission selects missing profile "${profileId}" from enabled mechanics module "${moduleId}".`);
+    }
+  }
+
+  const reactionProfileId = selection.profiles.reactions;
+  if (typeof reactionProfileId !== "string" || reactionProfileId.trim() === "") return;
+  const reactionModule = isRecord(modules) ? modules.reactions : undefined;
+  const combatProfileId = selection.profiles.combat;
+  const combatModule = isRecord(modules) ? modules.combat : undefined;
+  const combatCompatible = typeof combatProfileId === "string"
+    && isRecord(combatModule)
+    && combatModule.enabled === true
+    && [2, 3].includes(combatModule.schemaVersion)
+    && isRecord(combatModule.profiles)
+    && isRecord(combatModule.profiles[combatProfileId]);
+  if (!combatCompatible) {
+    const reportDependency = reactionModule?.enabled === true ? err : warn;
+    reportDependency(
+      "mission",
+      missionId,
+      "mechanics.profiles.reactions",
+      "The selected reactions profile requires an active mission-selected combat v2/v3 profile (dependency_missing).",
+      { code: "dependency_missing" }
+    );
+    return;
+  }
+
+  if (!isRecord(reactionModule?.profiles) || !isRecord(reactionModule.profiles[reactionProfileId])) return;
+  const reactionProfile = reactionModule.profiles[reactionProfileId];
+  const damageTypes = isRecord(combatModule.profiles[combatProfileId].damageTypes)
+    ? combatModule.profiles[combatProfileId].damageTypes
+    : {};
+  const referenced = collectReactionDamageTypeReferences(reactionProfile);
+  const report = reactionModule.enabled === true ? err : warn;
+  for (const damageTypeId of referenced) {
+    if (!Object.hasOwn(damageTypes, damageTypeId)) {
+      report(
+        "mechanics",
+        "reactions",
+        `modules.reactions.profiles.${reactionProfileId}`,
+        `Reaction profile "${reactionProfileId}" references unknown combat damage type "${damageTypeId}".`,
+        { code: "reaction_damage_type_missing" }
+      );
+    }
+  }
+  const authoredTerrainTags = new Set();
+  if (isRecord(terrainTypes)) {
+    for (const terrain of Object.values(terrainTypes)) {
+      if (!isRecord(terrain) || !Array.isArray(terrain.tags)) continue;
+      for (const tag of terrain.tags) if (typeof tag === "string") authoredTerrainTags.add(tag);
+    }
+  }
+  for (const terrainTag of collectReactionTerrainTagReferences(reactionProfile)) {
+    if (!authoredTerrainTags.has(terrainTag)) {
+      report(
+        "mechanics",
+        "reactions",
+        `modules.reactions.profiles.${reactionProfileId}`,
+        `Reaction profile "${reactionProfileId}" references unavailable authored terrain tag "${terrainTag}" (reaction_terrain_tag_missing).`,
+        { code: "reaction_terrain_tag_missing" }
+      );
+    }
+  }
+}
+
+function collectReactionDamageTypeReferences(profile) {
+  const ids = new Set();
+  const applications = profile?.exposures?.applications?.damageTypes;
+  if (isRecord(applications)) for (const id of Object.keys(applications)) ids.add(id);
+  if (isRecord(profile?.reactions)) {
+    for (const reaction of Object.values(profile.reactions)) {
+      if (!isRecord(reaction)) continue;
+      if (Array.isArray(reaction.trigger?.damageTypes)) {
+        for (const id of reaction.trigger.damageTypes) if (typeof id === "string") ids.add(id);
+      }
+      if (isRecord(reaction.effects)) {
+        for (const effect of Object.values(reaction.effects)) {
+          if (isRecord(effect) && typeof effect.damageType === "string") ids.add(effect.damageType);
+        }
+      }
+    }
+  }
+  return [...ids].sort();
+}
+
+function collectReactionTerrainTagReferences(profile) {
+  const tags = new Set();
+  if (!isRecord(profile?.reactions)) return [];
+  for (const reaction of Object.values(profile.reactions)) {
+    if (!isRecord(reaction)) continue;
+    if (Array.isArray(reaction.requirements)) {
+      for (const requirement of reaction.requirements) {
+        if (isRecord(requirement) && requirement.kind === "terrain_tag" && typeof requirement.tag === "string") {
+          tags.add(requirement.tag);
+        }
+      }
+    }
+    if (isRecord(reaction.effects)) {
+      for (const effect of Object.values(reaction.effects)) {
+        if (isRecord(effect?.target) && effect.target.kind === "terrain_tag" && typeof effect.target.tag === "string") {
+          tags.add(effect.target.tag);
+        }
+      }
+    }
+  }
+  return [...tags].sort();
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function validateNarrative(files, err, warn) {
@@ -465,16 +715,41 @@ function validateMaps(maps, err) {
       err("map", mapId, "root", `Map "${mapId}" must be an object.`);
       continue;
     }
-    if (!Number.isInteger(map.width) || map.width <= 0) err("map", mapId, "width", "Map width must be a positive integer.");
-    if (!Number.isInteger(map.height) || map.height <= 0) err("map", mapId, "height", "Map height must be a positive integer.");
+    if (!Number.isSafeInteger(map.width) || map.width <= 0) err("map", mapId, "width", "Map width must be a positive safe integer.");
+    if (!Number.isSafeInteger(map.height) || map.height <= 0) err("map", mapId, "height", "Map height must be a positive safe integer.");
     if (!Array.isArray(map.pathCenterline)) err("map", mapId, "pathCenterline", "pathCenterline must be an array.");
     if (!Array.isArray(map.terrainOverrides)) err("map", mapId, "terrainOverrides", "terrainOverrides must be an array.");
+    const elevationDescriptor = Object.getOwnPropertyDescriptor(map, "elevationOverrides");
+    if (elevationDescriptor) {
+      if (!("value" in elevationDescriptor)) {
+        err("map", mapId, "elevationOverrides", "elevationOverrides must be an own data property; accessors are not allowed.");
+      } else {
+        try {
+          normalizeElevationOverrides(elevationDescriptor.value, map.width, map.height, `maps.${mapId}.elevationOverrides`);
+        } catch (error) {
+          err("map", mapId, "elevationOverrides", error.message);
+        }
+      }
+    }
     if (map.grid !== undefined) {
       const validHex = map.grid?.kind === "hex" && map.grid.layout === "odd-r";
       const validSquare = map.grid?.kind === "square" && map.grid.adjacency === "cardinal";
       if (!validHex && !validSquare) err("map", mapId, "grid", "grid must be hex/odd-r or square/cardinal.");
     }
   }
+}
+
+function hasAuthoredElevation(files) {
+  for (const map of Object.values(files.maps ?? {})) {
+    if (map && typeof map === "object" && Object.hasOwn(map, "elevationOverrides")) return true;
+  }
+  for (const source of Object.values(files.mapSources ?? {})) {
+    if (!source || typeof source !== "object") continue;
+    if (Object.hasOwn(source, "elevationOverrides")) return true;
+    if (!Array.isArray(source.properties)) continue;
+    if (source.properties.some((property) => property && property.name === "elevationOverrides")) return true;
+  }
+  return false;
 }
 
 function validateMapSources(mapSources, err, warn) {
@@ -486,8 +761,8 @@ function validateMapSources(mapSources, err, warn) {
     if (source.orientation && !["hexagonal", "orthogonal"].includes(source.orientation)) {
       warn("mapSource", sourceName, "orientation", `Map source "${sourceName}" has unsupported orientation "${source.orientation}".`);
     }
-    if (!Number.isInteger(source.width) || source.width <= 0) err("mapSource", sourceName, "width", "Source width must be a positive integer.");
-    if (!Number.isInteger(source.height) || source.height <= 0) err("mapSource", sourceName, "height", "Source height must be a positive integer.");
+    if (!Number.isSafeInteger(source.width) || source.width <= 0) err("mapSource", sourceName, "width", "Source width must be a positive safe integer.");
+    if (!Number.isSafeInteger(source.height) || source.height <= 0) err("mapSource", sourceName, "height", "Source height must be a positive safe integer.");
   }
 }
 

@@ -141,6 +141,25 @@ describe("mcp tool registry", () => {
     expect(Object.keys(result.abilityPresets).sort()).toEqual(["freeze", "path_water", "strike"].sort());
     expect(result.abilityEffects.damage).toBeTruthy();
     expect(result.abilityEffects.status).toBeTruthy();
+    expect(result.modifierSpec).toEqual({
+      schemaVersion: 1,
+      requiredFields: ["id", "target", "stage", "operation", "value"],
+      targets: ["damage"],
+      stages: ["tower_upgrade", "meta", "run", "spatial", "temporary"],
+      operations: ["flat", "additive_ratio", "multiplier"],
+      maxPerResolution: 64,
+      pipelineOrder: ["base", "tower_upgrade", "meta", "run", "spatial", "temporary"],
+      withinStageOrder: ["flat", "additive_ratio", "multiplier", "id_binary_ascending"]
+    });
+    expect(result.damagePacket).toEqual({
+      schemaVersion: 1,
+      requiredFields: ["amount", "source", "target"],
+      optionalFields: ["damageType", "tags", "modifiers"],
+      sourceKinds: ["tower", "ability", "tower_script", "status", "enemy", "leak", "reaction"],
+      targetKinds: ["enemy", "tower", "core"],
+      tags: ["area", "over_time", "armor_piercing", "reaction"],
+      pipelineOrder: ["modifiers", "marks", "armor_matrix", "entity_resistance", "legacy_pierce_only", "shield", "entity_hp", "reactions"]
+    });
     expect(result.currencyRules.primaryRequired).toBe("coins");
     expect(result.missionEconomy.sellRefundRatio.default).toBe(0.7);
     expect(Object.keys(result.missionObjectives.victory)).toEqual(["clearWaves", "surviveSeconds", "killCount", "accumulateResource"]);
@@ -154,8 +173,47 @@ describe("mcp tool registry", () => {
   });
 
   it("returns focused schema domains for progressive discovery", async () => {
+    const combat = await callTool("describe_schema", { domain: "combat" }, {});
+    expect(combat.modifierSpec.stages).toEqual(["tower_upgrade", "meta", "run", "spatial", "temporary"]);
+    expect(combat.damagePacket.sourceKinds).toContain("tower_script");
+    expect(combat.damagePacket.targetKinds).toContain("core");
+    expect(combat.damagePacket.pipelineOrder).toEqual([
+      "modifiers",
+      "marks",
+      "armor_matrix",
+      "entity_resistance",
+      "legacy_pierce_only",
+      "shield",
+      "entity_hp",
+      "reactions"
+    ]);
+    expect(combat.combatShields.authoring).toMatchObject({
+      schemaVersion: 3,
+      supportedModuleSchemaVersions: [1, 2, 3],
+      profile: {
+        optionalFields: ["shields", "damageTypes", "armorTypes", "armorAssignments", "marks"]
+      },
+      armorMatrix: { limits: expect.any(Object) },
+      marks: { limits: expect.any(Object) }
+    });
+    expect(JSON.stringify(combat.combatShields.authoring)).not.toMatch(/reaction/i);
+    expect(combat).not.toHaveProperty("mechanics");
+
     const scripts = await callTool("describe_schema", { domain: "scripts" }, {});
     expect(scripts.requestedDomain).toBe("scripts");
+    expect(scripts.towerScript.schemaVersion).toBe(6);
+    expect(scripts.towerScript.events).toEqual(expect.arrayContaining([
+      "enemyShieldChanged", "towerShieldChanged", "enemyMarkChanged"
+    ]));
+    expect(scripts.towerScript.actions.restoreEnemyShield.required).toEqual({
+      target: "enemy target", amount: "expression >= 0"
+    });
+    expect(scripts.towerScript.actions.restoreTowerShield.required).toEqual({
+      target: "tower target", amount: "expression >= 0"
+    });
+    expect(scripts.towerScript.actions.applyEnemyMark).toBeTruthy();
+    expect(scripts.towerScript.actions.clearEnemyMark).toBeTruthy();
+    expect(scripts.towerScript.actions).not.toHaveProperty("damageShield");
     expect(scripts.towerScript.actions.spawnEnemy).toBeTruthy();
     expect(scripts).not.toHaveProperty("attackKinds");
 

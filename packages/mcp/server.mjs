@@ -178,7 +178,15 @@ async function handleMessage(message) {
         if (isRequest) reply(id, { content: toolResultContent(workspaceSanitize(result)) });
       } catch (error) {
         const message = workspaceSanitize(String(error?.message ?? error));
-        if (isRequest) reply(id, { content: [{ type: "text", text: message }], isError: true });
+        const errorCode = typeof error?.code === "string" ? error.code : undefined;
+        const text = errorCode
+          ? JSON.stringify({ error: { code: errorCode, message } })
+          : message;
+        if (isRequest) reply(id, {
+          content: [{ type: "text", text }],
+          isError: true,
+          ...(errorCode ? { _meta: { "towerforge/errorCode": errorCode } } : {})
+        });
       }
       return;
     }

@@ -1,6 +1,40 @@
 import { type GameContentRegistry } from "../content/registry.js";
+import { MARK_LIMITS, REACTION_LIMITS } from "../content/mechanics.js";
+import {
+  resolveActiveCombatMechanics,
+  resolveEnemyArmorMatrix,
+  type ActiveCombatMechanics
+} from "../content/combat-mechanics.js";
+import { resolveActiveReactionsMechanics } from "../content/reaction-mechanics.js";
+import {
+  NAVIGATION_LIMITS,
+  resolveActiveNavigationMechanics,
+  type DynamicFlowNavigationProfileV1
+} from "../content/navigation-mechanics.js";
+import {
+  LINE_OF_SIGHT_LIMITS,
+  resolveActiveElevationMechanics,
+  resolveActiveHighGroundMechanics,
+  resolveActiveLineOfSightMechanics
+} from "../content/elevation-mechanics.js";
+import {
+  PHYSICS_LIMITS,
+  inspectOwnDataEffect,
+  parseDisplacementEffectV1,
+  resolveActivePhysicsMechanics,
+  type ActivePhysicsMechanicsV1
+} from "../content/physics-mechanics.js";
+import {
+  TERRAFORMING_LIMITS,
+  resolveActiveTerraformingMechanics,
+  type ActiveTerraformingMechanicsV1
+} from "../content/terraforming-mechanics.js";
 import { evaluateTowerScriptExpression } from "../scripting/expression.js";
-import { TOWER_SCRIPT_LIMITS } from "../scripting/schema-descriptor.js";
+import {
+  TOWER_SCRIPT_EVENTS,
+  TOWER_SCRIPT_EVENT_FIELDS,
+  TOWER_SCRIPT_LIMITS
+} from "../scripting/schema-descriptor.js";
 import type {
   TowerScriptAction,
   TowerScriptBinding,
@@ -10,11 +44,81 @@ import type {
   TowerScriptEventName,
   TowerScriptHandler,
   TowerScriptJson,
-  TowerScriptTileTarget
+  TowerScriptTileTarget,
+  TerraformOperationV1,
+  TerraformTilesActionV1
 } from "../scripting/types.js";
 import { coordKey } from "./hex.js";
 import { GridMap } from "./map.js";
+import {
+  computeHighGroundPairModifiers,
+  type ActiveHighGroundMechanics
+} from "./high-ground.js";
+import { NavigationResolver } from "./navigation-runtime.js";
+import { NavigationFieldLookupCache } from "./navigation-movement.js";
+import type { NavigationFieldResult } from "./navigation-field.js";
+import {
+  planDynamicTerraformingNavigation,
+  type DynamicTerraformingNavigationPlan
+} from "./terraforming-navigation.js";
+import {
+  normalizeNavigationAnalysisRequestV1,
+  type NavigationAnalysisRequestV1,
+  type NavigationAnalysisV1,
+  type NormalizedNavigationAnalysisRequestV1
+} from "./navigation-analysis.js";
+import {
+  analyzeLineOfSightTargets,
+  normalizeLineOfSightAnalysisRequestV1,
+  traceLineOfSight,
+  type LineOfSightAnalysisRequestV1,
+  type LineOfSightAnalysisV1,
+  type LineOfSightRuntimeProfileV2
+} from "./line-of-sight.js";
+import {
+  DamageResolver,
+  type DamagePacket,
+  type DamageResolution,
+  type DamageResolutionContext,
+  type DamageSourceRef,
+  type DamageTag
+} from "./damage.js";
+import type { ModifierSpec } from "./modifiers.js";
+import {
+  GAME_CHECKPOINT_SCHEMA_VERSION,
+  SIMULATION_ENGINE_VERSION,
+  checkpointDataField,
+  checkpointObjectDescriptors,
+  cloneCheckpointJson,
+  computeCheckpointStateDigest,
+  inspectCheckpointEnvelope,
+  requireExactCheckpointKeys,
+  type GameCheckpointIdentityV1,
+  type GameCheckpointStateV1,
+  type GameCheckpointV1
+} from "./checkpoint.js";
+import { SeededRng, type GameSeed, type SeededRngStateV1 } from "./rng.js";
+import {
+  type ActiveCombatShieldDefinitions,
+  type CombatState,
+  type DamageApplicationResult,
+  type MarkStateV1,
+  type ShieldStateV1
+} from "./shields.js";
+import { canonicalStringify, getSimulationContentDigest, stableDigest } from "./stable-digest.js";
+import {
+  planReactions,
+  type ActiveReactionsMechanics,
+  type ExposureRuntimeStateV1,
+  type ReactionPlannerOutput,
+  type ReactionStateV1
+} from "./reactions.js";
 import { TOWER_TARGET_MODES } from "./types.js";
+import { createGridTopology, normalizeGridDefinition, type GridTopology } from "./topology.js";
+import {
+  planTileDisplacement,
+  type DisplacementStopReason
+} from "./displacement.js";
 import type {
   AbilityEffect,
   ActionResult,
@@ -23,10 +127,13 @@ import type {
   DifficultyDefinition,
   EffectPipelineAttackModel,
   EnemyPhaseSpawnDefinition,
+  EnemyNavigationStateV1,
   EnemyState,
   EnemyTargetClass,
   GameEvent,
   GameSnapshot,
+  GridDefinition,
+  GridPathRoute,
   HexCoord,
   HexTile,
   MissionAbilityDefinition,
@@ -37,11 +144,11 @@ import type {
   ResourceBag,
   ResourceCost,
   RuntimeTerrainOverride,
+  NavigationSnapshotV1,
   StatusEffectSpec,
   SunlightTile,
   TemporaryWaterTile,
   TowerTargetMode,
-  TowerEffectSpec,
   TowerState,
   WaveState
 } from "./types.js";
@@ -52,12 +159,135 @@ interface SpawnItem {
   routeId?: string;
 }
 
+interface NavigationMandatoryPair {
+  readonly movementProfileId: string;
+  readonly routeId: string;
+  readonly source: HexCoord;
+}
+
+interface NavigationFieldGroup {
+  readonly movementProfileId: string;
+  readonly goal: HexCoord;
+  readonly routeIds: Set<string>;
+}
+
+interface NavigationSpawnPair {
+  readonly enemyTypeId: string;
+  readonly routeId: string;
+}
+
+interface NavigationAnalysisRelaxationBudget {
+  used: number;
+  readonly limit: number;
+  readonly fields: WeakSet<NavigationFieldResult>;
+}
+
+interface NavigationPlacementAnalysisContext {
+  readonly pairs: readonly NavigationMandatoryPair[];
+  readonly lookups: NavigationFieldLookupCache;
+  readonly baselineUnavailable?: NavigationMandatoryPair;
+  readonly budget: NavigationAnalysisRelaxationBudget;
+}
+
 interface DamageResolutionOptions {
   aoe?: boolean;
+  overTime?: boolean;
   damageType?: string;
   armorPiercing?: boolean;
   applyLegacyStatus?: boolean;
 }
+
+interface DisplacementSource {
+  readonly sourceKind: "tower" | "ability";
+  readonly sourceId: string;
+  readonly sourceCoord: HexCoord;
+}
+
+interface DisplacementActivationBudget {
+  used: number;
+  readonly limit: number;
+}
+
+type RuntimeDisplacementStopReason = DisplacementStopReason | "goal_blocked" | "immune";
+
+interface ResolvedEnemyDamageOptions {
+  damageType?: string;
+  tags?: readonly DamageTag[];
+  modifiers?: readonly ModifierSpec[];
+  context?: DamageResolutionContext;
+  reactionRuntime?: ReactionRuntimeContext;
+}
+
+type ReactionQueuedPacket = ReactionPlannerOutput["secondaryPlans"][number];
+
+interface ReactionRootRuntime {
+  readonly queue: ReactionQueuedPacket[];
+  readonly rootEnemyId: string;
+  readonly rootEnemyTypeId: string;
+  readonly diagnostics: Partial<Record<"depth" | "secondary_packets" | "live_exposures", {
+    limit: number;
+    dropped: number;
+  }>>;
+  processing: boolean;
+  scheduledPackets: number;
+}
+
+interface ReactionRuntimeContext {
+  readonly depth: number;
+  readonly allowReactions: boolean;
+  readonly root: ReactionRootRuntime;
+}
+
+function emptyDataRecord<T>(): Record<string, T> {
+  return Object.create(null) as Record<string, T>;
+}
+
+function compareBinary(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function cloneExposureStates(
+  source: Readonly<Record<string, ExposureRuntimeStateV1>>,
+  canonical = false,
+  plain = false
+): Record<string, ExposureRuntimeStateV1> {
+  const cloned = plain ? {} : emptyDataRecord<ExposureRuntimeStateV1>();
+  const exposureIds = Object.keys(source);
+  if (canonical) exposureIds.sort();
+  for (const exposureId of exposureIds) {
+    Object.defineProperty(cloned, exposureId, {
+      value: { ...source[exposureId]! },
+      enumerable: true,
+      configurable: true,
+      writable: true
+    });
+  }
+  return cloned;
+}
+
+function cloneEnemyExposureStates(
+  source: Readonly<Record<string, Readonly<Record<string, ExposureRuntimeStateV1>>>>,
+  canonical = false,
+  plain = false
+): Record<string, Record<string, ExposureRuntimeStateV1>> {
+  const cloned = plain ? {} : emptyDataRecord<Record<string, ExposureRuntimeStateV1>>();
+  const enemyIds = Object.keys(source);
+  if (canonical) enemyIds.sort();
+  for (const enemyId of enemyIds) {
+    Object.defineProperty(cloned, enemyId, {
+      value: cloneExposureStates(source[enemyId]!, canonical, plain),
+      enumerable: true,
+      configurable: true,
+      writable: true
+    });
+  }
+  return cloned;
+}
+
+type MutableDamageTarget =
+  | { readonly kind: "enemy"; readonly enemy: EnemyState }
+  | { readonly kind: "core" }
+  | { readonly kind: "tower"; readonly tower: TowerState };
 
 interface TowerScriptSelfContext {
   scope: TowerScriptBinding["scope"];
@@ -76,9 +306,220 @@ interface TowerScriptExecutionContext {
   eventName: TowerScriptEventName;
 }
 
+const INVALID_SHIELD_RESTORE_MESSAGE = "TowerScript action is invalid for the current shield target.";
+
+class TowerScriptInvalidActionError extends Error {
+  constructor(message = INVALID_SHIELD_RESTORE_MESSAGE) {
+    super(message);
+    this.name = "TowerScriptInvalidActionError";
+  }
+}
+
+type TerraformingFailureReason =
+  | "terraform.invalid_operation"
+  | "terraform.operation_budget_exceeded"
+  | "terraform.duplicate_target"
+  | "terraform.target_outside_map"
+  | "terraform.transition_missing"
+  | "terraform.transition_source_tag_mismatch"
+  | "terraform.override_budget_exceeded"
+  | "terraform.authored_route_unavailable"
+  | "terraform.last_authored_route_blocked"
+  | "terraform.navigation_unavailable"
+  | "terraform.last_path_blocked";
+
+class TowerScriptTerraformingError extends Error {
+  constructor(
+    readonly code: "invalid_action" | "budget_exceeded",
+    readonly reasonKey: TerraformingFailureReason,
+    message: string
+  ) {
+    super(message);
+    this.name = "TowerScriptTerraformingError";
+  }
+}
+
+interface ResolvedPersistentTerrainOperation {
+  readonly kind: "set_terrain" | "restore_terrain";
+  readonly coord: HexCoord;
+  readonly transitionId?: string;
+}
+
+interface PersistentTerrainCandidate {
+  readonly overrides: Map<string, RuntimeTerrainOverride>;
+  readonly writes: readonly { readonly coord: HexCoord; readonly terrain: string }[];
+  readonly events: readonly Extract<GameEvent, { type: "terrainChanged" }>[];
+}
+
+interface PropertyDescriptorSnapshot {
+  readonly key: PropertyKey;
+  readonly configurable: boolean;
+  readonly enumerable: boolean;
+  readonly writable?: boolean;
+  readonly value?: unknown;
+  readonly get?: (() => unknown) | undefined;
+  readonly set?: ((value: unknown) => void) | undefined;
+}
+
+interface DerivedMapIntegrityBaseline {
+  readonly mapRef: GridMap;
+  readonly tilesRef: Map<string, HexTile>;
+  readonly baseTerrainRef: Map<string, string>;
+  readonly topologyRef: GridTopology;
+  readonly gridRef: GridDefinition;
+  readonly topologyGridRef: GridDefinition;
+  readonly mapOwnShape: readonly PropertyDescriptorSnapshot[];
+  readonly mapPrototypeRef: object;
+  readonly mapPrototypeShape: readonly PropertyDescriptorSnapshot[];
+  readonly definitionCanonical: string;
+  readonly id: string;
+  readonly width: number;
+  readonly height: number;
+  readonly grid: GridDefinition;
+  readonly topologyGrid: GridDefinition;
+  readonly topologyDirectionCount: GridTopology["directionCount"];
+  readonly topologyMethods: Readonly<{
+    neighbors: GridTopology["neighbors"];
+    distance: GridTopology["distance"];
+    line: GridTopology["line"];
+    directionBetween: GridTopology["directionBetween"];
+    tilesWithin: GridTopology["tilesWithin"];
+    footprintSize: GridTopology["footprintSize"];
+  }>;
+  readonly baseTiles: readonly Readonly<HexTile>[];
+  readonly pathCenterline: readonly Readonly<HexCoord>[];
+  readonly pathRoutes: readonly Readonly<{
+    id: string;
+    pathCenterline: readonly Readonly<HexCoord>[];
+  }>[];
+  readonly spawnCoord: Readonly<HexCoord>;
+  readonly coreCoord: Readonly<HexCoord>;
+}
+
+const NATIVE_MAP_PROTOTYPE = Map.prototype;
+const NATIVE_MAP_GET = Map.prototype.get;
+const NATIVE_MAP_SET = Map.prototype.set;
+const NATIVE_MAP_HAS = Map.prototype.has;
+const NATIVE_MAP_ENTRIES = Map.prototype.entries;
+const NATIVE_MAP_SIZE_GETTER = Object.getOwnPropertyDescriptor(Map.prototype, "size")?.get;
+const NATIVE_MAP_ITERATOR_PROTOTYPE = Object.getPrototypeOf(Reflect.apply(NATIVE_MAP_ENTRIES, new Map(), []));
+const NATIVE_MAP_ITERATOR_NEXT = Object.getOwnPropertyDescriptor(NATIVE_MAP_ITERATOR_PROTOTYPE, "next")?.value as
+  | ((this: IterableIterator<unknown>) => IteratorResult<unknown>)
+  | undefined;
+const NATIVE_MAP_INTRINSIC_KEYS = Object.freeze([
+  "get", "set", "has", "delete", "clear", "entries", "values", "size", Symbol.iterator
+] as const);
+
+function snapshotPropertyDescriptor(key: PropertyKey, descriptor: PropertyDescriptor): PropertyDescriptorSnapshot {
+  return Object.freeze("value" in descriptor
+    ? {
+        key,
+        configurable: Boolean(descriptor.configurable),
+        enumerable: Boolean(descriptor.enumerable),
+        writable: Boolean(descriptor.writable),
+        value: descriptor.value
+      }
+    : {
+        key,
+        configurable: Boolean(descriptor.configurable),
+        enumerable: Boolean(descriptor.enumerable),
+        get: descriptor.get,
+        set: descriptor.set
+      });
+}
+
+function capturePropertyDescriptorShape(value: object): readonly PropertyDescriptorSnapshot[] {
+  const descriptors = Object.getOwnPropertyDescriptors(value) as Record<PropertyKey, PropertyDescriptor>;
+  return Object.freeze(Reflect.ownKeys(descriptors).map((key) => snapshotPropertyDescriptor(key, descriptors[key]!)));
+}
+
+const PINNED_GRID_MAP_PROTOTYPE = GridMap.prototype;
+const PINNED_GRID_MAP_PROTOTYPE_SHAPE = capturePropertyDescriptorShape(PINNED_GRID_MAP_PROTOTYPE);
+const PINNED_GRID_MAP_OWN_KEYS = Object.freeze([
+  "id", "width", "height", "grid", "topology", "tiles", "pathCenterline", "pathRoutes",
+  "spawnCoord", "coreCoord", "definition", "baseTerrainByCoord"
+]);
+
+const NATIVE_MAP_INTRINSIC_SHAPE = Object.freeze(NATIVE_MAP_INTRINSIC_KEYS.map((key) => {
+  const descriptor = Object.getOwnPropertyDescriptor(NATIVE_MAP_PROTOTYPE, key);
+  if (!descriptor) throw new Error(`Missing native Map intrinsic ${String(key)}.`);
+  return snapshotPropertyDescriptor(key, descriptor);
+}));
+
+function descriptorMatchesSnapshot(
+  actual: PropertyDescriptor | undefined,
+  expected: PropertyDescriptorSnapshot
+): boolean {
+  if (!actual) return false;
+  if (
+    Boolean(actual.configurable) !== expected.configurable
+    || Boolean(actual.enumerable) !== expected.enumerable
+  ) return false;
+  if ("value" in actual) {
+    return Object.prototype.hasOwnProperty.call(expected, "value")
+      && Boolean(actual.writable) === expected.writable
+      && actual.value === expected.value;
+  }
+  return !Object.prototype.hasOwnProperty.call(expected, "value")
+    && actual.get === expected.get
+    && actual.set === expected.set;
+}
+
+function assertPinnedNativeMapIntrinsics(): void {
+  if (Map.prototype !== NATIVE_MAP_PROTOTYPE) {
+    throw new Error("Derived map integrity rejected a changed native Map prototype.");
+  }
+  for (const expected of NATIVE_MAP_INTRINSIC_SHAPE) {
+    if (!descriptorMatchesSnapshot(Object.getOwnPropertyDescriptor(NATIVE_MAP_PROTOTYPE, expected.key), expected)) {
+      throw new Error(`Derived map integrity rejected changed Map intrinsic ${String(expected.key)}.`);
+    }
+  }
+  const nextDescriptor = Object.getOwnPropertyDescriptor(NATIVE_MAP_ITERATOR_PROTOTYPE, "next");
+  if (!nextDescriptor || nextDescriptor.value !== NATIVE_MAP_ITERATOR_NEXT) {
+    throw new Error("Derived map integrity rejected a changed Map iterator intrinsic.");
+  }
+}
+
+function assertPinnedGridMapSurface(map: GridMap): void {
+  if (Object.getPrototypeOf(map) !== PINNED_GRID_MAP_PROTOTYPE) {
+    throw new Error("Derived map integrity rejected a changed GridMap prototype identity.");
+  }
+  const prototypeDescriptors = Object.getOwnPropertyDescriptors(PINNED_GRID_MAP_PROTOTYPE) as
+    Record<PropertyKey, PropertyDescriptor>;
+  if (
+    Reflect.ownKeys(prototypeDescriptors).length !== PINNED_GRID_MAP_PROTOTYPE_SHAPE.length
+    || PINNED_GRID_MAP_PROTOTYPE_SHAPE.some((expected) => (
+      !descriptorMatchesSnapshot(prototypeDescriptors[expected.key], expected)
+    ))
+  ) {
+    throw new Error("Derived map integrity rejected changed GridMap prototype methods.");
+  }
+  const ownDescriptors = Object.getOwnPropertyDescriptors(map);
+  const ownKeys = Reflect.ownKeys(ownDescriptors);
+  if (
+    ownKeys.length !== PINNED_GRID_MAP_OWN_KEYS.length
+    || ownKeys.some((key) => typeof key !== "string" || !PINNED_GRID_MAP_OWN_KEYS.includes(key))
+  ) {
+    throw new Error("Derived map integrity rejected a GridMap own method shadow or accessor.");
+  }
+  for (const key of PINNED_GRID_MAP_OWN_KEYS) {
+    const descriptor = ownDescriptors[key];
+    if (
+      !descriptor
+      || !("value" in descriptor)
+      || !descriptor.enumerable
+      || !descriptor.configurable
+      || !descriptor.writable
+    ) {
+      throw new Error(`Derived map integrity rejected GridMap own descriptor ${key}.`);
+    }
+  }
+}
+
 const SCRIPT_GAME_EVENT_NAMES = new Set<TowerScriptEventName>([
   "towerPlaced", "towerSold", "towerMoved", "towerUpgraded", "towerDestroyed", "towerTargetModeChanged",
-  "towerFired", "towerResourcesGranted", "enemyHit", "enemyKilled", "enemyLeaked", "enemySpawnedOnDeath",
+  "towerFired", "towerResourcesGranted", "towerShieldChanged", "enemyHit", "enemyShieldChanged", "enemyMarkChanged", "enemyKilled", "enemyLeaked", "enemySpawnedOnDeath",
+  "enemyExposureChanged", "enemyReactionTriggered",
   "enemyPhaseSpawned", "waveStarted", "waveCleared", "resourcesGranted", "abilityUsed", "objectiveCompleted",
   "enemyEnteredTile", "terrainChanged", "objectiveFailed", "starEarned", "victory", "defeat"
 ]);
@@ -89,6 +530,12 @@ export interface TowerDefenseGameOptions {
   difficultyId?: string;
   /** Persistent profile input. The pure engine consumes levels but never reads or writes storage. */
   metaUpgradeLevels?: Record<string, number>;
+  /** Deterministic simulation seed. Omitted legacy games use the stable numeric seed 0. */
+  seed?: GameSeed;
+}
+
+interface TowerDefenseGameInternalOptions {
+  skipGameStarted?: boolean;
 }
 
 export class TowerDefenseGame {
@@ -112,6 +559,25 @@ export class TowerDefenseGame {
   private readonly maxCoreHp: number;
   private readonly towerDamageMultiplier: number;
   private readonly towerFireRateMetaMultiplier: number;
+  private readonly activeCombatMechanics: ActiveCombatMechanics | undefined;
+  private readonly activeReactionsMechanics: ActiveReactionsMechanics | undefined;
+  private readonly activeNavigationProfile: DynamicFlowNavigationProfileV1 | undefined;
+  private readonly activeNavigationProfileId: string | undefined;
+  private readonly activeElevation: boolean;
+  private readonly activeLineOfSightProfile: LineOfSightRuntimeProfileV2 | undefined;
+  private readonly activeHighGroundProfile: ActiveHighGroundMechanics | undefined;
+  private readonly activePhysicsMechanics: ActivePhysicsMechanicsV1 | undefined;
+  private readonly activeTerraformingMechanics: ActiveTerraformingMechanicsV1 | undefined;
+  private readonly navigationMandatoryPairs: readonly NavigationMandatoryPair[];
+  private readonly navigationKnownPairs: readonly NavigationMandatoryPair[];
+  private navigationResolver: NavigationResolver | undefined;
+  private navigationFieldLookupCache: NavigationFieldLookupCache | undefined;
+  private navigationEnemyFields: Map<string, NavigationFieldResult> | undefined;
+  private readonly combatShieldDefinitions: ActiveCombatShieldDefinitions | undefined;
+  private enemyShields: Record<string, ShieldStateV1> = {};
+  private towerShields: Record<string, ShieldStateV1> = {};
+  private enemyMarks: Record<string, Record<string, MarkStateV1>> = {};
+  private enemyExposures: Record<string, Record<string, ExposureRuntimeStateV1>> = emptyDataRecord();
 
   private enemyCounter = 0;
   private towerCounter = 0;
@@ -135,6 +601,8 @@ export class TowerDefenseGame {
   private readonly staticPathRoutesSnapshot: GameSnapshot["pathRoutes"];
   private readonly staticSpawnCoordSnapshot: HexCoord;
   private readonly staticCoreCoordSnapshot: HexCoord;
+  private readonly staticElevationSnapshot: GameSnapshot["elevation"];
+  private readonly derivedMapIntegrityBaseline: DerivedMapIntegrityBaseline;
   private scriptValues: Record<string, Record<string, Record<string, TowerScriptJson>>> = {};
   private scriptDiagnostics: TowerScriptDiagnostic[] = [];
   private scriptHandlerLastRun: Record<string, number> = {};
@@ -142,9 +610,15 @@ export class TowerDefenseGame {
   private scriptActionsRemaining = 0;
   private scriptTerrainChangesRemaining = 0;
   private scriptSignalDepth = 0;
+  private displacementStepAttemptsThisTick = 0;
+  private initialRngState: SeededRngStateV1;
+  private rng: SeededRng;
 
-  constructor(options: TowerDefenseGameOptions) {
+  constructor(options: TowerDefenseGameOptions, internal: TowerDefenseGameInternalOptions = {}) {
+    assertPinnedNativeMapIntrinsics();
     this.content = options.content;
+    this.rng = new SeededRng(options.seed ?? 0);
+    this.initialRngState = this.rng.exportState();
     // Currencies are content-defined; "coins" is always guaranteed as the primary (first) currency.
     // Dedupe and reorder defensively so the engine is correct even on content built without the loader.
     const declared = this.content.currencies?.length ? this.content.currencies : [{ id: "coins", label: "Coins" }];
@@ -167,7 +641,41 @@ export class TowerDefenseGame {
       throw new Error(`Mission "${missionId}" not found in content registry.`);
     }
     this.mission = mission;
+    this.activeCombatMechanics = resolveActiveCombatMechanics(this.content, missionId);
+    this.activeReactionsMechanics = resolveActiveReactionsMechanics(this.content, missionId);
+    this.combatShieldDefinitions = this.activeCombatMechanics?.shields;
     this.map = this.mission.mapFactory();
+    assertPinnedGridMapSurface(this.map);
+    this.activeElevation = resolveActiveElevationMechanics(this.content, missionId) !== undefined;
+    this.activeLineOfSightProfile = resolveActiveLineOfSightMechanics(this.content, missionId);
+    this.activeHighGroundProfile = resolveActiveHighGroundMechanics(this.content, missionId);
+    this.activePhysicsMechanics = resolveActivePhysicsMechanics(this.content, missionId);
+    this.activeTerraformingMechanics = resolveActiveTerraformingMechanics(this.content, missionId);
+    const selectedNavigation = resolveActiveNavigationMechanics(this.content, missionId);
+    if (selectedNavigation?.mode === "dynamic_flow") {
+      this.activeNavigationProfileId = selectedNavigation.profileId;
+      this.activeNavigationProfile = Object.freeze({
+        mode: "dynamic_flow",
+        defaultMovementProfileId: selectedNavigation.defaultMovementProfileId,
+        movementProfiles: selectedNavigation.movementProfiles,
+        ...(selectedNavigation.enemyMovementProfiles === undefined
+          ? {}
+          : { enemyMovementProfiles: selectedNavigation.enemyMovementProfiles })
+      });
+      this.navigationKnownPairs = this.buildNavigationWavePairs(this.activeNavigationProfile);
+      this.navigationMandatoryPairs = this.buildNavigationMandatoryPairs(this.activeNavigationProfile);
+      this.navigationResolver = this.createNavigationResolver([]);
+      this.navigationFieldLookupCache = new NavigationFieldLookupCache();
+      this.navigationEnemyFields = new Map();
+    } else {
+      this.activeNavigationProfileId = undefined;
+      this.activeNavigationProfile = undefined;
+      this.navigationKnownPairs = Object.freeze([]);
+      this.navigationMandatoryPairs = Object.freeze([]);
+      this.navigationResolver = undefined;
+      this.navigationFieldLookupCache = undefined;
+      this.navigationEnemyFields = undefined;
+    }
     this.difficulty = this.content.difficulties.find((item) => item.id === options.difficultyId)
       ?? this.content.difficulties.find((item) => item.id === this.content.defaultDifficultyId)
       ?? { id: "normal", label: "Normal" };
@@ -187,6 +695,14 @@ export class TowerDefenseGame {
     }));
     this.staticSpawnCoordSnapshot = { ...this.map.spawnCoord };
     this.staticCoreCoordSnapshot = { ...this.map.coreCoord };
+    this.staticElevationSnapshot = this.activeElevation
+      ? Object.freeze({
+          schemaVersion: 1 as const,
+          defaultElevation: 0 as const,
+          overrides: Object.freeze(this.map.getElevationOverrides().map((entry) => Object.freeze({ ...entry })))
+        })
+      : undefined;
+    this.derivedMapIntegrityBaseline = this.captureDerivedMapIntegrityBaseline();
     this.maxCoreHp = Math.max(
       1,
       this.mission.startingCoreHp * (this.difficulty.coreHpMultiplier ?? 1) + this.metaEffectTotal("coreHp", "amountPerLevel")
@@ -194,9 +710,11 @@ export class TowerDefenseGame {
     this.coreHp = this.maxCoreHp;
     this.resources = this.initialResources();
     this.initializeScripts();
-    this.beginScriptTransaction();
-    this.runScriptEvent("gameStarted", { type: "gameStarted" });
-    this.processScriptEvents();
+    if (!internal.skipGameStarted) {
+      this.beginScriptTransaction();
+      this.runScriptEvent("gameStarted", { type: "gameStarted" });
+      this.processScriptEvents();
+    }
   }
 
   get coins(): number {
@@ -220,6 +738,7 @@ export class TowerDefenseGame {
   }
 
   reset(): void {
+    this.rng = SeededRng.fromState(this.initialRngState);
     this.coreHp = this.maxCoreHp;
     this.resources = this.initialResources();
     this.waveIndex = 0;
@@ -232,8 +751,13 @@ export class TowerDefenseGame {
     }
 
     this.enemies = [];
+    this.navigationEnemyFields?.clear();
     this.towers = [];
+    this.enemyShields = {};
+    this.towerShields = {};
+    this.enemyMarks = {};
     this.lastEvents = [];
+    if (this.activePhysicsMechanics) this.displacementStepAttemptsThisTick = 0;
     this.enemyCounter = 0;
     this.towerCounter = 0;
     this.clearedWaveCount = 0;
@@ -256,6 +780,7 @@ export class TowerDefenseGame {
     for (const tile of this.map.tiles.values()) {
       delete tile.occupiedBy;
     }
+    this.syncNavigationResolver();
   }
 
   startNextWave(): ActionResult {
@@ -306,11 +831,26 @@ export class TowerDefenseGame {
     let firstReason = "No valid build space.";
     let firstReasonKey: ActionResult["reasonKey"] = "reason.noBuildSpace";
     let firstReasonParams: ActionResult["reasonParams"] | undefined;
+    let navigationAnalyses = 0;
     for (const tile of this.map.tiles.values()) {
+      if (
+        this.navigationResolver
+        && navigationAnalyses >= NAVIGATION_LIMITS.placementAnalysisCoordinates
+      ) {
+        return this.fail(
+          "Dynamic navigation placement analysis budget exceeded.",
+          "reason.navigationAnalysisBudgetExceeded",
+          { limit: NAVIGATION_LIMITS.placementAnalysisCoordinates }
+        );
+      }
       const result = this.canPlaceTower(typeId, tile);
       if (result.ok) {
         return { ok: true };
       }
+      if (
+        this.navigationResolver
+        && (result.reasonKey === "reason.lastPathBlocked" || result.reasonKey === "reason.navigationUnavailable")
+      ) navigationAnalyses += 1;
       firstReason = result.reason ?? firstReason;
       firstReasonKey = result.reasonKey ?? firstReasonKey;
       firstReasonParams = result.reasonParams ?? firstReasonParams;
@@ -350,7 +890,9 @@ export class TowerDefenseGame {
 
     this.spendResources(type.cost);
     this.towers.push(tower);
+    this.initializeTowerShield(tower);
     this.map.setOccupied(tower.footprint, towerId);
+    this.syncNavigationOccupancy();
     const placedTile = this.map.getTile(coord)!;
     this.lastEvents.push({
       type: "towerPlaced",
@@ -415,6 +957,7 @@ export class TowerDefenseGame {
     tower.coord = this.cleanCoord(coord);
     tower.footprint = footprint;
     this.map.setOccupied(footprint, tower.id);
+    this.syncNavigationOccupancy();
     this.lastEvents.push({ type: "towerMoved", towerId, from, to: this.cleanCoord(coord), cost: this.cloneResources(moveTowerCost) });
     this.finishScriptedAction();
     return { ok: true };
@@ -612,11 +1155,81 @@ export class TowerDefenseGame {
     return undefined;
   }
 
-  private applyAbilityEffect(enemy: EnemyState, effect: AbilityEffect): void {
-    if (effect.kind === "damage") {
-      enemy.hp -= Math.max(0, effect.amount); // reward/removal handled by the next removeDeadEnemies() pass
-    } else if (effect.kind === "status") {
-      this.applyStatusEffect(enemy, effect.status);
+  private displacementEffectRanks(effects: readonly unknown[]): ReadonlyMap<number, number> {
+    const ranks = new Map<number, number>();
+    let displacementIndex = 0;
+    effects.forEach((effect, index) => {
+      const inspected = inspectOwnDataEffect(effect);
+      if (!inspected.ok || inspected.kind !== "displacement") return;
+      ranks.set(index, displacementIndex);
+      displacementIndex += 1;
+    });
+    return ranks;
+  }
+
+  private reserveDisplacementEffect(
+    value: unknown,
+    activationBudget: DisplacementActivationBudget | undefined,
+    includeTickBudget: boolean
+  ): ReturnType<typeof parseDisplacementEffectV1> {
+    if (!this.activePhysicsMechanics || !activationBudget) return undefined;
+    const effect = parseDisplacementEffectV1(value);
+    if (!effect) return undefined;
+    const reserved = effect.distance;
+    if (activationBudget.used + reserved > activationBudget.limit) return undefined;
+    if (includeTickBudget
+      && this.displacementStepAttemptsThisTick + reserved > PHYSICS_LIMITS.stepAttemptsPerTick) return undefined;
+    activationBudget.used += reserved;
+    if (includeTickBudget) this.displacementStepAttemptsThisTick += reserved;
+    return effect;
+  }
+
+  private safeAbilityEffectsForEvent(effects: readonly unknown[]): AbilityEffect[] {
+    const safe: AbilityEffect[] = [];
+    for (const value of effects) {
+      const inspected = inspectOwnDataEffect(value);
+      if (!inspected.ok) continue;
+      if (inspected.kind === "displacement") {
+        if (!this.activePhysicsMechanics) continue;
+        const effect = parseDisplacementEffectV1(inspected.record);
+        if (effect) safe.push(effect);
+      } else if (inspected.kind === "damage" || inspected.kind === "status") {
+        safe.push(inspected.record as unknown as AbilityEffect);
+      }
+    }
+    return safe;
+  }
+
+  private applyAbilityEffect(
+    enemy: EnemyState,
+    effectValue: unknown,
+    abilityId: MissionAbilityId,
+    center: HexCoord,
+    displacementAllowed: boolean,
+    displacementBudget: DisplacementActivationBudget | undefined
+  ): void {
+    const inspected = inspectOwnDataEffect(effectValue);
+    if (!inspected.ok) return;
+    const effect = inspected.record;
+    if (inspected.kind === "damage") {
+      if (typeof effect.amount !== "number" || !Number.isFinite(effect.amount)) return;
+      this.applyResolvedEnemyDamage(
+        enemy,
+        Math.max(0, effect.amount),
+        { kind: "ability", abilityId },
+        { tags: ["area"] }
+      ); // reward/removal handled by the next removeDeadEnemies() pass
+    } else if (inspected.kind === "status") {
+      if (!effect.status || typeof effect.status !== "object") return;
+      this.applyStatusEffect(enemy, effect.status as StatusEffectSpec);
+    } else if (inspected.kind === "displacement" && displacementAllowed) {
+      const displacement = this.reserveDisplacementEffect(effect, displacementBudget, false);
+      if (!displacement) return;
+      this.applyDisplacementEffect(enemy, displacement, {
+        sourceKind: "ability",
+        sourceId: abilityId,
+        sourceCoord: center
+      });
     }
   }
 
@@ -649,15 +1262,40 @@ export class TowerDefenseGame {
     }
 
     const targets = this.enemies.filter((enemy) => enemy.hp > 0 && this.map.distance(this.enemyCoord(enemy), center) <= ability.radius);
+    const displacementRanks = this.activePhysicsMechanics
+      ? this.displacementEffectRanks(effects)
+      : undefined;
+    const displacementBudget: DisplacementActivationBudget | undefined = this.activePhysicsMechanics
+      ? { used: 0, limit: PHYSICS_LIMITS.stepAttemptsPerActivation }
+      : undefined;
     const enemyIds: string[] = [];
-    for (const enemy of targets) {
-      for (const effect of effects) {
-        this.applyAbilityEffect(enemy, effect);
+    for (let targetIndex = 0; targetIndex < targets.length; targetIndex += 1) {
+      const enemy = targets[targetIndex]!;
+      for (let effectIndex = 0; effectIndex < effects.length; effectIndex += 1) {
+        if (enemy.hp <= 0) break;
+        const displacementRank = displacementRanks?.get(effectIndex);
+        this.applyAbilityEffect(
+          enemy,
+          effects[effectIndex],
+          abilityId,
+          center,
+          displacementRank !== undefined && (
+            targetIndex < PHYSICS_LIMITS.displacementTargetsPerActivation
+            && displacementRank < PHYSICS_LIMITS.displacementEffectsPerSource
+          ),
+          displacementBudget
+        );
       }
       enemyIds.push(enemy.id);
     }
     this.abilityCooldowns[abilityId] = ability.cooldown;
-    this.lastEvents.push({ type: "abilityUsed", abilityId, center: { ...center }, enemyIds, effects });
+    this.lastEvents.push({
+      type: "abilityUsed",
+      abilityId,
+      center: { ...center },
+      enemyIds,
+      effects: this.safeAbilityEffectsForEvent(effects)
+    });
     this.finishScriptedAction();
     return { ok: true };
   }
@@ -684,6 +1322,7 @@ export class TowerDefenseGame {
     this.lastEvents.push({ type: "scriptSignal", scriptId: "external", signal, payload: safePayload });
     this.runScriptEvent("signal", { type: "signal", signal, payload: safePayload, sourceScriptId: "external" });
     this.processScriptEvents();
+    this.stabilizeDynamicEnemyNavigation();
     return { ok: true };
   }
 
@@ -693,6 +1332,7 @@ export class TowerDefenseGame {
 
   tick(deltaUnits: number): void {
     this.lastEvents = [];
+    if (this.activePhysicsMechanics) this.displacementStepAttemptsThisTick = 0;
     this.scriptEventCursor = 0;
     this.beginScriptTransaction();
 
@@ -702,7 +1342,6 @@ export class TowerDefenseGame {
 
     const delta = Math.max(0, Math.min(deltaUnits, 0.2));
     this.updateAbilities(delta);
-    this.updateEnemyStatuses(delta);
 
     if (this.startedWaveCount > 0) {
       this.missionElapsed += delta;
@@ -712,6 +1351,10 @@ export class TowerDefenseGame {
       this.syncPrepRemaining();
     }
 
+    this.updateShieldRegeneration(delta);
+    this.updateEnemyMarks(delta);
+    this.updateEnemyExposures(delta);
+    this.updateEnemyStatuses(delta);
     this.moveEnemies(delta);
     this.applySunlightRegeneration(delta);
     this.applyHealAuras(delta);
@@ -727,6 +1370,7 @@ export class TowerDefenseGame {
     this.processScriptEvents();
     this.resolveWaveState();
     this.processScriptEvents();
+    this.stabilizeDynamicEnemyNavigation();
   }
 
   getSnapshot(): GameSnapshot {
@@ -737,7 +1381,2248 @@ export class TowerDefenseGame {
     return this.buildSnapshot(false);
   }
 
+  /** Pure, bounded diagnostics for active opt-in elevation v2 line of sight. */
+  analyzeLineOfSight(request: LineOfSightAnalysisRequestV1): LineOfSightAnalysisV1 | undefined {
+    const profile = this.activeLineOfSightProfile;
+    if (!profile) return undefined;
+    return analyzeLineOfSightTargets(
+      this.map,
+      this.content.terrainTypes,
+      profile,
+      normalizeLineOfSightAnalysisRequestV1(request, this.map)
+    );
+  }
+
+  /** Pure, bounded diagnostics for active opt-in dynamic-flow navigation. */
+  analyzeNavigation(request: NavigationAnalysisRequestV1): NavigationAnalysisV1 | undefined {
+    const profile = this.activeNavigationProfile;
+    const profileId = this.activeNavigationProfileId;
+    if (!profile || profileId === undefined) return undefined;
+
+    const normalized = normalizeNavigationAnalysisRequestV1(request, {
+      width: this.map.width,
+      height: this.map.height,
+      movementProfileIds: Object.keys(profile.movementProfiles),
+      routeIds: this.map.pathRoutes.map((route) => route.id),
+      towerTypeIds: Object.keys(this.towerTypes)
+    });
+    const budget: NavigationAnalysisRelaxationBudget = {
+      used: 0,
+      limit: NAVIGATION_LIMITS.placementAnalysisRelaxations,
+      fields: new WeakSet()
+    };
+    const fields = this.buildNavigationAnalysisFields(normalized, budget);
+    const placementContext = normalized.coordinates.length > 0
+      ? this.createNavigationPlacementAnalysisContext(budget)
+      : undefined;
+    const placementRows = normalized.coordinates.map((coord) => {
+      const result = this.canOccupyTowerFootprint(
+        normalized.towerTypeId!,
+        coord,
+        undefined,
+        placementContext
+      );
+      const movementProfileId = result.reasonParams?.movementProfileId;
+      const routeId = result.reasonParams?.routeId;
+      return {
+        coord: { q: coord.q, r: coord.r },
+        ok: result.ok,
+        ...(result.reasonKey === undefined ? {} : { reasonKey: result.reasonKey }),
+        ...(typeof movementProfileId === "string" && typeof routeId === "string"
+          ? { blockingPair: { movementProfileId, routeId } }
+          : {})
+      };
+    });
+    return {
+      schemaVersion: 1,
+      mode: "dynamic_flow",
+      profileId,
+      fields,
+      placementRows
+    };
+  }
+
+  createCheckpoint(): GameCheckpointV1 {
+    this.assertDerivedMapIntegrity();
+    const identity = this.checkpointIdentity();
+    const state = this.buildCheckpointState();
+    const currentRng = this.rng.exportState();
+    const contentDigest = getSimulationContentDigest(this.content);
+    const rng = {
+      initial: this.initialRngState,
+      current: currentRng
+    };
+    const checkpoint: GameCheckpointV1 = {
+      schemaVersion: GAME_CHECKPOINT_SCHEMA_VERSION,
+      engineVersion: SIMULATION_ENGINE_VERSION,
+      contentDigest,
+      identity,
+      rng,
+      state,
+      stateDigest: computeCheckpointStateDigest(contentDigest, identity, rng, state)
+    };
+    return cloneCheckpointJson(checkpoint);
+  }
+
+  getStateDigest(): string {
+    this.assertDerivedMapIntegrity();
+    const identity = this.checkpointIdentity();
+    return computeCheckpointStateDigest(
+      getSimulationContentDigest(this.content),
+      identity,
+      { initial: this.initialRngState, current: this.rng.exportState() },
+      this.buildCheckpointState()
+    );
+  }
+
+  /**
+   * Strictly validate and detach a checkpoint without constructing a map or
+   * executing simulation behavior. Restore and journal decoders share this path.
+   */
+  static validateCheckpoint(options: {
+    content: GameContentRegistry;
+    checkpoint: GameCheckpointV1;
+  }): GameCheckpointV1 {
+    const descriptors = inspectCheckpointEnvelope(options.checkpoint);
+
+    const expectedContentDigest = checkpointDataField(descriptors, "contentDigest", "Game checkpoint");
+    if (typeof expectedContentDigest !== "string" || expectedContentDigest !== getSimulationContentDigest(options.content)) {
+      throw new Error("Game checkpoint content digest mismatch.");
+    }
+
+    const identity = cloneCheckpointJson(
+      checkpointDataField(descriptors, "identity", "Game checkpoint")
+    ) as GameCheckpointIdentityV1;
+    TowerDefenseGame.validateCheckpointIdentity(options.content, identity);
+
+    const rngDescriptors = checkpointObjectDescriptors(
+      checkpointDataField(descriptors, "rng", "Game checkpoint"),
+      "Game checkpoint RNG"
+    );
+    requireExactCheckpointKeys(rngDescriptors, ["initial", "current"], "Game checkpoint RNG");
+    const initialRng = cloneCheckpointJson(
+      checkpointDataField(rngDescriptors, "initial", "Game checkpoint RNG")
+    ) as SeededRngStateV1;
+    const currentRng = cloneCheckpointJson(
+      checkpointDataField(rngDescriptors, "current", "Game checkpoint RNG")
+    ) as SeededRngStateV1;
+    for (const [label, rngState] of [["initial", initialRng], ["current", currentRng]] as const) {
+      requireExactCheckpointKeys(
+        checkpointObjectDescriptors(rngState, `Game checkpoint ${label} RNG state`),
+        ["schemaVersion", "algorithm", "words"],
+        `Game checkpoint ${label} RNG state`
+      );
+    }
+    SeededRng.fromState(initialRng);
+    SeededRng.fromState(currentRng);
+
+    const rawState = checkpointDataField(descriptors, "state", "Game checkpoint");
+    const rawStateDescriptors = checkpointObjectDescriptors(rawState, "Game checkpoint state");
+    const rawEnemies = checkpointDataField(rawStateDescriptors, "enemies", "Game checkpoint state");
+    if (Array.isArray(rawEnemies) && Object.getPrototypeOf(rawEnemies) === Array.prototype) {
+      const selectedNavigation = resolveActiveNavigationMechanics(options.content, identity.missionId);
+      const rawEnemyDescriptors = Object.getOwnPropertyDescriptors(rawEnemies);
+      if (selectedNavigation?.mode === "dynamic_flow" && rawEnemies.length > NAVIGATION_LIMITS.liveEnemyStates) {
+        let liveEnemyCount = 0;
+        for (const key of Object.keys(rawEnemyDescriptors)) {
+          if (key === "length") continue;
+          const enemyDescriptor = rawEnemyDescriptors[key];
+          if (!enemyDescriptor || !("value" in enemyDescriptor) || !enemyDescriptor.enumerable) continue;
+          const rawEnemy = enemyDescriptor.value;
+          if (rawEnemy === null || typeof rawEnemy !== "object" || Array.isArray(rawEnemy)) continue;
+          const hpDescriptor = Object.getOwnPropertyDescriptor(rawEnemy, "hp");
+          if (hpDescriptor && "value" in hpDescriptor && hpDescriptor.enumerable && hpDescriptor.value > 0) {
+            liveEnemyCount += 1;
+            if (liveEnemyCount > NAVIGATION_LIMITS.liveEnemyStates) {
+              throw new Error("Game checkpoint live enemy navigation state budget is exceeded.");
+            }
+          }
+        }
+      }
+      for (const key of Object.keys(rawEnemyDescriptors)) {
+        if (key === "length") continue;
+        const enemyDescriptor = rawEnemyDescriptors[key];
+        if (!enemyDescriptor || !("value" in enemyDescriptor) || !enemyDescriptor.enumerable) continue;
+        const rawEnemy = enemyDescriptor.value;
+        if (rawEnemy === null || typeof rawEnemy !== "object" || Array.isArray(rawEnemy)) continue;
+        const enemyDescriptors = Object.getOwnPropertyDescriptors(rawEnemy);
+        if (!Object.prototype.hasOwnProperty.call(enemyDescriptors, "navigation")) continue;
+        const navigationValue = checkpointDataField(
+          enemyDescriptors,
+          "navigation",
+          "Game checkpoint enemy navigation"
+        );
+        const navigationDescriptors = checkpointObjectDescriptors(
+          navigationValue,
+          "Game checkpoint enemy navigation"
+        );
+        for (const coordKey of ["currentCoord", "nextCoord"] as const) {
+          if (!Object.prototype.hasOwnProperty.call(navigationDescriptors, coordKey)) continue;
+          const coordDescriptors = checkpointObjectDescriptors(
+            checkpointDataField(navigationDescriptors, coordKey, "Game checkpoint enemy navigation"),
+            `Game checkpoint enemy navigation ${coordKey}`
+          );
+          for (const axis of ["q", "r"] as const) {
+            checkpointDataField(coordDescriptors, axis, `Game checkpoint enemy navigation ${coordKey}`);
+          }
+        }
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(rawStateDescriptors, "reactions")) {
+      const rawReactions = checkpointObjectDescriptors(
+        checkpointDataField(rawStateDescriptors, "reactions", "Game checkpoint state"),
+        "Game checkpoint reaction state"
+      );
+      const rawExposures = checkpointObjectDescriptors(
+        checkpointDataField(rawReactions, "exposures", "Game checkpoint reaction state"),
+        "Game checkpoint reaction exposures"
+      );
+      const rawEnemies = checkpointObjectDescriptors(
+        checkpointDataField(rawExposures, "enemies", "Game checkpoint reaction exposures"),
+        "Game checkpoint reaction exposure enemies"
+      );
+      const enemyIds = Object.keys(rawEnemies);
+      if (enemyIds.join("\u0000") !== [...enemyIds].sort().join("\u0000")) {
+        throw new Error("Game checkpoint reaction enemy order is not canonical.");
+      }
+      for (const enemyId of enemyIds) {
+        const rawEnemyExposures = checkpointObjectDescriptors(
+          checkpointDataField(rawEnemies, enemyId, "Game checkpoint reaction exposure enemies"),
+          `Game checkpoint reaction exposures for ${enemyId}`
+        );
+        const exposureIds = Object.keys(rawEnemyExposures);
+        if (exposureIds.join("\u0000") !== [...exposureIds].sort().join("\u0000")) {
+          throw new Error("Game checkpoint exposure order is not canonical.");
+        }
+      }
+    }
+    const state = cloneCheckpointJson(rawState) as GameCheckpointStateV1;
+    TowerDefenseGame.validateCheckpointState(options.content, identity, state);
+    const expectedStateDigest = checkpointDataField(descriptors, "stateDigest", "Game checkpoint");
+    if (
+      typeof expectedStateDigest !== "string" ||
+      expectedStateDigest !== computeCheckpointStateDigest(
+        expectedContentDigest,
+        identity,
+        { initial: initialRng, current: currentRng },
+        state
+      )
+    ) {
+      throw new Error("Game checkpoint state digest mismatch; checkpoint may be tampered.");
+    }
+
+    return cloneCheckpointJson({
+      schemaVersion: GAME_CHECKPOINT_SCHEMA_VERSION,
+      engineVersion: SIMULATION_ENGINE_VERSION,
+      contentDigest: expectedContentDigest,
+      identity,
+      rng: { initial: initialRng, current: currentRng },
+      state,
+      stateDigest: expectedStateDigest
+    });
+  }
+
+  static fromCheckpoint(options: { content: GameContentRegistry; checkpoint: GameCheckpointV1 }): TowerDefenseGame {
+    const checkpoint = TowerDefenseGame.validateCheckpoint(options);
+    const game = new TowerDefenseGame({
+      content: options.content,
+      missionId: checkpoint.identity.missionId,
+      difficultyId: checkpoint.identity.difficultyId,
+      metaUpgradeLevels: { ...checkpoint.identity.metaUpgradeLevels },
+      seed: 0
+    }, { skipGameStarted: true });
+    game.restoreCheckpointState(
+      checkpoint.state,
+      checkpoint.rng.initial,
+      checkpoint.rng.current
+    );
+    game.assertDerivedMapIntegrity();
+    return game;
+  }
+
+  private captureDerivedMapIntegrityBaseline(): DerivedMapIntegrityBaseline {
+    const freezeCoord = (coord: HexCoord): Readonly<HexCoord> => Object.freeze({ q: coord.q, r: coord.r });
+    const freezeGrid = (grid: GridDefinition): GridDefinition => Object.freeze({ ...grid }) as GridDefinition;
+    const mapDescriptors = Object.getOwnPropertyDescriptors(this.map);
+    const baseTerrainDescriptor = mapDescriptors["baseTerrainByCoord"];
+    const definitionDescriptor = mapDescriptors["definition"];
+    if (!baseTerrainDescriptor || !("value" in baseTerrainDescriptor) || !(baseTerrainDescriptor.value instanceof Map)) {
+      throw new Error("Derived map integrity baseline cannot read base terrain.");
+    }
+    if (!definitionDescriptor || !("value" in definitionDescriptor)) {
+      throw new Error("Derived map integrity baseline cannot read the map definition.");
+    }
+    const baseTiles = Object.freeze([...this.map.tiles.values()].map((tile) => Object.freeze({
+      q: tile.q,
+      r: tile.r,
+      terrain: tile.terrain
+    })));
+    const pathCenterline = Object.freeze(this.map.pathCenterline.map(freezeCoord));
+    const pathRoutes = Object.freeze(this.map.pathRoutes.map((route) => Object.freeze({
+      id: route.id,
+      pathCenterline: Object.freeze(route.pathCenterline.map(freezeCoord))
+    })));
+    return Object.freeze({
+      mapRef: this.map,
+      tilesRef: this.map.tiles,
+      baseTerrainRef: baseTerrainDescriptor.value as Map<string, string>,
+      topologyRef: this.map.topology,
+      gridRef: this.map.grid,
+      topologyGridRef: this.map.topology.grid,
+      mapOwnShape: capturePropertyDescriptorShape(this.map),
+      mapPrototypeRef: PINNED_GRID_MAP_PROTOTYPE,
+      mapPrototypeShape: PINNED_GRID_MAP_PROTOTYPE_SHAPE,
+      definitionCanonical: canonicalStringify(definitionDescriptor.value),
+      id: this.map.id,
+      width: this.map.width,
+      height: this.map.height,
+      grid: freezeGrid(this.map.grid),
+      topologyGrid: freezeGrid(this.map.topology.grid),
+      topologyDirectionCount: this.map.topology.directionCount,
+      topologyMethods: Object.freeze({
+        neighbors: this.map.topology.neighbors,
+        distance: this.map.topology.distance,
+        line: this.map.topology.line,
+        directionBetween: this.map.topology.directionBetween,
+        tilesWithin: this.map.topology.tilesWithin,
+        footprintSize: this.map.topology.footprintSize
+      }),
+      baseTiles,
+      pathCenterline,
+      pathRoutes,
+      spawnCoord: freezeCoord(this.map.spawnCoord),
+      coreCoord: freezeCoord(this.map.coreCoord)
+    });
+  }
+
+  /**
+   * Validate every mutable GridMap projection against authoritative game state.
+   * This intentionally reads untrusted public structures through descriptors so
+   * integrity checks never invoke a getter installed by a caller.
+   */
+  private assertDerivedMapIntegrity(): void {
+    const fail = (detail: string): never => {
+      throw new Error(`Derived map integrity is incoherent: ${detail}`);
+    };
+    const ownData = (
+      value: unknown,
+      prototype: object | null,
+      context: string,
+      inspectEveryField = true
+    ): Record<PropertyKey, PropertyDescriptor> => {
+      if (value === null || typeof value !== "object") return fail(`${context} is not an object.`);
+      let actualPrototype: object | null = null;
+      let descriptors: Record<PropertyKey, PropertyDescriptor> = {};
+      try {
+        actualPrototype = Object.getPrototypeOf(value);
+        descriptors = Object.getOwnPropertyDescriptors(value) as Record<PropertyKey, PropertyDescriptor>;
+      } catch {
+        return fail(`${context} descriptors cannot be inspected.`);
+      }
+      if (actualPrototype !== prototype) return fail(`${context} has an unexpected prototype.`);
+      if (Object.getOwnPropertySymbols(descriptors).length > 0) return fail(`${context} has symbol fields.`);
+      if (inspectEveryField) {
+        for (const [key, descriptor] of Object.entries(descriptors)) {
+          if (!("value" in descriptor)) return fail(`${context}.${key} must be a data property.`);
+          if (!descriptor.enumerable) return fail(`${context}.${key} must be enumerable.`);
+        }
+      }
+      return descriptors;
+    };
+    const field = (
+      descriptors: Record<PropertyKey, PropertyDescriptor>,
+      key: string,
+      context: string
+    ): unknown => {
+      const descriptor = descriptors[key];
+      if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+        return fail(`${context}.${key} must be an enumerable data property.`);
+      }
+      return descriptor.value;
+    };
+    const exactKeys = (
+      descriptors: Record<PropertyKey, PropertyDescriptor>,
+      keys: readonly string[],
+      context: string
+    ): void => {
+      const actual = Object.keys(descriptors);
+      if (actual.length !== keys.length || keys.some((key) => !actual.includes(key))) {
+        fail(`${context} has missing or extra fields.`);
+      }
+    };
+    const assertDescriptorShape = (
+      descriptors: Record<PropertyKey, PropertyDescriptor>,
+      expected: readonly PropertyDescriptorSnapshot[],
+      context: string
+    ): void => {
+      const actualKeys = Reflect.ownKeys(descriptors);
+      if (
+        actualKeys.length !== expected.length
+        || expected.some((snapshot) => !actualKeys.some((key) => Object.is(key, snapshot.key)))
+      ) {
+        fail(`${context} own shape changed or has a method shadow.`);
+      }
+      for (const snapshot of expected) {
+        if (!descriptorMatchesSnapshot(descriptors[snapshot.key], snapshot)) {
+          fail(`${context} descriptor for ${String(snapshot.key)} changed.`);
+        }
+      }
+    };
+    const nativeMapSize = (value: unknown, context: string): number => {
+      if (value === null || typeof value !== "object" || Object.getPrototypeOf(value) !== NATIVE_MAP_PROTOTYPE) {
+        return fail(`${context} is not a native Map.`);
+      }
+      if (Reflect.ownKeys(Object.getOwnPropertyDescriptors(value)).length > 0) {
+        return fail(`${context} has unsupported own fields.`);
+      }
+      if (typeof NATIVE_MAP_SIZE_GETTER !== "function") return fail("native Map size intrinsic is unavailable.");
+      try {
+        const size = Reflect.apply(NATIVE_MAP_SIZE_GETTER, value, []);
+        return typeof size === "number" && Number.isSafeInteger(size) && size >= 0
+          ? size
+          : fail(`${context} native size is invalid.`);
+      } catch {
+        return fail(`${context} native size cannot be inspected.`);
+      }
+    };
+    const assertNativeMapIntrinsics = (): void => {
+      if (Map.prototype !== NATIVE_MAP_PROTOTYPE) fail("native Map prototype identity changed.");
+      for (const expected of NATIVE_MAP_INTRINSIC_SHAPE) {
+        if (!descriptorMatchesSnapshot(Object.getOwnPropertyDescriptor(NATIVE_MAP_PROTOTYPE, expected.key), expected)) {
+          fail(`native Map prototype intrinsic ${String(expected.key)} changed.`);
+        }
+      }
+      const nextDescriptor = Object.getOwnPropertyDescriptor(NATIVE_MAP_ITERATOR_PROTOTYPE, "next");
+      if (!nextDescriptor || nextDescriptor.value !== NATIVE_MAP_ITERATOR_NEXT) {
+        fail("native Map iterator intrinsic changed.");
+      }
+    };
+    const arrayItems = (value: unknown, context: string): readonly unknown[] => {
+      if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+        return fail(`${context} is not a plain array.`);
+      }
+      let descriptors: Record<PropertyKey, PropertyDescriptor>;
+      try {
+        descriptors = Object.getOwnPropertyDescriptors(value) as unknown as Record<PropertyKey, PropertyDescriptor>;
+      } catch {
+        return fail(`${context} descriptors cannot be inspected.`);
+      }
+      if (Object.getOwnPropertySymbols(descriptors).length > 0) fail(`${context} has symbol fields.`);
+      const lengthDescriptor = descriptors["length"];
+      if (!lengthDescriptor || !("value" in lengthDescriptor)) return fail(`${context} length is not a data property.`);
+      const length = lengthDescriptor.value;
+      if (typeof length !== "number" || !Number.isSafeInteger(length) || length < 0) {
+        return fail(`${context} length is invalid.`);
+      }
+      const keys = Object.keys(descriptors).filter((key) => key !== "length");
+      if (keys.length !== length) fail(`${context} is sparse or has extra fields.`);
+      const result: unknown[] = [];
+      for (let index = 0; index < length; index += 1) {
+        const descriptor = descriptors[String(index)];
+        if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+          return fail(`${context}[${index}] must be an enumerable data property.`);
+        }
+        result.push(descriptor.value);
+      }
+      return result;
+    };
+    const mapEntries = (
+      value: unknown,
+      context: string,
+      expectedSize?: number,
+      maximumSize?: number
+    ): readonly [unknown, unknown][] => {
+      const size = nativeMapSize(value, context);
+      if (expectedSize !== undefined && size !== expectedSize) fail(`${context} native size changed.`);
+      if (maximumSize !== undefined && size > maximumSize) fail(`${context} exceeds its native size budget.`);
+      if (typeof NATIVE_MAP_ITERATOR_NEXT !== "function") return fail("native Map iterator is unavailable.");
+      const iteratorNext = NATIVE_MAP_ITERATOR_NEXT;
+      try {
+        const iterator = Reflect.apply(NATIVE_MAP_ENTRIES, value, []) as IterableIterator<[unknown, unknown]>;
+        const entries: [unknown, unknown][] = [];
+        for (let index = 0; index < size; index += 1) {
+          const step = Reflect.apply(iteratorNext, iterator, []) as IteratorResult<[unknown, unknown]>;
+          if (step.done) return fail(`${context} ended before its native size.`);
+          entries.push(step.value);
+        }
+        const end = Reflect.apply(iteratorNext, iterator, []) as IteratorResult<[unknown, unknown]>;
+        if (!end.done) return fail(`${context} exceeds its native size.`);
+        return entries;
+      } catch {
+        return fail(`${context} entries cannot be inspected.`);
+      }
+    };
+    const nativeMapGet = <K, V>(map: Map<K, V>, key: K): V | undefined => (
+      Reflect.apply(NATIVE_MAP_GET, map, [key]) as V | undefined
+    );
+    const nativeMapSet = <K, V>(map: Map<K, V>, key: K, value: V): void => {
+      Reflect.apply(NATIVE_MAP_SET, map, [key, value]);
+    };
+    const nativeMapHas = <K, V>(map: Map<K, V>, key: K): boolean => (
+      Reflect.apply(NATIVE_MAP_HAS, map, [key]) as boolean
+    );
+    const coord = (value: unknown, context: string): HexCoord => {
+      const descriptors = ownData(value, Object.prototype, context);
+      exactKeys(descriptors, ["q", "r"], context);
+      const q = field(descriptors, "q", context);
+      const r = field(descriptors, "r", context);
+      if (typeof q !== "number" || !Number.isInteger(q) || typeof r !== "number" || !Number.isInteger(r)) {
+        return fail(`${context} has invalid coordinates.`);
+      }
+      return { q, r };
+    };
+    const sameCoord = (actual: HexCoord, expected: Readonly<HexCoord>, context: string): void => {
+      if (actual.q !== expected.q || actual.r !== expected.r) fail(`${context} changed.`);
+    };
+    const grid = (value: unknown, expected: GridDefinition, context: string): void => {
+      const descriptors = ownData(value, Object.prototype, context);
+      const keys = expected.kind === "square" ? ["kind", "adjacency"] : ["kind", "layout"];
+      exactKeys(descriptors, keys, context);
+      if (field(descriptors, "kind", context) !== expected.kind) fail(`${context} kind changed.`);
+      const variantKey = expected.kind === "square" ? "adjacency" : "layout";
+      const expectedVariant = expected.kind === "square" ? expected.adjacency : expected.layout;
+      if (field(descriptors, variantKey, context) !== expectedVariant) fail(`${context} descriptor changed.`);
+    };
+    const paths = (
+      value: unknown,
+      expected: readonly Readonly<HexCoord>[],
+      context: string
+    ): void => {
+      const items = arrayItems(value, context);
+      if (items.length !== expected.length) fail(`${context} length changed.`);
+      for (let index = 0; index < items.length; index += 1) {
+        sameCoord(coord(items[index], `${context}[${index}]`), expected[index]!, `${context}[${index}]`);
+      }
+    };
+
+    const baseline = this.derivedMapIntegrityBaseline;
+    const gameDescriptors = ownData(this, TowerDefenseGame.prototype, "game", false);
+    const liveMap = field(gameDescriptors, "map", "game");
+    if (liveMap !== baseline.mapRef) fail("map identity changed.");
+    const mapDescriptors = ownData(liveMap, GridMap.prototype, "map", false);
+    assertDescriptorShape(mapDescriptors, baseline.mapOwnShape, "map");
+    if (Object.getPrototypeOf(liveMap) !== baseline.mapPrototypeRef) fail("map prototype identity changed.");
+    assertDescriptorShape(
+      Object.getOwnPropertyDescriptors(baseline.mapPrototypeRef) as Record<PropertyKey, PropertyDescriptor>,
+      baseline.mapPrototypeShape,
+      "map prototype"
+    );
+    const liveDefinition = field(mapDescriptors, "definition", "map");
+    try {
+      if (canonicalStringify(liveDefinition) !== baseline.definitionCanonical) {
+        fail("map definition changed and would alter clone behavior.");
+      }
+    } catch {
+      fail("map definition is not canonical clone data.");
+    }
+    if (field(mapDescriptors, "id", "map") !== baseline.id) fail("map id changed.");
+    if (field(mapDescriptors, "width", "map") !== baseline.width) fail("map width changed.");
+    if (field(mapDescriptors, "height", "map") !== baseline.height) fail("map height changed.");
+
+    const liveTiles = field(mapDescriptors, "tiles", "map");
+    if (liveTiles !== baseline.tilesRef) fail("map tiles identity changed.");
+    const baseTerrain = field(mapDescriptors, "baseTerrainByCoord", "map");
+    if (baseTerrain !== baseline.baseTerrainRef) fail("map base terrain identity changed.");
+    const runtimeOverrides = field(gameDescriptors, "runtimeTerrainOverrides", "game");
+    if (nativeMapSize(liveTiles, "map tiles") !== baseline.baseTiles.length) {
+      fail("map tiles native size changed.");
+    }
+    if (nativeMapSize(baseTerrain, "map base terrain") !== baseline.baseTiles.length) {
+      fail("map base terrain native size changed.");
+    }
+    if (nativeMapSize(runtimeOverrides, "runtime terrain overrides") > TOWER_SCRIPT_LIMITS.activeTerrainOverrides) {
+      fail("runtime terrain overrides exceed the native size budget.");
+    }
+    assertNativeMapIntrinsics();
+
+    const liveGrid = field(mapDescriptors, "grid", "map");
+    if (liveGrid !== baseline.gridRef) fail("map grid identity changed.");
+    grid(liveGrid, baseline.grid, "map grid");
+
+    const liveTopology = field(mapDescriptors, "topology", "map");
+    if (liveTopology !== baseline.topologyRef) fail("map topology identity changed.");
+    const topologyDescriptors = ownData(liveTopology, Object.prototype, "map topology");
+    exactKeys(topologyDescriptors, [
+      "grid", "directionCount", "neighbors", "distance", "line", "directionBetween", "tilesWithin", "footprintSize"
+    ], "map topology");
+    const topologyGrid = field(topologyDescriptors, "grid", "map topology");
+    if (topologyGrid !== baseline.topologyGridRef) fail("topology grid identity changed.");
+    grid(topologyGrid, baseline.topologyGrid, "topology grid");
+    if (field(topologyDescriptors, "directionCount", "map topology") !== baseline.topologyDirectionCount) {
+      fail("topology direction count changed.");
+    }
+    for (const [key, expected] of Object.entries(baseline.topologyMethods)) {
+      if (field(topologyDescriptors, key, "map topology") !== expected) fail(`topology method ${key} changed.`);
+    }
+
+    paths(field(mapDescriptors, "pathCenterline", "map"), baseline.pathCenterline, "map pathCenterline");
+    const routeValues = arrayItems(field(mapDescriptors, "pathRoutes", "map"), "map pathRoutes");
+    if (routeValues.length !== baseline.pathRoutes.length) fail("map pathRoutes length changed.");
+    for (let index = 0; index < routeValues.length; index += 1) {
+      const routeDescriptors = ownData(routeValues[index], Object.prototype, `map pathRoutes[${index}]`);
+      exactKeys(routeDescriptors, ["id", "pathCenterline"], `map pathRoutes[${index}]`);
+      const expected = baseline.pathRoutes[index]!;
+      if (field(routeDescriptors, "id", `map pathRoutes[${index}]`) !== expected.id) {
+        fail(`map pathRoutes[${index}] id changed.`);
+      }
+      paths(
+        field(routeDescriptors, "pathCenterline", `map pathRoutes[${index}]`),
+        expected.pathCenterline,
+        `map pathRoutes[${index}].pathCenterline`
+      );
+    }
+    sameCoord(
+      coord(field(mapDescriptors, "spawnCoord", "map"), "map spawnCoord"),
+      baseline.spawnCoord,
+      "map spawnCoord"
+    );
+    sameCoord(
+      coord(field(mapDescriptors, "coreCoord", "map"), "map coreCoord"),
+      baseline.coreCoord,
+      "map coreCoord"
+    );
+
+    const expectedTiles = new Map<string, { q: number; r: number; terrain: string }>();
+    for (const tile of baseline.baseTiles) nativeMapSet(expectedTiles, coordKey(tile), { ...tile });
+    const baseTerrainEntries = mapEntries(baseTerrain, "map base terrain", baseline.baseTiles.length);
+    for (const [key, terrain] of baseTerrainEntries) {
+      if (
+        typeof key !== "string"
+        || typeof terrain !== "string"
+        || nativeMapGet(expectedTiles, key)?.terrain !== terrain
+      ) {
+        fail("map base terrain changed.");
+      }
+    }
+
+    const overrideEntries = mapEntries(
+      runtimeOverrides,
+      "runtime terrain overrides",
+      undefined,
+      TOWER_SCRIPT_LIMITS.activeTerrainOverrides
+    );
+    for (let index = 0; index < overrideEntries.length; index += 1) {
+      const [key, value] = overrideEntries[index]!;
+      if (typeof key !== "string") return fail(`runtime terrain override ${index} has a non-string key.`);
+      const descriptors = ownData(value, Object.prototype, `runtime terrain override ${index}`);
+      const allowedKeys = Object.prototype.hasOwnProperty.call(descriptors, "expiresIn")
+        ? ["q", "r", "terrain", "source", "expiresIn"]
+        : ["q", "r", "terrain", "source"];
+      exactKeys(descriptors, allowedKeys, `runtime terrain override ${index}`);
+      const overrideCoord = coord({
+        q: field(descriptors, "q", `runtime terrain override ${index}`),
+        r: field(descriptors, "r", `runtime terrain override ${index}`)
+      }, `runtime terrain override ${index} coordinate`);
+      if (coordKey(overrideCoord) !== key || !nativeMapHas(expectedTiles, key)) {
+        fail(`runtime terrain override ${index} has an invalid coordinate key.`);
+      }
+      const terrain = field(descriptors, "terrain", `runtime terrain override ${index}`);
+      const source = field(descriptors, "source", `runtime terrain override ${index}`);
+      if (typeof terrain !== "string" || (source !== "script" && source !== "ability")) {
+        return fail(`runtime terrain override ${index} is invalid.`);
+      }
+      if (allowedKeys.includes("expiresIn")) {
+        const expiresIn = field(descriptors, "expiresIn", `runtime terrain override ${index}`);
+        if (typeof expiresIn !== "number" || !Number.isFinite(expiresIn) || expiresIn < 0) {
+          fail(`runtime terrain override ${index} expiry is invalid.`);
+        }
+      }
+      nativeMapGet(expectedTiles, key)!.terrain = terrain;
+    }
+
+    const expectedOccupancy = new Map<string, string>();
+    const towerValues = arrayItems(field(gameDescriptors, "towers", "game"), "game towers");
+    const towerIds = new Set<string>();
+    for (let index = 0; index < towerValues.length; index += 1) {
+      const towerDescriptors = ownData(towerValues[index], Object.prototype, `game tower ${index}`);
+      const towerId = field(towerDescriptors, "id", `game tower ${index}`);
+      if (typeof towerId !== "string" || towerId.length === 0 || towerIds.has(towerId)) {
+        return fail(`game tower ${index} has an invalid or duplicate id.`);
+      }
+      towerIds.add(towerId);
+      const footprint = arrayItems(field(towerDescriptors, "footprint", `game tower ${index}`), `game tower ${index} footprint`);
+      for (let footprintIndex = 0; footprintIndex < footprint.length; footprintIndex += 1) {
+        const footprintCoord = coord(footprint[footprintIndex], `game tower ${index} footprint ${footprintIndex}`);
+        const key = coordKey(footprintCoord);
+        if (!nativeMapHas(expectedTiles, key) || nativeMapHas(expectedOccupancy, key)) {
+          fail(`game tower ${index} footprint is outside or overlaps the map.`);
+        }
+        nativeMapSet(expectedOccupancy, key, towerId);
+      }
+    }
+
+    const tileEntries = mapEntries(liveTiles, "map tiles", baseline.baseTiles.length);
+    const seenTileKeys = new Set<string>();
+    for (let index = 0; index < tileEntries.length; index += 1) {
+      const [key, value] = tileEntries[index]!;
+      if (typeof key !== "string" || seenTileKeys.has(key)) return fail(`map tile ${index} has an invalid key.`);
+      seenTileKeys.add(key);
+      const expected = nativeMapGet(expectedTiles, key);
+      if (!expected) return fail(`map tile ${index} has an unexpected key.`);
+      const expectedTowerId = nativeMapGet(expectedOccupancy, key);
+      const tileDescriptors = ownData(value, Object.prototype, `map tile ${key}`);
+      exactKeys(
+        tileDescriptors,
+        expectedTowerId === undefined ? ["q", "r", "terrain"] : ["q", "r", "terrain", "occupiedBy"],
+        `map tile ${key}`
+      );
+      const liveCoord = coord({
+        q: field(tileDescriptors, "q", `map tile ${key}`),
+        r: field(tileDescriptors, "r", `map tile ${key}`)
+      }, `map tile ${key} coordinate`);
+      if (coordKey(liveCoord) !== key || liveCoord.q !== expected.q || liveCoord.r !== expected.r) {
+        fail(`map tile ${key} coordinates changed.`);
+      }
+      if (field(tileDescriptors, "terrain", `map tile ${key}`) !== expected.terrain) {
+        fail(`map tile ${key} terrain is not backed by a runtime override.`);
+      }
+      if (
+        expectedTowerId !== undefined
+        && field(tileDescriptors, "occupiedBy", `map tile ${key}`) !== expectedTowerId
+      ) {
+        fail(`map tile ${key} occupancy does not match tower footprints.`);
+      }
+    }
+  }
+
+  private checkpointIdentity(): GameCheckpointIdentityV1 {
+    return cloneCheckpointJson({
+      missionId: this.mission.id,
+      difficultyId: this.difficulty.id,
+      metaUpgradeLevels: { ...this.metaUpgradeLevels }
+    });
+  }
+
+  private buildCombatState(): CombatState | undefined {
+    const cloneRecord = (record: Readonly<Record<string, ShieldStateV1>>) => Object.fromEntries(
+      Object.keys(record).sort().map((id) => {
+        const state = record[id]!;
+        return [id, {
+          current: state.current,
+          capacity: state.capacity,
+          regenerationDelayRemaining: state.regenerationDelayRemaining
+        }];
+      })
+    );
+    const enemies = cloneRecord(this.enemyShields);
+    const towers = cloneRecord(this.towerShields);
+    const markEnemies = Object.fromEntries(Object.keys(this.enemyMarks).sort().map((enemyId) => [
+      enemyId,
+      Object.fromEntries(Object.keys(this.enemyMarks[enemyId] ?? {}).sort().map((markId) => {
+        const state = this.enemyMarks[enemyId]![markId]!;
+        return [markId, { stacks: state.stacks, remaining: state.remaining }];
+      }))
+    ]));
+    const hasShields = Object.keys(enemies).length > 0 || Object.keys(towers).length > 0;
+    const hasMarks = Object.keys(markEnemies).length > 0;
+    if (!hasShields && !hasMarks) return undefined;
+    if (this.activeCombatMechanics?.schemaVersion === 3) {
+      return {
+        schemaVersion: 2,
+        shields: { enemies, towers },
+        marks: { enemies: markEnemies }
+      };
+    }
+    return {
+      schemaVersion: 1,
+      shields: { enemies, towers }
+    };
+  }
+
+  private buildReactionState(): ReactionStateV1 | undefined {
+    const enemies = cloneEnemyExposureStates(this.enemyExposures, true, true);
+    if (Object.keys(enemies).length === 0) return undefined;
+    return { schemaVersion: 1, exposures: { enemies } };
+  }
+
+  private consumeNavigationAnalysisField(
+    field: NavigationFieldResult,
+    budget: NavigationAnalysisRelaxationBudget
+  ): void {
+    if (budget.fields.has(field)) return;
+    budget.fields.add(field);
+    const next = budget.used + field.stats.relaxations;
+    if (!Number.isSafeInteger(next) || next > budget.limit) {
+      throw new Error(`Navigation analysis relaxation budget limit ${budget.limit} exceeded.`);
+    }
+    budget.used = next;
+  }
+
+  private buildNavigationAnalysisFields(
+    request: NormalizedNavigationAnalysisRequestV1,
+    budget: NavigationAnalysisRelaxationBudget
+  ): NavigationAnalysisV1["fields"] {
+    const resolver = this.createNavigationResolver();
+    const lookups = new NavigationFieldLookupCache();
+    const movementProfileIds = new Set(request.movementProfileIds);
+    const routeIds = new Set(request.routeIds);
+    const pairs = this.navigationDiagnosticPairs().filter((pair) => (
+      movementProfileIds.has(pair.movementProfileId) && routeIds.has(pair.routeId)
+    ));
+    return this.buildNavigationFieldDiagnostics(
+      this.groupNavigationDiagnosticPairs(pairs),
+      (movementProfileId, routeId) => resolver.getField(movementProfileId, routeId),
+      lookups,
+      budget
+    );
+  }
+
+  private navigationDiagnosticPairs(): readonly NavigationMandatoryPair[] {
+    const pairs = new Map<string, NavigationMandatoryPair>();
+    for (const pair of [...this.navigationKnownPairs, ...this.navigationMandatoryPairs]) {
+      pairs.set(JSON.stringify([pair.movementProfileId, pair.routeId]), pair);
+    }
+    for (const enemy of this.enemies) {
+      if (!enemy.navigation || !enemy.routeId) continue;
+      const route = this.resolveDynamicNavigationRoute(enemy.routeId);
+      const source = route.pathCenterline[0];
+      if (!source) continue;
+      const pair: NavigationMandatoryPair = {
+        movementProfileId: enemy.navigation.movementProfileId,
+        routeId: route.id,
+        source: { ...source }
+      };
+      pairs.set(JSON.stringify([pair.movementProfileId, pair.routeId]), pair);
+    }
+    return [...pairs.values()].sort((left, right) => (
+      compareBinary(left.movementProfileId, right.movementProfileId)
+      || compareBinary(left.routeId, right.routeId)
+    ));
+  }
+
+  private groupNavigationDiagnosticPairs(
+    pairs: readonly NavigationMandatoryPair[]
+  ): readonly NavigationFieldGroup[] {
+    const grouped = new Map<string, NavigationFieldGroup>();
+    for (const pair of pairs) {
+      const route = this.resolveDynamicNavigationRoute(pair.routeId);
+      const goal = route.pathCenterline.at(-1);
+      if (!goal) continue;
+      const key = JSON.stringify([pair.movementProfileId, goal.q, goal.r]);
+      const group = grouped.get(key) ?? {
+        movementProfileId: pair.movementProfileId,
+        goal: { ...goal },
+        routeIds: new Set<string>()
+      };
+      group.routeIds.add(route.id);
+      grouped.set(key, group);
+    }
+    return [...grouped.values()]
+      .sort((left, right) => (
+        compareBinary(left.movementProfileId, right.movementProfileId)
+        || left.goal.r - right.goal.r
+        || left.goal.q - right.goal.q
+      ));
+  }
+
+  private buildNavigationFieldDiagnostics(
+    groups: readonly NavigationFieldGroup[],
+    resolveField: (movementProfileId: string, routeId: string) => NavigationFieldResult,
+    lookups: NavigationFieldLookupCache,
+    budget?: NavigationAnalysisRelaxationBudget
+  ): NavigationAnalysisV1["fields"] {
+    const profile = this.activeNavigationProfile;
+    if (!profile) return [];
+    const terrainByCoord = this.navigationTerrainByCoord();
+    const occupiedCoords = this.navigationOccupiedCoords();
+    return groups
+      .map((group) => {
+        const routeIds = [...group.routeIds].sort(compareBinary);
+        const field = resolveField(group.movementProfileId, routeIds[0]!);
+        if (budget) this.consumeNavigationAnalysisField(field, budget);
+        const lookup = lookups.get(field);
+        const reachableRouteIds: string[] = [];
+        const unreachableRouteIds: string[] = [];
+        for (const routeId of routeIds) {
+          const source = this.resolveDynamicNavigationRoute(routeId).pathCenterline[0];
+          (source && lookup.get(source) ? reachableRouteIds : unreachableRouteIds).push(routeId);
+        }
+        return {
+          movementProfileId: group.movementProfileId,
+          goal: { ...group.goal },
+          routeIds,
+          revision: stableDigest({
+            schemaVersion: 1,
+            grid: this.map.grid,
+            width: this.map.width,
+            height: this.map.height,
+            movementProfileId: group.movementProfileId,
+            goal: group.goal,
+            profile: profile.movementProfiles[group.movementProfileId],
+            terrainTypes: this.content.terrainTypes,
+            terrainByCoord,
+            occupiedCoords: profile.movementProfiles[group.movementProfileId]?.towerOccupancy === "blocked"
+              ? occupiedCoords
+              : []
+          }),
+          reachableTileCount: field.cells.length,
+          reachableRouteIds,
+          unreachableRouteIds
+        };
+      });
+  }
+
+  private buildNavigationSnapshot(): NavigationSnapshotV1 | undefined {
+    if (!this.activeNavigationProfile || !this.navigationResolver || !this.navigationFieldLookupCache) return undefined;
+    const fields = this.buildNavigationFieldDiagnostics(
+      this.groupNavigationDiagnosticPairs(this.navigationDiagnosticPairs()),
+      (movementProfileId, routeId) => this.navigationField(movementProfileId, routeId),
+      this.navigationFieldLookupCache
+    );
+    const stalledEnemyIds = this.enemies
+      .filter((enemy) => enemy.hp > 0 && enemy.navigation && !enemy.navigation.nextCoord && !this.dynamicEnemyAtGoal(enemy))
+      .map((enemy) => enemy.id)
+      .sort(compareBinary);
+    return { schemaVersion: 1, mode: "dynamic_flow", fields, stalledEnemyIds };
+  }
+
+  private buildElevationSnapshot(copyStaticState: boolean): GameSnapshot["elevation"] {
+    if (!this.activeElevation) return undefined;
+    if (!copyStaticState) return this.staticElevationSnapshot;
+    return {
+      schemaVersion: 1,
+      defaultElevation: 0,
+      overrides: this.staticElevationSnapshot!.overrides.map((entry) => ({ ...entry }))
+    };
+  }
+
+  private buildCheckpointState(): GameCheckpointStateV1 {
+    const enemies = this.enemies.map((enemy): EnemyState => ({
+      id: enemy.id,
+      typeId: enemy.typeId,
+      hp: enemy.hp,
+      maxHp: enemy.maxHp,
+      pathProgress: enemy.pathProgress,
+      dotRemaining: enemy.dotRemaining,
+      ...(enemy.dotDamagePerUnit === undefined ? {} : { dotDamagePerUnit: enemy.dotDamagePerUnit }),
+      ...(enemy.dotSourceTowerTypeId === undefined ? {} : { dotSourceTowerTypeId: enemy.dotSourceTowerTypeId }),
+      pathOffset: enemy.pathOffset,
+      ...(enemy.routeId === undefined ? {} : { routeId: enemy.routeId }),
+      ...(!this.activeNavigationProfile || enemy.navigation === undefined ? {} : {
+        navigation: {
+          schemaVersion: enemy.navigation.schemaVersion,
+          movementProfileId: enemy.navigation.movementProfileId,
+          currentCoord: { ...enemy.navigation.currentCoord },
+          ...(enemy.navigation.nextCoord === undefined ? {} : { nextCoord: { ...enemy.navigation.nextCoord } }),
+          edgeProgress: enemy.navigation.edgeProgress,
+          stepsEntered: enemy.navigation.stepsEntered
+        }
+      }),
+      ...(enemy.phaseSpawnsTriggered === undefined ? {} : { phaseSpawnsTriggered: [...enemy.phaseSpawnsTriggered] }),
+      ...(enemy.statuses === undefined ? {} : {
+        statuses: {
+          ...(enemy.statuses.slow === undefined ? {} : { slow: { ...enemy.statuses.slow } }),
+          ...(enemy.statuses.stun === undefined ? {} : { stun: { ...enemy.statuses.stun } }),
+          ...(enemy.statuses.poison === undefined ? {} : { poison: { ...enemy.statuses.poison } })
+        }
+      }),
+      ...(enemy.disruptCooldown === undefined ? {} : { disruptCooldown: enemy.disruptCooldown }),
+      ...(enemy.towerAttackCooldown === undefined ? {} : { towerAttackCooldown: enemy.towerAttackCooldown })
+    }));
+    const towers = this.towers.map((tower): TowerState => ({
+      id: tower.id,
+      typeId: tower.typeId,
+      coord: { ...tower.coord },
+      footprint: tower.footprint.map((coord) => ({ ...coord })),
+      level: tower.level,
+      ...(tower.targetMode === undefined ? {} : { targetMode: tower.targetMode }),
+      stacks: tower.stacks,
+      cooldown: tower.cooldown,
+      investedResources: { ...tower.investedResources },
+      ...(tower.disabledFor === undefined ? {} : { disabledFor: tower.disabledFor }),
+      ...(tower.hp === undefined ? {} : { hp: tower.hp })
+    }));
+    const combat = this.buildCombatState();
+    const reactions = this.buildReactionState();
+    const state: GameCheckpointStateV1 = {
+      coreHp: this.coreHp,
+      resources: { ...this.resources },
+      waveIndex: this.waveIndex,
+      startedWaveCount: this.startedWaveCount,
+      waveState: this.waveState,
+      prepRemaining: this.prepRemaining,
+      outcome: this.outcome,
+      enemies,
+      towers,
+      lastEvents: this.lastEvents,
+      enemyCounter: this.enemyCounter,
+      towerCounter: this.towerCounter,
+      clearedWaveCount: this.clearedWaveCount,
+      killCount: this.killCount,
+      leakCount: this.leakCount,
+      killCountByEnemyType: { ...this.killCountByEnemyType },
+      completedObjectiveIds: [...this.completedObjectiveIds].sort(),
+      earnedStarIds: [...this.earnedStarIds].sort(),
+      spawnQueue: this.spawnQueue.map((item) => ({
+        at: item.at,
+        enemyId: item.enemyId,
+        ...(item.routeId === undefined ? {} : { routeId: item.routeId })
+      })),
+      missionElapsed: this.missionElapsed,
+      nextWaveStartAt: this.nextWaveStartAt,
+      abilityCooldowns: Object.fromEntries(
+        Object.entries(this.abilityCooldowns).filter((entry): entry is [string, number] => typeof entry[1] === "number")
+      ),
+      runtimeTerrainOverrides: [...this.runtimeTerrainOverrides.values()].map((entry) => ({
+        q: entry.q,
+        r: entry.r,
+        terrain: entry.terrain,
+        source: entry.source,
+        ...(entry.expiresIn === undefined ? {} : { expiresIn: entry.expiresIn })
+      })),
+      scriptValues: this.scriptValues,
+      scriptDiagnostics: this.scriptDiagnostics.map((diagnostic) => ({
+        scriptId: diagnostic.scriptId,
+        ...(diagnostic.handlerId === undefined ? {} : { handlerId: diagnostic.handlerId }),
+        event: diagnostic.event,
+        code: diagnostic.code,
+        message: diagnostic.message
+      })),
+      scriptHandlerLastRun: { ...this.scriptHandlerLastRun },
+      scriptEventCursor: this.scriptEventCursor,
+      scriptActionsRemaining: this.scriptActionsRemaining,
+      scriptTerrainChangesRemaining: this.scriptTerrainChangesRemaining,
+      scriptSignalDepth: this.scriptSignalDepth,
+      ...(combat === undefined ? {} : { combat }),
+      ...(reactions === undefined ? {} : { reactions })
+    };
+    return cloneCheckpointJson(state);
+  }
+
+  private static validateCheckpointIdentity(content: GameContentRegistry, identity: GameCheckpointIdentityV1): void {
+    const descriptors = checkpointObjectDescriptors(identity, "Game checkpoint identity");
+    requireExactCheckpointKeys(
+      descriptors,
+      ["missionId", "difficultyId", "metaUpgradeLevels"],
+      "Game checkpoint identity"
+    );
+    const missionId = checkpointDataField(descriptors, "missionId", "Game checkpoint identity");
+    const difficultyId = checkpointDataField(descriptors, "difficultyId", "Game checkpoint identity");
+    const levelsValue = checkpointDataField(descriptors, "metaUpgradeLevels", "Game checkpoint identity");
+    if (typeof missionId !== "string" || !Object.prototype.hasOwnProperty.call(content.missions, missionId)) {
+      throw new Error("Game checkpoint identity references an unknown mission.");
+    }
+    if (typeof difficultyId !== "string" || !content.difficulties.some((item) => item.id === difficultyId)) {
+      throw new Error("Game checkpoint identity references an unknown difficulty.");
+    }
+    const levelDescriptors = checkpointObjectDescriptors(levelsValue, "Game checkpoint meta upgrade levels");
+    const authoredUpgradeIds = Object.keys(content.metaProgression.upgrades).sort();
+    const checkpointUpgradeIds = Object.keys(levelDescriptors).sort();
+    if (
+      authoredUpgradeIds.length !== checkpointUpgradeIds.length ||
+      authoredUpgradeIds.some((upgradeId, index) => upgradeId !== checkpointUpgradeIds[index])
+    ) {
+      throw new Error("Game checkpoint identity has an unknown or missing meta upgrade.");
+    }
+    for (const upgradeId of checkpointUpgradeIds) {
+      const level = checkpointDataField(levelDescriptors, upgradeId, "Game checkpoint meta upgrade levels");
+      const upgrade = content.metaProgression.upgrades[upgradeId];
+      if (!upgrade || typeof level !== "number" || !Number.isInteger(level) || level < 0 || level > upgrade.maxLevel) {
+        throw new Error(`Game checkpoint meta upgrade level for "${upgradeId}" is invalid.`);
+      }
+    }
+  }
+
+  private static validateCheckpointState(
+    content: GameContentRegistry,
+    identity: GameCheckpointIdentityV1,
+    state: GameCheckpointStateV1
+  ): void {
+    const descriptors = checkpointObjectDescriptors(state, "Game checkpoint state");
+    const required = [
+      "coreHp", "resources", "waveIndex", "startedWaveCount", "waveState", "prepRemaining", "outcome",
+      "enemies", "towers", "lastEvents", "enemyCounter", "towerCounter", "clearedWaveCount", "killCount",
+      "leakCount", "killCountByEnemyType", "completedObjectiveIds", "earnedStarIds", "spawnQueue",
+      "missionElapsed", "nextWaveStartAt", "abilityCooldowns", "runtimeTerrainOverrides", "scriptValues",
+      "scriptDiagnostics", "scriptHandlerLastRun", "scriptEventCursor", "scriptActionsRemaining",
+      "scriptTerrainChangesRemaining", "scriptSignalDepth"
+    ] as const;
+    for (const key of required) checkpointDataField(descriptors, key, "Game checkpoint state");
+    requireExactCheckpointKeys(descriptors, [
+      ...required,
+      ...(Object.prototype.hasOwnProperty.call(descriptors, "combat") ? ["combat"] : []),
+      ...(Object.prototype.hasOwnProperty.call(descriptors, "reactions") ? ["reactions"] : [])
+    ], "Game checkpoint state");
+
+    const finite = (value: unknown, label: string, minimum = 0, maximum = Infinity): number => {
+      if (typeof value !== "number" || !Number.isFinite(value) || value < minimum || value > maximum) {
+        throw new Error(`Game checkpoint state ${label} is invalid.`);
+      }
+      return value;
+    };
+    const integer = (value: unknown, label: string, minimum = 0): number => {
+      const result = finite(value, label, minimum);
+      if (!Number.isSafeInteger(result)) throw new Error(`Game checkpoint state ${label} must be a safe integer.`);
+      return result;
+    };
+    const array = (value: unknown, label: string): readonly unknown[] => {
+      if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+        throw new Error(`Game checkpoint state ${label} must be an array.`);
+      }
+      return value;
+    };
+    const closed = (
+      value: unknown,
+      label: string,
+      requiredKeys: readonly string[],
+      optionalKeys: readonly string[] = []
+    ) => {
+      const result = checkpointObjectDescriptors(value, `Game checkpoint state ${label}`);
+      for (const key of requiredKeys) checkpointDataField(result, key, `Game checkpoint state ${label}`);
+      const allowed = new Set([...requiredKeys, ...optionalKeys]);
+      if (Object.keys(result).some((key) => !allowed.has(key))) {
+        throw new Error(`Game checkpoint state ${label} contains an unsupported field.`);
+      }
+      return result;
+    };
+    const stringValue = (value: unknown, label: string): string => {
+      if (typeof value !== "string") throw new Error(`Game checkpoint state ${label} must be a string.`);
+      return value;
+    };
+    const own = (record: object, key: string): boolean => Object.prototype.hasOwnProperty.call(record, key);
+    const recordNumbers = (
+      value: unknown,
+      label: string,
+      allowedKeys?: ReadonlySet<string>,
+      integersOnly = false
+    ): void => {
+      const entries = checkpointObjectDescriptors(value, `Game checkpoint state ${label}`);
+      for (const key of Object.keys(entries)) {
+        if (allowedKeys && !allowedKeys.has(key)) throw new Error(`Game checkpoint state ${label} references unknown id "${key}".`);
+        const number = finite(checkpointDataField(entries, key, label), `${label}.${key}`);
+        if (integersOnly && !Number.isInteger(number)) throw new Error(`Game checkpoint state ${label}.${key} must be an integer.`);
+      }
+    };
+    const stringArray = (value: unknown, label: string, unique = false): string[] => {
+      const result = array(value, label).map((item) => stringValue(item, `${label} entry`));
+      if (unique && new Set(result).size !== result.length) {
+        throw new Error(`Game checkpoint state ${label} contains duplicate ids.`);
+      }
+      return result;
+    };
+
+    finite(state.coreHp, "coreHp");
+    const mission = content.missions[identity.missionId]!;
+    const currencyIds = new Set(content.currencies.map((currency) => currency.id));
+    recordNumbers(state.resources, "resources", currencyIds);
+    const waveIndex = integer(state.waveIndex, "waveIndex");
+    const startedWaveCount = integer(state.startedWaveCount, "startedWaveCount");
+    if (waveIndex >= Math.max(1, mission.waves.length) || startedWaveCount > mission.waves.length) {
+      throw new Error("Game checkpoint state wave position is outside the mission.");
+    }
+    if (!(new Set<WaveState>(["ready", "spawning", "between", "complete"])).has(state.waveState)) {
+      throw new Error("Game checkpoint state waveState is invalid.");
+    }
+    if (!(new Set(["playing", "victory", "defeat"])).has(state.outcome)) {
+      throw new Error("Game checkpoint state outcome is invalid.");
+    }
+    finite(state.prepRemaining, "prepRemaining");
+    finite(state.missionElapsed, "missionElapsed");
+    if (state.nextWaveStartAt !== null) finite(state.nextWaveStartAt, "nextWaveStartAt");
+    const enemyCounter = integer(state.enemyCounter, "enemyCounter");
+    const towerCounter = integer(state.towerCounter, "towerCounter");
+    integer(state.clearedWaveCount, "clearedWaveCount");
+    integer(state.killCount, "killCount");
+    integer(state.leakCount, "leakCount");
+    const enemyTypeIds = new Set(Object.keys(content.enemies));
+    const abilityIds = new Set((mission.abilities ?? []).map((ability) => ability.id));
+    recordNumbers(state.killCountByEnemyType, "killCountByEnemyType", enemyTypeIds, true);
+    recordNumbers(state.abilityCooldowns, "abilityCooldowns", abilityIds);
+    recordNumbers(state.scriptHandlerLastRun, "scriptHandlerLastRun");
+
+    const mapDefinition = content.maps[mission.mapId];
+    if (!mapDefinition) throw new Error("Game checkpoint identity mission has no source map.");
+    const validCoord = (value: unknown, label: string): { q: number; r: number } => {
+      const coord = closed(value, label, ["q", "r"]);
+      const q = checkpointDataField(coord, "q", label);
+      const r = checkpointDataField(coord, "r", label);
+      if (
+        typeof q !== "number" || !Number.isInteger(q) || typeof r !== "number" || !Number.isInteger(r) ||
+        q < 0 || q >= mapDefinition.width || r < 0 || r >= mapDefinition.height
+      ) throw new Error(`Game checkpoint state ${label} is outside the map.`);
+      return { q, r };
+    };
+    const routeIds = new Set(
+      mapDefinition.pathRoutes?.length ? mapDefinition.pathRoutes.map((route) => route.id) : ["main"]
+    );
+    const routeTracks = new Map(
+      mapDefinition.pathRoutes?.length
+        ? mapDefinition.pathRoutes.map((route) => [route.id, route.pathCenterline] as const)
+        : [["main", mapDefinition.pathCenterline] as const]
+    );
+    const topology = createGridTopology(normalizeGridDefinition(mapDefinition.grid));
+    const directFlightTrack = topology.line(mapDefinition.spawnCoord, mapDefinition.coreCoord);
+    const difficulty = content.difficulties.find((item) => item.id === identity.difficultyId)!;
+    const selectedNavigation = resolveActiveNavigationMechanics(content, identity.missionId);
+    const activeNavigationProfile: DynamicFlowNavigationProfileV1 | undefined = selectedNavigation?.mode === "dynamic_flow"
+      ? {
+          mode: "dynamic_flow",
+          defaultMovementProfileId: selectedNavigation.defaultMovementProfileId,
+          movementProfiles: selectedNavigation.movementProfiles,
+          ...(selectedNavigation.enemyMovementProfiles === undefined
+            ? {}
+            : { enemyMovementProfiles: selectedNavigation.enemyMovementProfiles })
+        }
+      : undefined;
+    const optionalRoute = (descriptors: ReturnType<typeof closed>, label: string): void => {
+      if (!own(descriptors, "routeId")) return;
+      const routeId = stringValue(checkpointDataField(descriptors, "routeId", label), `${label}.routeId`);
+      if (!routeIds.has(routeId)) throw new Error(`Game checkpoint state ${label} references an unknown route.`);
+    };
+    const optionalFinite = (
+      object: ReturnType<typeof closed>, key: string, label: string, minimum = 0, maximum = Infinity
+    ): void => {
+      if (own(object, key)) finite(checkpointDataField(object, key, label), `${label}.${key}`, minimum, maximum);
+    };
+
+    const enemyIds = new Set<string>();
+    const navigationStates: Array<{
+      readonly enemyId: string;
+      readonly routeId: string;
+      readonly navigation: EnemyNavigationStateV1;
+    }> = [];
+    let liveNavigationStates = 0;
+    let maxEnemyId = 0;
+    for (const value of array(state.enemies, "enemies")) {
+      const enemy = closed(value, "enemy", [
+        "id", "typeId", "hp", "maxHp", "pathProgress", "dotRemaining", "pathOffset"
+      ], [
+        "dotDamagePerUnit", "dotSourceTowerTypeId", "routeId", "phaseSpawnsTriggered", "statuses",
+        "disruptCooldown", "towerAttackCooldown", "navigation"
+      ]);
+      const id = checkpointDataField(enemy, "id", "Game checkpoint enemy");
+      const typeId = checkpointDataField(enemy, "typeId", "Game checkpoint enemy");
+      if (
+        typeof id !== "string" || enemyIds.has(id) || typeof typeId !== "string" ||
+        !own(content.enemies, typeId)
+      ) {
+        throw new Error("Game checkpoint state has an invalid or duplicate enemy identity.");
+      }
+      const idMatch = /^enemy_([1-9]\d*)$/.exec(id);
+      if (!idMatch) throw new Error("Game checkpoint state enemy id is not an engine id.");
+      const numericId = Number(idMatch[1]);
+      if (!Number.isSafeInteger(numericId)) throw new Error("Game checkpoint state enemy id suffix is unsafe.");
+      maxEnemyId = Math.max(maxEnemyId, numericId);
+      enemyIds.add(id);
+      for (const key of ["hp", "maxHp", "pathProgress", "dotRemaining", "pathOffset"] as const) {
+        finite(checkpointDataField(enemy, key, "Game checkpoint enemy"), `enemy.${key}`, key === "pathOffset" ? -Infinity : 0);
+      }
+      optionalFinite(enemy, "dotDamagePerUnit", "enemy");
+      const enemyType = content.enemies[typeId];
+      if (!enemyType) throw new Error("Game checkpoint enemy references an unknown type.");
+      const maxHp = checkpointDataField(enemy, "maxHp", "enemy");
+      const hp = checkpointDataField(enemy, "hp", "enemy");
+      const expectedMaxHp = enemyType.maxHp * (difficulty.enemyHpMultiplier ?? 1);
+      if (maxHp !== expectedMaxHp || typeof hp !== "number" || hp > expectedMaxHp) {
+        throw new Error("Game checkpoint enemy hp or maxHp is inconsistent with authored content.");
+      }
+      if (own(enemy, "dotSourceTowerTypeId")) {
+        const towerTypeId = stringValue(checkpointDataField(enemy, "dotSourceTowerTypeId", "enemy"), "enemy.dotSourceTowerTypeId");
+        if (!own(content.towers, towerTypeId)) throw new Error("Game checkpoint enemy references an unknown dot tower type.");
+      }
+      const isFlying = enemyType.targetClass === "flying";
+      const hasNavigation = own(enemy, "navigation");
+      if (!activeNavigationProfile && hasNavigation) {
+        throw new Error("Game checkpoint enemy navigation is unexpected for an inactive capability.");
+      }
+      if (activeNavigationProfile && !hasNavigation) {
+        throw new Error("Game checkpoint active dynamic enemy navigation is missing.");
+      }
+      if (activeNavigationProfile && !own(enemy, "routeId")) {
+        throw new Error("Game checkpoint active dynamic enemy route is missing.");
+      }
+      if (!activeNavigationProfile && isFlying && own(enemy, "routeId")) {
+        throw new Error("Game checkpoint flying enemy must not carry a route.");
+      }
+      if (activeNavigationProfile || !isFlying) optionalRoute(enemy, "enemy");
+      const routeId = own(enemy, "routeId")
+        ? stringValue(checkpointDataField(enemy, "routeId", "enemy"), "enemy.routeId")
+        : "main";
+      const pathProgress = checkpointDataField(enemy, "pathProgress", "enemy");
+      if (!activeNavigationProfile) {
+        const track = enemyType.movementKind === "direct_flying"
+          ? directFlightTrack
+          : (routeTracks.get(routeId) ?? routeTracks.values().next().value ?? []);
+        const maximumProgress = Math.max(0, track.length - 1 - 0.001);
+        if (typeof pathProgress !== "number" || pathProgress > maximumProgress) {
+          throw new Error("Game checkpoint enemy progress is outside its resolved track.");
+        }
+      }
+      if (activeNavigationProfile) {
+        const navigation = closed(
+          checkpointDataField(enemy, "navigation", "enemy"),
+          "enemy navigation",
+          ["schemaVersion", "movementProfileId", "currentCoord", "edgeProgress", "stepsEntered"],
+          ["nextCoord"]
+        );
+        if (checkpointDataField(navigation, "schemaVersion", "enemy navigation") !== 1) {
+          throw new Error("Game checkpoint enemy navigation schema version is unsupported.");
+        }
+        const movementProfileId = stringValue(
+          checkpointDataField(navigation, "movementProfileId", "enemy navigation"),
+          "enemy navigation movement profile"
+        );
+        const expectedMovementProfileId = activeNavigationProfile.enemyMovementProfiles?.[typeId]
+          ?? activeNavigationProfile.defaultMovementProfileId;
+        if (
+          !own(activeNavigationProfile.movementProfiles, movementProfileId)
+          || movementProfileId !== expectedMovementProfileId
+        ) {
+          throw new Error("Game checkpoint enemy navigation profile is invalid for its enemy type.");
+        }
+        const currentCoord = validCoord(
+          checkpointDataField(navigation, "currentCoord", "enemy navigation"),
+          "enemy navigation current coord"
+        );
+        const nextCoord = own(navigation, "nextCoord")
+          ? validCoord(
+              checkpointDataField(navigation, "nextCoord", "enemy navigation"),
+              "enemy navigation next coord"
+            )
+          : undefined;
+        const edgeProgress = finite(
+          checkpointDataField(navigation, "edgeProgress", "enemy navigation"),
+          "enemy navigation edge progress"
+        );
+        if (edgeProgress >= 1) {
+          throw new Error("Game checkpoint enemy navigation edge progress must be in [0, 1)." );
+        }
+        const stepsEntered = integer(
+          checkpointDataField(navigation, "stepsEntered", "enemy navigation"),
+          "enemy navigation steps entered"
+        );
+        if (pathProgress !== stepsEntered + edgeProgress) {
+          throw new Error("Game checkpoint enemy navigation pathProgress mismatch.");
+        }
+        navigationStates.push({
+          enemyId: id,
+          routeId,
+          navigation: {
+            schemaVersion: 1,
+            movementProfileId,
+            currentCoord,
+            ...(nextCoord === undefined ? {} : { nextCoord }),
+            edgeProgress,
+            stepsEntered
+          }
+        });
+        if (typeof hp === "number" && hp > 0) liveNavigationStates += 1;
+      }
+      optionalFinite(enemy, "disruptCooldown", "enemy");
+      optionalFinite(enemy, "towerAttackCooldown", "enemy");
+      if (own(enemy, "phaseSpawnsTriggered")) {
+        const triggers = stringArray(
+          checkpointDataField(enemy, "phaseSpawnsTriggered", "enemy"),
+          "enemy.phaseSpawnsTriggered",
+          true
+        );
+        const authoredTriggers = new Set((enemyType.phaseSpawns ?? []).map((phase) => `${phase.hpRatio}:${phase.enemyId}`));
+        if (triggers.some((trigger) => !authoredTriggers.has(trigger))) {
+          throw new Error("Game checkpoint enemy has an unauthored phase trigger.");
+        }
+      }
+      if (own(enemy, "statuses")) {
+        const statuses = closed(checkpointDataField(enemy, "statuses", "enemy"), "enemy statuses", [], ["slow", "stun", "poison"]);
+        if (own(statuses, "slow")) {
+          const slow = closed(checkpointDataField(statuses, "slow", "enemy statuses"), "enemy slow status", ["factor", "remaining"]);
+          finite(checkpointDataField(slow, "factor", "enemy slow status"), "enemy slow factor", 0, 1);
+          finite(checkpointDataField(slow, "remaining", "enemy slow status"), "enemy slow remaining");
+        }
+        if (own(statuses, "stun")) {
+          const stun = closed(checkpointDataField(statuses, "stun", "enemy statuses"), "enemy stun status", ["remaining"]);
+          finite(checkpointDataField(stun, "remaining", "enemy stun status"), "enemy stun remaining");
+        }
+        if (own(statuses, "poison")) {
+          const poison = closed(checkpointDataField(statuses, "poison", "enemy statuses"), "enemy poison status", ["dps", "remaining"]);
+          finite(checkpointDataField(poison, "dps", "enemy poison status"), "enemy poison dps");
+          finite(checkpointDataField(poison, "remaining", "enemy poison status"), "enemy poison remaining");
+        }
+      }
+    }
+    if (liveNavigationStates > NAVIGATION_LIMITS.liveEnemyStates) {
+      throw new Error("Game checkpoint live enemy navigation state budget is exceeded.");
+    }
+    if (enemyCounter < maxEnemyId) throw new Error("Game checkpoint enemy counter is below a live enemy id.");
+
+    const towerIds = new Set<string>();
+    const occupiedCoords = new Set<string>();
+    let maxTowerId = 0;
+    for (const value of array(state.towers, "towers")) {
+      const tower = closed(value, "tower", [
+        "id", "typeId", "coord", "footprint", "level", "stacks", "cooldown", "investedResources"
+      ], ["targetMode", "disabledFor", "hp"]);
+      const id = checkpointDataField(tower, "id", "Game checkpoint tower");
+      const typeId = checkpointDataField(tower, "typeId", "Game checkpoint tower");
+      if (
+        typeof id !== "string" || towerIds.has(id) || typeof typeId !== "string" ||
+        !own(content.towers, typeId)
+      ) {
+        throw new Error("Game checkpoint state has an invalid or duplicate tower identity.");
+      }
+      const idMatch = /^tower_([1-9]\d*)$/.exec(id);
+      if (!idMatch) throw new Error("Game checkpoint state tower id is not an engine id.");
+      const numericId = Number(idMatch[1]);
+      if (!Number.isSafeInteger(numericId)) throw new Error("Game checkpoint state tower id suffix is unsafe.");
+      maxTowerId = Math.max(maxTowerId, numericId);
+      towerIds.add(id);
+      const type = content.towers[typeId];
+      if (!type) throw new Error("Game checkpoint tower references an unknown type.");
+      const center = validCoord(checkpointDataField(tower, "coord", "Game checkpoint tower"), `tower ${id} coord`);
+      integer(checkpointDataField(tower, "level", "tower"), "tower.level", 1);
+      integer(checkpointDataField(tower, "stacks", "tower"), "tower.stacks");
+      finite(checkpointDataField(tower, "cooldown", "tower"), "tower.cooldown");
+      recordNumbers(checkpointDataField(tower, "investedResources", "tower"), "tower.investedResources", currencyIds);
+      optionalFinite(tower, "disabledFor", "tower");
+      if (own(tower, "hp")) finite(checkpointDataField(tower, "hp", "tower"), "tower.hp", 0, type.maxHp ?? Infinity);
+      if ((typeof type.maxHp === "number" && type.maxHp > 0) !== own(tower, "hp")) {
+        throw new Error("Game checkpoint tower hp does not match its tower type.");
+      }
+      if (own(tower, "targetMode")) {
+        const mode = stringValue(checkpointDataField(tower, "targetMode", "tower"), "tower.targetMode");
+        if (!(TOWER_TARGET_MODES as readonly string[]).includes(mode)) throw new Error("Game checkpoint tower target mode is invalid.");
+      }
+      const expectedFootprint = topology.tilesWithin(center, type.footprintRadius)
+        .filter((coord) => coord.q >= 0 && coord.q < mapDefinition.width && coord.r >= 0 && coord.r < mapDefinition.height);
+      const footprints = array(checkpointDataField(tower, "footprint", "Game checkpoint tower"), "tower footprint");
+      if (footprints.length !== expectedFootprint.length || footprints.length === 0) {
+        throw new Error("Game checkpoint tower footprint size is invalid.");
+      }
+      for (let index = 0; index < footprints.length; index += 1) {
+        const coord = validCoord(footprints[index], `tower ${id} footprint`);
+        const expected = expectedFootprint[index];
+        if (!expected || coord.q !== expected.q || coord.r !== expected.r) {
+          throw new Error("Game checkpoint tower footprint is inconsistent with its coord and type.");
+        }
+        const key = coordKey(coord);
+        if (occupiedCoords.has(key)) throw new Error("Game checkpoint tower footprints overlap.");
+        occupiedCoords.add(key);
+      }
+    }
+    if (towerCounter < maxTowerId) throw new Error("Game checkpoint tower counter is below a live tower id.");
+
+    const activeCombat = resolveActiveCombatMechanics(content, identity.missionId);
+    const combatDefinitions = activeCombat?.shields;
+    const expectedEnemyShields = new Map<string, NonNullable<ActiveCombatShieldDefinitions["enemies"][string]>>();
+    const expectedTowerShields = new Map<string, NonNullable<ActiveCombatShieldDefinitions["towers"][string]>>();
+    if (combatDefinitions) {
+      for (const enemy of state.enemies) {
+        const definition = combatDefinitions.enemies[enemy.typeId];
+        if (definition) expectedEnemyShields.set(enemy.id, definition);
+      }
+      for (const tower of state.towers) {
+        const definition = combatDefinitions.towers[tower.typeId];
+        if (definition) expectedTowerShields.set(tower.id, definition);
+      }
+    }
+    const expectsShields = expectedEnemyShields.size > 0 || expectedTowerShields.size > 0;
+    const hasCombat = own(descriptors, "combat");
+    if (expectsShields && !hasCombat) {
+      throw new Error("Game checkpoint combat shield state is missing.");
+    }
+    if (hasCombat) {
+      if (!activeCombat) throw new Error("Game checkpoint combat state is unexpected for an inactive capability.");
+      const rawCombat = checkpointObjectDescriptors(
+        checkpointDataField(descriptors, "combat", "Game checkpoint state"),
+        "Game checkpoint state combat"
+      );
+      const combatSchemaVersion = checkpointDataField(rawCombat, "schemaVersion", "combat state");
+      const expectedSchemaVersion = activeCombat.schemaVersion === 3 ? 2 : 1;
+      if (combatSchemaVersion !== expectedSchemaVersion) {
+        throw new Error("Game checkpoint combat schema version is invalid.");
+      }
+      const combat = closed(
+        checkpointDataField(descriptors, "combat", "Game checkpoint state"),
+        "combat state",
+        combatSchemaVersion === 2 ? ["schemaVersion", "shields", "marks"] : ["schemaVersion", "shields"]
+      );
+      const shields = closed(
+        checkpointDataField(combat, "shields", "combat state"),
+        "combat shields",
+        ["enemies", "towers"]
+      );
+      const validateShieldRecord = (
+        value: unknown,
+        label: string,
+        expected: ReadonlyMap<string, NonNullable<ActiveCombatShieldDefinitions["enemies"][string]>>
+      ) => {
+        const record = checkpointObjectDescriptors(value, `Game checkpoint state ${label}`);
+        const actualIds = Object.keys(record).sort();
+        const expectedIds = [...expected.keys()].sort();
+        if (
+          actualIds.length !== expectedIds.length
+          || actualIds.some((id, index) => id !== expectedIds[index])
+        ) {
+          throw new Error(`Game checkpoint ${label} has a missing or extra shield target.`);
+        }
+        for (const id of actualIds) {
+          const definition = expected.get(id)!;
+          const shield = closed(
+            checkpointDataField(record, id, label),
+            `${label}.${id}`,
+            ["current", "capacity", "regenerationDelayRemaining"]
+          );
+          const capacity = checkpointDataField(shield, "capacity", label);
+          if (capacity !== definition.capacity) {
+            throw new Error(`Game checkpoint ${label}.${id} shield capacity differs from authored content.`);
+          }
+          finite(checkpointDataField(shield, "current", label), `${label}.${id}.current`, 0, definition.capacity);
+          finite(
+            checkpointDataField(shield, "regenerationDelayRemaining", label),
+            `${label}.${id}.regenerationDelayRemaining`,
+            0,
+            definition.regeneration?.delayAfterDamage ?? 0
+          );
+        }
+      };
+      validateShieldRecord(
+        checkpointDataField(shields, "enemies", "combat shields"),
+        "enemy shields",
+        expectedEnemyShields
+      );
+      validateShieldRecord(
+        checkpointDataField(shields, "towers", "combat shields"),
+        "tower shields",
+        expectedTowerShields
+      );
+
+      let markApplicationCount = 0;
+      if (combatSchemaVersion === 2) {
+        const marks = closed(
+          checkpointDataField(combat, "marks", "combat state"),
+          "combat marks",
+          ["enemies"]
+        );
+        const markEnemies = checkpointObjectDescriptors(
+          checkpointDataField(marks, "enemies", "combat marks"),
+          "Game checkpoint state combat mark enemies"
+        );
+        for (const enemyId of Object.keys(markEnemies)) {
+          if (!enemyIds.has(enemyId)) {
+            throw new Error(`Game checkpoint combat marks reference unknown enemy "${enemyId}".`);
+          }
+          const enemyMarkRecord = checkpointObjectDescriptors(
+            checkpointDataField(markEnemies, enemyId, "combat mark enemies"),
+            `Game checkpoint state combat marks for ${enemyId}`
+          );
+          const markIds = Object.keys(enemyMarkRecord);
+          if (markIds.length === 0) throw new Error("Game checkpoint combat mark enemy record must not be empty.");
+          markApplicationCount += markIds.length;
+          if (markApplicationCount > MARK_LIMITS.runtimeApplications) {
+            throw new Error(`Game checkpoint mark applications exceed the ${MARK_LIMITS.runtimeApplications} limit.`);
+          }
+          for (const markId of markIds) {
+            const definition = activeCombat.marks.definitions[markId];
+            if (!definition) throw new Error(`Game checkpoint combat state references unknown mark "${markId}".`);
+            const mark = closed(
+              checkpointDataField(enemyMarkRecord, markId, `combat marks for ${enemyId}`),
+              `combat mark ${enemyId}.${markId}`,
+              ["stacks", "remaining"]
+            );
+            integer(
+              checkpointDataField(mark, "stacks", `combat mark ${markId}`),
+              `combat mark ${markId}.stacks`,
+              1
+            );
+            const stacks = checkpointDataField(mark, "stacks", `combat mark ${markId}`);
+            if (typeof stacks !== "number" || stacks > definition.maxStacks) {
+              throw new Error(`Game checkpoint combat mark "${markId}" stacks exceed its definition.`);
+            }
+            finite(
+              checkpointDataField(mark, "remaining", `combat mark ${markId}`),
+              `combat mark ${markId}.remaining`,
+              Number.MIN_VALUE,
+              definition.duration
+            );
+          }
+        }
+      }
+      if (!expectsShields && markApplicationCount === 0) {
+        throw new Error("Game checkpoint empty combat state must be omitted.");
+      }
+    }
+
+    const hasReactions = own(descriptors, "reactions");
+    const activeReactions = resolveActiveReactionsMechanics(content, identity.missionId);
+    if (hasReactions) {
+      if (!activeReactions) throw new Error("Game checkpoint reaction state is unexpected for an inactive capability.");
+      const reactionState = closed(
+        checkpointDataField(descriptors, "reactions", "Game checkpoint state"),
+        "reaction state",
+        ["schemaVersion", "exposures"]
+      );
+      if (checkpointDataField(reactionState, "schemaVersion", "reaction state") !== 1) {
+        throw new Error("Game checkpoint reaction state version is unsupported.");
+      }
+      const exposures = closed(
+        checkpointDataField(reactionState, "exposures", "reaction state"),
+        "reaction exposures",
+        ["enemies"]
+      );
+      const exposureEnemies = checkpointObjectDescriptors(
+        checkpointDataField(exposures, "enemies", "reaction exposures"),
+        "Game checkpoint reaction exposure enemies"
+      );
+      const enemyOrder = Object.keys(exposureEnemies);
+      if (enemyOrder.length === 0 || enemyOrder.join("\u0000") !== [...enemyOrder].sort().join("\u0000")) {
+        throw new Error("Game checkpoint reaction enemy order must be canonical and non-empty.");
+      }
+      let total = 0;
+      for (const enemyId of enemyOrder) {
+        if (!enemyIds.has(enemyId)) throw new Error(`Game checkpoint reaction state references unknown enemy "${enemyId}".`);
+        const enemyExposureRecord = checkpointObjectDescriptors(
+          checkpointDataField(exposureEnemies, enemyId, "reaction exposure enemies"),
+          `Game checkpoint reaction exposures for ${enemyId}`
+        );
+        const exposureOrder = Object.keys(enemyExposureRecord);
+        if (exposureOrder.length === 0 || exposureOrder.join("\u0000") !== [...exposureOrder].sort().join("\u0000")) {
+          throw new Error("Game checkpoint exposure order must be canonical and non-empty.");
+        }
+        total += exposureOrder.length;
+        if (total > REACTION_LIMITS.runtimeExposureApplications) throw new Error("Game checkpoint reaction exposure budget is exceeded.");
+        for (const exposureId of exposureOrder) {
+          const definition = activeReactions.exposures.definitions[exposureId];
+          if (!definition) throw new Error(`Game checkpoint references unknown exposure "${exposureId}".`);
+          const exposure = closed(
+            checkpointDataField(enemyExposureRecord, exposureId, `reaction exposures for ${enemyId}`),
+            `reaction exposure ${enemyId}.${exposureId}`,
+            ["stacks", "remaining"]
+          );
+          const stacks = integer(checkpointDataField(exposure, "stacks", exposureId), `reaction exposure ${exposureId}.stacks`, 1);
+          if (stacks > definition.maxStacks) throw new Error("Game checkpoint reaction exposure stacks exceed definition.");
+          finite(checkpointDataField(exposure, "remaining", exposureId), `reaction exposure ${exposureId}.remaining`, Number.MIN_VALUE, definition.duration);
+        }
+      }
+    }
+
+    let previousSpawnAt = -Infinity;
+    let spawnIndex = 0;
+    for (const value of array(state.spawnQueue, "spawnQueue")) {
+      const item = closed(value, "spawn item", ["at", "enemyId"], ["routeId"]);
+      const at = finite(checkpointDataField(item, "at", "Game checkpoint spawn item"), "spawnQueue.at");
+      if (at < previousSpawnAt || (spawnIndex === 0 && at < state.missionElapsed - 0.0001)) {
+        throw new Error("Game checkpoint spawn queue order or due time is invalid.");
+      }
+      previousSpawnAt = at;
+      spawnIndex += 1;
+      const enemyId = checkpointDataField(item, "enemyId", "Game checkpoint spawn item");
+      if (typeof enemyId !== "string" || !own(content.enemies, enemyId)) {
+        throw new Error("Game checkpoint spawn queue references an unknown enemy.");
+      }
+      optionalRoute(item, "spawn item");
+      if (!activeNavigationProfile && content.enemies[enemyId]?.targetClass === "flying" && own(item, "routeId")) {
+        throw new Error("Game checkpoint flying spawn must not carry a route.");
+      }
+    }
+    const authoredObjectiveIds = (mission.objectives?.victory?.length
+      ? mission.objectives.victory.map((objective) => objective.id)
+      : ["clear_waves"]);
+    const authoredStarIds = (mission.objectives?.stars ?? []).map((star) => star.id);
+    if (new Set(authoredObjectiveIds).size !== authoredObjectiveIds.length || new Set(authoredStarIds).size !== authoredStarIds.length) {
+      throw new Error("Game checkpoint mission has duplicate authored objective or star ids.");
+    }
+    for (const [key, allowed] of [
+      ["completedObjectiveIds", new Set(authoredObjectiveIds)],
+      ["earnedStarIds", new Set(authoredStarIds)]
+    ] as const) {
+      const values = stringArray(state[key], key, true);
+      if (values.some((value, index) => index > 0 && values[index - 1]! > value)) {
+        throw new Error(`Game checkpoint state ${key} is not in canonical order.`);
+      }
+      for (const value of values) {
+        if (!allowed.has(value)) throw new Error(`Game checkpoint state ${key} references an unauthored objective or star.`);
+      }
+    }
+    const validateScriptJson = (value: unknown, label: string, depth = 0): void => {
+      if (depth > 128) throw new Error(`Game checkpoint state ${label} exceeds the script JSON depth limit.`);
+      if (value === null || typeof value === "string" || typeof value === "boolean") return;
+      if (typeof value === "number") {
+        finite(value, label, -Infinity);
+        return;
+      }
+      if (Array.isArray(value)) {
+        for (const item of array(value, label)) validateScriptJson(item, label, depth + 1);
+        return;
+      }
+      const object = checkpointObjectDescriptors(value, `Game checkpoint state ${label}`);
+      for (const key of Object.keys(object)) {
+        validateScriptJson(checkpointDataField(object, key, label), `${label}.${key}`, depth + 1);
+      }
+    };
+
+    const scriptValueRoot = checkpointObjectDescriptors(state.scriptValues, "Game checkpoint scriptValues");
+    const authoredScriptIds = Object.keys(content.scripts).sort();
+    const stateScriptIds = Object.keys(scriptValueRoot).sort();
+    if (
+      authoredScriptIds.length !== stateScriptIds.length ||
+      authoredScriptIds.some((scriptId, index) => scriptId !== stateScriptIds[index])
+    ) throw new Error("Game checkpoint script values do not match authored scripts.");
+    for (const scriptId of stateScriptIds) {
+      if (!own(content.scripts, scriptId)) throw new Error("Game checkpoint script values reference an unknown script.");
+      const bindings = checkpointObjectDescriptors(
+        checkpointDataField(scriptValueRoot, scriptId, "scriptValues"),
+        `Game checkpoint script values for ${scriptId}`
+      );
+      for (const bindingKey of Object.keys(bindings)) {
+        const bindingState = checkpointDataField(bindings, bindingKey, `script ${scriptId}`);
+        const values = checkpointObjectDescriptors(
+          bindingState,
+          `Game checkpoint script binding ${scriptId}:${bindingKey}`
+        );
+        for (const key of Object.keys(values)) {
+          validateScriptJson(checkpointDataField(values, key, `script binding ${bindingKey}`), `script value ${scriptId}.${bindingKey}.${key}`);
+        }
+        canonicalStringify(bindingState, {
+          maxDepth: 64,
+          maxNodes: 100_000,
+          maxBytes: TOWER_SCRIPT_LIMITS.stateBytesPerBinding
+        });
+      }
+    }
+
+    const allowedTimerKeys = new Set<string>();
+    for (const scriptId of authoredScriptIds) {
+      const script = content.scripts[scriptId];
+      if (!script) continue;
+      const bindingStates = checkpointObjectDescriptors(
+        checkpointDataField(scriptValueRoot, scriptId, "scriptValues"),
+        `Game checkpoint script values for ${scriptId}`
+      );
+      const timedHandlers = (script.handlers.tick ?? [])
+        .map((handler, index) => ({ handler, handlerId: handler.id ?? String(index) }))
+        .filter(({ handler }) => typeof handler.every === "number");
+      for (const bindingKey of Object.keys(bindingStates)) {
+        for (const { handlerId } of timedHandlers) allowedTimerKeys.add(`${script.id}:${bindingKey}:${handlerId}`);
+      }
+    }
+    const handlerTimers = checkpointObjectDescriptors(state.scriptHandlerLastRun, "Game checkpoint scriptHandlerLastRun");
+    for (const key of Object.keys(handlerTimers)) {
+      const lastRun = checkpointDataField(handlerTimers, key, "scriptHandlerLastRun");
+      if (!allowedTimerKeys.has(key) || typeof lastRun !== "number" || lastRun > state.missionElapsed + 0.000001) {
+        throw new Error("Game checkpoint script handler timer key or time is invalid.");
+      }
+    }
+
+    const diagnosticCodes = new Set(["budget_exceeded", "invalid_expression", "invalid_action", "runtime_error"]);
+    const scriptEvents = new Set<string>(TOWER_SCRIPT_EVENTS);
+    const validateDiagnostic = (value: unknown, label: string): void => {
+      const diagnostic = closed(value, label, ["scriptId", "event", "code", "message"], ["handlerId"]);
+      const scriptId = stringValue(checkpointDataField(diagnostic, "scriptId", label), `${label}.scriptId`);
+      if (scriptId !== "runtime" && !own(content.scripts, scriptId)) throw new Error("Game checkpoint diagnostic references an unknown script.");
+      const event = stringValue(checkpointDataField(diagnostic, "event", label), `${label}.event`);
+      const code = stringValue(checkpointDataField(diagnostic, "code", label), `${label}.code`);
+      stringValue(checkpointDataField(diagnostic, "message", label), `${label}.message`);
+      if (!scriptEvents.has(event) || !diagnosticCodes.has(code)) throw new Error("Game checkpoint script diagnostic is invalid.");
+      if (own(diagnostic, "handlerId")) stringValue(checkpointDataField(diagnostic, "handlerId", label), `${label}.handlerId`);
+    };
+    const diagnostics = array(state.scriptDiagnostics, "scriptDiagnostics");
+    if (diagnostics.length > TOWER_SCRIPT_LIMITS.retainedDiagnostics) {
+      throw new Error("Game checkpoint retained script diagnostic limit is exceeded.");
+    }
+    for (const diagnostic of diagnostics) {
+      validateDiagnostic(diagnostic, "script diagnostic");
+    }
+
+    const eventSchemas: Record<string, { required: readonly string[]; optional?: readonly string[] }> = {
+      towerPlaced: { required: ["type", "towerId", "towerTypeId", "coord", "terrain", "terrainMetadata"] },
+      towerSold: { required: ["type", "towerId", "towerTypeId", "refund"] },
+      towerMoved: { required: ["type", "towerId", "from", "to", "cost"] },
+      towerUpgraded: { required: ["type", "towerId", "level", "stacks"] },
+      towerDisrupted: { required: ["type", "enemyId", "enemyTypeId", "towerIds", "duration"] },
+      towerAttacked: { required: ["type", "enemyId", "enemyTypeId", "towerId", "damage"] },
+      towerShieldChanged: {
+        required: ["type", "towerId", "towerTypeId", "previous", "current", "capacity", "cause", "amount"],
+        optional: ["overflowDamage"]
+      },
+      towerDestroyed: { required: ["type", "towerId", "towerTypeId", "enemyId"] },
+      towerTargetModeChanged: { required: ["type", "towerId", "mode"] },
+      enemyKilled: { required: ["type", "enemyId", "enemyTypeId", "coins", "resources"] },
+      enemySpawnedOnDeath: { required: ["type", "parentEnemyId", "parentEnemyTypeId", "enemyTypeId", "enemyIds"] },
+      enemyLeaked: { required: ["type", "enemyId", "enemyTypeId", "damage"] },
+      enemyDisplacementResolved: {
+        required: [
+          "type", "sourceKind", "sourceId", "sourceCoord", "enemyId", "enemyTypeId", "mode",
+          "requestedDistance", "movedDistance", "from", "to", "stopReason"
+        ]
+      },
+      enemyFell: {
+        required: [
+          "type", "sourceKind", "sourceId", "sourceCoord", "enemyId", "enemyTypeId",
+          "from", "to", "terrainTag"
+        ]
+      },
+      waveStarted: { required: ["type", "waveIndex"] },
+      waveCleared: { required: ["type", "waveIndex", "income", "interest"] },
+      resourcesGranted: { required: ["type", "source", "waveIndex", "resources"] },
+      objectiveCompleted: { required: ["type", "objectiveId", "kind"] },
+      objectiveFailed: { required: ["type", "objectiveId", "kind"] },
+      starEarned: { required: ["type", "starId"] },
+      towerFired: { required: ["type", "towerId", "enemyId", "damage"] },
+      enemyHit: { required: ["type", "towerId", "enemyId", "enemyTypeId", "damage"] },
+      enemyShieldChanged: {
+        required: ["type", "enemyId", "enemyTypeId", "previous", "current", "capacity", "cause", "amount"],
+        optional: ["overflowDamage"]
+      },
+      enemyMarkChanged: {
+        required: [
+          "type", "enemyId", "enemyTypeId", "markId", "previousStacks", "currentStacks",
+          "previousRemaining", "remaining", "cause"
+        ]
+      },
+      enemyExposureChanged: {
+        required: [
+          "type", "enemyId", "enemyTypeId", "exposureId", "previousStacks", "currentStacks",
+          "previousRemaining", "remaining", "cause"
+        ]
+      },
+      enemyReactionTriggered: {
+        required: [
+          "type", "reactionId", "originEnemyId", "originEnemyTypeId", "originCoord",
+          "triggerDamageType", "depth", "scheduledTargetIds"
+        ]
+      },
+      reactionBudgetExceeded: {
+        required: ["type", "rootEnemyId", "rootEnemyTypeId", "budget", "limit", "dropped"]
+      },
+      enemyArmorBlocked: { required: ["type", "towerId", "enemyId", "enemyTypeId", "rawDamage"] },
+      enemyHealed: { required: ["type", "healerEnemyId", "targetEnemyId", "targetEnemyTypeId", "amount"] },
+      enemyPhaseSpawned: { required: ["type", "parentEnemyId", "parentEnemyTypeId", "enemyTypeId", "enemyIds", "hpRatio"] },
+      areaPulse: { required: ["type", "towerId", "enemyIds"] },
+      towerResourcesGranted: { required: ["type", "towerId", "enemyId", "resources"] },
+      waterAbilityUsed: { required: ["type", "abilityId", "center", "coords", "duration"] },
+      abilityUsed: { required: ["type", "abilityId", "center", "enemyIds", "effects"] },
+      enemyEnteredTile: { required: ["type", "enemyId", "enemyTypeId", "coord", "terrain", "terrainMetadata", "pathOrder"], optional: ["routeId"] },
+      terrainChanged: { required: ["type", "coord", "fromTerrain", "toTerrain", "terrainMetadata", "source"] },
+      scriptSignal: { required: ["type", "scriptId", "signal", "payload"] },
+      scriptDiagnostic: { required: ["type", "diagnostic"] },
+      victory: { required: ["type"] },
+      defeat: { required: ["type"] }
+    };
+    const numericEventFields = new Set([
+      "level", "stacks", "duration", "damage", "coins", "waveIndex", "rawDamage", "amount", "hpRatio", "pathOrder",
+      "previous", "current", "capacity", "overflowDamage", "previousStacks", "currentStacks",
+      "previousRemaining", "remaining"
+      , "depth", "limit", "dropped", "requestedDistance", "movedDistance"
+    ]);
+    const stringEventFields = new Set([
+      "towerId", "towerTypeId", "enemyId", "enemyTypeId", "parentEnemyId", "parentEnemyTypeId", "healerEnemyId",
+      "targetEnemyId", "targetEnemyTypeId", "source", "objectiveId", "kind", "starId", "abilityId", "terrain",
+      "fromTerrain", "toTerrain", "scriptId", "signal", "routeId", "mode", "cause", "markId",
+      "exposureId", "reactionId", "originEnemyId", "originEnemyTypeId", "rootEnemyId", "rootEnemyTypeId",
+      "triggerDamageType", "budget", "sourceKind", "sourceId", "stopReason", "terrainTag"
+    ]);
+    const coordEventFields = new Set(["coord", "from", "to", "center", "originCoord", "sourceCoord"]);
+    const bagEventFields = new Set(["refund", "cost", "resources", "income", "interest"]);
+    const stringArrayEventFields = new Set(["towerIds", "enemyIds", "scheduledTargetIds"]);
+    for (const value of array(state.lastEvents, "lastEvents")) {
+      const base = checkpointObjectDescriptors(value, "Game checkpoint last event");
+      const type = stringValue(checkpointDataField(base, "type", "last event"), "last event type");
+      const schema = eventSchemas[type];
+      if (!schema) throw new Error(`Game checkpoint state last event type "${type}" is invalid.`);
+      const event = closed(value, `last event ${type}`, schema.required, schema.optional ?? []);
+      for (const key of Object.keys(event)) {
+        if (key === "type") continue;
+        const field = checkpointDataField(event, key, `last event ${type}`);
+        if (numericEventFields.has(key)) finite(field, `last event ${type}.${key}`);
+        else if (stringEventFields.has(key)) stringValue(field, `last event ${type}.${key}`);
+        else if (coordEventFields.has(key)) validCoord(field, `last event ${type}.${key}`);
+        else if (bagEventFields.has(key)) recordNumbers(field, `last event ${type}.${key}`, currencyIds);
+        else if (stringArrayEventFields.has(key)) stringArray(field, `last event ${type}.${key}`);
+        else if (key === "coords") for (const coord of array(field, `last event ${type}.coords`)) validCoord(coord, `last event ${type}.coords`);
+        else if (key === "terrainMetadata") {
+          const terrain = closed(field, "event terrain metadata", ["id", "label", "buildable", "walkable", "groundSpeedMultiplier", "tags"]);
+          stringValue(checkpointDataField(terrain, "id", "terrain metadata"), "terrain metadata id");
+          stringValue(checkpointDataField(terrain, "label", "terrain metadata"), "terrain metadata label");
+          if (typeof checkpointDataField(terrain, "buildable", "terrain metadata") !== "boolean" || typeof checkpointDataField(terrain, "walkable", "terrain metadata") !== "boolean") {
+            throw new Error("Game checkpoint event terrain metadata booleans are invalid.");
+          }
+          finite(checkpointDataField(terrain, "groundSpeedMultiplier", "terrain metadata"), "terrain speed");
+          stringArray(checkpointDataField(terrain, "tags", "terrain metadata"), "terrain tags");
+        } else if (key === "diagnostic") validateDiagnostic(field, "event script diagnostic");
+        else if (key === "payload") validateScriptJson(field, `last event ${type}.${key}`);
+        else if (key === "effects") {
+          for (const effectValue of array(field, `last event ${type}.effects`)) {
+            const effectBase = checkpointObjectDescriptors(effectValue, "Game checkpoint ability event effect");
+            const kind = stringValue(checkpointDataField(effectBase, "kind", "ability event effect"), "ability event effect kind");
+            if (kind === "damage") {
+              const effect = closed(effectValue, "ability damage effect", ["kind", "amount"]);
+              finite(checkpointDataField(effect, "amount", "ability damage effect"), "ability damage amount");
+            } else if (kind === "status") {
+              const effect = closed(effectValue, "ability status effect", ["kind", "status"]);
+              const status = closed(
+                checkpointDataField(effect, "status", "ability status effect"),
+                "ability status spec",
+                [],
+                ["stun", "slow", "poison", "slowAffectsClasses"]
+              );
+              optionalFinite(status, "stun", "ability status spec");
+              if (own(status, "slow")) {
+                const slow = closed(checkpointDataField(status, "slow", "ability status spec"), "ability slow spec", ["factor", "duration"]);
+                finite(checkpointDataField(slow, "factor", "ability slow spec"), "ability slow factor", 0, 1);
+                finite(checkpointDataField(slow, "duration", "ability slow spec"), "ability slow duration");
+              }
+              if (own(status, "poison")) {
+                const poison = closed(checkpointDataField(status, "poison", "ability status spec"), "ability poison spec", ["dps", "duration"]);
+                finite(checkpointDataField(poison, "dps", "ability poison spec"), "ability poison dps");
+                finite(checkpointDataField(poison, "duration", "ability poison spec"), "ability poison duration");
+              }
+              if (own(status, "slowAffectsClasses")) {
+                const classes = stringArray(checkpointDataField(status, "slowAffectsClasses", "ability status spec"), "ability slow classes", true);
+                if (classes.some((item) => item !== "ground" && item !== "flying")) throw new Error("Game checkpoint ability slow class is invalid.");
+              }
+            } else if (kind === "displacement") {
+              const effect = closed(
+                effectValue,
+                "ability displacement effect",
+                ["kind", "mode", "distance", "stopAtBlocker"]
+              );
+              const mode = stringValue(
+                checkpointDataField(effect, "mode", "ability displacement effect"),
+                "ability displacement mode"
+              );
+              const distance = checkpointDataField(effect, "distance", "ability displacement effect");
+              const stopAtBlocker = checkpointDataField(effect, "stopAtBlocker", "ability displacement effect");
+              if (mode !== "push" && mode !== "pull") throw new Error("Game checkpoint ability displacement mode is invalid.");
+              if (!Number.isSafeInteger(distance) || (distance as number) < 1 || (distance as number) > 8) {
+                throw new Error("Game checkpoint ability displacement distance is invalid.");
+              }
+              if (typeof stopAtBlocker !== "boolean") throw new Error("Game checkpoint ability displacement stopAtBlocker is invalid.");
+            } else {
+              throw new Error("Game checkpoint ability event effect kind is invalid.");
+            }
+          }
+        }
+      }
+      for (const key of ["enemyTypeId", "parentEnemyTypeId", "targetEnemyTypeId"] as const) {
+        if (!own(event, key)) continue;
+        const typeId = stringValue(checkpointDataField(event, key, type), `${type}.${key}`);
+        if (!own(content.enemies, typeId)) throw new Error("Game checkpoint event references an unknown enemy type.");
+      }
+      if (own(event, "towerTypeId")) {
+        const typeId = stringValue(checkpointDataField(event, "towerTypeId", type), `${type}.towerTypeId`);
+        if (!own(content.towers, typeId)) throw new Error("Game checkpoint event references an unknown tower type.");
+      }
+      if (own(event, "abilityId")) {
+        const abilityId = stringValue(checkpointDataField(event, "abilityId", type), `${type}.abilityId`);
+        if (!abilityIds.has(abilityId)) throw new Error("Game checkpoint event references an unknown ability.");
+      }
+      if (type === "scriptSignal") {
+        const scriptId = stringValue(checkpointDataField(event, "scriptId", type), "script signal scriptId");
+        if (scriptId !== "external" && !own(content.scripts, scriptId)) throw new Error("Game checkpoint event references an unknown script.");
+      }
+      if (type === "enemyDisplacementResolved" || type === "enemyFell") {
+        const sourceKind = checkpointDataField(event, "sourceKind", type);
+        if (sourceKind !== "tower" && sourceKind !== "ability") {
+          throw new Error("Game checkpoint physics event sourceKind is invalid.");
+        }
+      }
+      if (type === "enemyDisplacementResolved") {
+        const mode = checkpointDataField(event, "mode", type);
+        const reason = checkpointDataField(event, "stopReason", type);
+        const requested = checkpointDataField(event, "requestedDistance", type);
+        const moved = checkpointDataField(event, "movedDistance", type);
+        const reasons = new Set([
+          "completed", "same_source_target", "blocked", "atomic_blocked", "no_strict_neighbor",
+          "fall_hazard", "goal_blocked", "immune"
+        ]);
+        if (mode !== "push" && mode !== "pull") throw new Error("Game checkpoint displacement event mode is invalid.");
+        if (typeof reason !== "string" || !reasons.has(reason)) throw new Error("Game checkpoint displacement stop reason is invalid.");
+        if (!Number.isSafeInteger(requested) || (requested as number) < 1 || (requested as number) > 8
+          || !Number.isSafeInteger(moved) || (moved as number) < 0 || (moved as number) > (requested as number)) {
+          throw new Error("Game checkpoint displacement event distance is invalid.");
+        }
+      }
+      if ((type === "enemyShieldChanged" || type === "towerShieldChanged")) {
+        const cause = checkpointDataField(event, "cause", type);
+        if (cause !== "damage" && cause !== "regeneration" && cause !== "script") {
+          throw new Error("Game checkpoint shield event cause is invalid.");
+        }
+      }
+      if (type === "enemyMarkChanged") {
+        const cause = checkpointDataField(event, "cause", type);
+        if (cause !== "application" && cause !== "consume" && cause !== "expiration" && cause !== "script") {
+          throw new Error("Game checkpoint mark event cause is invalid.");
+        }
+        const markId = stringValue(checkpointDataField(event, "markId", type), `${type}.markId`);
+        const activeCombatMechanics = resolveActiveCombatMechanics(content, identity.missionId);
+        const markDefinitions = (
+          activeCombatMechanics as unknown as {
+            marks?: { definitions?: Readonly<Record<string, { maxStacks: number; duration: number }>> };
+          } | undefined
+        )?.marks?.definitions;
+        const markDefinition = markDefinitions && Object.prototype.hasOwnProperty.call(markDefinitions, markId)
+          ? markDefinitions[markId]
+          : undefined;
+        if (!markDefinition) throw new Error("Game checkpoint mark event references an unknown mark.");
+        const previousStacks = integer(
+          checkpointDataField(event, "previousStacks", type),
+          `${type}.previousStacks`,
+          0
+        );
+        const currentStacks = integer(
+          checkpointDataField(event, "currentStacks", type),
+          `${type}.currentStacks`,
+          0
+        );
+        if (previousStacks > markDefinition.maxStacks || currentStacks > markDefinition.maxStacks) {
+          throw new Error("Game checkpoint mark event stacks exceed the mark definition.");
+        }
+        const previousRemaining = finite(
+          checkpointDataField(event, "previousRemaining", type),
+          `${type}.previousRemaining`,
+          0
+        );
+        const remaining = finite(
+          checkpointDataField(event, "remaining", type),
+          `${type}.remaining`,
+          0
+        );
+        if (previousRemaining > markDefinition.duration || remaining > markDefinition.duration) {
+          throw new Error("Game checkpoint mark event remaining duration exceeds the mark definition.");
+        }
+      }
+      if (type === "enemyExposureChanged") {
+        if (!activeReactions) throw new Error("Game checkpoint exposure event requires active reactions.");
+        const exposureId = stringValue(checkpointDataField(event, "exposureId", type), `${type}.exposureId`);
+        const definition = activeReactions.exposures.definitions[exposureId];
+        if (!definition) throw new Error("Game checkpoint exposure event references an unknown exposure.");
+        const cause = checkpointDataField(event, "cause", type);
+        if (cause !== "damage" && cause !== "consume" && cause !== "expiration" && cause !== "script") {
+          throw new Error("Game checkpoint exposure event cause is invalid.");
+        }
+        const previousStacks = integer(checkpointDataField(event, "previousStacks", type), `${type}.previousStacks`);
+        const currentStacks = integer(checkpointDataField(event, "currentStacks", type), `${type}.currentStacks`);
+        if (previousStacks > definition.maxStacks || currentStacks > definition.maxStacks) {
+          throw new Error("Game checkpoint exposure event stacks exceed the exposure definition.");
+        }
+        const previousRemaining = finite(checkpointDataField(event, "previousRemaining", type), `${type}.previousRemaining`);
+        const remaining = finite(checkpointDataField(event, "remaining", type), `${type}.remaining`);
+        if (previousRemaining > definition.duration || remaining > definition.duration) {
+          throw new Error("Game checkpoint exposure event remaining exceeds the exposure definition.");
+        }
+      }
+      if (type === "enemyReactionTriggered") {
+        if (!activeReactions) throw new Error("Game checkpoint reaction event requires active reactions.");
+        const reactionId = stringValue(checkpointDataField(event, "reactionId", type), `${type}.reactionId`);
+        if (!activeReactions.reactions[reactionId]) {
+          throw new Error("Game checkpoint reaction event references an unknown reaction.");
+        }
+        const triggerDamageType = stringValue(
+          checkpointDataField(event, "triggerDamageType", type),
+          `${type}.triggerDamageType`
+        );
+        if (!activeCombat?.damageTypes[triggerDamageType]) {
+          throw new Error("Game checkpoint reaction event references an unknown trigger damage type.");
+        }
+        integer(checkpointDataField(event, "depth", type), `${type}.depth`);
+        if ((checkpointDataField(event, "depth", type) as number) > REACTION_LIMITS.maxDepth) {
+          throw new Error("Game checkpoint reaction event depth exceeds the runtime budget.");
+        }
+        const scheduledTargetIds = stringArray(
+          checkpointDataField(event, "scheduledTargetIds", type),
+          `${type}.scheduledTargetIds`,
+          true
+        );
+        if (scheduledTargetIds.length > REACTION_LIMITS.secondaryPacketsPerRoot) {
+          throw new Error("Game checkpoint reaction event target list exceeds the per-root packet budget.");
+        }
+      }
+      if (type === "reactionBudgetExceeded") {
+        const budget = checkpointDataField(event, "budget", type);
+        if (budget !== "depth" && budget !== "secondary_packets" && budget !== "live_exposures") {
+          throw new Error("Game checkpoint reaction budget event kind is unknown.");
+        }
+        const expectedLimit = budget === "depth"
+          ? REACTION_LIMITS.maxDepth
+          : budget === "secondary_packets"
+            ? REACTION_LIMITS.secondaryPacketsPerRoot
+            : REACTION_LIMITS.runtimeExposureApplications;
+        if (checkpointDataField(event, "limit", type) !== expectedLimit) {
+          throw new Error("Game checkpoint reaction budget event limit is invalid.");
+        }
+        integer(checkpointDataField(event, "dropped", type), `${type}.dropped`, 1);
+      }
+      optionalRoute(event, `last event ${type}`);
+    }
+    for (const value of array(state.runtimeTerrainOverrides, "runtimeTerrainOverrides")) {
+      const override = closed(value, "terrain override", ["q", "r", "terrain", "source"], ["expiresIn"]);
+      validCoord({
+        q: checkpointDataField(override, "q", "terrain override"),
+        r: checkpointDataField(override, "r", "terrain override")
+      }, "terrain override");
+      const terrain = checkpointDataField(override, "terrain", "Game checkpoint terrain override");
+      const source = checkpointDataField(override, "source", "Game checkpoint terrain override");
+      if (typeof terrain !== "string" || !own(content.terrainTypes, terrain) || (source !== "script" && source !== "ability")) {
+        throw new Error("Game checkpoint terrain override is invalid.");
+      }
+      optionalFinite(override, "expiresIn", "terrain override");
+    }
+    const overrideKeys = state.runtimeTerrainOverrides.map((override) => coordKey(override));
+    if (new Set(overrideKeys).size !== overrideKeys.length) throw new Error("Game checkpoint has duplicate terrain override coordinates.");
+    if (overrideKeys.length > TOWER_SCRIPT_LIMITS.activeTerrainOverrides) throw new Error("Game checkpoint terrain override budget is exceeded.");
+    if (activeNavigationProfile) {
+      const authoredTerrain = new Map(
+        mapDefinition.terrainOverrides.map((override) => [coordKey(override), override.terrain])
+      );
+      const runtimeTerrain = new Map(
+        state.runtimeTerrainOverrides.map((override) => [coordKey(override), override.terrain])
+      );
+      const terrainByCoord: Record<string, string> = {};
+      for (let r = 0; r < mapDefinition.height; r += 1) {
+        for (let q = 0; q < mapDefinition.width; q += 1) {
+          const key = coordKey({ q, r });
+          let terrain = authoredTerrain.get(key) ?? mapDefinition.defaultTerrain;
+          if (key === coordKey(mapDefinition.spawnCoord)) terrain = "spawn";
+          if (key === coordKey(mapDefinition.coreCoord)) terrain = "core";
+          terrainByCoord[key] = runtimeTerrain.get(key) ?? terrain;
+        }
+      }
+      const routes = mapDefinition.pathRoutes?.length
+        ? mapDefinition.pathRoutes
+        : [{ id: "main", pathCenterline: mapDefinition.pathCenterline }];
+      const occupiedNavigationCoords = state.towers.flatMap((tower) => (
+        tower.footprint.map((coord) => ({ q: coord.q, r: coord.r }))
+      ));
+      const resolver = new NavigationResolver({
+        grid: normalizeGridDefinition(mapDefinition.grid),
+        width: mapDefinition.width,
+        height: mapDefinition.height,
+        profile: activeNavigationProfile,
+        terrainTypes: content.terrainTypes,
+        terrainByCoord,
+        occupiedCoords: occupiedNavigationCoords,
+        routes
+      });
+      const lookups = new NavigationFieldLookupCache();
+      for (const entry of navigationStates) {
+        const navigation = entry.navigation;
+        const field = resolver.getField(navigation.movementProfileId, entry.routeId);
+        const lookup = lookups.get(field);
+        const currentCell = lookup.get(navigation.currentCoord);
+        const atGoal = navigation.currentCoord.q === field.goal.q && navigation.currentCoord.r === field.goal.r;
+        if (!currentCell) {
+          if (navigation.nextCoord !== undefined || navigation.edgeProgress !== 0) {
+            throw new Error("Game checkpoint enemy navigation stalled state must omit nextCoord and have zero edge progress.");
+          }
+          continue;
+        }
+        if (atGoal) {
+          if (navigation.nextCoord !== undefined || navigation.edgeProgress !== 0) {
+            throw new Error("Game checkpoint enemy navigation goal state must omit nextCoord and have zero edge progress.");
+          }
+          continue;
+        }
+        if (!navigation.nextCoord) {
+          throw new Error("Game checkpoint enemy navigation reachable non-goal state is missing nextCoord.");
+        }
+        if (!topology.directionBetween(navigation.currentCoord, navigation.nextCoord)) {
+          throw new Error("Game checkpoint enemy navigation nextCoord must be adjacent to currentCoord.");
+        }
+        const nextCell = lookup.get(navigation.nextCoord);
+        if (!nextCell || nextCell.distance >= currentCell.distance) {
+          throw new Error("Game checkpoint enemy navigation nextCoord must strictly lower field distance.");
+        }
+        if (
+          !currentCell.nextCoord
+          || navigation.nextCoord.q !== currentCell.nextCoord.q
+          || navigation.nextCoord.r !== currentCell.nextCoord.r
+        ) {
+          throw new Error("Game checkpoint enemy navigation nextCoord is not the canonical field link.");
+        }
+      }
+    }
+    const eventCursor = integer(state.scriptEventCursor, "scriptEventCursor");
+    if (eventCursor > state.lastEvents.length) throw new Error("Game checkpoint script event cursor is invalid.");
+    integer(state.scriptActionsRemaining, "scriptActionsRemaining", 0);
+    if (state.scriptActionsRemaining > TOWER_SCRIPT_LIMITS.actionsPerTransaction) throw new Error("Game checkpoint action budget is invalid.");
+    integer(state.scriptTerrainChangesRemaining, "scriptTerrainChangesRemaining", 0);
+    if (state.scriptTerrainChangesRemaining > TOWER_SCRIPT_LIMITS.terrainChangesPerTransaction) throw new Error("Game checkpoint terrain budget is invalid.");
+    integer(state.scriptSignalDepth, "scriptSignalDepth", 0);
+    if (state.scriptSignalDepth > TOWER_SCRIPT_LIMITS.signalRecursionDepth) throw new Error("Game checkpoint signal depth is invalid.");
+  }
+
+  private restoreCheckpointState(
+    state: GameCheckpointStateV1,
+    initialRng: SeededRngStateV1,
+    currentRng: SeededRngStateV1
+  ): void {
+    this.coreHp = state.coreHp;
+    this.resources = { ...state.resources };
+    this.waveIndex = state.waveIndex;
+    this.startedWaveCount = state.startedWaveCount;
+    this.waveState = state.waveState;
+    this.prepRemaining = state.prepRemaining;
+    this.outcome = state.outcome;
+    this.enemies = state.enemies.map((enemy): EnemyState => ({
+      ...enemy,
+      ...(enemy.navigation === undefined ? {} : {
+        navigation: {
+          ...enemy.navigation,
+          currentCoord: { ...enemy.navigation.currentCoord },
+          ...(enemy.navigation.nextCoord === undefined ? {} : { nextCoord: { ...enemy.navigation.nextCoord } })
+        }
+      })
+    }));
+    this.navigationEnemyFields?.clear();
+    this.towers = [...state.towers] as TowerState[];
+    this.lastEvents = [...state.lastEvents] as GameEvent[];
+    this.enemyCounter = state.enemyCounter;
+    this.towerCounter = state.towerCounter;
+    this.clearedWaveCount = state.clearedWaveCount;
+    this.killCount = state.killCount;
+    this.leakCount = state.leakCount;
+    this.killCountByEnemyType = { ...state.killCountByEnemyType };
+    this.completedObjectiveIds = new Set(state.completedObjectiveIds);
+    this.earnedStarIds = new Set(state.earnedStarIds);
+    this.spawnQueue = state.spawnQueue.map((item) => ({ ...item }));
+    this.missionElapsed = state.missionElapsed;
+    this.nextWaveStartAt = state.nextWaveStartAt;
+    this.abilityCooldowns = { ...state.abilityCooldowns };
+    this.scriptValues = state.scriptValues as Record<string, Record<string, Record<string, TowerScriptJson>>>;
+    this.scriptDiagnostics = [...state.scriptDiagnostics];
+    this.scriptHandlerLastRun = { ...state.scriptHandlerLastRun };
+    this.scriptEventCursor = state.scriptEventCursor;
+    this.scriptActionsRemaining = state.scriptActionsRemaining;
+    this.scriptTerrainChangesRemaining = state.scriptTerrainChangesRemaining;
+    this.scriptSignalDepth = state.scriptSignalDepth;
+    this.enemyShields = Object.fromEntries(Object.entries(state.combat?.shields.enemies ?? {}).map(([id, shield]) => [id, { ...shield }]));
+    this.towerShields = Object.fromEntries(Object.entries(state.combat?.shields.towers ?? {}).map(([id, shield]) => [id, { ...shield }]));
+    this.enemyMarks = state.combat?.schemaVersion === 2
+      ? Object.fromEntries(Object.entries(state.combat.marks.enemies).map(([enemyId, marks]) => [
+          enemyId,
+          Object.fromEntries(Object.entries(marks).map(([markId, mark]) => [markId, { ...mark }]))
+        ]))
+      : {};
+    this.enemyExposures = cloneEnemyExposureStates(state.reactions?.exposures.enemies ?? {});
+    this.initialRngState = cloneCheckpointJson(initialRng);
+    this.rng = SeededRng.fromState(currentRng);
+
+    this.map.restoreAllTerrain();
+    for (const tile of this.map.tiles.values()) delete tile.occupiedBy;
+    this.runtimeTerrainOverrides = new Map();
+    for (const override of state.runtimeTerrainOverrides) {
+      const restored = { ...override };
+      this.runtimeTerrainOverrides.set(coordKey(restored), restored);
+      this.map.setTerrain(restored, restored.terrain);
+    }
+    for (const tower of this.towers) this.map.setOccupied(tower.footprint, tower.id);
+    this.syncTemporaryWaterTiles();
+    this.syncNavigationResolver();
+    if (this.navigationEnemyFields) {
+      for (const enemy of this.enemies) {
+        if (!enemy.navigation || !enemy.routeId) continue;
+        this.navigationEnemyFields.set(
+          enemy.id,
+          this.navigationField(enemy.navigation.movementProfileId, enemy.routeId)
+        );
+      }
+    }
+  }
+
   private buildSnapshot(copyStaticState: boolean): GameSnapshot {
+    const combat = this.buildCombatState();
+    const reactions = this.buildReactionState();
+    const navigation = this.buildNavigationSnapshot();
+    const elevation = this.buildElevationSnapshot(copyStaticState);
     return {
       mapId: this.map.id,
       grid: { ...this.map.grid },
@@ -765,6 +3650,13 @@ export class TowerDefenseGame {
       nextWaveDelayUnits: this.mission.prepTimeUnits,
       enemies: this.enemies.map((enemy) => ({
         ...enemy,
+        ...(enemy.navigation === undefined ? {} : {
+          navigation: {
+            ...enemy.navigation,
+            currentCoord: { ...enemy.navigation.currentCoord },
+            ...(enemy.navigation.nextCoord === undefined ? {} : { nextCoord: { ...enemy.navigation.nextCoord } })
+          }
+        }),
         routeId: enemy.routeId,
         phaseSpawnsTriggered: enemy.phaseSpawnsTriggered ? [...enemy.phaseSpawnsTriggered] : undefined,
         statuses: enemy.statuses
@@ -801,6 +3693,10 @@ export class TowerDefenseGame {
       spawnCoord: copyStaticState ? { ...this.map.spawnCoord } : this.staticSpawnCoordSnapshot,
       coreCoord: copyStaticState ? { ...this.map.coreCoord } : this.staticCoreCoordSnapshot,
       outcome: this.outcome,
+      ...(combat === undefined ? {} : { combat }),
+      ...(reactions === undefined ? {} : { reactions }),
+      ...(navigation === undefined ? {} : { navigation }),
+      ...(elevation === undefined ? {} : { elevation }),
       scriptState: {
         values: this.cloneScriptValues(),
         diagnostics: this.scriptDiagnostics.map((diagnostic) => ({ ...diagnostic }))
@@ -828,6 +3724,7 @@ export class TowerDefenseGame {
   private finishScriptedAction(): void {
     this.beginScriptTransaction();
     this.processScriptEvents();
+    this.stabilizeDynamicEnemyNavigation();
   }
 
   private processScriptEvents(): void {
@@ -891,18 +3788,26 @@ export class TowerDefenseGame {
       const root = this.scriptExpressionContext(context);
       if (handler.when !== undefined && !evaluateTowerScriptExpression(handler.when, root, expressionBudget)) return;
       for (const action of handler.actions ?? []) {
+        if (this.scriptActionsRemaining <= 0) {
+          this.scriptActionsRemaining = 0;
+          throw new Error("TowerScript action budget exceeded.");
+        }
         this.scriptActionsRemaining -= 1;
-        if (this.scriptActionsRemaining < 0) throw new Error("TowerScript action budget exceeded.");
         this.applyScriptAction(action, context, root, expressionBudget);
       }
     } catch (error) {
+      const invalidAction = error instanceof TowerScriptInvalidActionError;
+      const terraformingError = error instanceof TowerScriptTerraformingError ? error : undefined;
       const message = error instanceof Error ? error.message : String(error);
       this.recordScriptDiagnostic({
         scriptId: context.script.id,
         handlerId,
         event: context.eventName,
-        code: /budget exceeded/i.test(message) ? "budget_exceeded" : /expression|\$get|\$op|context path/i.test(message) ? "invalid_expression" : "runtime_error",
-        message
+        code: terraformingError?.code ?? (invalidAction
+          ? "invalid_action"
+          : /budget exceeded/i.test(message) ? "budget_exceeded" : /expression|\$get|\$op|context path/i.test(message) ? "invalid_expression" : "runtime_error"),
+        message,
+        ...(terraformingError ? { reasonKey: terraformingError.reasonKey } : {})
       });
     }
   }
@@ -1065,7 +3970,10 @@ export class TowerDefenseGame {
       return;
     }
     if (action.action === "damageCore") {
-      this.coreHp = Math.max(0, this.coreHp - Math.max(0, numberValue(action.amount)));
+      this.applyResolvedCoreDamage(
+        Math.max(0, numberValue(action.amount)),
+        { kind: "tower_script", scriptId: context.script.id }
+      );
       if (this.coreHp <= 0 && this.outcome === "playing") {
         this.outcome = "defeat";
         this.lastEvents.push({ type: "defeat" });
@@ -1079,7 +3987,140 @@ export class TowerDefenseGame {
     if (action.action === "damageEnemy" || action.action === "healEnemy") {
       const amount = Math.max(0, numberValue(action.amount));
       for (const enemy of this.resolveScriptEnemies(action.target, context)) {
-        enemy.hp = action.action === "damageEnemy" ? enemy.hp - amount : Math.min(enemy.maxHp, enemy.hp + amount);
+        if (action.action === "damageEnemy") {
+          this.applyResolvedEnemyDamage(
+            enemy,
+            amount,
+            { kind: "tower_script", scriptId: context.script.id }
+          );
+        } else {
+          enemy.hp = Math.min(enemy.maxHp, enemy.hp + amount);
+        }
+      }
+      return;
+    }
+    if (action.action === "restoreEnemyShield") {
+      const amount = Math.max(0, numberValue(action.amount));
+      let shieldTargetCount = 0;
+      for (const enemy of this.resolveScriptEnemies(action.target, context)) {
+        const shield = this.enemyShields[enemy.id];
+        if (!shield) continue;
+        shieldTargetCount += 1;
+        const previous = shield.current;
+        shield.current = Math.min(shield.capacity, previous + amount);
+        const restored = shield.current - previous;
+        if (restored <= 0) continue;
+        this.lastEvents.push({
+          type: "enemyShieldChanged",
+          enemyId: enemy.id,
+          enemyTypeId: enemy.typeId,
+          previous,
+          current: shield.current,
+          capacity: shield.capacity,
+          cause: "script",
+          amount: restored
+        });
+      }
+      if (shieldTargetCount === 0) throw new TowerScriptInvalidActionError();
+      return;
+    }
+    if (action.action === "restoreTowerShield") {
+      const amount = Math.max(0, numberValue(action.amount));
+      let shieldTargetCount = 0;
+      for (const tower of this.resolveScriptTowers(action.target, context)) {
+        const shield = this.towerShields[tower.id];
+        if (!shield) continue;
+        shieldTargetCount += 1;
+        const previous = shield.current;
+        shield.current = Math.min(shield.capacity, previous + amount);
+        const restored = shield.current - previous;
+        if (restored <= 0) continue;
+        this.lastEvents.push({
+          type: "towerShieldChanged",
+          towerId: tower.id,
+          towerTypeId: tower.typeId,
+          previous,
+          current: shield.current,
+          capacity: shield.capacity,
+          cause: "script",
+          amount: restored
+        });
+      }
+      if (shieldTargetCount === 0) throw new TowerScriptInvalidActionError();
+      return;
+    }
+    if (action.action === "applyEnemyMark") {
+      const definition = this.activeCombatMechanics?.marks.definitions[action.markId];
+      const stacks = action.stacks === undefined ? 1 : numberValue(action.stacks);
+      if (
+        !definition
+        || !Number.isSafeInteger(stacks)
+        || stacks <= 0
+        || stacks > definition.maxStacks
+      ) {
+        throw new TowerScriptInvalidActionError("TowerScript applyEnemyMark action has an invalid mark or stacks value.");
+      }
+      for (const enemy of this.resolveScriptEnemies(action.target, context)) {
+        this.applyEnemyMark(enemy, action.markId, stacks, "script");
+      }
+      return;
+    }
+    if (action.action === "clearEnemyMark") {
+      if (!this.activeCombatMechanics?.marks.definitions[action.markId]) {
+        throw new TowerScriptInvalidActionError("TowerScript clearEnemyMark action references an inactive mark.");
+      }
+      for (const enemy of this.resolveScriptEnemies(action.target, context)) {
+        this.clearEnemyMark(enemy, action.markId, "script");
+      }
+      return;
+    }
+    if (action.action === "applyEnemyExposure") {
+      const definition = this.activeReactionsMechanics?.exposures.definitions[action.exposureId];
+      const stacks = action.stacks === undefined ? 1 : numberValue(action.stacks);
+      if (!definition || !Number.isSafeInteger(stacks) || stacks <= 0 || stacks > definition.maxStacks) {
+        throw new TowerScriptInvalidActionError("TowerScript applyEnemyExposure action has an invalid exposure or stacks value.");
+      }
+      let liveExposureCount = Object.values(this.enemyExposures)
+        .reduce((total, states) => total + Object.keys(states).length, 0);
+      let dropped = 0;
+      let firstDropped: EnemyState | undefined;
+      for (const enemy of this.resolveScriptEnemies(action.target, context)) {
+        const createsLiveExposure = this.enemyExposures[enemy.id]?.[action.exposureId] === undefined;
+        if (createsLiveExposure && liveExposureCount >= REACTION_LIMITS.runtimeExposureApplications) {
+          dropped += 1;
+          firstDropped ??= enemy;
+          continue;
+        }
+        this.applyEnemyExposure(enemy, action.exposureId, stacks, definition.duration, definition.maxStacks, "script");
+        if (createsLiveExposure) liveExposureCount += 1;
+      }
+      if (dropped > 0 && firstDropped) {
+        this.lastEvents.push({
+          type: "reactionBudgetExceeded",
+          rootEnemyId: firstDropped.id,
+          rootEnemyTypeId: firstDropped.typeId,
+          budget: "live_exposures",
+          limit: REACTION_LIMITS.runtimeExposureApplications,
+          dropped
+        });
+      }
+      return;
+    }
+    if (action.action === "clearEnemyExposure") {
+      if (!this.activeReactionsMechanics?.exposures.definitions[action.exposureId]) {
+        throw new TowerScriptInvalidActionError("TowerScript clearEnemyExposure action references an inactive exposure.");
+      }
+      for (const enemy of this.resolveScriptEnemies(action.target, context)) {
+        const states = this.enemyExposures[enemy.id];
+        const previous = states?.[action.exposureId];
+        if (!states || !previous) continue;
+        delete states[action.exposureId];
+        if (Object.keys(states).length === 0) delete this.enemyExposures[enemy.id];
+        this.lastEvents.push({
+          type: "enemyExposureChanged", enemyId: enemy.id, enemyTypeId: enemy.typeId,
+          exposureId: action.exposureId, previousStacks: previous.stacks, currentStacks: 0,
+          previousRemaining: previous.remaining, remaining: 0, cause: "script"
+        });
       }
       return;
     }
@@ -1108,8 +4149,11 @@ export class TowerDefenseGame {
       return;
     }
     if (action.action === "setTileTerrain" || action.action === "restoreTileTerrain") {
+      if (this.scriptTerrainChangesRemaining <= 0) {
+        this.scriptTerrainChangesRemaining = 0;
+        throw new Error("TowerScript terrain change budget exceeded.");
+      }
       this.scriptTerrainChangesRemaining -= 1;
-      if (this.scriptTerrainChangesRemaining < 0) throw new Error("TowerScript terrain change budget exceeded.");
       const coord = this.resolveScriptTileTarget(action.target, context, evaluate);
       if (!coord) throw new Error("TowerScript tile target did not resolve to an in-bounds integer coordinate.");
       if (action.action === "restoreTileTerrain") {
@@ -1122,16 +4166,36 @@ export class TowerDefenseGame {
       if (!result.ok) throw new Error(result.reason ?? "Unable to change tile terrain.");
       return;
     }
+    if (action.action === "terraformTiles") {
+      this.applyTerraformTilesAction(action, context, evaluate);
+      return;
+    }
     if (action.action === "setState") {
+      const hadPrevious = Object.prototype.hasOwnProperty.call(context.state, action.key);
+      const previous = context.state[action.key];
       context.state[action.key] = evaluate(action.value);
-      this.assertScriptStateSize(context);
+      try {
+        this.assertScriptStateSize(context);
+      } catch (error) {
+        if (hadPrevious) context.state[action.key] = previous!;
+        else delete context.state[action.key];
+        throw error;
+      }
       return;
     }
     if (action.action === "incrementState") {
       const current = typeof context.state[action.key] === "number" ? context.state[action.key] as number : 0;
       const next = current + (action.amount === undefined ? 1 : numberValue(action.amount, 1));
+      const hadPrevious = Object.prototype.hasOwnProperty.call(context.state, action.key);
+      const previous = context.state[action.key];
       context.state[action.key] = Number.isFinite(next) ? Math.max(-1e12, Math.min(1e12, next)) : 0;
-      this.assertScriptStateSize(context);
+      try {
+        this.assertScriptStateSize(context);
+      } catch (error) {
+        if (hadPrevious) context.state[action.key] = previous!;
+        else delete context.state[action.key];
+        throw error;
+      }
       return;
     }
     if (action.action === "emitSignal") {
@@ -1164,6 +4228,476 @@ export class TowerDefenseGame {
     return this.map.isInside(coord) ? coord : undefined;
   }
 
+  private applyTerraformTilesAction(
+    action: TerraformTilesActionV1,
+    context: TowerScriptExecutionContext,
+    evaluate: (expression: Parameters<typeof evaluateTowerScriptExpression>[0]) => TowerScriptJson
+  ): void {
+    // Inactive projects retain the exact legacy path: the generic action slot was consumed by
+    // the interpreter, but no terraforming field, expression, budget, or diagnostic is touched.
+    if (!this.activeTerraformingMechanics) return;
+
+    let actionPrototype: object | null;
+    let actionDescriptors: Record<PropertyKey, PropertyDescriptor>;
+    try {
+      actionPrototype = Object.getPrototypeOf(action);
+      actionDescriptors = Object.getOwnPropertyDescriptors(action) as Record<PropertyKey, PropertyDescriptor>;
+    } catch {
+      throw new TowerScriptTerraformingError(
+        "invalid_action",
+        "terraform.invalid_operation",
+        "terraformTiles action could not be inspected safely."
+      );
+    }
+    const actionKeys = Reflect.ownKeys(actionDescriptors);
+    const allowedActionKeys = new Set(["action", "operations", "duration"]);
+    const actionDescriptor = actionDescriptors.action;
+    const operationsDescriptor = actionDescriptors.operations;
+    if (
+      actionPrototype !== Object.prototype
+      || actionKeys.some((key) => typeof key !== "string" || !allowedActionKeys.has(key))
+      || !actionDescriptor
+      || !operationsDescriptor
+      || actionKeys.some((key) => {
+        const descriptor = actionDescriptors[key];
+        return !descriptor?.enumerable || !("value" in descriptor);
+      })
+      || actionDescriptor.value !== "terraformTiles"
+    ) {
+      throw new TowerScriptTerraformingError(
+        "invalid_action",
+        "terraform.invalid_operation",
+        "terraformTiles must be an exact plain data action."
+      );
+    }
+    const operationValues = this.inspectTerraformOperationArray(operationsDescriptor.value);
+    const operationCount = operationValues.length;
+    if (operationCount < 1) {
+      throw new TowerScriptTerraformingError(
+        "invalid_action",
+        "terraform.invalid_operation",
+        "terraformTiles requires at least one operation."
+      );
+    }
+    if (operationCount > this.scriptTerrainChangesRemaining) {
+      // C1's public RED contract exhausts the remaining batch budget on a failed reservation.
+      this.scriptTerrainChangesRemaining = 0;
+      throw new TowerScriptTerraformingError(
+        "budget_exceeded",
+        "terraform.operation_budget_exceeded",
+        "TowerScript terraforming operation budget exceeded."
+      );
+    }
+    this.scriptTerrainChangesRemaining -= operationCount;
+
+    const operations = operationValues.map((value) => this.inspectTerraformOperation(value));
+    if (Object.prototype.hasOwnProperty.call(actionDescriptors, "duration")) {
+      throw new TowerScriptTerraformingError(
+        "invalid_action",
+        "terraform.invalid_operation",
+        "Timed terraforming batches are not supported by the C1 runtime."
+      );
+    }
+    if (operations.some((operation) => (
+      operation.kind === "set_elevation" || operation.kind === "restore_elevation"
+    ))) {
+      throw new TowerScriptTerraformingError(
+        "invalid_action",
+        "terraform.invalid_operation",
+        "Elevation terraforming operations are not supported by the C1 runtime."
+      );
+    }
+    const resolvedOperations = operations.map((operation): ResolvedPersistentTerrainOperation => {
+      const coord = this.resolveTerraformTarget(operation.target, context, evaluate);
+      if (!coord) {
+        throw new TowerScriptTerraformingError(
+          "invalid_action",
+          "terraform.invalid_operation",
+          "Terraform tile target did not resolve to safe integer coordinates."
+        );
+      }
+      return operation.kind === "set_terrain"
+        ? { kind: "set_terrain", coord, transitionId: operation.transitionId }
+        : { kind: "restore_terrain", coord };
+    });
+    const outside = resolvedOperations.find((operation) => !this.map.isInside(operation.coord));
+    if (outside) {
+      throw new TowerScriptTerraformingError(
+        "invalid_action",
+        "terraform.target_outside_map",
+        `Terraform target ${outside.coord.q},${outside.coord.r} is outside the map.`
+      );
+    }
+    const targetKeys = new Set<string>();
+    for (const operation of resolvedOperations) {
+      const key = coordKey(operation.coord);
+      if (targetKeys.has(key)) {
+        throw new TowerScriptTerraformingError(
+          "invalid_action",
+          "terraform.duplicate_target",
+          `Terraform terrain target ${key} is duplicated in the batch.`
+        );
+      }
+      targetKeys.add(key);
+    }
+
+    const candidate = this.planPersistentTerrainCandidate(resolvedOperations);
+    const navigation = this.activeNavigationProfile
+      ? this.planDynamicPersistentTerrainNavigation(candidate)
+      : undefined;
+    this.publishPersistentTerrainCandidate(candidate, navigation);
+  }
+
+  private inspectTerraformOperationArray(value: unknown): readonly unknown[] {
+    let prototype: object | null;
+    let lengthDescriptor: PropertyDescriptor | undefined;
+    try {
+      if (!Array.isArray(value)) {
+        throw new TowerScriptTerraformingError(
+          "invalid_action",
+          "terraform.invalid_operation",
+          "Terraform operations must be an ordinary dense array."
+        );
+      }
+      prototype = Object.getPrototypeOf(value);
+      lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+    } catch {
+      throw new TowerScriptTerraformingError(
+        "invalid_action",
+        "terraform.invalid_operation",
+        "Terraform operations could not be inspected safely."
+      );
+    }
+    if (prototype !== Array.prototype) {
+      throw new TowerScriptTerraformingError(
+        "invalid_action",
+        "terraform.invalid_operation",
+        "Terraform operations must be an ordinary dense array."
+      );
+    }
+    const length = lengthDescriptor && "value" in lengthDescriptor ? lengthDescriptor.value : undefined;
+    if (!Number.isSafeInteger(length) || length < 0) {
+      throw new TowerScriptTerraformingError(
+        "invalid_action",
+        "terraform.invalid_operation",
+        "Terraform operations array length is invalid."
+      );
+    }
+    if (length > TERRAFORMING_LIMITS.operationsPerBatch) {
+      this.scriptTerrainChangesRemaining = 0;
+      throw new TowerScriptTerraformingError(
+        "budget_exceeded",
+        "terraform.operation_budget_exceeded",
+        `terraformTiles exceeds the ${TERRAFORMING_LIMITS.operationsPerBatch} operation budget.`
+      );
+    }
+
+    let descriptors: Record<PropertyKey, PropertyDescriptor>;
+    try {
+      descriptors = Object.getOwnPropertyDescriptors(value) as unknown as Record<PropertyKey, PropertyDescriptor>;
+    } catch {
+      throw new TowerScriptTerraformingError(
+        "invalid_action",
+        "terraform.invalid_operation",
+        "Terraform operations could not be inspected safely."
+      );
+    }
+    const descriptorKeys = Reflect.ownKeys(descriptors);
+    if (descriptorKeys.some((key) => {
+      if (key === "length") return false;
+      return typeof key !== "string" || !/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= length;
+    }) || descriptorKeys.length - 1 !== length) {
+      throw new TowerScriptTerraformingError(
+        "invalid_action",
+        "terraform.invalid_operation",
+        "Terraform operations must be dense own data without extra fields."
+      );
+    }
+    const result: unknown[] = [];
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = descriptors[String(index)];
+      if (!descriptor?.enumerable || !("value" in descriptor)) {
+        throw new TowerScriptTerraformingError(
+          "invalid_action",
+          "terraform.invalid_operation",
+          "Terraform operation entries must be enumerable own data."
+        );
+      }
+      result.push(descriptor.value);
+    }
+    return result;
+  }
+
+  private inspectTerraformOperation(value: unknown): TerraformOperationV1 {
+    let prototype: object | null;
+    let descriptors: Record<PropertyKey, PropertyDescriptor>;
+    try {
+      prototype = value !== null && typeof value === "object" ? Object.getPrototypeOf(value) : null;
+      descriptors = value !== null && typeof value === "object"
+        ? Object.getOwnPropertyDescriptors(value) as Record<PropertyKey, PropertyDescriptor>
+        : {};
+    } catch {
+      throw new TowerScriptTerraformingError(
+        "invalid_action",
+        "terraform.invalid_operation",
+        "Terraform operation could not be inspected safely."
+      );
+    }
+    if (value === null || typeof value !== "object" || Array.isArray(value)
+      || prototype !== Object.prototype || Object.getOwnPropertySymbols(descriptors).length > 0) {
+      throw new TowerScriptTerraformingError(
+        "invalid_action",
+        "terraform.invalid_operation",
+        "Terraform operation must be a plain own-data object."
+      );
+    }
+    const fields: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+    for (const key of Object.keys(descriptors)) {
+      const descriptor = descriptors[key];
+      if (!descriptor?.enumerable || !("value" in descriptor)) {
+        throw new TowerScriptTerraformingError(
+          "invalid_action",
+          "terraform.invalid_operation",
+          `Terraform operation field "${key}" must be enumerable own data.`
+        );
+      }
+      Object.defineProperty(fields, key, { value: descriptor.value, enumerable: true });
+    }
+    const kind = fields.kind;
+    const allowed = kind === "set_terrain"
+      ? ["kind", "target", "transitionId"]
+      : kind === "restore_terrain"
+        ? ["kind", "target"]
+        : kind === "set_elevation"
+          ? ["kind", "target", "elevation"]
+          : kind === "restore_elevation"
+            ? ["kind", "target"]
+            : undefined;
+    if (!allowed || Object.keys(fields).some((key) => !allowed.includes(key))
+      || allowed.some((key) => !Object.prototype.hasOwnProperty.call(fields, key))) {
+      throw new TowerScriptTerraformingError(
+        "invalid_action",
+        "terraform.invalid_operation",
+        "Terraform operation has an unknown kind, missing field, or extra field."
+      );
+    }
+    if (kind === "set_terrain" && typeof fields.transitionId !== "string") {
+      throw new TowerScriptTerraformingError(
+        "invalid_action",
+        "terraform.invalid_operation",
+        "set_terrain requires a transitionId string."
+      );
+    }
+    return Object.freeze({ ...fields }) as unknown as TerraformOperationV1;
+  }
+
+  private resolveTerraformTarget(
+    target: TerraformOperationV1["target"],
+    context: TowerScriptExecutionContext,
+    evaluate: (expression: Parameters<typeof evaluateTowerScriptExpression>[0]) => TowerScriptJson
+  ): HexCoord | undefined {
+    if (target === "eventTile") {
+      const value = context.event.coord ?? context.event.center ?? context.event.to;
+      if (!value || typeof value !== "object") return undefined;
+      const coord = value as { q?: unknown; r?: unknown };
+      return Number.isSafeInteger(coord.q) && Number.isSafeInteger(coord.r)
+        ? { q: Number(coord.q), r: Number(coord.r) }
+        : undefined;
+    }
+    let descriptors: Record<PropertyKey, PropertyDescriptor>;
+    let prototype: object | null;
+    try {
+      prototype = target !== null && typeof target === "object" ? Object.getPrototypeOf(target) : null;
+      descriptors = target !== null && typeof target === "object"
+        ? Object.getOwnPropertyDescriptors(target) as Record<PropertyKey, PropertyDescriptor>
+        : {};
+    } catch {
+      return undefined;
+    }
+    if (target === null || typeof target !== "object" || Array.isArray(target)
+      || prototype !== Object.prototype || Object.getOwnPropertySymbols(descriptors).length > 0
+      || Object.keys(descriptors).some((key) => key !== "q" && key !== "r")) return undefined;
+    const qField = descriptors.q;
+    const rField = descriptors.r;
+    if (!qField?.enumerable || !("value" in qField) || !rField?.enumerable || !("value" in rField)) {
+      return undefined;
+    }
+    const q = evaluate(qField.value as Parameters<typeof evaluateTowerScriptExpression>[0]);
+    const r = evaluate(rField.value as Parameters<typeof evaluateTowerScriptExpression>[0]);
+    return Number.isSafeInteger(q) && Number.isSafeInteger(r)
+      ? { q: Number(q), r: Number(r) }
+      : undefined;
+  }
+
+  private planPersistentTerrainCandidate(
+    operations: readonly ResolvedPersistentTerrainOperation[]
+  ): PersistentTerrainCandidate {
+    const overrides = new Map<string, RuntimeTerrainOverride>();
+    for (const [key, override] of this.runtimeTerrainOverrides) overrides.set(key, { ...override });
+    const writes: { coord: HexCoord; terrain: string }[] = [];
+    const events: Extract<GameEvent, { type: "terrainChanged" }>[] = [];
+    const effectiveTerrain = (coord: HexCoord): string | undefined => (
+      overrides.get(coordKey(coord))?.terrain ?? this.map.getBaseTerrain(coord)
+    );
+
+    for (const operation of operations) {
+      const key = coordKey(operation.coord);
+      const currentTerrain = effectiveTerrain(operation.coord);
+      const baseTerrain = this.map.getBaseTerrain(operation.coord);
+      if (!currentTerrain || !baseTerrain) {
+        throw new TowerScriptTerraformingError(
+          "invalid_action",
+          "terraform.target_outside_map",
+          `Terraform target ${key} is outside the map.`
+        );
+      }
+      const existing = overrides.get(key);
+      if (typeof existing?.expiresIn === "number") {
+        throw new TowerScriptTerraformingError(
+          "invalid_action",
+          "terraform.invalid_operation",
+          `Terraform target ${key} is owned by a legacy timed override.`
+        );
+      }
+      let nextTerrain: string;
+      let eventSource: "script" | "restore";
+      if (operation.kind === "set_terrain") {
+        const transition = this.activeTerraformingMechanics!.terrainTransitions[operation.transitionId!];
+        if (!transition) {
+          throw new TowerScriptTerraformingError(
+            "invalid_action",
+            "terraform.transition_missing",
+            `Terraform transition "${operation.transitionId}" is not active.`
+          );
+        }
+        const destination = this.content.terrainTypes[transition.toTerrainId];
+        if (!destination) {
+          throw new TowerScriptTerraformingError(
+            "invalid_action",
+            "terraform.invalid_operation",
+            `Terraform transition destination "${transition.toTerrainId}" is unknown.`
+          );
+        }
+        const sourceTags = this.terrainMetadata(currentTerrain).tags;
+        if (!transition.fromTerrainTags.some((tag) => sourceTags.includes(tag))) {
+          throw new TowerScriptTerraformingError(
+            "invalid_action",
+            "terraform.transition_source_tag_mismatch",
+            `Terraform transition "${operation.transitionId}" does not admit terrain "${currentTerrain}".`
+          );
+        }
+        nextTerrain = destination.id;
+        eventSource = "script";
+        if (nextTerrain === baseTerrain) overrides.delete(key);
+        else overrides.set(key, {
+          q: operation.coord.q,
+          r: operation.coord.r,
+          terrain: nextTerrain,
+          source: "script"
+        });
+      } else {
+        nextTerrain = baseTerrain;
+        eventSource = "restore";
+        overrides.delete(key);
+      }
+      if (currentTerrain !== nextTerrain) {
+        const coord = { q: operation.coord.q, r: operation.coord.r };
+        writes.push({ coord, terrain: nextTerrain });
+        events.push({
+          type: "terrainChanged",
+          coord: { ...coord },
+          fromTerrain: currentTerrain,
+          toTerrain: nextTerrain,
+          terrainMetadata: this.terrainMetadata(nextTerrain),
+          source: eventSource
+        });
+      }
+    }
+    if (overrides.size > TERRAFORMING_LIMITS.activeTerrainOverrides) {
+      throw new TowerScriptTerraformingError(
+        "invalid_action",
+        "terraform.override_budget_exceeded",
+        `Terraform terrain overrides exceed the ${TERRAFORMING_LIMITS.activeTerrainOverrides} entry limit.`
+      );
+    }
+
+    if (!this.activeNavigationProfile) {
+      const routes = [...this.map.pathRoutes].sort((left, right) => (
+        left.id < right.id ? -1 : left.id > right.id ? 1 : 0
+      ));
+      const baselineAvailable = routes.every((route) => route.pathCenterline.every((coord) => {
+        const terrain = this.map.getTile(coord)?.terrain;
+        return terrain !== undefined && this.terrainMetadata(terrain).walkable;
+      }));
+      const candidateAvailable = routes.every((route) => route.pathCenterline.every((coord) => {
+        const terrain = effectiveTerrain(coord);
+        return terrain !== undefined && this.terrainMetadata(terrain).walkable;
+      }));
+      if (!candidateAvailable) {
+        throw new TowerScriptTerraformingError(
+          "invalid_action",
+          baselineAvailable ? "terraform.last_authored_route_blocked" : "terraform.authored_route_unavailable",
+          baselineAvailable
+            ? "Terraforming would block an authored route."
+            : "Authored routes remain unavailable after terraforming."
+        );
+      }
+    }
+    return { overrides, writes, events };
+  }
+
+  private planDynamicPersistentTerrainNavigation(
+    candidate: PersistentTerrainCandidate
+  ): DynamicTerraformingNavigationPlan {
+    const profile = this.activeNavigationProfile;
+    if (!profile) throw new Error("Dynamic terraforming navigation requires an active profile.");
+    const occupiedCoords = this.navigationOccupiedCoords();
+    const navigation = planDynamicTerraformingNavigation({
+      profile,
+      routes: this.map.pathRoutes,
+      enemies: this.enemies,
+      baselineResolver: this.createNavigationResolver(occupiedCoords),
+      candidateResolver: this.createNavigationResolver(
+        occupiedCoords,
+        this.navigationTerrainByCoordForOverrides(candidate.overrides)
+      )
+    });
+    if (!navigation.candidateAvailable) {
+      throw new TowerScriptTerraformingError(
+        "invalid_action",
+        navigation.baselineAvailable
+          ? "terraform.last_path_blocked"
+          : "terraform.navigation_unavailable",
+        navigation.baselineAvailable
+          ? "Terraforming would block the last dynamic path."
+          : "Dynamic paths remain unavailable after terraforming."
+      );
+    }
+    return navigation;
+  }
+
+  private publishPersistentTerrainCandidate(
+    candidate: PersistentTerrainCandidate,
+    navigation?: DynamicTerraformingNavigationPlan
+  ): void {
+    for (const write of candidate.writes) this.map.setTerrain(write.coord, write.terrain);
+    this.runtimeTerrainOverrides = candidate.overrides;
+    if (navigation) {
+      this.navigationResolver = navigation.candidateResolver;
+      this.navigationFieldLookupCache = navigation.candidateLookupCache;
+      this.navigationEnemyFields = navigation.candidateEnemyFields;
+      const rebinds = new Map(navigation.enemyRebinds.map((rebind) => [rebind.enemyId, rebind]));
+      for (const enemy of this.enemies) {
+        const rebind = rebinds.get(enemy.id);
+        if (!rebind) continue;
+        enemy.navigation = rebind.navigation;
+        enemy.pathProgress = rebind.pathProgress;
+      }
+    }
+    this.syncTemporaryWaterTiles();
+    this.lastEvents.push(...candidate.events);
+  }
+
   private applyTerrainOverride(
     coord: HexCoord,
     terrainId: string,
@@ -1186,6 +4720,7 @@ export class TowerDefenseGame {
     const expiresIn = duration === undefined ? undefined : Math.max(duration, existing?.expiresIn ?? 0);
     this.runtimeTerrainOverrides.set(key, { q: coord.q, r: coord.r, terrain: terrainId, source, ...(expiresIn === undefined ? {} : { expiresIn }) });
     this.map.setTerrain(coord, terrainId);
+    this.syncNavigationTerrain();
     if (fromTerrain !== terrainId) {
       this.lastEvents.push({
         type: "terrainChanged",
@@ -1210,6 +4745,7 @@ export class TowerDefenseGame {
     const fromTerrain = tile?.terrain ?? existing.terrain;
     this.runtimeTerrainOverrides.delete(key);
     this.map.restoreTerrain(existing);
+    this.syncNavigationTerrain();
     const toTerrain = this.map.getTile(existing)?.terrain ?? fromTerrain;
     if (fromTerrain !== toTerrain) {
       this.lastEvents.push({
@@ -1260,7 +4796,15 @@ export class TowerDefenseGame {
   }
 
   private assertScriptStateSize(context: TowerScriptExecutionContext): void {
-    if (JSON.stringify(context.state).length > TOWER_SCRIPT_LIMITS.stateBytesPerBinding) throw new Error(`TowerScript state for ${context.stateKey} exceeds 64 KiB.`);
+    try {
+      canonicalStringify(context.state, {
+        maxDepth: 64,
+        maxNodes: 100_000,
+        maxBytes: TOWER_SCRIPT_LIMITS.stateBytesPerBinding
+      });
+    } catch {
+      throw new Error(`TowerScript state for ${context.stateKey} exceeds the canonical JSON limit.`);
+    }
   }
 
   private recordScriptDiagnostic(diagnostic: TowerScriptDiagnostic): void {
@@ -1278,9 +4822,309 @@ export class TowerDefenseGame {
   }
 
   enemyCoord(enemy: EnemyState): HexCoord {
+    if (enemy.navigation) {
+      const coord = enemy.navigation.edgeProgress >= 0.5 && enemy.navigation.nextCoord
+        ? enemy.navigation.nextCoord
+        : enemy.navigation.currentCoord;
+      return { q: coord.q, r: coord.r };
+    }
     const track = this.enemyTrack(enemy);
     const index = Math.min(Math.round(enemy.pathProgress), track.length - 1);
     return track[index] ?? { q: 0, r: 0 };
+  }
+
+  private coordEquals(left: HexCoord, right: HexCoord): boolean {
+    return left.q === right.q && left.r === right.r;
+  }
+
+  /** Resolve one opt-in displacement effect without adding persistent physics state. */
+  private applyDisplacementEffect(
+    enemy: EnemyState,
+    effectValue: unknown,
+    source: DisplacementSource
+  ): void {
+    const profile = this.activePhysicsMechanics;
+    if (!profile || enemy.hp <= 0) return;
+    const effect = parseDisplacementEffectV1(effectValue);
+    if (!effect) return;
+    const from = this.enemyCoord(enemy);
+    const sourceCoord = { ...source.sourceCoord };
+    const emitResolved = (
+      to: HexCoord,
+      movedDistance: number,
+      stopReason: RuntimeDisplacementStopReason
+    ): void => {
+      this.lastEvents.push({
+        type: "enemyDisplacementResolved",
+        sourceKind: source.sourceKind,
+        sourceId: source.sourceId,
+        sourceCoord,
+        enemyId: enemy.id,
+        enemyTypeId: enemy.typeId,
+        mode: effect.mode,
+        requestedDistance: effect.distance,
+        movedDistance,
+        from: { ...from },
+        to: { ...to },
+        stopReason
+      });
+    };
+    if (
+      this.enemyTargetClass(enemy) === "flying"
+      || profile.displacementImmuneEnemyTypeIds.includes(enemy.typeId)
+    ) {
+      emitResolved(from, 0, "immune");
+      return;
+    }
+
+    let goalBlocked = false;
+    let fallTag: string | undefined;
+    let applyPlanPosition: (to: HexCoord, fell: boolean, steps: readonly HexCoord[]) => void;
+    let classifyCandidate: (coord: HexCoord) => "open" | "blocked" | "fall_hazard";
+
+    if (enemy.navigation && this.activeNavigationProfile && enemy.routeId) {
+      const navigation = enemy.navigation;
+      const field = this.navigationField(navigation.movementProfileId, enemy.routeId);
+      const lookup = this.navigationFieldLookupCache?.get(field);
+      if (!lookup) return;
+      const goal = this.resolveDynamicNavigationRoute(enemy.routeId).pathCenterline.at(-1);
+      classifyCandidate = (candidate) => {
+        const tile = this.map.getTile(candidate);
+        if (!tile) return "blocked";
+        if (goal && this.coordEquals(candidate, goal)) {
+          goalBlocked = true;
+          return "blocked";
+        }
+        const tag = profile.fallHazardTerrainTags.find((candidateTag) => (
+          this.terrainMetadata(tile.terrain).tags.includes(candidateTag)
+        ));
+        if (tag) {
+          if (profile.fallImmuneEnemyTypeIds.includes(enemy.typeId)) return "blocked";
+          fallTag = tag;
+          return "fall_hazard";
+        }
+        return lookup.get(candidate) ? "open" : "blocked";
+      };
+      applyPlanPosition = (to, fell, steps) => {
+        const destination = fell ? (steps.at(-2) ?? from) : to;
+        const cell = lookup.get(destination);
+        navigation.currentCoord = { ...destination };
+        if (cell?.nextCoord) navigation.nextCoord = { ...cell.nextCoord };
+        else delete navigation.nextCoord;
+        navigation.edgeProgress = 0;
+        enemy.pathProgress = navigation.stepsEntered;
+      };
+    } else {
+      const track = this.enemyTrack(enemy);
+      const anchorIndex = Math.min(Math.round(enemy.pathProgress), Math.max(0, track.length - 1));
+      let currentIndex = anchorIndex;
+      const indicesByCoord = new Map<string, number[]>();
+      for (let index = 0; index < track.length; index += 1) {
+        const coord = track[index]!;
+        const key = coordKey(coord);
+        const indices = indicesByCoord.get(key) ?? [];
+        indices.push(index);
+        indicesByCoord.set(key, indices);
+      }
+      classifyCandidate = (candidate) => {
+        const currentCoord = track[currentIndex];
+        const currentIndices = currentCoord ? indicesByCoord.get(coordKey(currentCoord)) : undefined;
+        if (!currentCoord || currentIndices?.length !== 1) return "blocked";
+        const indices = indicesByCoord.get(coordKey(candidate));
+        if (!indices || indices.length !== 1) return "blocked";
+        const candidateIndex = indices[0]!;
+        if (candidateIndex === track.length - 1) {
+          goalBlocked = true;
+          return "blocked";
+        }
+        if (Math.abs(candidateIndex - currentIndex) !== 1
+          || this.map.distance(currentCoord, candidate) !== 1) return "blocked";
+        const tile = this.map.getTile(candidate);
+        if (!tile) return "blocked";
+        const tag = profile.fallHazardTerrainTags.find((candidateTag) => (
+          this.terrainMetadata(tile.terrain).tags.includes(candidateTag)
+        ));
+        if (tag) {
+          if (profile.fallImmuneEnemyTypeIds.includes(enemy.typeId)) return "blocked";
+          fallTag = tag;
+          currentIndex = candidateIndex;
+          return "fall_hazard";
+        }
+        if (tile.occupiedBy || !this.terrainMetadata(tile.terrain).walkable) return "blocked";
+        currentIndex = candidateIndex;
+        return "open";
+      };
+      applyPlanPosition = (to) => {
+        const indices = indicesByCoord.get(coordKey(to));
+        if (indices?.length === 1) enemy.pathProgress = indices[0]!;
+      };
+    }
+
+    const plan = planTileDisplacement({
+      topology: this.map.topology,
+      sourceCoord,
+      targetCoord: from,
+      effect,
+      classifyCandidate
+    });
+    if (plan.movedDistance > 0 || plan.fell) {
+      applyPlanPosition(plan.to, plan.fell, plan.steps);
+    }
+    const stopReason = goalBlocked ? "goal_blocked" : plan.stopReason as DisplacementStopReason;
+    emitResolved(plan.to, plan.movedDistance, stopReason);
+    if (!plan.fell || !fallTag) return;
+    enemy.hp = 0;
+    this.lastEvents.push({
+      type: "enemyFell",
+      sourceKind: source.sourceKind,
+      sourceId: source.sourceId,
+      sourceCoord,
+      enemyId: enemy.id,
+      enemyTypeId: enemy.typeId,
+      from: { ...plan.from },
+      to: { ...plan.to },
+      terrainTag: fallTag
+    });
+  }
+
+  private navigationMovementProfileId(typeId: string): string {
+    const profile = this.activeNavigationProfile;
+    if (!profile) throw new Error("Dynamic enemy navigation requires an active profile.");
+    return profile.enemyMovementProfiles?.[typeId] ?? profile.defaultMovementProfileId;
+  }
+
+  private navigationField(movementProfileId: string, routeId: string): NavigationFieldResult {
+    const resolver = this.navigationResolver;
+    if (!resolver) throw new Error("Dynamic enemy navigation requires an active resolver.");
+    return resolver.getField(movementProfileId, routeId);
+  }
+
+  private createEnemyNavigationState(
+    enemyId: string,
+    typeId: string,
+    routeId: string,
+    pathProgress: number
+  ): EnemyNavigationStateV1 {
+    const movementProfileId = this.navigationMovementProfileId(typeId);
+    const route = this.resolveDynamicNavigationRoute(routeId);
+    const source = route.pathCenterline[0] ?? route.pathCenterline.at(-1);
+    if (!source) throw new Error(`Dynamic navigation route "${route.id}" has no endpoint.`);
+    const field = this.navigationField(movementProfileId, route.id);
+    const lookup = this.navigationFieldLookupCache?.get(field);
+    if (!lookup) throw new Error("Dynamic enemy navigation lookup cache is unavailable.");
+    const state: EnemyNavigationStateV1 = {
+      schemaVersion: 1,
+      movementProfileId,
+      currentCoord: { q: source.q, r: source.r },
+      edgeProgress: 0,
+      stepsEntered: 0
+    };
+    let remainingSteps = Math.min(
+      NAVIGATION_LIMITS.activeMapCells,
+      Math.max(0, Math.floor(Number.isFinite(pathProgress) ? pathProgress : 0))
+    );
+    while (remainingSteps > 0) {
+      const cell = lookup.get(state.currentCoord);
+      if (!cell?.nextCoord) break;
+      state.currentCoord = { q: cell.nextCoord.q, r: cell.nextCoord.r };
+      state.stepsEntered += 1;
+      remainingSteps -= 1;
+    }
+    const cell = lookup.get(state.currentCoord);
+    if (cell?.nextCoord) {
+      state.nextCoord = { q: cell.nextCoord.q, r: cell.nextCoord.r };
+      state.edgeProgress = Math.max(0, Math.min(0.999999999999, pathProgress - Math.floor(pathProgress)));
+    }
+    this.navigationEnemyFields?.set(enemyId, field);
+    return state;
+  }
+
+  private createDynamicChildEnemyState(
+    parent: EnemyState,
+    typeId: string,
+    routeId: string,
+    pathOffset: number,
+    forwardSteps: number
+  ): EnemyState | null {
+    const child = this.createEnemyState(typeId, 0, pathOffset, routeId);
+    if (!child || !parent.navigation || !child.navigation || !child.routeId) return child;
+    const field = this.navigationField(child.navigation.movementProfileId, child.routeId);
+    const lookup = this.navigationFieldLookupCache?.get(field);
+    if (!lookup) return child;
+    let currentCoord = { ...parent.navigation.currentCoord };
+    let stepsEntered = parent.navigation.stepsEntered;
+    let cell = lookup.get(currentCoord);
+    const parentEdgeIsCanonical = Boolean(
+      parent.navigation.nextCoord
+      && cell?.nextCoord
+      && parent.navigation.nextCoord.q === cell.nextCoord.q
+      && parent.navigation.nextCoord.r === cell.nextCoord.r
+    );
+    let edgeProgress = parentEdgeIsCanonical ? parent.navigation.edgeProgress : 0;
+    let remaining = Math.max(0, Number.isFinite(forwardSteps) ? forwardSteps : 0);
+    let traversed = 0;
+    while (cell?.nextCoord && edgeProgress + remaining >= 1 && traversed < NAVIGATION_LIMITS.activeMapCells) {
+      const needed = 1 - edgeProgress;
+      remaining = Math.max(0, remaining - needed);
+      currentCoord = { q: cell.nextCoord.q, r: cell.nextCoord.r };
+      stepsEntered += 1;
+      edgeProgress = 0;
+      traversed += 1;
+      cell = lookup.get(currentCoord);
+    }
+    if (cell?.nextCoord) edgeProgress = Math.min(0.999999999999, edgeProgress + remaining);
+    else edgeProgress = 0;
+    child.navigation = {
+      schemaVersion: 1,
+      movementProfileId: child.navigation.movementProfileId,
+      currentCoord,
+      ...(cell?.nextCoord ? { nextCoord: { q: cell.nextCoord.q, r: cell.nextCoord.r } } : {}),
+      edgeProgress,
+      stepsEntered
+    };
+    child.pathProgress = stepsEntered + edgeProgress;
+    this.navigationEnemyFields?.set(child.id, field);
+    return child;
+  }
+
+  private stabilizeDynamicEnemyNavigation(): void {
+    if (!this.activeNavigationProfile || !this.navigationResolver) return;
+    for (const enemy of this.enemies) {
+      const routeId = this.resolveDynamicNavigationRoute(enemy.routeId).id;
+      enemy.routeId = routeId;
+      if (!enemy.navigation) {
+        enemy.navigation = this.createEnemyNavigationState(enemy.id, enemy.typeId, routeId, enemy.pathProgress);
+        enemy.pathProgress = enemy.navigation.stepsEntered + enemy.navigation.edgeProgress;
+        continue;
+      }
+      const movementProfileId = this.navigationMovementProfileId(enemy.typeId);
+      const installedField = this.navigationEnemyFields?.get(enemy.id);
+      if (
+        installedField
+        && this.navigationResolver.isFieldCurrent(installedField, movementProfileId, routeId)
+      ) continue;
+      const field = this.navigationField(movementProfileId, routeId);
+      if (installedField === field) continue;
+      const lookup = this.navigationFieldLookupCache?.get(field);
+      const cell = lookup?.get(enemy.navigation.currentCoord);
+      const edgeRemainsCanonical = Boolean(
+        enemy.navigation.nextCoord
+        && cell?.nextCoord
+        && enemy.navigation.nextCoord.q === cell.nextCoord.q
+        && enemy.navigation.nextCoord.r === cell.nextCoord.r
+        && lookup?.enteredCost(cell) !== undefined
+      );
+      enemy.navigation = {
+        schemaVersion: 1,
+        movementProfileId,
+        currentCoord: { ...enemy.navigation.currentCoord },
+        ...(cell?.nextCoord ? { nextCoord: { q: cell.nextCoord.q, r: cell.nextCoord.r } } : {}),
+        edgeProgress: edgeRemainsCanonical ? enemy.navigation.edgeProgress : 0,
+        stepsEntered: enemy.navigation.stepsEntered
+      };
+      enemy.pathProgress = enemy.navigation.stepsEntered + enemy.navigation.edgeProgress;
+      this.navigationEnemyFields?.set(enemy.id, field);
+    }
   }
 
   private startWave(waveIndex: number, startedAt: number, earlyStartUnits = 0): ActionResult {
@@ -1367,9 +5211,11 @@ export class TowerDefenseGame {
       return null;
     }
 
-    const resolvedRouteId = this.enemyTargetClassByType(typeId) === "ground" ? this.resolveRouteId(routeId) : undefined;
+    const resolvedRouteId = this.activeNavigationProfile
+      ? this.resolveDynamicNavigationRoute(routeId).id
+      : this.enemyTargetClassByType(typeId) === "ground" ? this.resolveRouteId(routeId) : undefined;
     const trackEnd = Math.max(0, this.enemyTrackForType(typeId, resolvedRouteId).length - 1);
-    return {
+    const enemy: EnemyState = {
       id: `enemy_${++this.enemyCounter}`,
       typeId,
       hp: type.maxHp * (this.difficulty.enemyHpMultiplier ?? 1),
@@ -1381,6 +5227,224 @@ export class TowerDefenseGame {
       phaseSpawnsTriggered: type.phaseSpawns?.length ? [] : undefined,
       statuses: {}
     };
+    if (this.activeNavigationProfile && resolvedRouteId) {
+      enemy.navigation = this.createEnemyNavigationState(enemy.id, typeId, resolvedRouteId, pathProgress);
+      enemy.pathProgress = enemy.navigation.stepsEntered + enemy.navigation.edgeProgress;
+    }
+    this.initializeEnemyShield(enemy);
+    return enemy;
+  }
+
+  private initializeEnemyShield(enemy: EnemyState): void {
+    const definition = this.combatShieldDefinitions?.enemies[enemy.typeId];
+    if (!definition) return;
+    this.enemyShields[enemy.id] = {
+      current: definition.capacity,
+      capacity: definition.capacity,
+      regenerationDelayRemaining: 0
+    };
+  }
+
+  private initializeTowerShield(tower: TowerState): void {
+    const definition = this.combatShieldDefinitions?.towers[tower.typeId];
+    if (!definition) return;
+    this.towerShields[tower.id] = {
+      current: definition.capacity,
+      capacity: definition.capacity,
+      regenerationDelayRemaining: 0
+    };
+  }
+
+  private runtimeMarkApplicationCount(): number {
+    let count = 0;
+    for (const marks of Object.values(this.enemyMarks)) count += Object.keys(marks).length;
+    return count;
+  }
+
+  private applyEnemyMark(
+    enemy: EnemyState,
+    markId: string,
+    stacks: number,
+    cause: "application" | "script"
+  ): boolean {
+    const definition = this.activeCombatMechanics?.marks.definitions[markId];
+    if (!definition || enemy.hp <= 0 || !Number.isSafeInteger(stacks) || stacks <= 0 || stacks > definition.maxStacks) {
+      return false;
+    }
+    const enemyMarkState = this.enemyMarks[enemy.id] ??= {};
+    const previous = enemyMarkState[markId];
+    if (!previous && this.runtimeMarkApplicationCount() >= MARK_LIMITS.runtimeApplications) {
+      throw new Error(`Runtime mark applications exceed the ${MARK_LIMITS.runtimeApplications} limit.`);
+    }
+    const previousStacks = previous?.stacks ?? 0;
+    const previousRemaining = previous?.remaining ?? 0;
+    const currentStacks = Math.min(definition.maxStacks, previousStacks + stacks);
+    if (currentStacks === previousStacks && definition.duration === previousRemaining) return false;
+    enemyMarkState[markId] = { stacks: currentStacks, remaining: definition.duration };
+    this.lastEvents.push({
+      type: "enemyMarkChanged",
+      enemyId: enemy.id,
+      enemyTypeId: enemy.typeId,
+      markId,
+      previousStacks,
+      currentStacks,
+      previousRemaining,
+      remaining: definition.duration,
+      cause
+    });
+    return true;
+  }
+
+  private clearEnemyMark(
+    enemy: EnemyState,
+    markId: string,
+    cause: "consume" | "expiration" | "script",
+    consumedStacks?: number
+  ): boolean {
+    const enemyMarkState = this.enemyMarks[enemy.id];
+    const previous = enemyMarkState?.[markId];
+    if (!enemyMarkState || !previous) return false;
+    const currentStacks = consumedStacks === undefined ? 0 : Math.max(0, previous.stacks - consumedStacks);
+    const remaining = currentStacks > 0 ? previous.remaining : 0;
+    if (currentStacks > 0) enemyMarkState[markId] = { stacks: currentStacks, remaining };
+    else delete enemyMarkState[markId];
+    if (Object.keys(enemyMarkState).length === 0) delete this.enemyMarks[enemy.id];
+    this.lastEvents.push({
+      type: "enemyMarkChanged",
+      enemyId: enemy.id,
+      enemyTypeId: enemy.typeId,
+      markId,
+      previousStacks: previous.stacks,
+      currentStacks,
+      previousRemaining: previous.remaining,
+      remaining,
+      cause
+    });
+    return true;
+  }
+
+  private updateEnemyMarks(delta: number): void {
+    if (delta <= 0) return;
+    for (const enemy of this.enemies) {
+      const marks = this.enemyMarks[enemy.id];
+      if (!marks) continue;
+      for (const markId of Object.keys(marks).sort()) {
+        const state = marks[markId];
+        if (!state) continue;
+        const remaining = Math.max(0, state.remaining - delta);
+        if (remaining <= 1e-9) this.clearEnemyMark(enemy, markId, "expiration");
+        else marks[markId] = { stacks: state.stacks, remaining };
+      }
+    }
+  }
+
+  private activeMarkDamageContext(enemy: EnemyState): DamageResolutionContext["marks"] {
+    const states = this.enemyMarks[enemy.id];
+    if (!states) return undefined;
+    return Object.keys(states).sort().flatMap((markId) => {
+      const state = states[markId];
+      const definition = this.activeCombatMechanics?.marks.definitions[markId];
+      if (!state || !definition) return [];
+      return [{
+        markId,
+        stacks: state.stacks,
+        multiplier: definition.multiplier,
+        consumePolicy: definition.consumePolicy,
+        ...(definition.damageTypes === undefined ? {} : { damageTypes: definition.damageTypes })
+      }];
+    });
+  }
+
+  private consumeResolvedMarks(enemy: EnemyState, resolution: DamageResolution): void {
+    if (resolution.afterModifiers <= 0) return;
+    for (const step of resolution.markTrace ?? []) {
+      if (step.consumePolicy === "retain") continue;
+      this.clearEnemyMark(
+        enemy,
+        step.markId,
+        "consume",
+        step.consumePolicy === "consume_one" ? 1 : undefined
+      );
+    }
+  }
+
+  private applySourceMarkBindings(enemy: EnemyState, packet: DamagePacket, resolution: DamageResolution): void {
+    if (
+      enemy.hp <= 0
+      || resolution.finalAmount <= 0
+      || packet.tags?.includes("over_time")
+      || !this.activeCombatMechanics
+    ) return;
+    const source = packet.source;
+    const applications = source.kind === "tower"
+      ? this.activeCombatMechanics.marks.bindings.towers[source.towerTypeId]
+      : source.kind === "ability"
+        ? this.activeCombatMechanics.marks.bindings.abilities[source.abilityId]
+        : source.kind === "tower_script"
+          ? this.activeCombatMechanics.marks.bindings.towerScripts[source.scriptId]
+          : undefined;
+    for (const application of applications ?? []) {
+      this.applyEnemyMark(enemy, application.markId, application.stacks ?? 1, "application");
+    }
+  }
+
+  private updateShieldRegeneration(delta: number): void {
+    if (delta <= 0 || !this.combatShieldDefinitions) return;
+    const regenerate = (
+      state: ShieldStateV1,
+      definition: NonNullable<ActiveCombatShieldDefinitions["enemies"][string]>,
+      emitFull: (previous: number, amount: number) => void
+    ) => {
+      const regeneration = definition.regeneration;
+      if (!regeneration || state.current >= state.capacity) return;
+      let available = delta;
+      if (state.regenerationDelayRemaining > 0) {
+        const consumed = Math.min(available, state.regenerationDelayRemaining);
+        state.regenerationDelayRemaining = Math.max(0, state.regenerationDelayRemaining - consumed);
+        available -= consumed;
+      }
+      if (available <= 0) return;
+      const previous = state.current;
+      state.current = Math.min(state.capacity, state.current + regeneration.ratePerUnit * available);
+      if (previous < state.capacity && state.current === state.capacity) {
+        emitFull(previous, state.current - previous);
+      }
+    };
+
+    for (const enemy of this.enemies) {
+      const state = this.enemyShields[enemy.id];
+      const definition = this.combatShieldDefinitions.enemies[enemy.typeId];
+      if (!state || !definition) continue;
+      regenerate(state, definition, (previous, amount) => {
+        this.lastEvents.push({
+          type: "enemyShieldChanged",
+          enemyId: enemy.id,
+          enemyTypeId: enemy.typeId,
+          previous,
+          current: state.current,
+          capacity: state.capacity,
+          cause: "regeneration",
+          amount
+        });
+      });
+    }
+    for (const tower of this.towers) {
+      const state = this.towerShields[tower.id];
+      const definition = this.combatShieldDefinitions.towers[tower.typeId];
+      if (!state || !definition) continue;
+      regenerate(state, definition, (previous, amount) => {
+        this.lastEvents.push({
+          type: "towerShieldChanged",
+          towerId: tower.id,
+          towerTypeId: tower.typeId,
+          previous,
+          current: state.current,
+          capacity: state.capacity,
+          cause: "regeneration",
+          amount
+        });
+      });
+    }
   }
 
   private updateAbilities(delta: number): void {
@@ -1413,7 +5477,14 @@ export class TowerDefenseGame {
       }
       if (statuses.poison) {
         // Damage-over-time; death + reward is handled by the later removeDeadEnemies() pass.
-        if (enemy.hp > 0) enemy.hp -= statuses.poison.dps * delta;
+        if (enemy.hp > 0) {
+          this.applyResolvedEnemyDamage(
+            enemy,
+            statuses.poison.dps * delta,
+            { kind: "status", statusId: "poison" },
+            { tags: ["over_time"] }
+          );
+        }
         statuses.poison.remaining = Math.max(0, statuses.poison.remaining - delta);
         if (statuses.poison.remaining <= 0) delete statuses.poison;
       }
@@ -1464,6 +5535,10 @@ export class TowerDefenseGame {
   }
 
   private moveEnemies(delta: number): void {
+    if (this.activeNavigationProfile) {
+      this.moveDynamicEnemies(delta);
+      return;
+    }
     for (const enemy of this.enemies) {
       // An enemy killed between ticks (by an ability) or earlier this tick is pending removal by
       // removeDeadEnemies() — it must not keep advancing, or it can reach the core and "leak"
@@ -1497,7 +5572,7 @@ export class TowerDefenseGame {
           coord: { ...coord },
           terrain: tile.terrain,
           terrainMetadata: this.terrainMetadata(tile.terrain),
-          routeId: enemy.routeId,
+          ...(enemy.routeId === undefined ? {} : { routeId: enemy.routeId }),
           pathOrder
         });
       }
@@ -1505,7 +5580,10 @@ export class TowerDefenseGame {
       if (enemy.pathProgress >= trackEnd) {
         enemy.hp = 0;
         const coreDamage = type.coreDamage * (this.difficulty.coreDamageMultiplier ?? 1);
-        this.coreHp = Math.max(0, this.coreHp - coreDamage);
+        this.applyResolvedCoreDamage(
+          coreDamage,
+          { kind: "leak", enemyId: enemy.id, enemyTypeId: enemy.typeId }
+        );
         this.lastEvents.push({
           type: "enemyLeaked",
           enemyId: enemy.id,
@@ -1519,6 +5597,95 @@ export class TowerDefenseGame {
           this.lastEvents.push({ type: "defeat" });
         }
       }
+    }
+  }
+
+  private moveDynamicEnemies(delta: number): void {
+    this.stabilizeDynamicEnemyNavigation();
+    for (const enemy of this.enemies) {
+      if (enemy.hp <= 0 || !enemy.navigation || !enemy.routeId) continue;
+      const type = this.enemyTypes[enemy.typeId];
+      if (!type) continue;
+      const field = this.navigationField(enemy.navigation.movementProfileId, enemy.routeId);
+      const lookup = this.navigationFieldLookupCache?.get(field);
+      if (!lookup) continue;
+      let movementBudget = Math.max(0,
+        type.speed
+        * (this.difficulty.enemySpeedMultiplier ?? 1)
+        * this.enemyStatusSpeedFactor(enemy)
+        * delta
+        * 1_000
+      );
+      let entered = 0;
+      while (entered < NAVIGATION_LIMITS.activeMapCells) {
+        const navigation = enemy.navigation;
+        const cell = lookup.get(navigation.currentCoord);
+        if (!cell) {
+          delete navigation.nextCoord;
+          navigation.edgeProgress = 0;
+          enemy.pathProgress = navigation.stepsEntered;
+          break;
+        }
+        if (!cell.nextCoord) {
+          delete navigation.nextCoord;
+          navigation.edgeProgress = 0;
+          enemy.pathProgress = navigation.stepsEntered;
+          if (cell.distance === 0) this.leakDynamicEnemy(enemy, type);
+          break;
+        }
+        navigation.nextCoord = { q: cell.nextCoord.q, r: cell.nextCoord.r };
+        const enteredCost = lookup.enteredCost(cell);
+        if (enteredCost === undefined || movementBudget <= 0) {
+          enemy.pathProgress = navigation.stepsEntered + navigation.edgeProgress;
+          break;
+        }
+        const remainingCost = (1 - navigation.edgeProgress) * enteredCost;
+        if (movementBudget + 1e-9 < remainingCost) {
+          navigation.edgeProgress = Math.min(0.999999999999, navigation.edgeProgress + movementBudget / enteredCost);
+          enemy.pathProgress = navigation.stepsEntered + navigation.edgeProgress;
+          break;
+        }
+        movementBudget = Math.max(0, movementBudget - remainingCost);
+        navigation.currentCoord = { q: cell.nextCoord.q, r: cell.nextCoord.r };
+        navigation.edgeProgress = 0;
+        navigation.stepsEntered += 1;
+        enemy.pathProgress = navigation.stepsEntered;
+        entered += 1;
+        const tile = this.map.getTile(navigation.currentCoord);
+        if (tile) {
+          this.lastEvents.push({
+            type: "enemyEnteredTile",
+            enemyId: enemy.id,
+            enemyTypeId: enemy.typeId,
+            coord: { ...navigation.currentCoord },
+            terrain: tile.terrain,
+            terrainMetadata: this.terrainMetadata(tile.terrain),
+            routeId: enemy.routeId,
+            pathOrder: navigation.stepsEntered
+          });
+        }
+      }
+    }
+  }
+
+  private leakDynamicEnemy(enemy: EnemyState, type: GameContentRegistry["enemies"][string]): void {
+    if (enemy.hp <= 0) return;
+    enemy.hp = 0;
+    const coreDamage = type.coreDamage * (this.difficulty.coreDamageMultiplier ?? 1);
+    this.applyResolvedCoreDamage(
+      coreDamage,
+      { kind: "leak", enemyId: enemy.id, enemyTypeId: enemy.typeId }
+    );
+    this.lastEvents.push({
+      type: "enemyLeaked",
+      enemyId: enemy.id,
+      enemyTypeId: enemy.typeId,
+      damage: coreDamage
+    });
+    this.leakCount += 1;
+    if (this.coreHp <= 0 && this.outcome === "playing") {
+      this.outcome = "defeat";
+      this.lastEvents.push({ type: "defeat" });
     }
   }
 
@@ -1536,7 +5703,7 @@ export class TowerDefenseGame {
       const sourceTowerTypeId = enemy.dotSourceTowerTypeId ?? this.firstPulseTowerTypeId();
       const damagePerUnit = enemy.dotDamagePerUnit ?? this.pulseDotDamagePerUnit(sourceTowerTypeId);
       const baseDamage = Math.max(0, damagePerUnit) * delta;
-      enemy.hp -= this.resolveEffectiveTowerDamage(sourceTowerTypeId ?? "", enemy, baseDamage, { aoe: true });
+      this.applyResolvedTowerDamage(sourceTowerTypeId ?? "", enemy, baseDamage, { aoe: true, overTime: true });
 
       if (enemy.dotRemaining <= 0) {
         delete enemy.dotDamagePerUnit;
@@ -1691,9 +5858,19 @@ export class TowerDefenseGame {
         if (dist <= attack.range && dist < best) { best = dist; target = tower; }
       }
       if (!target) continue;
-      target.hp = (target.hp ?? 0) - attack.damage;
-      this.lastEvents.push({ type: "towerAttacked", enemyId: enemy.id, enemyTypeId: enemy.typeId, towerId: target.id, damage: attack.damage });
-      if (target.hp <= 0) {
+      const application = this.applyResolvedTowerEntityDamage(
+        target,
+        attack.damage,
+        { kind: "enemy", enemyId: enemy.id, enemyTypeId: enemy.typeId }
+      );
+      this.lastEvents.push({
+        type: "towerAttacked",
+        enemyId: enemy.id,
+        enemyTypeId: enemy.typeId,
+        towerId: target.id,
+        damage: application.resolution.finalAmount
+      });
+      if ((target.hp ?? 0) <= 0) {
         destroyedIds.push(target.id);
         this.lastEvents.push({ type: "towerDestroyed", towerId: target.id, towerTypeId: target.typeId, enemyId: enemy.id });
       }
@@ -1706,6 +5883,8 @@ export class TowerDefenseGame {
     if (index < 0) return;
     this.map.clearOccupied(towerId); // free the footprint tiles for rebuilding
     this.towers.splice(index, 1);
+    delete this.towerShields[towerId];
+    this.syncNavigationOccupancy();
   }
 
   private updateTowers(delta: number): void {
@@ -1814,10 +5993,16 @@ export class TowerDefenseGame {
     let pulses = 0;
 
     while (tower.cooldown <= 0 && pulses < 3) {
-      const targets = this.enemies.filter(
+      let targets = this.enemies.filter(
         (enemy) =>
-          enemy.hp > 0 && this.enemyTargetClass(enemy) === "ground" && this.enemyInRange(tower, enemy, this.towerRange(tower))
+          enemy.hp > 0 && this.enemyTargetClass(enemy) === "ground" && this.enemyInTowerAcquisitionRange(tower, enemy)
       );
+      if (this.activeLineOfSightProfile) {
+        targets = targets
+          .sort((left, right) => this.compareTargets(tower, left, right))
+          .slice(0, LINE_OF_SIGHT_LIMITS.candidatesPerAcquisition)
+          .filter((enemy) => this.towerHasLineOfSight(tower, enemy));
+      }
       if (targets.length === 0) {
         tower.cooldown = 0;
         return;
@@ -1915,6 +6100,9 @@ export class TowerDefenseGame {
     const levelIndex = Math.max(0, tower.level - 1);
     const baseInterval = attack.intervalByLevel?.[Math.min(levelIndex, attack.intervalByLevel.length - 1)] ?? attack.interval;
     const interval = baseInterval / Math.max(0.05, fireRateMultiplier);
+    const displacementRanks = this.activePhysicsMechanics
+      ? this.displacementEffectRanks(attack.effects)
+      : undefined;
     let activations = 0;
     while (tower.cooldown <= 0 && activations < 4) {
       const targets = this.pipelineTargets(tower, attack);
@@ -1922,14 +6110,39 @@ export class TowerDefenseGame {
         tower.cooldown = 0;
         return;
       }
-      for (const target of targets) {
+      const displacementBudget: DisplacementActivationBudget | undefined = this.activePhysicsMechanics
+        ? { used: 0, limit: PHYSICS_LIMITS.stepAttemptsPerActivation }
+        : undefined;
+      for (let targetIndex = 0; targetIndex < targets.length; targetIndex += 1) {
+        const target = targets[targetIndex]!;
         const expectedDamage = attack.effects.reduce((sum, effect) => {
-          if (effect.kind !== "damage") return sum;
-          const amount = effect.amountByLevel?.[Math.min(levelIndex, effect.amountByLevel.length - 1)] ?? effect.amount;
+          const inspected = inspectOwnDataEffect(effect);
+          if (!inspected.ok || inspected.kind !== "damage") return sum;
+          const record = inspected.record;
+          if (typeof record.amount !== "number" || !Number.isFinite(record.amount)) return sum;
+          const amountByLevel = Array.isArray(record.amountByLevel) ? record.amountByLevel : undefined;
+          const amount = amountByLevel?.[Math.min(levelIndex, amountByLevel.length - 1)] ?? record.amount;
+          if (typeof amount !== "number" || !Number.isFinite(amount)) return sum;
           return sum + amount * target.damageMultiplier;
         }, 0);
         this.lastEvents.push({ type: "towerFired", towerId: tower.id, enemyId: target.enemy.id, damage: expectedDamage });
-        for (const effect of attack.effects) this.applyPipelineEffect(tower, target.enemy, effect, target.damageMultiplier, levelIndex, attack.delivery.kind === "area" || attack.delivery.kind === "aura");
+        for (let effectIndex = 0; effectIndex < attack.effects.length; effectIndex += 1) {
+          if (target.enemy.hp <= 0) break;
+          const displacementRank = displacementRanks?.get(effectIndex);
+          this.applyPipelineEffect(
+            tower,
+            target.enemy,
+            attack.effects[effectIndex],
+            target.damageMultiplier,
+            levelIndex,
+            attack.delivery.kind === "area" || attack.delivery.kind === "aura",
+            displacementRank !== undefined && (
+              targetIndex < PHYSICS_LIMITS.displacementTargetsPerActivation
+              && displacementRank < PHYSICS_LIMITS.displacementEffectsPerSource
+            ),
+            displacementBudget
+          );
+        }
       }
       tower.cooldown += interval;
       activations += 1;
@@ -1941,9 +6154,14 @@ export class TowerDefenseGame {
     attack: EffectPipelineAttackModel
   ): Array<{ enemy: EnemyState; damageMultiplier: number }> {
     const classes = attack.targeting?.classes?.length ? attack.targeting.classes : ["ground" as const];
-    const inRange = this.enemies
-      .filter((enemy) => enemy.hp > 0 && classes.includes(this.enemyTargetClass(enemy)) && this.enemyInRange(tower, enemy, this.towerRange(tower)))
+    const sortedInRange = this.enemies
+      .filter((enemy) => enemy.hp > 0 && classes.includes(this.enemyTargetClass(enemy)) && this.enemyInTowerAcquisitionRange(tower, enemy))
       .sort((left, right) => this.compareTargets(tower, left, right));
+    const inRange = this.activeLineOfSightProfile
+      ? sortedInRange
+        .slice(0, LINE_OF_SIGHT_LIMITS.candidatesPerAcquisition)
+        .filter((enemy) => this.towerHasLineOfSight(tower, enemy))
+      : sortedInRange;
     if (attack.delivery.kind === "aura") return inRange.map((enemy) => ({ enemy, damageMultiplier: 1 }));
 
     const primaryLimit = attack.delivery.kind === "single" ? 1 : Math.max(1, attack.targeting?.maxTargets ?? 1);
@@ -1988,25 +6206,43 @@ export class TowerDefenseGame {
   private applyPipelineEffect(
     tower: TowerState,
     enemy: EnemyState,
-    effect: TowerEffectSpec,
+    effectValue: unknown,
     deliveryMultiplier: number,
     levelIndex: number,
-    aoe: boolean
+    aoe: boolean,
+    displacementAllowed: boolean,
+    displacementBudget: DisplacementActivationBudget | undefined
   ): void {
-    if (effect.kind === "damage") {
-      const amount = effect.amountByLevel?.[Math.min(levelIndex, effect.amountByLevel.length - 1)] ?? effect.amount;
+    const inspected = inspectOwnDataEffect(effectValue);
+    if (!inspected.ok) return;
+    const effect = inspected.record;
+    if (inspected.kind === "damage") {
+      if (typeof effect.amount !== "number" || !Number.isFinite(effect.amount)) return;
+      const amountByLevel = Array.isArray(effect.amountByLevel) ? effect.amountByLevel : undefined;
+      const amount = amountByLevel?.[Math.min(levelIndex, amountByLevel.length - 1)] ?? effect.amount;
+      if (typeof amount !== "number" || !Number.isFinite(amount)) return;
       this.applyTowerDamage(tower, enemy, amount * deliveryMultiplier, {
         aoe,
-        damageType: effect.damageType,
-        armorPiercing: effect.armorPiercing,
+        damageType: typeof effect.damageType === "string" ? effect.damageType : undefined,
+        armorPiercing: typeof effect.armorPiercing === "boolean" ? effect.armorPiercing : undefined,
         applyLegacyStatus: false
       });
-    } else if (effect.kind === "status") {
-      this.applyStatusEffect(enemy, effect.status);
-    } else if (effect.kind === "resource") {
-      const resources = this.normalizeCost(effect.resources);
+    } else if (inspected.kind === "status") {
+      if (!effect.status || typeof effect.status !== "object") return;
+      this.applyStatusEffect(enemy, effect.status as StatusEffectSpec);
+    } else if (inspected.kind === "resource") {
+      if (!effect.resources || typeof effect.resources !== "object") return;
+      const resources = this.normalizeCost(effect.resources as ResourceBag);
       this.addResources(resources);
       this.lastEvents.push({ type: "towerResourcesGranted", towerId: tower.id, enemyId: enemy.id, resources });
+    } else if (inspected.kind === "displacement" && displacementAllowed) {
+      const displacement = this.reserveDisplacementEffect(effect, displacementBudget, true);
+      if (!displacement) return;
+      this.applyDisplacementEffect(enemy, displacement, {
+        sourceKind: "tower",
+        sourceId: tower.id,
+        sourceCoord: tower.coord
+      });
     }
   }
 
@@ -2039,14 +6275,30 @@ export class TowerDefenseGame {
   }
 
   private selectTargets(tower: TowerState, targetClass: "ground" | "flying", limit: number): EnemyState[] {
-    const range = this.towerRange(tower);
-    return this.enemies
-      .filter((enemy) => enemy.hp > 0 && this.enemyTargetClass(enemy) === targetClass && this.enemyInRange(tower, enemy, range))
-      .sort((left, right) => this.compareTargets(tower, left, right))
+    const sorted = this.enemies
+      .filter((enemy) => enemy.hp > 0 && this.enemyTargetClass(enemy) === targetClass && this.enemyInTowerAcquisitionRange(tower, enemy))
+      .sort((left, right) => this.compareTargets(tower, left, right));
+    if (!this.activeLineOfSightProfile) return sorted.slice(0, Math.max(0, limit));
+    return sorted
+      .slice(0, LINE_OF_SIGHT_LIMITS.candidatesPerAcquisition)
+      .filter((enemy) => this.towerHasLineOfSight(tower, enemy))
       .slice(0, Math.max(0, limit));
   }
 
+  private towerHasLineOfSight(tower: TowerState, enemy: EnemyState): boolean {
+    const profile = this.activeLineOfSightProfile;
+    if (!profile) return true;
+    return traceLineOfSight(
+      this.map,
+      this.content.terrainTypes,
+      profile.terrainBlockerTags,
+      tower.coord,
+      this.enemyCoord(enemy)
+    ).row.visible;
+  }
+
   private compareTargets(tower: TowerState, left: EnemyState, right: EnemyState): number {
+    if (this.activeNavigationProfile) return this.compareDynamicTargets(tower, left, right);
     const mode = tower.targetMode ?? "first";
     const leftProgress = this.enemyRouteProgressRatio(left);
     const rightProgress = this.enemyRouteProgressRatio(right);
@@ -2064,8 +6316,50 @@ export class TowerDefenseGame {
     return result || left.id.localeCompare(right.id);
   }
 
+  private compareDynamicTargets(tower: TowerState, left: EnemyState, right: EnemyState): number {
+    const mode = tower.targetMode ?? "first";
+    const leftRemaining = this.dynamicEnemyRemainingCost(left);
+    const rightRemaining = this.dynamicEnemyRemainingCost(right);
+    const compareRemaining = leftRemaining === rightRemaining
+      ? 0
+      : leftRemaining < rightRemaining ? -1 : 1;
+    const leftDistance = this.map.distance(tower.coord, this.enemyCoord(left));
+    const rightDistance = this.map.distance(tower.coord, this.enemyCoord(right));
+    let result = 0;
+    if (mode === "last") result = -compareRemaining;
+    else if (mode === "closest") result = leftDistance - rightDistance;
+    else if (mode === "furthest") result = rightDistance - leftDistance;
+    else if (mode === "strongest" || mode === "largest_hp") result = right.hp - left.hp || compareRemaining;
+    else if (mode === "weakest") result = left.hp - right.hp || compareRemaining;
+    else if (mode === "fastest_ahead") {
+      result = Number(this.hasPierceOnlyArmor(right)) - Number(this.hasPierceOnlyArmor(left)) || compareRemaining;
+    } else result = compareRemaining;
+    return result || compareBinary(left.id, right.id);
+  }
+
+  private dynamicEnemyRemainingCost(enemy: EnemyState): number {
+    if (!enemy.navigation || !enemy.routeId || !this.navigationFieldLookupCache) return Number.POSITIVE_INFINITY;
+    const field = this.navigationField(enemy.navigation.movementProfileId, enemy.routeId);
+    return this.navigationFieldLookupCache.get(field).remainingCost(enemy.navigation);
+  }
+
   private enemyInRange(tower: TowerState, enemy: EnemyState, range: number): boolean {
     return this.map.distance(tower.coord, this.enemyCoord(enemy)) <= range;
+  }
+
+  private highGroundPair(tower: TowerState, enemy: EnemyState) {
+    const profile = this.activeHighGroundProfile;
+    if (!profile) return undefined;
+    return computeHighGroundPairModifiers(
+      this.map.elevationAt(tower.coord),
+      this.map.elevationAt(this.enemyCoord(enemy)),
+      profile
+    );
+  }
+
+  private enemyInTowerAcquisitionRange(tower: TowerState, enemy: EnemyState): boolean {
+    const rangeBonus = this.highGroundPair(tower, enemy)?.rangeBonus ?? 0;
+    return this.enemyInRange(tower, enemy, this.towerRange(tower) + rangeBonus);
   }
 
   private towerRange(tower: TowerState): number {
@@ -2153,16 +6447,354 @@ export class TowerDefenseGame {
     if (this.sunlightPathKeys.size === 0 || this.enemyTargetClass(enemy) !== "ground") {
       return false;
     }
+    if (enemy.navigation) {
+      const coord = this.enemyCoord(enemy);
+      return this.sunlightTilesSnapshot.some((tile) => tile.q === coord.q && tile.r === coord.r);
+    }
     const track = this.enemyTrack(enemy);
     const order = Math.min(Math.round(enemy.pathProgress), track.length - 1);
     return this.sunlightPathKeys.has(this.routePathKey(enemy.routeId, order));
   }
 
-  private aoeDamageAfterSunlight(enemy: EnemyState, damage: number): number {
-    if (damage <= 0 || !this.isEnemyInSunlight(enemy)) {
-      return damage;
+  private applyResolvedEnemyDamage(
+    enemy: EnemyState,
+    amount: number,
+    source: DamageSourceRef,
+    options: ResolvedEnemyDamageOptions = {}
+  ): DamageApplicationResult {
+    const armorMatrix = resolveEnemyArmorMatrix(this.activeCombatMechanics, enemy.typeId);
+    const resistances = this.activeCombatMechanics?.enemyResistances[enemy.typeId];
+    const marks = this.activeMarkDamageContext(enemy);
+    const context: DamageResolutionContext = {
+      ...(options.context ?? {}),
+      ...(resistances === undefined ? {} : { resistances }),
+      ...(armorMatrix === undefined ? {} : { armorMatrix }),
+      ...(marks === undefined ? {} : { marks })
+    };
+    return this.resolveAndApplyDamage(
+      {
+        amount,
+        source,
+        target: { kind: "enemy", enemyId: enemy.id, enemyTypeId: enemy.typeId },
+        ...(options.damageType === undefined ? {} : { damageType: options.damageType }),
+        ...(options.tags?.length ? { tags: options.tags } : {}),
+        ...(options.modifiers?.length ? { modifiers: options.modifiers } : {})
+      },
+      Object.keys(context).length === 0 ? undefined : context,
+      { kind: "enemy", enemy },
+      options.reactionRuntime
+    );
+  }
+
+  private applyResolvedCoreDamage(amount: number, source: DamageSourceRef): DamageApplicationResult {
+    return this.resolveAndApplyDamage(
+      { amount, source, target: { kind: "core" } },
+      undefined,
+      { kind: "core" }
+    );
+  }
+
+  private applyResolvedTowerEntityDamage(
+    tower: TowerState,
+    amount: number,
+    source: DamageSourceRef
+  ): DamageApplicationResult {
+    return this.resolveAndApplyDamage(
+      {
+        amount,
+        source,
+        target: { kind: "tower", towerId: tower.id, towerTypeId: tower.typeId }
+      },
+      undefined,
+      { kind: "tower", tower }
+    );
+  }
+
+  private resolveAndApplyDamage(
+    packet: DamagePacket,
+    context: DamageResolutionContext | undefined,
+    mutableTarget: MutableDamageTarget,
+    reactionRuntime?: ReactionRuntimeContext
+  ): DamageApplicationResult {
+    const targetMatches = mutableTarget.kind === "core"
+      ? packet.target.kind === "core"
+      : mutableTarget.kind === "enemy"
+        ? packet.target.kind === "enemy"
+          && packet.target.enemyId === mutableTarget.enemy.id
+          && packet.target.enemyTypeId === mutableTarget.enemy.typeId
+        : packet.target.kind === "tower"
+          && packet.target.towerId === mutableTarget.tower.id
+          && packet.target.towerTypeId === mutableTarget.tower.typeId;
+    if (!targetMatches) {
+      throw new Error("Damage packet target does not match mutable target.");
     }
-    return damage * (this.mission.sunlight?.aoeDamageMultiplier ?? 1);
+    const resolvedDamage = DamageResolver.resolve(packet, context);
+    const capturedReactionState = mutableTarget.kind === "enemy" && this.activeReactionsMechanics
+      ? {
+          coord: this.enemyCoord(mutableTarget.enemy),
+          exposures: cloneExposureStates(this.enemyExposures[mutableTarget.enemy.id] ?? {}),
+          statuses: mutableTarget.enemy.statuses
+            ? Object.fromEntries(Object.entries(mutableTarget.enemy.statuses).map(([key, value]) => [key, value ? { ...value } : value]))
+            : {},
+          terrainTags: [...this.terrainMetadata(
+            this.map.getTile(this.enemyCoord(mutableTarget.enemy))?.terrain
+              ?? this.content.maps[this.mission.mapId]?.defaultTerrain
+              ?? ""
+          ).tags]
+        }
+      : undefined;
+    let shieldAbsorbed = 0;
+    let hpDamage = resolvedDamage.finalAmount;
+    if (resolvedDamage.finalAmount > 0 && mutableTarget.kind !== "core") {
+      const isEnemy = mutableTarget.kind === "enemy";
+      const entity = isEnemy ? mutableTarget.enemy : mutableTarget.tower;
+      const state = isEnemy ? this.enemyShields[entity.id] : this.towerShields[entity.id];
+      const definition = isEnemy
+        ? this.combatShieldDefinitions?.enemies[entity.typeId]
+        : this.combatShieldDefinitions?.towers[entity.typeId];
+      if (state && definition) {
+        state.regenerationDelayRemaining = definition.regeneration?.delayAfterDamage ?? 0;
+        const previous = state.current;
+        shieldAbsorbed = Math.min(previous, resolvedDamage.finalAmount);
+        hpDamage = resolvedDamage.finalAmount - shieldAbsorbed;
+        state.current = previous - shieldAbsorbed;
+        if (shieldAbsorbed > 0) {
+          if (isEnemy) {
+            this.lastEvents.push({
+              type: "enemyShieldChanged",
+              enemyId: entity.id,
+              enemyTypeId: entity.typeId,
+              previous,
+              current: state.current,
+              capacity: state.capacity,
+              cause: "damage",
+              amount: shieldAbsorbed,
+              ...(hpDamage > 0 ? { overflowDamage: hpDamage } : {})
+            });
+          } else {
+            this.lastEvents.push({
+              type: "towerShieldChanged",
+              towerId: entity.id,
+              towerTypeId: entity.typeId,
+              previous,
+              current: state.current,
+              capacity: state.capacity,
+              cause: "damage",
+              amount: shieldAbsorbed,
+              ...(hpDamage > 0 ? { overflowDamage: hpDamage } : {})
+            });
+          }
+        }
+      }
+    }
+    // Keep the target-specific legacy mutation formulas stable while applying only overflow to HP.
+    const resolution: DamageResolution = hpDamage === resolvedDamage.finalAmount
+      ? resolvedDamage
+      : { ...resolvedDamage, finalAmount: hpDamage };
+    if (mutableTarget.kind === "enemy") {
+      // Zero is the canonical pending-death state. Settlement intentionally stays
+      // deferred to removeDeadEnemies(), preserving reward/event ordering exactly once.
+      mutableTarget.enemy.hp = Math.max(0, mutableTarget.enemy.hp - resolution.finalAmount);
+    } else if (mutableTarget.kind === "core") {
+      this.coreHp = Math.max(0, this.coreHp - resolution.finalAmount);
+    } else {
+      mutableTarget.tower.hp = (mutableTarget.tower.hp ?? 0) - resolution.finalAmount;
+    }
+    if (mutableTarget.kind === "enemy") {
+      this.consumeResolvedMarks(mutableTarget.enemy, resolvedDamage);
+      this.applySourceMarkBindings(mutableTarget.enemy, packet, resolvedDamage);
+      if (capturedReactionState) {
+        this.planAndApplyReactions(packet, mutableTarget.enemy, resolvedDamage, capturedReactionState, reactionRuntime);
+      }
+    }
+    return { resolution: resolvedDamage, shieldAbsorbed, hpDamage };
+  }
+
+  private planAndApplyReactions(
+    packet: DamagePacket,
+    enemy: EnemyState,
+    resolvedDamage: DamageResolution,
+    captured: {
+      coord: HexCoord;
+      exposures: Record<string, ExposureRuntimeStateV1>;
+      statuses: Record<string, unknown>;
+      terrainTags: string[];
+    },
+    runtime?: ReactionRuntimeContext
+  ): void {
+    const profile = this.activeReactionsMechanics;
+    if (!profile) return;
+    const root = runtime?.root ?? {
+      queue: [],
+      rootEnemyId: enemy.id,
+      rootEnemyTypeId: enemy.typeId,
+      diagnostics: {},
+      processing: false,
+      scheduledPackets: 0
+    };
+    const depth = runtime?.depth ?? 0;
+    const liveExposureCount = Object.values(this.enemyExposures)
+      .reduce((total, states) => total + Object.keys(states).length, 0);
+    const plan = planReactions({
+      profile,
+      primary: {
+        rootEnemyId: enemy.id,
+        rootEnemyTypeId: enemy.typeId,
+        originCoord: captured.coord,
+        damageType: packet.damageType ?? "physical",
+        afterModifiers: resolvedDamage.afterModifiers,
+        resolvedFinalAmount: resolvedDamage.finalAmount,
+        depth,
+        sourceKind: packet.source.kind,
+        tags: packet.tags ?? [],
+        allowReactions: runtime?.allowReactions ?? false,
+        aliveAfterPrimary: enemy.hp > 0,
+        exposures: captured.exposures,
+        statuses: captured.statuses,
+        terrainTags: captured.terrainTags
+      },
+      candidates: this.enemies.map((candidate) => ({
+        enemyId: candidate.id,
+        enemyTypeId: candidate.typeId,
+        coord: this.enemyCoord(candidate),
+        topologyDistance: this.map.distance(captured.coord, this.enemyCoord(candidate)),
+        alive: candidate.hp > 0,
+        terrainTags: this.terrainMetadata(
+          this.map.getTile(this.enemyCoord(candidate))?.terrain
+            ?? this.content.maps[this.mission.mapId]?.defaultTerrain
+            ?? ""
+        ).tags
+      })),
+      budget: {
+        secondaryPacketsRemaining: Math.max(0, 256 - root.scheduledPackets),
+        liveExposuresRemaining: Math.max(0, 16_384 - liveExposureCount)
+      }
+    });
+
+    for (const consumption of plan.consumptions) {
+      if (consumption.kind === "exposure") {
+        const states = this.enemyExposures[enemy.id];
+        const previous = states?.[consumption.exposureId];
+        if (!states || !previous) continue;
+        const currentStacks = consumption.stacks === "all" ? 0 : Math.max(0, previous.stacks - 1);
+        const remaining = currentStacks === 0 ? 0 : previous.remaining;
+        if (currentStacks === 0) delete states[consumption.exposureId];
+        else states[consumption.exposureId] = { stacks: currentStacks, remaining };
+        if (Object.keys(states).length === 0) delete this.enemyExposures[enemy.id];
+        this.lastEvents.push({
+          type: "enemyExposureChanged", enemyId: enemy.id, enemyTypeId: enemy.typeId,
+          exposureId: consumption.exposureId, previousStacks: previous.stacks, currentStacks,
+          previousRemaining: previous.remaining, remaining, cause: "consume"
+        });
+      } else if (enemy.statuses?.[consumption.statusId]) {
+        delete enemy.statuses[consumption.statusId];
+      }
+    }
+    for (const trigger of plan.triggers) {
+      this.lastEvents.push({ type: "enemyReactionTriggered", ...trigger });
+    }
+    for (const application of plan.exposureApplications) {
+      this.applyEnemyExposure(
+        enemy,
+        application.exposureId,
+        application.stacks,
+        application.duration,
+        application.maxStacks,
+        "damage"
+      );
+    }
+    for (const diagnostic of plan.diagnostics) {
+      const accumulated = root.diagnostics[diagnostic.budget];
+      if (accumulated) accumulated.dropped += diagnostic.dropped;
+      else root.diagnostics[diagnostic.budget] = {
+        limit: diagnostic.limit,
+        dropped: diagnostic.dropped
+      };
+    }
+    root.queue.push(...plan.secondaryPlans);
+    root.scheduledPackets += plan.secondaryPlans.length;
+    if (root.processing) return;
+    root.processing = true;
+    while (root.queue.length > 0) {
+      const secondary = root.queue.shift()!;
+      const target = this.enemies.find((candidate) => candidate.id === secondary.targetEnemyId && candidate.hp > 0);
+      if (!target) continue;
+      this.applyResolvedEnemyDamage(
+        target,
+        secondary.amount,
+        { kind: "reaction", reactionId: secondary.reactionId },
+        {
+          damageType: secondary.damageType,
+          tags: secondary.tags,
+          reactionRuntime: {
+            depth: secondary.depth,
+            allowReactions: secondary.allowReactions,
+            root
+          }
+        }
+      );
+    }
+    root.processing = false;
+    for (const budget of ["depth", "secondary_packets", "live_exposures"] as const) {
+      const diagnostic = root.diagnostics[budget];
+      if (!diagnostic) continue;
+      this.lastEvents.push({
+        type: "reactionBudgetExceeded",
+        rootEnemyId: root.rootEnemyId,
+        rootEnemyTypeId: root.rootEnemyTypeId,
+        budget,
+        limit: diagnostic.limit,
+        dropped: diagnostic.dropped
+      });
+    }
+  }
+
+  private applyEnemyExposure(
+    enemy: EnemyState,
+    exposureId: string,
+    stacks: number,
+    duration: number,
+    maxStacks: number,
+    cause: "damage" | "script"
+  ): void {
+    const states = this.enemyExposures[enemy.id] ?? emptyDataRecord<ExposureRuntimeStateV1>();
+    const previous = states[exposureId];
+    const previousStacks = previous?.stacks ?? 0;
+    const previousRemaining = previous?.remaining ?? 0;
+    const currentStacks = Math.min(maxStacks, previousStacks + stacks);
+    const remaining = duration;
+    if (currentStacks === previousStacks && remaining === previousRemaining) return;
+    states[exposureId] = { stacks: currentStacks, remaining };
+    this.enemyExposures[enemy.id] = states;
+    this.lastEvents.push({
+      type: "enemyExposureChanged", enemyId: enemy.id, enemyTypeId: enemy.typeId,
+      exposureId, previousStacks, currentStacks, previousRemaining, remaining, cause
+    });
+  }
+
+  private updateEnemyExposures(delta: number): void {
+    if (delta <= 0 || !this.activeReactionsMechanics) return;
+    for (const enemyId of Object.keys(this.enemyExposures).sort()) {
+      const enemy = this.enemies.find((candidate) => candidate.id === enemyId);
+      const states = this.enemyExposures[enemyId];
+      if (!enemy || !states) continue;
+      for (const exposureId of Object.keys(states).sort()) {
+        const previous = states[exposureId];
+        if (!previous) continue;
+        const remaining = Math.max(0, previous.remaining - delta);
+        if (remaining > 1e-12) {
+          states[exposureId] = { stacks: previous.stacks, remaining };
+          continue;
+        }
+        delete states[exposureId];
+        this.lastEvents.push({
+          type: "enemyExposureChanged", enemyId, enemyTypeId: enemy.typeId,
+          exposureId, previousStacks: previous.stacks, currentStacks: 0,
+          previousRemaining: previous.remaining, remaining: 0, cause: "expiration"
+        });
+      }
+      if (Object.keys(states).length === 0) delete this.enemyExposures[enemyId];
+    }
   }
 
   private applyTowerDamage(
@@ -2171,9 +6803,9 @@ export class TowerDefenseGame {
     rawDamage: number,
     options: DamageResolutionOptions = {}
   ): number {
-    const damage = this.resolveEffectiveTowerDamage(tower.typeId, enemy, rawDamage, options);
+    const application = this.applyResolvedTowerDamage(tower.typeId, enemy, rawDamage, options, tower.id);
+    const damage = application.resolution.finalAmount;
     if (damage > 0) {
-      enemy.hp -= damage;
       if (options.applyLegacyStatus !== false) this.applyStatusOnHit(tower.typeId, enemy);
       this.lastEvents.push({
         type: "enemyHit",
@@ -2185,7 +6817,7 @@ export class TowerDefenseGame {
       return damage;
     }
 
-    if (rawDamage > 0 && this.isDamageBlockedByArmor(tower.typeId, enemy, options.armorPiercing)) {
+    if (rawDamage > 0 && application.resolution.blockedByArmor) {
       this.lastEvents.push({
         type: "enemyArmorBlocked",
         towerId: tower.id,
@@ -2197,51 +6829,86 @@ export class TowerDefenseGame {
     return 0;
   }
 
-  private resolveEffectiveTowerDamage(
+  private applyResolvedTowerDamage(
     towerTypeId: string,
     enemy: EnemyState,
     rawDamage: number,
-    options: DamageResolutionOptions = {}
-  ): number {
-    let damage = rawDamage * this.towerDamageMultiplier;
-    damage = options.aoe ? this.aoeDamageAfterSunlight(enemy, damage) : damage;
-    if (damage <= 0) {
-      return 0;
+    options: DamageResolutionOptions = {},
+    towerId?: string
+  ): DamageApplicationResult {
+    const modifiers: ModifierSpec[] = [];
+    if (this.towerDamageMultiplier !== 1) {
+      modifiers.push({
+        id: "legacy-meta-tower-damage",
+        target: "damage",
+        stage: "meta",
+        operation: "multiplier",
+        value: this.towerDamageMultiplier
+      });
+    }
+    const sourceTower = towerId === undefined || options.overTime === true
+      ? undefined
+      : this.towers.find((tower) => tower.id === towerId
+        && tower.typeId === towerTypeId
+        && (tower.hp === undefined || tower.hp > 0));
+    if (sourceTower) {
+      const damageBonusBasisPoints = this.highGroundPair(sourceTower, enemy)?.damageBonusBasisPoints ?? 0;
+      if (damageBonusBasisPoints > 0) {
+        modifiers.push({
+          id: "elevation:high-ground:damage",
+          target: "damage",
+          stage: "spatial",
+          operation: "additive_ratio",
+          value: damageBonusBasisPoints / 10_000
+        });
+      }
+    }
+    if (options.aoe && this.isEnemyInSunlight(enemy)) {
+      const sunlightMultiplier = this.mission.sunlight?.aoeDamageMultiplier ?? 1;
+      if (sunlightMultiplier !== 1) {
+        modifiers.push({
+          id: "legacy-spatial-sunlight-aoe",
+          target: "damage",
+          stage: "spatial",
+          operation: "multiplier",
+          value: sunlightMultiplier
+        });
+      }
     }
 
-    // Elemental resistances: scale by the enemy's multiplier for this attack's (author-defined) damage type.
-    damage *= this.resistanceMultiplier(enemy, options.damageType ?? this.damageTypeOf(towerTypeId));
-    if (damage <= 0) {
-      return 0;
-    }
+    const tags: DamageTag[] = [];
+    if (options.overTime) tags.push("over_time");
+    else if (options.aoe) tags.push("area");
+    if (options.armorPiercing) tags.push("armor_piercing");
 
     const armor = this.enemyTypes[enemy.typeId]?.armor;
-    if (!armor || armor.kind !== "pierce_only" || options.armorPiercing || this.piercesSniperArmor(towerTypeId)) {
-      return damage;
-    }
-
-    damage = Math.min(damage, this.armoredChipDamageForTower(towerTypeId, armor.chipDamageByTowerId));
-    return Math.max(0, damage);
+    const legacyArmor = armor?.kind === "pierce_only"
+      ? {
+          kind: "pierce_only" as const,
+          bypassed: options.armorPiercing === true || this.piercesSniperArmor(towerTypeId),
+          chipDamage: this.armoredChipDamageForTower(towerTypeId, armor.chipDamageByTowerId)
+        }
+      : undefined;
+    const source: DamageSourceRef = {
+      kind: "tower",
+      towerTypeId,
+      ...(towerId === undefined ? {} : { towerId })
+    };
+    return this.applyResolvedEnemyDamage(enemy, rawDamage, source, {
+      damageType: options.damageType ?? this.damageTypeOf(towerTypeId),
+      ...(tags.length ? { tags } : {}),
+      ...(modifiers.length ? { modifiers } : {}),
+      context: {
+        resistances: this.enemyTypes[enemy.typeId]?.resistances,
+        ...(legacyArmor === undefined ? {} : { legacyArmor })
+      }
+    });
   }
 
   /** The (author-defined) damage type a tower deals; defaults to "physical". */
   private damageTypeOf(towerTypeId: string): string {
     const attack = this.towerTypes[towerTypeId]?.attack as { damageType?: string } | undefined;
     return attack?.damageType ?? "physical";
-  }
-
-  /** Enemy's incoming-damage multiplier for a damage type (unlisted types = 1, clamped >= 0). */
-  private resistanceMultiplier(enemy: EnemyState, damageType: string): number {
-    const value = this.enemyTypes[enemy.typeId]?.resistances?.[damageType];
-    return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 1;
-  }
-
-  private isDamageBlockedByArmor(towerTypeId: string, enemy: EnemyState, armorPiercing = false): boolean {
-    const armor = this.enemyTypes[enemy.typeId]?.armor;
-    if (!armor || armor.kind !== "pierce_only" || armorPiercing || this.piercesSniperArmor(towerTypeId)) {
-      return false;
-    }
-    return this.armoredChipDamageForTower(towerTypeId, armor.chipDamageByTowerId) <= 0;
   }
 
   /** "pierce_only" armor is fully pierced by any sniper-kind weapon, regardless of its tower id. */
@@ -2347,15 +7014,29 @@ export class TowerDefenseGame {
     const routeIds = phase.routeIds?.length ? phase.routeIds : [parent.routeId ?? this.defaultRouteId()];
     const children: EnemyState[] = [];
     for (let index = 0; index < phase.count; index += 1) {
-      const routeId = this.resolveRouteId(routeIds[index % routeIds.length]);
-      const track = this.enemyTrackForType(phase.enemyId, routeId);
-      const trackEnd = Math.max(0, track.length - 1);
-      const progress = Math.min(
-        Math.max(0, parentRatio * trackEnd + (phase.progressOffset ?? 0)),
-        Math.max(0, trackEnd - 0.001)
-      );
+      const authoredRouteId = routeIds[index % routeIds.length];
+      const routeId = this.activeNavigationProfile
+        ? this.resolveDynamicNavigationRoute(authoredRouteId).id
+        : this.resolveRouteId(authoredRouteId);
       const offset = phase.pathOffsets?.[index] ?? (index % 2 === 0 ? -0.22 : 0.22);
-      const child = this.createEnemyState(phase.enemyId, progress, offset, routeId);
+      let child: EnemyState | null;
+      if (this.activeNavigationProfile && parent.navigation) {
+        child = this.createDynamicChildEnemyState(
+          parent,
+          phase.enemyId,
+          routeId,
+          offset,
+          phase.progressOffset ?? 0
+        );
+      } else {
+        const track = this.enemyTrackForType(phase.enemyId, routeId);
+        const trackEnd = Math.max(0, track.length - 1);
+        const progress = Math.min(
+          Math.max(0, parentRatio * trackEnd + (phase.progressOffset ?? 0)),
+          Math.max(0, trackEnd - 0.001)
+        );
+        child = this.createEnemyState(phase.enemyId, progress, offset, routeId);
+      }
       if (child) {
         children.push(child);
       }
@@ -2422,7 +7103,7 @@ export class TowerDefenseGame {
   private isInsideAnyPulse(enemy: EnemyState): boolean {
     return (
       this.enemyTargetClass(enemy) === "ground" &&
-      this.towers.some((tower) => this.isPulseTower(tower) && this.enemyInRange(tower, enemy, this.towerRange(tower)))
+      this.towers.some((tower) => this.isPulseTower(tower) && this.enemyInTowerAcquisitionRange(tower, enemy))
     );
   }
 
@@ -2437,7 +7118,387 @@ export class TowerDefenseGame {
     );
   }
 
-  private canOccupyTowerFootprint(typeId: string, coord: HexCoord, ignoreTowerId?: string): ActionResult {
+  private buildNavigationWavePairs(
+    profile: DynamicFlowNavigationProfileV1
+  ): readonly NavigationMandatoryPair[] {
+    const pairs = new Map<string, NavigationMandatoryPair>();
+    for (const wave of this.mission.waves) {
+      for (const group of wave.groups) {
+        const route = this.resolveDynamicNavigationRoute(group.routeId);
+        const source = route.pathCenterline[0];
+        if (!source) continue;
+        const movementProfileId = profile.enemyMovementProfiles?.[group.enemyId]
+          ?? profile.defaultMovementProfileId;
+        const pair = Object.freeze({
+          movementProfileId,
+          routeId: route.id,
+          source: Object.freeze({ q: source.q, r: source.r })
+        });
+        pairs.set(JSON.stringify([movementProfileId, route.id]), pair);
+      }
+    }
+    return Object.freeze([...pairs.values()].sort((left, right) => (
+      compareBinary(left.movementProfileId, right.movementProfileId)
+      || compareBinary(left.routeId, right.routeId)
+    )));
+  }
+
+  private buildNavigationMandatoryPairs(
+    profile: DynamicFlowNavigationProfileV1
+  ): readonly NavigationMandatoryPair[] {
+    const pairs = new Map<string, NavigationMandatoryPair>();
+    const queued = new Set<string>();
+    const worklist: NavigationSpawnPair[] = [];
+    const reachableEnemyTypeIds = new Set<string>();
+    const deathSpawnChildTypeIds = new Set<string>();
+    const phaseSpawnChildTypeIds = new Set<string>();
+    const enqueue = (enemyTypeId: string, routeId: string | undefined): void => {
+      if (!this.content.enemies[enemyTypeId]) return;
+      const route = this.resolveDynamicNavigationRoute(routeId);
+      const key = JSON.stringify([enemyTypeId, route.id]);
+      if (queued.has(key)) return;
+      queued.add(key);
+      worklist.push(Object.freeze({ enemyTypeId, routeId: route.id }));
+      worklist.sort((left, right) => (
+        compareBinary(left.enemyTypeId, right.enemyTypeId)
+        || compareBinary(left.routeId, right.routeId)
+      ));
+    };
+    for (const wave of this.mission.waves) {
+      for (const group of wave.groups) {
+        enqueue(group.enemyId, group.routeId);
+      }
+    }
+
+    const reachableTerrainIds = new Set([...this.map.tiles.values()].map((tile) => tile.terrain));
+    if (
+      this.mission.abilities?.some((ability) => ability.id === "path_water")
+      && this.content.terrainTypes.water
+      && this.map.allPathCoords().some((coord) => this.map.getBaseTerrain(coord) === "path")
+    ) reachableTerrainIds.add("water");
+    const appliedHandlers = new Set<string>();
+    while (true) {
+      let changed = false;
+      while (worklist.length > 0) {
+        const current = worklist.shift()!;
+        changed = true;
+        const enemyType = this.content.enemies[current.enemyTypeId];
+        if (!enemyType) continue;
+        reachableEnemyTypeIds.add(current.enemyTypeId);
+        const route = this.resolveDynamicNavigationRoute(current.routeId);
+        const movementProfileId = profile.enemyMovementProfiles?.[current.enemyTypeId]
+          ?? profile.defaultMovementProfileId;
+        if (profile.movementProfiles[movementProfileId]?.towerOccupancy === "blocked") {
+          const source = route.pathCenterline[0];
+          if (source) {
+            const pair: NavigationMandatoryPair = Object.freeze({
+              movementProfileId,
+              routeId: route.id,
+              source: Object.freeze({ q: source.q, r: source.r })
+            });
+            pairs.set(JSON.stringify([movementProfileId, route.id]), pair);
+          }
+        }
+        const deathSpawn = enemyType.spawnOnDeath;
+        if (deathSpawn && deathSpawn.count > 0) {
+          deathSpawnChildTypeIds.add(deathSpawn.enemyId);
+          enqueue(deathSpawn.enemyId, route.id);
+        }
+        for (const phase of enemyType.phaseSpawns ?? []) {
+          if (!(phase.count > 0)) continue;
+          phaseSpawnChildTypeIds.add(phase.enemyId);
+          if (!phase.routeIds?.length) {
+            enqueue(phase.enemyId, route.id);
+            continue;
+          }
+          const routeCount = Math.min(phase.routeIds.length, Math.ceil(phase.count));
+          for (let index = 0; index < routeCount; index += 1) {
+            enqueue(phase.enemyId, phase.routeIds[index]);
+          }
+        }
+      }
+
+      for (const scriptId of Object.keys(this.content.scripts ?? {}).sort(compareBinary)) {
+        const script = this.content.scripts[scriptId];
+        if (!script || script.enabled === false) continue;
+        for (const eventName of Object.keys(script.handlers).sort(compareBinary) as TowerScriptEventName[]) {
+          const handlers = script.handlers[eventName] ?? [];
+          for (let handlerIndex = 0; handlerIndex < handlers.length; handlerIndex += 1) {
+            const handlerKey = JSON.stringify([scriptId, eventName, handlerIndex]);
+            if (appliedHandlers.has(handlerKey)) continue;
+            if (!this.navigationHandlerAppliesToMission(
+              script,
+              eventName,
+              reachableEnemyTypeIds,
+              deathSpawnChildTypeIds,
+              phaseSpawnChildTypeIds,
+              reachableTerrainIds
+            )) continue;
+            appliedHandlers.add(handlerKey);
+            changed = true;
+            const handler = handlers[handlerIndex]!;
+            for (const action of handler.actions) {
+              if (action.action === "spawnEnemy") enqueue(action.enemyTypeId, action.routeId);
+              if (action.action === "setTileTerrain") reachableTerrainIds.add(action.terrainId);
+            }
+          }
+        }
+      }
+      if (worklist.length === 0 && !changed) break;
+    }
+    const ordered = [...pairs.values()].sort((left, right) => (
+      compareBinary(left.movementProfileId, right.movementProfileId)
+      || compareBinary(left.routeId, right.routeId)
+    ));
+    return Object.freeze(ordered);
+  }
+
+  private resolveDynamicNavigationRoute(routeId: string | undefined): GridPathRoute {
+    const route = routeId === undefined
+      ? this.map.pathRoutes.find((candidate) => candidate.id === "main")
+        ?? [...this.map.pathRoutes].sort((left, right) => compareBinary(left.id, right.id))[0]
+      : this.map.pathRoutes.find((candidate) => candidate.id === routeId);
+    if (!route) {
+      throw new Error(`Dynamic navigation spawn references unknown route "${routeId ?? "main"}".`);
+    }
+    return route;
+  }
+
+  private navigationHandlerAppliesToMission(
+    script: TowerScriptDefinition,
+    eventName: TowerScriptEventName,
+    reachableEnemyTypeIds: ReadonlySet<string>,
+    deathSpawnChildTypeIds: ReadonlySet<string>,
+    phaseSpawnChildTypeIds: ReadonlySet<string>,
+    reachableTerrainIds: ReadonlySet<string>
+  ): boolean {
+    const acceptsAny = (ids: readonly string[] | undefined, candidates: Iterable<string>): boolean => {
+      const accepted = ids === undefined ? undefined : new Set(ids);
+      for (const candidate of candidates) if (!accepted || accepted.has(candidate)) return true;
+      return false;
+    };
+    const towerIds = this.mission.buildTowerIds ?? Object.keys(this.content.towers);
+    const abilityIds = this.mission.abilityIds ?? Object.keys(this.content.abilities);
+    const eventFields = new Set<string>(TOWER_SCRIPT_EVENT_FIELDS[eventName]);
+    const eventEnemyTypeIds = eventName === "enemySpawnedOnDeath"
+      ? deathSpawnChildTypeIds
+      : eventName === "enemyPhaseSpawned"
+        ? phaseSpawnChildTypeIds
+        : reachableEnemyTypeIds;
+    for (const binding of script.bindings) {
+      if (binding.scope === "global") return true;
+      if (binding.scope === "mission" && acceptsAny(binding.ids, [this.mission.id])) return true;
+      if (binding.scope === "map" && acceptsAny(binding.ids, [this.mission.mapId])) return true;
+      if (binding.scope === "wave" && acceptsAny(binding.ids, [this.mission.waveSetId])) return true;
+      if (
+        binding.scope === "tower"
+        && (eventName === "tick" || eventFields.has("towerId") || eventFields.has("towerIds"))
+        && acceptsAny(binding.ids, towerIds)
+      ) return true;
+      if (
+        binding.scope === "ability"
+        && eventFields.has("abilityId")
+        && acceptsAny(binding.ids, abilityIds)
+      ) return true;
+      if (
+        binding.scope === "terrain"
+        && (eventFields.has("coord") || eventFields.has("center") || eventFields.has("to"))
+        && acceptsAny(binding.ids, reachableTerrainIds)
+      ) return true;
+      if (
+        binding.scope === "enemy"
+        && (eventName === "tick" || eventFields.has("enemyId") || eventFields.has("targetEnemyId") || eventFields.has("enemyIds"))
+        && eventEnemyTypeIds.size > 0
+        && acceptsAny(binding.ids, eventEnemyTypeIds)
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private navigationTerrainByCoord(): Readonly<Record<string, string>> {
+    const terrainByCoord: Record<string, string> = {};
+    for (const tile of this.map.tiles.values()) {
+      Object.defineProperty(terrainByCoord, coordKey(tile), {
+        value: tile.terrain,
+        enumerable: true,
+        configurable: true,
+        writable: true
+      });
+    }
+    return terrainByCoord;
+  }
+
+  private navigationTerrainByCoordForOverrides(
+    overrides: ReadonlyMap<string, RuntimeTerrainOverride>
+  ): Readonly<Record<string, string>> {
+    const terrainByCoord: Record<string, string> = {};
+    for (const tile of this.map.tiles.values()) {
+      const key = coordKey(tile);
+      const terrain = overrides.get(key)?.terrain ?? this.map.getBaseTerrain(tile);
+      if (!terrain) throw new Error(`Dynamic terraforming candidate is missing base terrain at ${key}.`);
+      Object.defineProperty(terrainByCoord, key, {
+        value: terrain,
+        enumerable: true,
+        configurable: true,
+        writable: true
+      });
+    }
+    return terrainByCoord;
+  }
+
+  private navigationOccupiedCoords(
+    ignoreTowerId?: string,
+    candidateFootprint: readonly HexCoord[] = []
+  ): readonly HexCoord[] {
+    const occupied = new Map<string, HexCoord>();
+    for (const tile of this.map.tiles.values()) {
+      if (!tile.occupiedBy || tile.occupiedBy === ignoreTowerId) continue;
+      occupied.set(coordKey(tile), { q: tile.q, r: tile.r });
+    }
+    for (const coord of candidateFootprint) {
+      occupied.set(coordKey(coord), { q: coord.q, r: coord.r });
+    }
+    return [...occupied.values()];
+  }
+
+  private createNavigationResolver(
+    occupiedCoords = this.navigationOccupiedCoords(),
+    terrainByCoord = this.navigationTerrainByCoord()
+  ): NavigationResolver {
+    const profile = this.activeNavigationProfile;
+    if (!profile) throw new Error("Dynamic navigation resolver requires an active profile.");
+    return new NavigationResolver({
+      grid: this.map.grid,
+      width: this.map.width,
+      height: this.map.height,
+      profile,
+      terrainTypes: this.content.terrainTypes,
+      terrainByCoord,
+      occupiedCoords,
+      routes: this.map.pathRoutes
+    });
+  }
+
+  private navigationPlacementPairs(): readonly NavigationMandatoryPair[] {
+    const profile = this.activeNavigationProfile;
+    if (!profile) return [];
+    const pairs = new Map<string, NavigationMandatoryPair>();
+    for (const pair of this.navigationMandatoryPairs) {
+      pairs.set(JSON.stringify([pair.movementProfileId, pair.routeId, pair.source.q, pair.source.r]), pair);
+    }
+    for (const enemy of this.enemies) {
+      if (enemy.hp <= 0 || !enemy.navigation || !enemy.routeId) continue;
+      if (profile.movementProfiles[enemy.navigation.movementProfileId]?.towerOccupancy !== "blocked") continue;
+      const pair: NavigationMandatoryPair = Object.freeze({
+        movementProfileId: enemy.navigation.movementProfileId,
+        routeId: enemy.routeId,
+        source: Object.freeze({ ...enemy.navigation.currentCoord })
+      });
+      pairs.set(JSON.stringify([pair.movementProfileId, pair.routeId, pair.source.q, pair.source.r]), pair);
+    }
+    return [...pairs.values()].sort((left, right) => (
+      compareBinary(left.movementProfileId, right.movementProfileId)
+      || compareBinary(left.routeId, right.routeId)
+      || left.source.r - right.source.r
+      || left.source.q - right.source.q
+    ));
+  }
+
+  private navigationPairIsReachable(
+    resolver: NavigationResolver,
+    pair: NavigationMandatoryPair,
+    lookups: NavigationFieldLookupCache,
+    budget?: NavigationAnalysisRelaxationBudget
+  ): boolean {
+    const field = resolver.getField(pair.movementProfileId, pair.routeId);
+    if (budget) this.consumeNavigationAnalysisField(field, budget);
+    return lookups.get(field).get(pair.source) !== undefined;
+  }
+
+  private createNavigationPlacementAnalysisContext(
+    budget: NavigationAnalysisRelaxationBudget
+  ): NavigationPlacementAnalysisContext {
+    const pairs = this.navigationPlacementPairs();
+    const lookups = new NavigationFieldLookupCache();
+    if (pairs.length === 0) return { pairs, lookups, budget };
+    const baseline = this.createNavigationResolver();
+    const baselineUnavailable = pairs.find((pair) => (
+      !this.navigationPairIsReachable(baseline, pair, lookups, budget)
+    ));
+    return {
+      pairs,
+      lookups,
+      budget,
+      ...(baselineUnavailable === undefined ? {} : { baselineUnavailable })
+    };
+  }
+
+  private canPreserveDynamicNavigation(
+    footprint: readonly HexCoord[],
+    ignoreTowerId?: string,
+    analysisContext?: NavigationPlacementAnalysisContext
+  ): ActionResult {
+    if (!this.navigationResolver) return { ok: true };
+    const pairs = analysisContext?.pairs ?? this.navigationPlacementPairs();
+    if (pairs.length === 0) return { ok: true };
+    const lookups = analysisContext?.lookups ?? new NavigationFieldLookupCache();
+    if (analysisContext?.baselineUnavailable) {
+      const pair = analysisContext.baselineUnavailable;
+      return this.fail(
+        "A required navigation route is already unavailable.",
+        "reason.navigationUnavailable",
+        { movementProfileId: pair.movementProfileId, routeId: pair.routeId }
+      );
+    }
+    if (!analysisContext) {
+      const baseline = this.createNavigationResolver();
+      for (const pair of pairs) {
+        if (!this.navigationPairIsReachable(baseline, pair, lookups)) {
+          return this.fail(
+            "A required navigation route is already unavailable.",
+            "reason.navigationUnavailable",
+            { movementProfileId: pair.movementProfileId, routeId: pair.routeId }
+          );
+        }
+      }
+    }
+    const candidate = this.createNavigationResolver(this.navigationOccupiedCoords(ignoreTowerId, footprint));
+    for (const pair of pairs) {
+      if (!this.navigationPairIsReachable(candidate, pair, lookups, analysisContext?.budget)) {
+        return this.fail(
+          "Tower would block the last available path.",
+          "reason.lastPathBlocked",
+          { movementProfileId: pair.movementProfileId, routeId: pair.routeId }
+        );
+      }
+    }
+    return { ok: true };
+  }
+
+  private syncNavigationTerrain(): void {
+    this.navigationResolver?.updateTerrainByCoord(this.navigationTerrainByCoord());
+  }
+
+  private syncNavigationOccupancy(): void {
+    this.navigationResolver?.updateOccupiedCoords(this.navigationOccupiedCoords());
+  }
+
+  private syncNavigationResolver(): void {
+    const resolver = this.navigationResolver;
+    if (!resolver) return;
+    resolver.updateTerrainByCoord(this.navigationTerrainByCoord());
+    resolver.updateOccupiedCoords(this.navigationOccupiedCoords());
+    resolver.updateRoutes(this.map.pathRoutes);
+  }
+
+  private canOccupyTowerFootprint(
+    typeId: string,
+    coord: HexCoord,
+    ignoreTowerId?: string,
+    analysisContext?: NavigationPlacementAnalysisContext
+  ): ActionResult {
     const type = this.towerTypes[typeId];
     if (!type) {
       return this.fail("Unknown tower type.", "reason.unknownTower");
@@ -2469,7 +7530,7 @@ export class TowerDefenseGame {
       }
     }
 
-    return { ok: true };
+    return this.canPreserveDynamicNavigation(footprint, ignoreTowerId, analysisContext);
   }
 
   private dependentsKeepSupportAfterMove(sourceTowerId: string, nextCoord: HexCoord): boolean {
@@ -2548,7 +7609,15 @@ export class TowerDefenseGame {
         continue;
       }
 
-      if (enemy.pathProgress < this.enemyTrack(enemy).length - 1) {
+      delete this.enemyShields[enemy.id];
+      delete this.enemyMarks[enemy.id];
+      delete this.enemyExposures[enemy.id];
+      this.navigationEnemyFields?.delete(enemy.id);
+
+      const killedBeforeEndpoint = enemy.navigation
+        ? !this.dynamicEnemyAtGoal(enemy)
+        : enemy.pathProgress < this.enemyTrack(enemy).length - 1;
+      if (killedBeforeEndpoint) {
         const type = this.enemyTypes[enemy.typeId];
         if (!type) {
           continue;
@@ -2571,20 +7640,46 @@ export class TowerDefenseGame {
     this.enemies = [...survivors, ...spawned];
   }
 
+  private dynamicEnemyAtGoal(enemy: EnemyState): boolean {
+    if (!enemy.navigation || !enemy.routeId) return false;
+    const goal = this.resolveDynamicNavigationRoute(enemy.routeId).pathCenterline.at(-1);
+    return Boolean(
+      goal
+      && enemy.navigation.currentCoord.q === goal.q
+      && enemy.navigation.currentCoord.r === goal.r
+    );
+  }
+
   private spawnOnDeathChildren(parent: EnemyState): EnemyState[] {
     const spawn = this.enemyTypes[parent.typeId]?.spawnOnDeath;
     if (!spawn || spawn.count <= 0) {
       return [];
     }
 
-    const childRouteId = this.enemyTargetClassByType(spawn.enemyId) === "ground" ? parent.routeId : undefined;
-    const track = this.enemyTrackForType(spawn.enemyId, childRouteId);
-    const trackEnd = Math.max(0, track.length - 1);
-    const childProgress = Math.min(parent.pathProgress + spawn.forwardPathSteps, Math.max(0, trackEnd - 0.001));
+    const childRouteId = this.activeNavigationProfile
+      ? parent.routeId
+      : this.enemyTargetClassByType(spawn.enemyId) === "ground" ? parent.routeId : undefined;
     const children: EnemyState[] = [];
     for (let index = 0; index < spawn.count; index += 1) {
       const offset = spawn.pathOffsets?.[index] ?? 0;
-      const child = this.createEnemyState(spawn.enemyId, childProgress, offset, childRouteId);
+      let child: EnemyState | null;
+      if (this.activeNavigationProfile && parent.navigation && childRouteId) {
+        child = this.createDynamicChildEnemyState(
+          parent,
+          spawn.enemyId,
+          childRouteId,
+          offset,
+          spawn.forwardPathSteps
+        );
+      } else {
+        const track = this.enemyTrackForType(spawn.enemyId, childRouteId);
+        const trackEnd = Math.max(0, track.length - 1);
+        const childProgress = Math.min(
+          parent.pathProgress + spawn.forwardPathSteps,
+          Math.max(0, trackEnd - 0.001)
+        );
+        child = this.createEnemyState(spawn.enemyId, childProgress, offset, childRouteId);
+      }
       if (child) {
         children.push(child);
       }

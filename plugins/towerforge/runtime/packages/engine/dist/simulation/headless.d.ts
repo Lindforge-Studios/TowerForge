@@ -2,6 +2,7 @@ import { type GameContentRegistry } from "../content/registry.js";
 import { TowerDefenseGame } from "./TowerDefenseGame.js";
 import type { ActionResult, GameSnapshot, HexCoord, MissionAbilityId, TowerTargetMode } from "./types.js";
 import type { TowerScriptJson } from "../scripting/types.js";
+/** @deprecated Use the versioned GameCommand public contract. */
 export type SimulationAction = {
     type: "tick";
     units: number;
@@ -50,6 +51,7 @@ export interface HeadlessMissionRunResult {
     snapshot: GameSnapshot;
     actionResults: SimulationActionResult[];
 }
+/** @deprecated Use dispatchGameCommand with a versioned GameCommand. */
 export declare function applySimulationAction(game: TowerDefenseGame, action: SimulationAction): ActionResult;
 export declare function tickHeadless(game: TowerDefenseGame, units: number, step?: number): void;
 export declare function runHeadlessMission(options: HeadlessMissionRunOptions): HeadlessMissionRunResult;

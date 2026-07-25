@@ -1,0 +1,150 @@
+import type { TowerScriptDiagnostic, TowerScriptJson } from "../scripting/types.js";
+import type {
+  EnemyState,
+  GameEvent,
+  GameSnapshot,
+  ResourceBag,
+  RuntimeTerrainOverride,
+  TowerState,
+  WaveState
+} from "./types.js";
+import type { SeededRngStateV1 } from "./rng.js";
+import type { CombatState } from "./shields.js";
+import type { ReactionStateV1 } from "./reactions.js";
+import { canonicalStringify, stableDigest } from "./stable-digest.js";
+
+export const GAME_CHECKPOINT_SCHEMA_VERSION = 1 as const;
+export const SIMULATION_ENGINE_VERSION = "towerforge-sim-v2" as const;
+
+export interface GameCheckpointIdentityV1 {
+  readonly missionId: string;
+  readonly difficultyId: string;
+  readonly metaUpgradeLevels: Readonly<Record<string, number>>;
+}
+
+export interface CheckpointSpawnItemV1 {
+  readonly at: number;
+  readonly enemyId: string;
+  readonly routeId?: string;
+}
+
+/** Authoritative mutable simulation state. Map occupancy and water cues are rebuilt derivatives. */
+export interface GameCheckpointStateV1 {
+  readonly coreHp: number;
+  readonly resources: Readonly<ResourceBag>;
+  readonly waveIndex: number;
+  readonly startedWaveCount: number;
+  readonly waveState: WaveState;
+  readonly prepRemaining: number;
+  readonly outcome: GameSnapshot["outcome"];
+  readonly enemies: readonly EnemyState[];
+  readonly towers: readonly TowerState[];
+  readonly lastEvents: readonly GameEvent[];
+  readonly enemyCounter: number;
+  readonly towerCounter: number;
+  readonly clearedWaveCount: number;
+  readonly killCount: number;
+  readonly leakCount: number;
+  readonly killCountByEnemyType: Readonly<Record<string, number>>;
+  readonly completedObjectiveIds: readonly string[];
+  readonly earnedStarIds: readonly string[];
+  readonly spawnQueue: readonly CheckpointSpawnItemV1[];
+  readonly missionElapsed: number;
+  readonly nextWaveStartAt: number | null;
+  readonly abilityCooldowns: Readonly<Record<string, number>>;
+  readonly runtimeTerrainOverrides: readonly RuntimeTerrainOverride[];
+  readonly scriptValues: Readonly<Record<string, Record<string, Record<string, TowerScriptJson>>>>;
+  readonly scriptDiagnostics: readonly TowerScriptDiagnostic[];
+  readonly scriptHandlerLastRun: Readonly<Record<string, number>>;
+  readonly scriptEventCursor: number;
+  readonly scriptActionsRemaining: number;
+  readonly scriptTerrainChangesRemaining: number;
+  readonly scriptSignalDepth: number;
+  readonly combat?: CombatState;
+  readonly reactions?: ReactionStateV1;
+}
+
+export interface GameCheckpointV1 {
+  readonly schemaVersion: typeof GAME_CHECKPOINT_SCHEMA_VERSION;
+  readonly engineVersion: typeof SIMULATION_ENGINE_VERSION;
+  readonly contentDigest: string;
+  readonly identity: GameCheckpointIdentityV1;
+  readonly rng: {
+    readonly initial: SeededRngStateV1;
+    readonly current: SeededRngStateV1;
+  };
+  readonly state: GameCheckpointStateV1;
+  readonly stateDigest: string;
+}
+
+export type CheckpointDescriptorMap = Record<PropertyKey, PropertyDescriptor>;
+
+export function checkpointObjectDescriptors(value: unknown, context: string): CheckpointDescriptorMap {
+  if (value === null || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) {
+    throw new Error(`${context} must be a plain object.`);
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value) as CheckpointDescriptorMap;
+  if (Object.getOwnPropertySymbols(descriptors).length > 0) {
+    throw new Error(`${context} rejects symbol keys.`);
+  }
+  return descriptors;
+}
+
+export function checkpointDataField(
+  descriptors: CheckpointDescriptorMap,
+  key: string,
+  context: string
+): unknown {
+  const descriptor = descriptors[key];
+  if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+    throw new Error(`${context} field "${key}" must be an enumerable own data property.`);
+  }
+  return descriptor.value;
+}
+
+export function requireExactCheckpointKeys(
+  descriptors: CheckpointDescriptorMap,
+  expectedKeys: readonly string[],
+  context: string
+): void {
+  const actualKeys = Object.keys(descriptors);
+  if (actualKeys.length !== expectedKeys.length || expectedKeys.some((key) => !actualKeys.includes(key))) {
+    throw new Error(`${context} contains missing or unsupported fields.`);
+  }
+}
+
+export function inspectCheckpointEnvelope(value: unknown): CheckpointDescriptorMap {
+  const descriptors = checkpointObjectDescriptors(value, "Game checkpoint");
+  const schemaVersion = checkpointDataField(descriptors, "schemaVersion", "Game checkpoint");
+  if (schemaVersion !== GAME_CHECKPOINT_SCHEMA_VERSION) {
+    throw new Error(`Unsupported game checkpoint schema version "${String(schemaVersion)}".`);
+  }
+  const engineVersion = checkpointDataField(descriptors, "engineVersion", "Game checkpoint");
+  if (engineVersion !== SIMULATION_ENGINE_VERSION) {
+    throw new Error(`Unsupported simulation engine version "${String(engineVersion)}".`);
+  }
+  const expectedKeys = ["schemaVersion", "engineVersion", "contentDigest", "identity", "rng", "state", "stateDigest"];
+  requireExactCheckpointKeys(descriptors, expectedKeys, "Game checkpoint envelope");
+  return descriptors;
+}
+
+/** Descriptor-safe detached JSON clone. Unsupported values and accessors are rejected. */
+export function cloneCheckpointJson<T>(value: T): T {
+  return JSON.parse(canonicalStringify(value)) as T;
+}
+
+export function computeCheckpointStateDigest(
+  contentDigest: string,
+  identity: GameCheckpointIdentityV1,
+  rng: { readonly initial: SeededRngStateV1; readonly current: SeededRngStateV1 },
+  state: GameCheckpointStateV1
+): string {
+  return stableDigest({
+    schemaVersion: GAME_CHECKPOINT_SCHEMA_VERSION,
+    engineVersion: SIMULATION_ENGINE_VERSION,
+    contentDigest,
+    identity,
+    rng,
+    state
+  });
+}

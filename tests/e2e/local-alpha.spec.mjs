@@ -528,6 +528,7 @@ test("Russian locale covers the primary authoring surfaces", async ({ page }) =>
     ["missions", "Редактор миссий"],
     ["worldmap", "Редактор карты мира"],
     ["maps", "Редактор карт"],
+    ["mechanics", "Центр механик"],
     ["scripts", "Проект и скрипты"],
     ["assets", "Каталог ресурсов"],
     ["settings", "Константы и настройки"],

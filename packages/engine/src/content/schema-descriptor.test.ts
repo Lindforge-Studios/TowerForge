@@ -1,7 +1,25 @@
 import { describe, expect, it } from "vitest";
+import * as Engine from "../index.js";
 import { createGameContentRegistry, type GameContentInput } from "./registry.js";
-import { ABILITY_IDS, ABILITY_SCHEMA, ATTACK_KIND_IDS, ATTACK_KIND_SCHEMA, type FieldConstraint, type PresetAbilityId } from "./schema-descriptor.js";
+import {
+  ABILITY_IDS,
+  ABILITY_SCHEMA,
+  ATTACK_KIND_IDS,
+  ATTACK_KIND_SCHEMA,
+  COMBAT_MECHANICS_SCHEMA,
+  DAMAGE_PACKET_SCHEMA,
+  MODIFIER_SPEC_SCHEMA,
+  type FieldConstraint,
+  type PresetAbilityId
+} from "./schema-descriptor.js";
 import { validateGameContentRegistry } from "./validate.js";
+import {
+  MAX_MODIFIERS_PER_RESOLUTION,
+  MODIFIER_OPERATION_ORDER,
+  MODIFIER_STAGE_ORDER,
+  MODIFIER_TARGETS
+} from "../simulation/modifiers.js";
+import { ARMOR_MATRIX_LIMITS } from "./mechanics.js";
 import type { TowerAttackKind } from "../simulation/types.js";
 
 // This file is the contract test for schema-descriptor.ts: it proves the descriptor's declared
@@ -165,4 +183,66 @@ describe("schema-descriptor: ability ids match validate.ts", () => {
       expect(abilityIssues).toEqual([]);
     });
   }
+});
+
+describe("schema-descriptor: combat resolution contracts", () => {
+  it("describes ModifierSpec from the same closed sets and budget as the engine", () => {
+    expect(MODIFIER_SPEC_SCHEMA).toEqual({
+      schemaVersion: 1,
+      requiredFields: ["id", "target", "stage", "operation", "value"],
+      targets: [...MODIFIER_TARGETS],
+      stages: [...MODIFIER_STAGE_ORDER],
+      operations: [...MODIFIER_OPERATION_ORDER],
+      maxPerResolution: MAX_MODIFIERS_PER_RESOLUTION,
+      pipelineOrder: [
+        "base",
+        "tower_upgrade",
+        "meta",
+        "run",
+        "spatial",
+        "temporary"
+      ],
+      withinStageOrder: ["flat", "additive_ratio", "multiplier", "id_binary_ascending"]
+    });
+  });
+
+  it("describes the R1.5 reaction-aware damage boundary", () => {
+    expect(COMBAT_MECHANICS_SCHEMA).toMatchObject({
+      schemaVersion: 3,
+      supportedModuleSchemaVersions: [1, 2, 3],
+      profile: {
+        additionalProperties: false,
+        optionalFields: ["shields", "damageTypes", "armorTypes", "armorAssignments", "marks"]
+      },
+      damageTypes: expect.any(Object),
+      armorTypes: expect.any(Object),
+      armorAssignments: expect.any(Object),
+      armorMatrix: {
+        limits: ARMOR_MATRIX_LIMITS,
+        order: "source modifiers -> marks -> armor matrix -> entity resistance -> legacy pierce_only adapter -> shield -> HP"
+      },
+      marks: { limits: (Engine as unknown as { MARK_LIMITS?: unknown }).MARK_LIMITS }
+    });
+    expect(DAMAGE_PACKET_SCHEMA).toEqual({
+      schemaVersion: 1,
+      requiredFields: ["amount", "source", "target"],
+      optionalFields: ["damageType", "tags", "modifiers"],
+      sourceKinds: ["tower", "ability", "tower_script", "status", "enemy", "leak", "reaction"],
+      targetKinds: ["enemy", "tower", "core"],
+      tags: ["area", "over_time", "armor_piercing", "reaction"],
+      pipelineOrder: [
+        "modifiers",
+        "marks",
+        "armor_matrix",
+        "entity_resistance",
+        "legacy_pierce_only",
+        "shield",
+        "entity_hp",
+        "reactions"
+      ]
+    });
+
+    expect(JSON.stringify({ combat: COMBAT_MECHANICS_SCHEMA, damage: DAMAGE_PACKET_SCHEMA }))
+      .toMatch(/reaction/i);
+  });
 });

@@ -1,6 +1,12 @@
 import { GridMap, type GridMapDefinition } from "../simulation/map.js";
 import { normalizeTerrainTypes } from "../simulation/terrain.js";
 import type { TowerScriptDefinition } from "../scripting/types.js";
+import {
+  resolveCapabilitySet,
+  type CapabilitySet,
+  type MechanicsCatalog,
+  type MissionMechanicsSelection
+} from "./mechanics.js";
 import type {
   CurrencyDefinition,
   DifficultyDefinition,
@@ -76,6 +82,7 @@ export interface MissionDataDefinition {
   economy?: MissionEconomyDefinition;
   objectives?: MissionObjectivesDefinition;
   sunlight?: MissionSunlightDefinition;
+  mechanics?: MissionMechanicsSelection;
 }
 
 export interface MissionContentDefinition extends MissionDefinition {
@@ -84,6 +91,8 @@ export interface MissionContentDefinition extends MissionDefinition {
   buildTowerIds: string[];
   abilityIds: MissionAbilityId[];
   mapFactory: () => GridMap;
+  mechanics?: MissionMechanicsSelection;
+  readonly capabilities: CapabilitySet;
 }
 
 export interface GameBalanceData {
@@ -138,6 +147,7 @@ export interface GameContentRegistry {
   missions: Record<string, MissionContentDefinition>;
   maps: Record<string, GridMapDefinition>;
   scripts: Record<string, TowerScriptDefinition>;
+  mechanics: MechanicsCatalog;
   worldMap: WorldMapCatalog;
   visuals: unknown;
   storyComics: Record<string, StoryComicDefinition>;
@@ -152,6 +162,7 @@ export interface GameContentInput {
   maps: Record<string, GridMapDefinition>;
   worldMap: WorldMapCatalog;
   scripts?: Record<string, TowerScriptDefinition>;
+  mechanics?: MechanicsCatalog;
   visuals?: unknown;
   storyComics?: { seenStoragePrefix: string; comics: Record<string, StoryComicDefinition> };
   battleBackgrounds?: {
@@ -163,6 +174,7 @@ export interface GameContentInput {
 
 export function createGameContentRegistry(options: GameContentInput): GameContentRegistry {
   const { balance, maps } = options;
+  const mechanics: MechanicsCatalog = options.mechanics ?? { schemaVersion: 1, modules: {} };
 
   const missions = Object.fromEntries(
     Object.values(balance.missions).map((mission) => {
@@ -173,6 +185,7 @@ export function createGameContentRegistry(options: GameContentInput): GameConten
         abilityIds: [...abilityIds],
         waves: balance.waveSets[mission.waveSetId] ?? [],
         abilities: abilityIds.map((abilityId) => balance.abilities[abilityId]).filter((a): a is MissionAbilityDefinition => !!a),
+        capabilities: resolveCapabilitySet(mechanics, mission.mechanics),
         mapFactory: () => {
           const mapDefinition = maps[mission.mapId];
           if (!mapDefinition) {
@@ -202,6 +215,7 @@ export function createGameContentRegistry(options: GameContentInput): GameConten
     missions,
     maps,
     scripts: options.scripts ?? {},
+    mechanics,
     worldMap: options.worldMap,
     visuals: options.visuals ?? {},
     storyComics: options.storyComics?.comics ?? {},

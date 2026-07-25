@@ -44,7 +44,7 @@ Studio opens at `http://localhost:5174` and edits `examples/starter.tdproj` by d
 | Task | Command |
 | --- | --- |
 | Install | `npm install` |
-| Create a project | `npx towerforge create my-game --template classic` (also `maze`, `idle`, or `roguelike`) |
+| Create a project | `npx towerforge create my-game --template classic --grid square`; grids: `hex`/`square`, templates: `classic`, `maze`, `idle`, `roguelike` |
 | Run Studio | `npm run studio` |
 | Run MCP server | `npm run mcp -- --project examples/starter.tdproj` |
 | Build Codex plugin | `npm run plugin:build` |
@@ -71,6 +71,9 @@ Studio opens at `http://localhost:5174` and edits `examples/starter.tdproj` by d
 | Run desktop Studio shell | `npm run desktop:dev` |
 | Build desktop Studio installers | `npm run desktop:build` |
 | Build platform-specific Studio installers | `npm run desktop:build:mac`, `npm run desktop:build:win`, or `npm run desktop:build:linux` |
+| Rebuild brand banners | `npm run brand:build` |
+| Rebuild native icons | `npm run brand:icons` |
+| Rebuild bundled tile sheets | `npm run tiles:build-presets` |
 | Unit and integration tests | `npm run test` |
 | Browser smoke test | `npm run test:e2e` |
 
@@ -87,16 +90,19 @@ Then open `http://127.0.0.1:5175`.
 A `.tdproj` directory is the source of a game:
 
 - `project.json` stores project metadata.
-- `content/balance.json` stores constants, difficulties, meta progression/rewards, abilities, enemies, towers, waves, and missions.
+- `content/balance.json` stores constants, the typed terrain registry, difficulties, meta progression/rewards, abilities, enemies, towers, waves, and missions.
+- `content/mechanics.json` is an optional versioned catalog of opt-in mechanics; without it the project retains legacy behavior.
 - `content/world-map.json` stores regions and mission nodes.
-- `content/visuals.json` stores the local visual catalog, asset bindings, atlas refs, and sprite refs.
+- `content/visuals.json` stores the v2 visual catalog: atlases, sprites, tilesets, Wang/signature rules, weights, transforms, and map/grid bindings.
 - `content/story-comics.json` stores mission-linked narrative panels.
 - `content/battle-backgrounds.json` stores mission colors and optional sprite backdrops.
 - `maps/src/*.tmj` stores editable hex/odd-r or square/cardinal map sources.
 - `maps/compiled/maps.json` stores runtime map definitions generated from source maps.
-- `scripts/**/*.tower.json` stores deterministic custom gameplay bound to global, mission, map, wave, tower, enemy, or ability scopes.
+- `scripts/**/*.tower.json` stores deterministic custom gameplay, including terrain scope, tile events, and controlled runtime terrain changes.
 - `build-targets.json` stores output targets.
 - `.towerforge/` stores local editor state and backups and MUST NOT be committed.
+
+A mission selects catalog profiles through `mission.mechanics`; defining a profile does not activate it. Combat module v1 adds opt-in shields, v2 adds authored damage/armor types, and v3 adds vulnerability marks. Independent `reactions` v1 adds exposures and bounded secondary effects only when a mission explicitly selects a compatible combat v2/v3 profile. `navigation` v1 enables dynamic flow independently from legacy routes. `elevation` v1 enables authored heights only, v2 may opt into deterministic LoS, and v3 adds an independent bounded high-ground profile with pairwise range and immediate tower-damage bonuses; the elevation snapshot remains v1. Mechanics Hub and AI/MCP show recipe prerequisites but never patch dependent combat, terrain, or map data automatically. Ordinary starter projects omit `content/mechanics.json` and preserve the legacy path. See [ADR 0011](docs/adr/0011-opt-in-versioned-mechanics.md), [ADR 0021](docs/adr/0021-opt-in-elemental-reactions.md), [ADR 0022](docs/adr/0022-opt-in-dynamic-flow-navigation.md), [ADR 0023](docs/adr/0023-opt-in-authored-elevation-foundation.md), [ADR 0024](docs/adr/0024-opt-in-deterministic-elevation-line-of-sight.md), [ADR 0025](docs/adr/0025-opt-in-authored-high-ground-modifiers.md), and the [roadmap](docs/ROADMAP.md).
 
 ## Architecture
 
@@ -114,7 +120,7 @@ Agent policy lives in [AGENTS.md](AGENTS.md). Operations are in [docs/runbook.md
 
 Studio **AI Chat** and external MCP clients share the same tool registry and authoring policy. Domain-scoped schema discovery teaches agents when to use universal effects, TowerScript, difficulty/meta progression, or themes. Tools advertise risk metadata and prefer previewed, revision-guarded writes such as `apply_progression_patch`, `upsert_tower_script`, `apply_theme_pack`, granular entity/map/asset/narrative operations, validation, and rollback over broad replacement. Compact reads expose project concepts without raw filesystem access. Settings offers ChatGPT OAuth through Codex App Server, Claude account auth through the bundled Claude Agent SDK/runtime, and direct Anthropic, OpenAI, or OpenRouter keys. The right-side chat supports Ask/Plan/Act permissions, model catalogs, reasoning effort, images, and locally sampled video frames; official runtimes retain ownership of OAuth credentials.
 
-Codex users can install the generated public marketplace from [towerforge-codex-plugin](https://github.com/Lindforge-Studios/towerforge-codex-plugin). The canonical source, tests, and build scripts remain in this repository. Every mirror update records the exact TowerForge source commit and SHA-256 for each distributed file.
+Codex users can install the generated public marketplace from [towerforge-codex-plugin](https://github.com/Lindforge-Studios/towerforge-codex-plugin). Its release bundle is built deterministically from [`plugins/towerforge`](plugins/towerforge) in this repository. The plugin adds a skill and a local MCP runtime without an API key or TowerForge cloud account. It discovers `.tdproj` projects only inside the current Codex workspace roots, does not accept an absolute model-selected `projectDir`, and redacts local paths from responses. Installation and the security model are documented in the [runbook](docs/runbook.md#codex-marketplace-plugin).
 
 ## License
 

@@ -1,6 +1,6 @@
 # Contributing
 
-TowerForge is a local-first constructor for 2D hex tower-defense games.
+TowerForge is a local-first constructor for 2D tower-defense games with per-map hex and square grids.
 
 ## Development
 
@@ -8,6 +8,9 @@ Install dependencies with `npm install`, then use the root scripts:
 
 - `npm run typecheck`
 - `npm run build:engine`
+- `npm run plugin:build`
+- `npm run plugin:validate`
+- `npm run plugin:smoke`
 - `npm run studio`
 - `npm run validate`
 - `npm run sim tutorial_01 60`
@@ -23,10 +26,12 @@ CI uses Node 22 and `npm ci`. Run only the checks relevant to a focused change l
 
 - Keep `packages/engine` pure TypeScript with no DOM, Node, filesystem, Studio, or renderer imports.
 - Keep `.tdproj` loading, migration, source map compilation, asset copying, and build output in Node-side packages.
+- Keep grid behavior behind the engine topology registry and tile signatures behind the shared renderer autotile resolver; Studio and generated players must not fork those rules.
 - Use engine validation and simulation APIs instead of duplicating gameplay rules in Studio.
 - Extend custom gameplay through typed TowerScript events/actions with deterministic tests. Never execute project-authored JavaScript or expose filesystem, network, clock, randomness, modules, or host objects to scripts.
 - Keep generic project-tree writes under `scripts/**/*.tower.json`; use the existing validation-aware APIs for content, maps, assets, and narrative.
 - Reuse `packages/mcp/tools.mjs` for Studio AI and external MCP behavior. New write tools need narrow schemas, risk metadata, revision guards where applicable, validation, backups, and rollback or dry-run/commit semantics.
+- Keep `Lindforge-Studios/TowerForge` as the source of truth for the Codex plugin. Update `plugins/towerforge` and its build/export scripts here; never patch the generated `towerforge-codex-plugin` mirror independently.
 - Update architecture docs or ADRs when package boundaries, project format, validation, or build output changes.
 
 ## Pull Requests

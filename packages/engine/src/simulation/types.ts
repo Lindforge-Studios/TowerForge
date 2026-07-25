@@ -1,3 +1,15 @@
+import type {
+  CombatState,
+  EnemyShieldChangedEvent,
+  TowerShieldChangedEvent
+} from "./shields.js";
+import type {
+  EnemyExposureChangedEvent,
+  EnemyReactionTriggeredEvent,
+  ReactionBudgetExceededEvent,
+  ReactionStateV1
+} from "./reactions.js";
+
 /** Terrain ids are project-authored; the built-in ids remain available as defaults. */
 export type Terrain = string;
 export type TerrainId = Terrain;
@@ -273,7 +285,16 @@ export type TowerEffectSpec =
       armorPiercing?: boolean;
     }
   | { kind: "status"; status: StatusEffectSpec }
-  | { kind: "resource"; resources: ResourceBag };
+  | { kind: "resource"; resources: ResourceBag }
+  | DisplacementEffectV1;
+
+/** Bounded opt-in tile displacement effect shared by tower pipelines and abilities. */
+export interface DisplacementEffectV1 {
+  kind: "displacement";
+  mode: "push" | "pull";
+  distance: number;
+  stopAtBlocker: boolean;
+}
 
 /**
  * Declarative tower execution model. Targeting chooses primary enemies, delivery expands that set,
@@ -438,7 +459,10 @@ export interface MissionObjectivesDefinition {
  * `MissionAbilityDefinition.effects` from these; no engine code is needed for a new ability that
  * only needs damage and/or status effects.
  */
-export type AbilityEffect = { kind: "damage"; amount: number } | { kind: "status"; status: StatusEffectSpec };
+export type AbilityEffect =
+  | { kind: "damage"; amount: number }
+  | { kind: "status"; status: StatusEffectSpec }
+  | DisplacementEffectV1;
 
 export interface MissionAbilityDefinition {
   id: MissionAbilityId;
@@ -470,6 +494,32 @@ export interface MissionSunlightPathTile {
   pathOrder: number;
 }
 
+export interface EnemyNavigationStateV1 {
+  readonly schemaVersion: 1;
+  readonly movementProfileId: string;
+  currentCoord: GridCoord;
+  nextCoord?: GridCoord;
+  edgeProgress: number;
+  stepsEntered: number;
+}
+
+export interface NavigationFieldSnapshotV1 {
+  readonly movementProfileId: string;
+  readonly goal: GridCoord;
+  readonly routeIds: readonly string[];
+  readonly revision: string;
+  readonly reachableTileCount: number;
+  readonly reachableRouteIds: readonly string[];
+  readonly unreachableRouteIds: readonly string[];
+}
+
+export interface NavigationSnapshotV1 {
+  readonly schemaVersion: 1;
+  readonly mode: "dynamic_flow";
+  readonly fields: readonly NavigationFieldSnapshotV1[];
+  readonly stalledEnemyIds: readonly string[];
+}
+
 export interface EnemyState {
   id: string;
   typeId: string;
@@ -483,6 +533,7 @@ export interface EnemyState {
   dotSourceTowerTypeId?: string;
   pathOffset: number;
   routeId?: string;
+  navigation?: EnemyNavigationStateV1;
   phaseSpawnsTriggered?: string[];
   statuses?: {
     slow?: {
@@ -532,6 +583,20 @@ export interface TowerState {
   hp?: number;
 }
 
+export type EnemyMarkChangeCause = "application" | "consume" | "expiration" | "script";
+
+export interface EnemyMarkChangedEvent {
+  type: "enemyMarkChanged";
+  enemyId: string;
+  enemyTypeId: string;
+  markId: string;
+  previousStacks: number;
+  currentStacks: number;
+  previousRemaining: number;
+  remaining: number;
+  cause: EnemyMarkChangeCause;
+}
+
 export type GameEvent =
   | { type: "towerPlaced"; towerId: string; towerTypeId: string; coord: GridCoord; terrain: Terrain; terrainMetadata: TerrainTypeDefinition }
   | { type: "towerSold"; towerId: string; towerTypeId: string; refund: ResourceBag }
@@ -539,6 +604,7 @@ export type GameEvent =
   | { type: "towerUpgraded"; towerId: string; level: number; stacks: number }
   | { type: "towerDisrupted"; enemyId: string; enemyTypeId: string; towerIds: string[]; duration: number }
   | { type: "towerAttacked"; enemyId: string; enemyTypeId: string; towerId: string; damage: number }
+  | TowerShieldChangedEvent
   | { type: "towerDestroyed"; towerId: string; towerTypeId: string; enemyId: string }
   | { type: "towerTargetModeChanged"; towerId: string; mode: TowerTargetMode }
   | { type: "enemyKilled"; enemyId: string; enemyTypeId: string; coins: number; resources: ResourceBag }
@@ -550,6 +616,31 @@ export type GameEvent =
       enemyIds: string[];
     }
   | { type: "enemyLeaked"; enemyId: string; enemyTypeId: string; damage: number }
+  | {
+      type: "enemyDisplacementResolved";
+      sourceKind: "tower" | "ability";
+      sourceId: string;
+      sourceCoord: GridCoord;
+      enemyId: string;
+      enemyTypeId: string;
+      mode: "push" | "pull";
+      requestedDistance: number;
+      movedDistance: number;
+      from: GridCoord;
+      to: GridCoord;
+      stopReason: "completed" | "same_source_target" | "blocked" | "atomic_blocked" | "no_strict_neighbor" | "fall_hazard" | "goal_blocked" | "immune";
+    }
+  | {
+      type: "enemyFell";
+      sourceKind: "tower" | "ability";
+      sourceId: string;
+      sourceCoord: GridCoord;
+      enemyId: string;
+      enemyTypeId: string;
+      from: GridCoord;
+      to: GridCoord;
+      terrainTag: string;
+    }
   | { type: "waveStarted"; waveIndex: number }
   | { type: "waveCleared"; waveIndex: number; income: ResourceBag; interest: ResourceBag }
   | { type: "resourcesGranted"; source: "waveStart" | "earlyStart"; waveIndex: number; resources: ResourceBag }
@@ -558,6 +649,11 @@ export type GameEvent =
   | { type: "starEarned"; starId: string }
   | { type: "towerFired"; towerId: string; enemyId: string; damage: number }
   | { type: "enemyHit"; towerId: string; enemyId: string; enemyTypeId: string; damage: number }
+  | EnemyShieldChangedEvent
+  | EnemyMarkChangedEvent
+  | EnemyExposureChangedEvent
+  | EnemyReactionTriggeredEvent
+  | ReactionBudgetExceededEvent
   | { type: "enemyArmorBlocked"; towerId: string; enemyId: string; enemyTypeId: string; rawDamage: number }
   | { type: "enemyHealed"; healerEnemyId: string; targetEnemyId: string; targetEnemyTypeId: string; amount: number }
   | {
@@ -604,6 +700,12 @@ export interface SunlightTile extends HexCoord {
   routeId?: string;
 }
 
+export interface ElevationSnapshotV1 {
+  readonly schemaVersion: 1;
+  readonly defaultElevation: 0;
+  readonly overrides: readonly import("./map.js").GridMapElevationOverride[];
+}
+
 export interface GameSnapshot {
   mapId: string;
   grid: GridDefinition;
@@ -641,6 +743,10 @@ export interface GameSnapshot {
   spawnCoord: HexCoord;
   coreCoord: HexCoord;
   outcome: Outcome;
+  combat?: CombatState;
+  reactions?: ReactionStateV1;
+  navigation?: NavigationSnapshotV1;
+  elevation?: ElevationSnapshotV1;
   scriptState: import("../scripting/types.js").TowerScriptStateSnapshot;
   lastEvents: GameEvent[];
 }

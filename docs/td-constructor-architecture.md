@@ -66,6 +66,9 @@ packages/mcp
 packages/renderer
   browser canvas rendering over snapshots and map definitions
 
+packages/player-runtime
+  renderer-neutral browser profile persistence through injected storage and engine codec
+
 examples/starter.tdproj
   reference project data
 ```
@@ -81,6 +84,7 @@ my-game.tdproj/
   project.json
   content/
     balance.json
+    mechanics.json (optional)
     world-map.json
     visuals.json
     story-comics.json
@@ -97,6 +101,8 @@ my-game.tdproj/
 
 Source data is JSON so projects are portable and git-friendly. `.towerforge/` is local editor state and backup storage.
 
+`content/mechanics.json` is an opt-in versioned catalog. A mission selects named module profiles through `mission.mechanics.profiles`; no file or selection means the established constructor behavior. Authored mechanics require project schema v3, while ordinary starter and legacy projects remain schema v2 and MUST NOT receive a synthesized catalog during read/save/build/package.
+
 ## Content Model
 
 `content/balance.json` owns:
@@ -110,6 +116,8 @@ Source data is JSON so projects are portable and git-friendly. `.towerforge/` is
 - wave sets
 - missions
 - typed terrain definitions (`buildable`, `walkable`, `groundSpeedMultiplier`, `tags`)
+
+Optional `content/mechanics.json` owns independent module profiles. `packages/engine/src/content/mechanics.ts` owns the stable module ID allowlist and resolves each mission to a read-only `CapabilitySet`. Authored `enabled` state is not proof of runtime support: only an engine-implemented, enabled module with a selected existing profile can be active.
 
 `content/world-map.json` owns campaign regions and mission nodes.
 
@@ -127,6 +135,7 @@ The engine exposes:
 
 - `createGameContentRegistry`
 - `validateGameContentRegistry`
+- `MechanicsCatalog`, `MissionMechanicsSelection`, and read-only `CapabilitySet`
 - `TowerDefenseGame`
 - `runHeadlessMission`
 - serializable `SimulationAction`
@@ -135,11 +144,15 @@ The engine exposes:
 
 Studio and CLI must call those APIs instead of duplicating gameplay behavior. Validation and simulation are engine-backed in the current implementation.
 
+The engine also owns `PlayerProfileV2`, its bounded legacy migrations, canonical codec, launch options, and immutable progression reducers. `packages/player-runtime` is a browser-safe adapter around those contracts: it accepts content, codec, and a Storage-like port by dependency injection; it does not import browser globals, DOM, Node, or either renderer. Loading is read-only, explicit save validates before a single preflight read and refuses to overwrite a future profile, and reset removes only the exact app-scoped profile key. Storage failures and corrupt data fail closed to a playable frozen empty profile without exposing raw/error details.
+
+Canvas and Phaser generated-player templates now consume this boundary through one shared profile fragment. Normal reset removes only the exact profile key; emergency boot recovery removes that key plus the current app's story namespace. The complete decision is recorded in [ADR 0016](adr/0016-player-profile-runtime-and-persistence.md).
+
 ## Agent And MCP Contract
 
 `packages/mcp/tools.mjs` is the shared constructor tool registry for the stdio MCP server and Studio AI Chat. Current tools cover compact gameplay/visual/audio/narrative/script reads, the filtered project tree, schema and recipe retrieval, validation, simulation/playtest diagnosis, map compilation/authoring, balance reports, granular entity/asset/narrative/script writes, project packs, web/native packaging, and build.
 
-`packages/mcp/agent-instructions.mjs` is the canonical mechanism-selection and safe-workflow policy for Studio direct APIs, Codex, Claude, and external MCP initialization. `describe_schema({domain})` progressively exposes `combat`, `missions`, `progression`, `scripts`, `maps`, `terrain`, `tiles`, and `assets` contracts.
+`packages/mcp/agent-instructions.mjs` is the canonical mechanism-selection and safe-workflow policy for Studio direct APIs, Codex, Claude, and external MCP initialization. `describe_schema({domain})` progressively exposes `combat`, `reactions`, `navigation`, `elevation`, `missions`, `progression`, `scripts`, `maps`, `terrain`, `tiles`, `assets`, and `mechanics` contracts. `get_capabilities` is read-only and never creates the optional catalog or upgrades a project; preview/apply reject unavailable modules, unsupported versions, and unmet dependencies before any write. Executable modules are `combat` v1/v2/v3, independent `reactions` and `navigation` v1, and `elevation` v1/v2; a mission may select reactions only together with active combat v2/v3, while elevation v2 activates LoS only when its optional closed section is authored.
 
 Agent-facing write tools are local-only and validation-gated:
 
@@ -165,7 +178,8 @@ Current Studio modules:
 - World Map Editor: regions, mission nodes, difficulty, unlock requirements, canvas preview.
 - Settings: global constants, project manifest, AI account/API connections, and provider/model/reasoning defaults.
 - Build Targets: target metadata plus one-click web build.
-- Map Authoring: per-map grid selection, source dimensions, spawn/core, path centerline, named routes, typed terrain overrides, exact square/hex picking, and compile action.
+- Mechanics Hub: a separate opt-in workspace for engine-owned module cards and capability state; planned/unavailable mechanics do not add disabled controls to the ordinary tower, enemy, or mission forms.
+- Map Authoring: per-map grid selection, source dimensions, spawn/core, path centerline, named routes, typed terrain overrides, exact square/hex picking, and compile action. During R3.1 it gains a separate elevation draft/layer only for an applicable opt-in elevation capability; ordinary map forms stay unchanged while inactive.
 - Project Home: release-readiness checks, project summary, recent activity, and direct navigation to current problems.
 - Playtest: engine-backed live canvas playtest with difficulty selection, mouse/keyboard placement, selling/targeting/abilities plus Pause/Step, inspector, objectives, kills/leaks, and event timeline.
 - Balance: deterministic multi-strategy Balance Lab with mission/budget filters, advisor flags, passive mission badges, and contextual Ask AI.
@@ -229,10 +243,11 @@ examples/starter.tdproj/dist/
   offline-sw.js
   engine/
   renderer/
+  player-runtime/
   assets/
 ```
 
-The player imports `./engine/index.js`, runs `TowerDefenseGame` in the browser, and renders with Canvas or Phaser. It provides difficulty selection, persistent meta currencies/upgrades/rewards, campaign missions, story/background presentation, mouse and keyboard placement, move/sell/targeting/abilities, explicit pause, separate SFX/music controls, objectives/stars, recovery, and accessible HUD state.
+The player imports `./engine/index.js` and `./player-runtime/index.mjs`, runs `TowerDefenseGame` in the browser, and renders with Canvas or Phaser. Both renderer templates use the same immutable profile reducers and persistence fragment for difficulty, meta currencies/upgrades/rewards, campaign unlocks, warnings, and reset behavior. The build precaches the runtime for PWA use and embeds its relative module graph in `index.single.html`; plugin and desktop runtime preparation mirror the same package.
 
 Preview with:
 
@@ -279,7 +294,7 @@ Validation warnings are allowed for incomplete authoring states such as missions
 
 ## Persistence Rules
 
-Studio saves:
+Studio's ordinary editor save writes:
 
 - `content/balance.json`
 - `content/world-map.json`
@@ -290,6 +305,8 @@ Studio saves:
 - `project.json`
 - `build-targets.json`
 
+R0A preserves an existing `content/mechanics.json` unchanged and never creates it through the ordinary save route. A later implemented module must use the dedicated guarded mechanics transaction to write the manifest, catalog, and mission selection together.
+
 Writes are atomic per file and guarded by a content hash across mutable project files. Before overwriting, Studio creates `.towerforge/*.bak` backups.
 
 TowerScript writes use a second file revision guard and backups under `.towerforge/backups/scripts`. The generic project tree hides sensitive names, generated/editor directories, binary files, and symlinks; only `.tower.json` files below `scripts/` are editable from that tree.
@@ -298,14 +315,75 @@ Studio writes action traces for save, sim, build, map compile, and asset import 
 
 ## Roadmap
 
-Next high-value work:
+The staged R0–R8 mechanics program, TDD roles, forbidden increment combinations, compatibility baseline, and status live in [ROADMAP.md](ROADMAP.md). R0A establishes the opt-in capability harness, R0B adds the shared modifier/damage foundation, and completed R0C supplies deterministic session/profile foundations. Completed R1.1 proves resolver equivalence through one private application boundary; R1.2 adds shields; R1.3 adds the independently versioned armor matrix; R1.4 adds bounded marks; R1.5 adds a separate bounded reactions module; completed R2 adds opt-in dynamic-flow navigation, movement profiles, safe placement analysis, and shared Studio/player presentation. Completed R3.1 adds the opt-in authored elevation foundation; completed R3.2 adds deterministic elevation LoS; completed R3.3 adds elevation v3 high-ground through engine-owned pairwise acquisition range and one common-pipeline spatial damage modifier, with no new renderer gameplay rule or mutable state. R3.4a completes the isolated `physics` v1 increment with bounded tile-discrete push/pull, explicit terrain-tag fall hazards, authored-route confinement, cached-field dynamic movement, and engine-event-only presentation; its independent code and constructor-integration sign-offs were issued on 2026-07-25. The accepted R3.4b foundation separately introduces opt-in `terraforming` v1 and the TowerScript v6 batch/event contract with fail-closed, mission-scoped validation. Accepted runtime C1 adds atomic persistent terrain batches and complete authored-route safety. Accepted C2A adds detached dynamic resolver preflight, endpoint/live-source safety and atomic verified adoption without changing inactive, legacy, snapshot, or checkpoint shapes. Accepted C2B1 supplies the internal canonical wave/death/phase/TowerScript reachability graph; C2B2 runtime preparation/budgets, elevation, Studio/MCP authoring, renderer presentation, recipes, expiry, and checkpoint state remain pending; Visual Graph is unchanged.
 
-1. Expand TowerScript with typed shield/mark/split actions, contextual autocomplete, and debugger support while preserving deterministic budgets.
-2. Add named meta loadouts, import/export, and explicit save migration tooling beyond the current app-scoped progress-v2 profile.
-3. Expand themed packs from battlefield tiles/palettes into licensed tower/enemy sprite families and batch binding.
-4. Profile swarm-scale Canvas/Phaser hot paths and add deterministic performance fixtures.
-5. Expand malformed-project, agent-policy, concurrency, and balance eval fixtures.
-6. Design opt-in publish/remix only after API stability, without weakening local-first ownership.
+## Shared Damage Pipeline
+
+`packages/engine/src/simulation/modifiers.ts` defines the closed, bounded `ModifierSpec` order. `packages/engine/src/simulation/damage.ts` defines serializable source/target references, the closed damage-tag vocabulary, `DamagePacket`, and the stateless `DamageResolver`. `TowerDefenseGame.resolveAndApplyDamage` is the single private application boundary: target-specific wrappers assemble packets/context, then every tower delivery, ability, TowerScript damage action, status/DoT tick, enemy tower attack, and core leak resolves once before HP mutation. Before resolution or mutation, the boundary fails closed unless the packet target kind and exact enemy/tower id and type match the mutable target. Enemy/core HP clamp at zero; destructible tower HP keeps its legacy subtraction before immediate destruction. Death, reward, status, and gameplay events stay outside the resolver and therefore retain exactly-once ownership. Setting a leaked enemy to zero is a removal marker; the actual leak damage is the separately resolved core packet.
+
+R0B preserves legacy behavior. Existing level-scaled attack values enter as the base; existing meta damage and sunlight bonuses are expressed at the `meta` and `spatial` stages. R1.1 changed no public schema, Studio/MCP authoring, snapshot, renderer, or player surface; absent, disabled, enabled-empty, and engine-unavailable combat variants produce the same gameplay snapshot. Their `getStateDigest()` values and content fingerprints may differ because authored mechanics catalog/version intentionally participates in the simulation content digest. Engine schema descriptors are exported to MCP `describe_schema` for both `combat` and `all`, so agents discover the same allowlists used by the runtime. See [ADR 0017](adr/0017-damage-routing-equivalence.md).
+
+## Opt-In Combat Shields
+
+R1.2 makes `combat` the first executable mechanics module. Its closed v1 profile currently accepts only `shields.enemies` and `shields.towers`, keyed by authored type ID. Tower targets must already be destructible. `capacity` is required; regeneration is optional and bounded. Catalog presence is insufficient: the module must be enabled and the mission must select the profile.
+
+At runtime the keys change to entity instance IDs. The optional `snapshot.combat` / checkpoint section contains only `{ current, capacity, regenerationDelayRemaining }` for each active target. In v1, resolved damage uses `modifiers → resistance/pierce compatibility → shield → HP`. Shield absorption, regeneration, and typed TowerScript v3 restoration emit deterministic change events and preserve exactly-once death/reward handling.
+
+Mechanics Hub and MCP obtain bounds, fields, runtime shape, events, and actions from the engine descriptor. The `basic_regenerating_shields` recipe remains an explicit choice and guarded writes update project schema, catalog, and mission selection together. Canvas and Phaser share `packages/renderer/src/combat-presentation.mjs`, a pure own-property projection over the optional snapshot/events. It renders state and cues but never reads the authored profile or reproduces combat logic. A terminal break event can outlive its entity and combat state for one presentation frame; the projection uses a detached previous, spawn, or same-frame placement coordinate while continuing to reject an explicitly present future combat schema. Studio playtest inherits Canvas behavior; PWA and single-file builds ship the same module. The reference pair is under `docs/examples/opt-in-basic-shields/`; the full decision is [ADR 0018](adr/0018-opt-in-combat-shields.md).
+
+R1.3 adds combat module v2. Its profile retains optional `shields` and adds `damageTypes`, `armorTypes`, and `armorAssignments.enemies`. Damage and armor IDs are author-defined; a missing packet `damageType` falls back to `physical`, and any non-empty assignment set therefore requires a declared `physical` type. Each armor type has a required bounded multiplier record and may define `defaultMultiplier`; a missing entry and default means `1`, while `0` is a valid immunity. Enemy `resistances` remain a per-enemy override applied after the matrix. The fixed shared order for tower delivery, ability, TowerScript, status/DoT, enemy attack, and leak packets is `source modifiers → armor matrix → entity resistance → legacy pierce_only → shield → HP`. The `armor_piercing` tag bypasses only `pierce_only`, never the authored matrix.
+
+Only enemy armor assignment is supported in R1.3; tower armor, marks, vulnerabilities, exposures, and reactions are rejected or remain unavailable. Limits are 256 damage types, 256 armor types, 4,096 assignments, 16,384 matrix entries, 128 characters per label, and a `0..1,000,000` multiplier range. Active cross-references are semantic errors; broken references in disabled profiles remain warnings, but unsafe/non-data shapes and structural budget violations still fail validation.
+
+Armor is immutable derived content, so an armor-only profile adds neither mutable state nor `snapshot.combat`/checkpoint combat data. `content/mechanics.json` still participates in the simulation content digest: restoring a checkpoint against changed armor definitions is rejected before simulation. Studio keeps the editors inside Mechanics Hub; MCP uses `get_capabilities → get_recipe({collection:"mechanics", recipeId:"basic_elemental_armor_matrix"}) → preview_mechanics_module → apply_mechanics_module → validate_project`. A guarded v1-to-v2 upgrade preserves profiles and selection; downgrade/future versions fail closed. The recipe's elemental names are data presets only and do not activate reactions. See [ADR 0019](adr/0019-opt-in-armor-matrix.md) and `docs/examples/opt-in-elemental-armor-matrix/`.
+
+R1.4 adds combat module v3. `marks.definitions` is keyed by author-defined mark ID; each definition owns duration, maximum stacks, a per-stack multiplier, consume policy, and an optional damage-type filter. Optional bindings key ordered mark applications by tower, ability, or TowerScript ID. Matching marks are applied in binary ID order after all source modifiers and before armor. The multiplier is `1 + stacks * (multiplier - 1)`; consumption occurs after successful resolution, including hits later reduced to zero by armor or fully absorbed by a shield. Automatic bindings are limited to positive direct tower/ability/TowerScript damage against a surviving enemy. Status/DoT may consume existing marks but does not auto-apply them.
+
+Mark state is enemy-instance keyed and ages deterministically at the start of each positive tick after shield regeneration. Combat v3 uses optional runtime schema v2 containing both `shields` and `marks`; v1/v2 shield state remains schema v1 and empty state remains absent. The outer checkpoint and simulation versions do not change. TowerScript v4 adds `enemyMarkChanged`, `applyEnemyMark`, and `clearEnemyMark`; v1-v3 reject them. Studio/MCP use the shared descriptor and guarded `basic_vulnerability_marks` recipe, while Canvas/Phaser consume only bounded presentation projections. Reactions, exposures, tag filters, and Visual Graph are excluded. See [ADR 0020](adr/0020-opt-in-vulnerability-marks.md) and `docs/examples/opt-in-basic-vulnerability-marks/`.
+
+R1.5 implements the separately selected `reactions` module v1 without changing combat v3. Profiles define bounded exposure applications and directional reaction rules whose requirements are AND predicates over exposure, legacy status, or authored terrain tags. Eligible direct tower, ability, and TowerScript enemy hits finish `modifiers → marks → armor → resistance → legacy → shield → HP` before the engine captures/consumes reaction state and drains secondary damage through the same boundary. Status/DoT, enemy/leak, zero/immune hits, and secondary packets are ineligible unless an effect explicitly allows reactions. Binary rule/effect order, topology distance plus enemy ID ordering, depth 4, and 256 packets per root make the FIFO deterministic; `removeDeadEnemies()` remains the only reward/kill settlement.
+
+Live exposures use optional top-level `snapshot.reactions` / checkpoint reaction-state schema v1; combat-state schema v2 and all outer version domains remain unchanged. TowerScript v5 adds typed exposure actions and exposure/reaction events but cannot directly trigger the matrix. Mechanics Hub and MCP expose prerequisite-aware `elemental_shatter`, `wet_chain_shock`, and `poison_combustion` recipes through the existing guarded transaction. Recipes never patch missing combat types or terrain tags. Canvas/Phaser consume a shared fail-closed projection with bounded badges/cues and no rule evaluation. See [ADR 0021](adr/0021-opt-in-elemental-reactions.md) and `docs/examples/opt-in-elemental-reactions/`.
+
+## Opt-In Dynamic Navigation
+
+R2 implements `navigation` v1 as a discriminated `authored_routes | dynamic_flow` profile. Inactive, disabled, unselected, and authored-routes missions retain the original route movement and placement path without a solver, navigation snapshot, or overlay. Active dynamic flow resolves one cached reverse-Dijkstra field per movement-profile/goal pair through the engine topology registry; renderers and Studio never calculate paths.
+
+The engine-owned `analyzeNavigation` query accepts bounded explicit coordinates and returns canonical field diagnostics plus spatial placement rows without changing commands, RNG, journal, events, checkpoint, state, or digest. MCP exposes it as compute-only `analyze_navigation`. Studio's `/api/navigation/analyze` endpoint is a thin sanitized facade over that tool for saved-project authoring. Live Playtest queries its current game instance so runtime tower occupancy and terrain are included, then forwards the detached result to the shared renderer projection; the server endpoint is only its compatibility fallback. A viewport of at most 4,096 cells is analyzed completely. Larger viewports use an input-order-independent window nearest to the latest pointer/keyboard interaction anchor, tie-broken by numeric `(r,q)`, and the UI exposes analyzed/total partial coverage. Actual placement always runs the authoritative `canPlaceTower` preflight followed by the engine action.
+
+Mechanics Hub owns the isolated navigation editor for mode, default profile, movement profiles, terrain/tower policies, fixed-point costs, optional overrides, and explicit enemy assignments. `basic_dynamic_navigation` supplies ground/floating/burrowing/flying data presets but no assignments or writes. Enable/save/disable/re-enable continues through the same revision-guarded project-v3 transaction. See [ADR 0022](adr/0022-opt-in-dynamic-flow-navigation.md).
+
+## Opt-In Authored Elevation Foundation
+
+R3.1 gives project-v3 map sources one sparse `elevationOverrides` array. An entry is a closed `{q,r,elevation}` safe-integer row; coordinates are unique and in bounds, elevation is within `-1_000_000..1_000_000`, and the total is capped at 65,536. A missing tile is exactly `0`, explicit zero rows compile away, and output is sorted by numeric `(r,q)`. Sources may use the top-level field or a JSON Tiled property. Legacy maps receive neither the field nor an automatic project upgrade.
+
+The independent elevation module v1 uses a closed empty profile `{}` as the mission-level switch over the map data. Only enabled + selected + available produces `snapshot.elevation = {schemaVersion:1, defaultElevation:0, overrides}`; an active flat map uses an empty array, while every inactive/future/missing path omits the section. `GridMap.elevationAt` returns the override/default for an in-bounds coordinate and `undefined` outside the map. Existing tile rows, checkpoint v1, command/journal, TowerScript, and multiplayer contracts do not change. Elevation remains immutable content and therefore participates in the content digest even if the module is disabled.
+
+## Opt-In Deterministic Elevation Line of Sight
+
+R3.2 extends only the elevation module contract to schema v2. A v1 profile stays exactly `{}`; a v2 profile is also elevation-only unless it explicitly authors `lineOfSight.terrainBlockerTags`. Activation still requires module enablement and mission selection. Source/target endpoints use eye height `elevation + 1`; an interior cell blocks on a configured terrain tag or when its elevation reaches or exceeds the integer-interpolated ray. Terrain tags win on the same cell, and all ordering/tie breaks are binary/canonical.
+
+The same engine tracer filters direct tower acquisition and serves bounded detached analysis. It does not recheck splash/area secondaries or chain hops, and it does not affect support, abilities, enemy attacks, reactions, DoT, or TowerScript. MCP and Studio may analyze active content or the exact preview candidate with the current mechanics revision; this is compute-only. Renderer/player code can project the engine result but cannot inspect blocker tags, map lines, or elevations to derive visibility. Optional `snapshot.elevation` remains schema v1, and no new event, checkpoint, command, or journal section is introduced. See accepted [ADR 0024](adr/0024-opt-in-deterministic-elevation-line-of-sight.md).
+
+Map Authoring holds elevation in a detached capability-gated draft. Studio and MCP share `preview_map_elevations` and `apply_map_elevations`, which guard one source revision, perform the explicit v3 manifest update, compile and validate, back up, and roll back the source/compiled map/manifest transaction. Mechanics Hub separately enables/selects the closed v1 profile or a v2 profile with optional LoS. `basic_authored_elevation` and `basic_elevation_line_of_sight` return profile data only and never edit either boundary. Canvas and Phaser consume shared fail-closed presentation projectors; badges/contours and detached LoS diagnostics remain presentation cues, never gameplay-rule implementations. See accepted [ADR 0023](adr/0023-opt-in-authored-elevation-foundation.md), accepted [ADR 0024](adr/0024-opt-in-deterministic-elevation-line-of-sight.md), and the matching reference fixtures. R3.1 and R3.2 are complete with independent code and constructor-integration sign-offs.
+
+## Deterministic Session Foundation
+
+R0C.1 adds the pure engine `SeededRng` utility without changing current gameplay. Its `xoshiro128**` state schema and typed seed-expansion v1 have immutable vectors; malformed, future, sparse, non-uint32, and all-zero states fail closed. `nextInt` uses deterministic rejection sampling, including the full `2^32` range. Production engine code is statically guarded against `Math.random()`.
+
+At the R0C.1 boundary, `TowerDefenseGame` does not consume RNG; state digest, checkpoints, journals/replay, external surfaces, and the shared profile runtime remain separately gated work. UI/editor IDs and vendored renderer internals are outside gameplay RNG state and must never affect a simulation digest.
+
+R0C.2 now provides `GameCommandV1` for `tick`, wave start, tower placement/move/sell/upgrade/target mode, ability use, and external TowerScript signals. `dispatchGameCommand` accepts untrusted input, snapshots only own data descriptors, validates a closed shape, clones coordinates and payloads, and then calls exactly one existing engine method. Invalid/future input cannot mutate the game; an exception from an already validated engine method is intentionally propagated rather than misreported as malformed input. Legacy headless actions remain an adapter until the later Canvas/Phaser/Studio surface migration.
+
+R0C.3 adds a synchronous browser-safe canonical serializer and versioned state/content digests. Canonical input is the strict JSON subset captured through own data descriptors; accessors, hidden properties, sparse or subclassed arrays, cycles, non-finite numbers, and configured budget overflow fail closed. Simulation content hashing excludes presentation-only catalogs, world-map layout, derived `mapFactory`, and known definition metadata without recursively dropping author IDs that happen to be named `label`, `color`, or `__proto__`. The digest is a deterministic compatibility fingerprint, not a cryptographic integrity or authentication primitive; checkpoint codecs must still validate their complete envelope before restore.
+
+R0C.4 implements that codec as `GameCheckpointV1`. A checkpoint is detached JSON containing independent checkpoint and engine versions, the simulation-content digest, mission/difficulty/meta identity, initial and current seeded RNG states, the complete authoritative mutable game state, and one digest over the compatibility envelope. Restore validates closed nested shapes, cross-references, topology-derived footprints, generated-ID counters, queue and route bounds, entity state, TowerScript timers/state/budgets, and canonical set ordering before `mapFactory` can run. It then creates a fresh game without dispatching `gameStarted` and rebuilds only derived map state. Hex and square prefix/checkpoint/suffix runs must produce the same snapshot and state digest as uninterrupted simulation, including the legal boundary immediately after `startNextWave` and before the first tick.
+
+R0C.5 adds an opt-in command-recording wrapper without changing ordinary simulation. `JournaledGameSession` captures a detached initial checkpoint, routes each accepted versioned command through the same single-pass parser/executor as `dispatchGameCommand`, and records a zero-based sequence, detached command, normalized durable result, and post-state digest. Structurally invalid input is omitted; a structurally valid gameplay rejection is retained. Out-of-band mutations, engine exceptions, and capacity exhaustion fault the session before it can claim a complete journal. `decodeGameCommandJournal` is a closed, bounded, validation-only codec: it validates content and the embedded checkpoint without `mapFactory`, and never executes entries. Journal data remains absent from checkpoints, snapshots, project files, players, and multiplayer envelopes until an explicit later surface consumes it.
+
+R0C.6 adds that consumer as the pure engine-only `replayGameCommandJournal` API. Replay first uses the validation-only journal decoder to validate and parse the complete detached journal before `mapFactory` can run, restores one fresh game from the initial checkpoint, and sends each already parsed command through the shared executor exactly once. At every sequence boundary it compares the normalized durable result before calculating and comparing the post-state digest; `GameCommandReplayDivergenceError` reports the first mismatching sequence and kind, while engine failures are wrapped separately with their sequence and original cause. The returned game is independent and can continue deterministically. Replay introduces no Studio, MCP, renderer, player, project, profile, checkpoint, or multiplayer state, and its compatibility contract remains independent of those version domains.
+
+R0C.7.1–R0C.7.4 establish the shared profile foundation in four isolated contracts: the engine-owned `PlayerProfileV2` codec/migrations, immutable difficulty/meta/mission reducers, the renderer-neutral fail-closed persistence adapter, and generated-player integration. The adapter retains the exact legacy `towerforge:progress:` key derivation but does not read a browser global, silently migrate storage, overwrite future versions, or enumerate/reset sibling profile/story keys. Canvas and Phaser use one byte-identical marker fragment; PWA, single-file, plugin, and desktop bundles ship the same runtime boundary defined by [ADR 0016](adr/0016-player-profile-runtime-and-persistence.md).
 
 ## Done Criteria For Constructor Changes
 

@@ -1,5 +1,6 @@
 import { GridMap, type GridMapDefinition } from "../simulation/map.js";
 import type { TowerScriptDefinition } from "../scripting/types.js";
+import { type CapabilitySet, type MechanicsCatalog, type MissionMechanicsSelection } from "./mechanics.js";
 import type { CurrencyDefinition, DifficultyDefinition, EnemyType, MetaProgressionDefinition, MissionAbilityDefinition, MissionAbilityId, MissionDefinition, MissionEconomyDefinition, MissionObjectivesDefinition, MissionSunlightDefinition, ResourceBag, TerrainTypeDefinition, TowerType, WaveDefinition } from "../simulation/types.js";
 export declare const DEFAULT_CURRENCIES: CurrencyDefinition[];
 export interface WorldRegionDefinition {
@@ -59,6 +60,7 @@ export interface MissionDataDefinition {
     economy?: MissionEconomyDefinition;
     objectives?: MissionObjectivesDefinition;
     sunlight?: MissionSunlightDefinition;
+    mechanics?: MissionMechanicsSelection;
 }
 export interface MissionContentDefinition extends MissionDefinition {
     mapId: string;
@@ -66,6 +68,8 @@ export interface MissionContentDefinition extends MissionDefinition {
     buildTowerIds: string[];
     abilityIds: MissionAbilityId[];
     mapFactory: () => GridMap;
+    mechanics?: MissionMechanicsSelection;
+    readonly capabilities: CapabilitySet;
 }
 export interface GameBalanceData {
     constants: GameBalanceConstants;
@@ -115,6 +119,7 @@ export interface GameContentRegistry {
     missions: Record<string, MissionContentDefinition>;
     maps: Record<string, GridMapDefinition>;
     scripts: Record<string, TowerScriptDefinition>;
+    mechanics: MechanicsCatalog;
     worldMap: WorldMapCatalog;
     visuals: unknown;
     storyComics: Record<string, StoryComicDefinition>;
@@ -128,6 +133,7 @@ export interface GameContentInput {
     maps: Record<string, GridMapDefinition>;
     worldMap: WorldMapCatalog;
     scripts?: Record<string, TowerScriptDefinition>;
+    mechanics?: MechanicsCatalog;
     visuals?: unknown;
     storyComics?: {
         seenStoragePrefix: string;

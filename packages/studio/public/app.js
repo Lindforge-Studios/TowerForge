@@ -1,4 +1,4 @@
-import { createCanvasRenderer } from "/renderer/index.mjs";
+import { createCanvasRenderer, projectElevationCues } from "/renderer/index.mjs";
 import { AUDIO_EVENTS } from "/renderer/audio.mjs";
 import { LANGUAGES, getLanguage, initI18n, setLanguage } from "/i18n.js";
 
@@ -49,7 +49,7 @@ const STUDIO_TABS = [
   ["home", "Home"], ["waves", "Waves"], ["enemies", "Enemies"], ["towers", "Towers"],
   ["missions", "Missions"], ["worldmap", "World Map"], ["maps", "Maps"],
   ["playtest", "Playtest"], ["balance", "Balance"],
-  ["scripts", "Scripts"], ["assets", "Assets"], ["settings", "Settings"], ["buildtargets", "Build Targets"]
+  ["mechanics", "Mechanics"], ["scripts", "Scripts"], ["assets", "Assets"], ["settings", "Settings"], ["buildtargets", "Build Targets"]
 ];
 
 const APP_INFO = {
@@ -62,6 +62,80 @@ const APP_INFO = {
 };
 
 const SCRIPT_UI = { collapsed: new Set(), selectedNode: null, loading: false };
+
+const MECHANICS_MODULES = [
+  { id: "combat", title: "Deep Combat", description: "Opt-in shields, project-defined damage types, armor matrices, marks, and assignments." },
+  { id: "reactions", title: "Elemental Reactions", description: "Data-driven exposures and bounded secondary effects." },
+  { id: "navigation", title: "Dynamic Navigation", description: "Flow fields, movement layers, and route-safe placement." },
+  { id: "elevation", title: "Elevation", description: "Authored tile elevation with optional deterministic line of sight and bounded high-ground bonuses." },
+  { id: "physics", title: "Physics", description: "Bounded push/pull displacement, immunities, and explicit fall hazards." },
+  { id: "roguelite", title: "Rogue-lite", description: "Synergies, artifacts, draft choices, and campaign runs." },
+  { id: "heroes", title: "Heroes", description: "Command units, abilities, auras, and skill trees." },
+  { id: "logistics", title: "Logistics", description: "Power grids, inventories, ammunition, and production." },
+  { id: "director", title: "AI Director", description: "Deterministic adaptation and generative Studio hooks." },
+  { id: "scriptingDx", title: "TowerScript DX", description: "Visual graphs, structured traces, and step debugging." },
+  { id: "multiplayer", title: "Multiplayer", description: "Deterministic matches, replay, and local transport." }
+];
+const REACTION_RECIPE_IDS = new Set(["elemental_shatter", "wet_chain_shock", "poison_combustion"]);
+const ELEVATION_RECIPE_IDS = new Set([
+  "basic_authored_elevation",
+  "basic_elevation_line_of_sight",
+  "basic_elevation_high_ground"
+]);
+const PHYSICS_RECIPE_IDS = new Set(["basic_displacement_physics", "tagged_fall_hazards"]);
+const MAX_ELEVATION_CANVAS_TILES = 4_096;
+const MAX_ELEVATION_EDITOR_ROWS = 256;
+
+// This draft is deliberately separate from S.project/S.projectDirty. Mechanics writes use
+// their own preview/revision transaction and cannot leak into the ordinary Studio save.
+const MechanicsUI = {
+  missionId: null,
+  selectedModuleId: "combat",
+  capabilities: null,
+  recipes: [],
+  recipe: null,
+  recipeId: "basic_regenerating_shields",
+  draft: null,
+  moduleSchemaVersion: 1,
+  profileId: "",
+  loadedProfileId: null,
+  preview: null,
+  navigationOverlayEnabled: true,
+  loading: false,
+  applying: false,
+  error: null
+};
+
+// Map authoring has its own guarded revision cycle. It never mutates the mechanics profile draft
+// or the ordinary Studio project/save state.
+const ElevationUI = {
+  mapId: null,
+  overrides: [],
+  canvasWindow: null,
+  focusedCoord: null,
+  brushLevel: 1,
+  canvasTiles: [],
+  editorRowCount: 0,
+  paintingPointerId: null,
+  lastPaintedCoordKey: null,
+  preview: null,
+  loading: false,
+  applying: false,
+  error: null
+};
+
+// Read-only LoS diagnostics are tied to one mechanics preview revision. They never mutate the
+// ordinary project draft or the independently guarded elevation map draft.
+const ElevationLineOfSightUI = {
+  analysis: null,
+  loading: false,
+  error: null,
+  requestSerial: 0,
+  contextKey: null,
+  source: null,
+  targets: []
+};
+let elevationRenderer = null;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -270,6 +344,7 @@ function markDirty(isDirty, skipHistory) {
   syncDirtyUi();
   if (isDirty) {
     invalidateBalanceReport();
+    invalidateElevationLineOfSightAnalysis();
     if (!skipHistory) scheduleHistoryCommit();
     scheduleValidation();
     scheduleAutosave();
@@ -283,6 +358,7 @@ function markScriptDirty(isDirty) {
   syncDirtyUi();
   if (isDirty) {
     invalidateBalanceReport();
+    invalidateElevationLineOfSightAnalysis();
     scheduleAutosave();
     PT.dirty = true;
   }
@@ -504,11 +580,2485 @@ function renderActiveTab() {
   else if (t === "maps") renderMapsTab();
   else if (t === "playtest") renderPlaytestTab();
   else if (t === "balance") renderBalanceTab();
+  else if (t === "mechanics") renderMechanicsHub();
   else if (t === "scripts") renderScriptsTab();
   else if (t === "assets") renderAssetsTab();
   else if (t === "settings") renderSettingsTab();
   else if (t === "buildtargets") renderBuildTargetsTab();
   refreshValidationUI();
+}
+
+function ownDataValue(record, key) {
+  if (!record || typeof record !== "object" || !Object.hasOwn(record, key)) return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(record, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
+function defineOwnDataValue(record, key, value) {
+  Object.defineProperty(record, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true
+  });
+}
+
+function mechanicsMissionId() {
+  const missions = S.project?.missions ?? {};
+  if (MechanicsUI.missionId && ownDataValue(missions, MechanicsUI.missionId)) return MechanicsUI.missionId;
+  return S.project?.defaultMissionId && ownDataValue(missions, S.project.defaultMissionId)
+    ? S.project.defaultMissionId
+    : Object.keys(missions)[0] ?? null;
+}
+
+function mechanicsCombatCapability() {
+  return MechanicsUI.capabilities?.capabilities?.combat ?? null;
+}
+
+function mechanicsSelectedCapability() {
+  return MechanicsUI.capabilities?.capabilities?.[MechanicsUI.selectedModuleId] ?? null;
+}
+
+function mechanicsSelectedModuleLabel() {
+  const module = MECHANICS_MODULES.find((candidate) => candidate.id === MechanicsUI.selectedModuleId);
+  if (MechanicsUI.selectedModuleId === "combat") return "Combat";
+  if (MechanicsUI.selectedModuleId === "reactions") return "Reactions";
+  return module?.title ?? MechanicsUI.selectedModuleId;
+}
+
+function mechanicsAuthoringState() {
+  return MechanicsUI.capabilities?.authoring ?? { writable: true };
+}
+
+function mechanicsProjectProfiles() {
+  const modules = ownDataValue(S.project?.mechanics, "modules");
+  const module = ownDataValue(modules, MechanicsUI.selectedModuleId);
+  return ownDataValue(module, "profiles") ?? {};
+}
+
+function mechanicsProjectModuleVersion() {
+  const modules = ownDataValue(S.project?.mechanics, "modules");
+  const module = ownDataValue(modules, MechanicsUI.selectedModuleId);
+  const version = ownDataValue(module, "schemaVersion");
+  return Number.isInteger(version) && version > 0 ? version : 1;
+}
+
+function mechanicsProfileIds() {
+  const described = MechanicsUI.capabilities?.[MechanicsUI.selectedModuleId]?.profileIds;
+  return [...new Set([
+    ...(Array.isArray(described) ? described.filter((id) => typeof id === "string") : []),
+    ...Object.keys(mechanicsProjectProfiles())
+  ])];
+}
+
+function mechanicsSelectedProfile() {
+  const response = MechanicsUI.capabilities;
+  const selectedFromResponse = response?.[MechanicsUI.selectedModuleId]?.selectedProfile;
+  if (selectedFromResponse && typeof selectedFromResponse === "object") return selectedFromResponse;
+  const missionId = mechanicsMissionId();
+  const mission = ownDataValue(S.project?.missions, missionId);
+  const profileId = response?.[MechanicsUI.selectedModuleId]?.selectedProfileId
+    ?? response?.capabilities?.[MechanicsUI.selectedModuleId]?.profileId
+    ?? mission?.mechanics?.profiles?.[MechanicsUI.selectedModuleId];
+  return profileId ? ownDataValue(mechanicsProjectProfiles(), profileId) ?? null : null;
+}
+
+function normalizeMechanicsDraft(profile) {
+  if (MechanicsUI.selectedModuleId === "physics") return normalizePhysicsMechanicsDraft(profile);
+  if (MechanicsUI.selectedModuleId === "elevation") return normalizeElevationLineOfSightDraft(profile);
+  if (MechanicsUI.selectedModuleId === "navigation") return normalizeNavigationMechanicsDraft(profile);
+  if (MechanicsUI.selectedModuleId === "reactions") return normalizeReactionMechanicsDraft(profile);
+  const draft = deep(profile ?? { shields: { enemies: {}, towers: {} } });
+  draft.shields ??= {};
+  draft.shields.enemies ??= {};
+  draft.shields.towers ??= {};
+  draft.damageTypes = draft.damageTypes && typeof draft.damageTypes === "object" && !Array.isArray(draft.damageTypes)
+    ? draft.damageTypes
+    : {};
+  draft.armorTypes = draft.armorTypes && typeof draft.armorTypes === "object" && !Array.isArray(draft.armorTypes)
+    ? draft.armorTypes
+    : {};
+  draft.armorAssignments = draft.armorAssignments && typeof draft.armorAssignments === "object" && !Array.isArray(draft.armorAssignments)
+    ? draft.armorAssignments
+    : {};
+  draft.armorAssignments.enemies = draft.armorAssignments.enemies
+    && typeof draft.armorAssignments.enemies === "object"
+    && !Array.isArray(draft.armorAssignments.enemies)
+    ? draft.armorAssignments.enemies
+    : {};
+  draft.marks = draft.marks && typeof draft.marks === "object" && !Array.isArray(draft.marks)
+    ? draft.marks
+    : {};
+  draft.marks.definitions = draft.marks.definitions
+    && typeof draft.marks.definitions === "object"
+    && !Array.isArray(draft.marks.definitions)
+    ? draft.marks.definitions
+    : {};
+  draft.marks.bindings = draft.marks.bindings
+    && typeof draft.marks.bindings === "object"
+    && !Array.isArray(draft.marks.bindings)
+    ? draft.marks.bindings
+    : {};
+  for (const sourceKind of ["towers", "abilities", "towerScripts"]) {
+    draft.marks.bindings[sourceKind] = draft.marks.bindings[sourceKind]
+      && typeof draft.marks.bindings[sourceKind] === "object"
+      && !Array.isArray(draft.marks.bindings[sourceKind])
+      ? draft.marks.bindings[sourceKind]
+      : {};
+  }
+  return draft;
+}
+
+function normalizePhysicsMechanicsDraft(profile) {
+  const source = profile && typeof profile === "object" && !Array.isArray(profile) ? profile : {};
+  const normalizeList = (field, limit) => {
+    const authored = ownDataValue(source, field);
+    if (!Array.isArray(authored)) return [];
+    const seen = new Set();
+    const normalized = [];
+    for (const value of authored) {
+      if (typeof value !== "string" || !value || new TextEncoder().encode(value).length > 128 || seen.has(value)) continue;
+      seen.add(value);
+      normalized.push(value);
+      if (normalized.length >= limit) break;
+    }
+    return normalized;
+  };
+  const draft = {};
+  const displacementImmuneEnemyTypeIds = normalizeList("displacementImmuneEnemyTypeIds", 4096);
+  const fallImmuneEnemyTypeIds = normalizeList("fallImmuneEnemyTypeIds", 4096);
+  const fallHazardTerrainTags = normalizeList("fallHazardTerrainTags", 64);
+  if (displacementImmuneEnemyTypeIds.length) draft.displacementImmuneEnemyTypeIds = displacementImmuneEnemyTypeIds;
+  if (fallImmuneEnemyTypeIds.length) draft.fallImmuneEnemyTypeIds = fallImmuneEnemyTypeIds;
+  if (fallHazardTerrainTags.length) draft.fallHazardTerrainTags = fallHazardTerrainTags;
+  return draft;
+}
+
+function normalizeElevationLineOfSightDraft(profile) {
+  const draft = {};
+  const source = profile && typeof profile === "object" && !Array.isArray(profile) ? profile : {};
+  const lineOfSight = ownDataValue(source, "lineOfSight");
+  if (lineOfSight !== undefined) {
+    const terrainBlockerTags = lineOfSight && typeof lineOfSight === "object" && !Array.isArray(lineOfSight)
+      && Array.isArray(ownDataValue(lineOfSight, "terrainBlockerTags"))
+      ? [...lineOfSight.terrainBlockerTags]
+      : [];
+    draft.lineOfSight = { terrainBlockerTags };
+  }
+  const highGround = ownDataValue(source, "highGround");
+  if (highGround && typeof highGround === "object" && !Array.isArray(highGround)) {
+    draft.highGround = {
+      maximumEffectiveElevationDelta: ownDataValue(highGround, "maximumEffectiveElevationDelta"),
+      rangeBonusPerElevation: ownDataValue(highGround, "rangeBonusPerElevation"),
+      damageBonusBasisPointsPerElevation: ownDataValue(highGround, "damageBonusBasisPointsPerElevation")
+    };
+  }
+  return draft;
+}
+
+function normalizeNavigationMechanicsDraft(profile) {
+  const draft = deep(profile ?? { mode: "authored_routes" });
+  if (draft.mode !== "dynamic_flow") return { mode: "authored_routes" };
+  const authoredProfiles = draft.movementProfiles && typeof draft.movementProfiles === "object" && !Array.isArray(draft.movementProfiles)
+    ? draft.movementProfiles
+    : {};
+  const movementProfiles = {};
+  for (const [profileId, definition] of Object.entries(authoredProfiles)) {
+    if (!definition || typeof definition !== "object" || Array.isArray(definition)) continue;
+    const normalized = {
+      label: typeof definition.label === "string" && definition.label ? definition.label : profileId,
+      terrainMode: definition.terrainMode === "ignore_walkable" ? "ignore_walkable" : "respect_walkable",
+      towerOccupancy: definition.towerOccupancy === "ignored" ? "ignored" : "blocked",
+      defaultTerrainCost: definition.defaultTerrainCost === null
+        ? null
+        : Number.isSafeInteger(definition.defaultTerrainCost) ? definition.defaultTerrainCost : 1000
+    };
+    if (definition.terrainCosts && typeof definition.terrainCosts === "object" && !Array.isArray(definition.terrainCosts)) {
+      normalized.terrainCosts = Object.fromEntries(Object.entries(definition.terrainCosts)
+        .filter(([, cost]) => cost === null || Number.isSafeInteger(cost)));
+    }
+    defineOwnDataValue(movementProfiles, profileId, normalized);
+  }
+  if (Object.keys(movementProfiles).length === 0) {
+    defineOwnDataValue(movementProfiles, "ground", {
+      label: "Ground",
+      terrainMode: "respect_walkable",
+      towerOccupancy: "blocked",
+      defaultTerrainCost: 1000
+    });
+  }
+  const defaultMovementProfileId = typeof draft.defaultMovementProfileId === "string"
+    && ownDataValue(movementProfiles, draft.defaultMovementProfileId)
+    ? draft.defaultMovementProfileId
+    : Object.keys(movementProfiles)[0];
+  const normalizedDraft = { mode: "dynamic_flow", defaultMovementProfileId, movementProfiles };
+  if (draft.enemyMovementProfiles && typeof draft.enemyMovementProfiles === "object" && !Array.isArray(draft.enemyMovementProfiles)) {
+    normalizedDraft.enemyMovementProfiles = Object.fromEntries(Object.entries(draft.enemyMovementProfiles)
+      .filter(([, movementProfileId]) => typeof movementProfileId === "string" && ownDataValue(movementProfiles, movementProfileId)));
+  }
+  return normalizedDraft;
+}
+
+function normalizeReactionMechanicsDraft(profile) {
+  const draft = deep(profile ?? { exposures: { definitions: {}, applications: { damageTypes: {} } }, reactions: {} });
+  draft.exposures = draft.exposures && typeof draft.exposures === "object" && !Array.isArray(draft.exposures)
+    ? draft.exposures : {};
+  draft.exposures.definitions = draft.exposures.definitions
+    && typeof draft.exposures.definitions === "object" && !Array.isArray(draft.exposures.definitions)
+    ? draft.exposures.definitions : {};
+  draft.exposures.applications = draft.exposures.applications
+    && typeof draft.exposures.applications === "object" && !Array.isArray(draft.exposures.applications)
+    ? draft.exposures.applications : {};
+  draft.exposures.applications.damageTypes = draft.exposures.applications.damageTypes
+    && typeof draft.exposures.applications.damageTypes === "object"
+    && !Array.isArray(draft.exposures.applications.damageTypes)
+    ? draft.exposures.applications.damageTypes : {};
+  draft.reactions = draft.reactions && typeof draft.reactions === "object" && !Array.isArray(draft.reactions)
+    ? draft.reactions : {};
+  return draft;
+}
+
+function mechanicsDraftUsesArmor(draft = MechanicsUI.draft) {
+  return Boolean(draft && (
+    Object.keys(draft.damageTypes ?? {}).length
+    || Object.keys(draft.armorTypes ?? {}).length
+    || Object.keys(draft.armorAssignments?.enemies ?? {}).length
+  ));
+}
+
+function mechanicsDraftUsesMarks(draft = MechanicsUI.draft) {
+  if (!draft?.marks) return false;
+  return Boolean(
+    Object.keys(draft.marks.definitions ?? {}).length
+    || Object.values(draft.marks.bindings ?? {}).some((bindings) => Object.keys(bindings ?? {}).length)
+  );
+}
+
+function mechanicsAuthoringLimits() {
+  const source = MechanicsUI.capabilities?.combat?.authoring?.armorMatrix?.limits;
+  if (!source || typeof source !== "object" || Array.isArray(source)) return {};
+  const limits = {};
+  for (const key of ["damageTypes", "armorTypes", "assignments", "matrixEntries", "multiplier", "labelLength"]) {
+    const value = ownDataValue(source, key);
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) defineOwnDataValue(limits, key, value);
+  }
+  return limits;
+}
+
+function mechanicsMarkLimits() {
+  const source = MechanicsUI.capabilities?.combat?.authoring?.marks?.limits;
+  if (!source || typeof source !== "object" || Array.isArray(source)) return {};
+  const limits = {};
+  for (const key of ["definitions", "sourceBindings", "applications", "applicationsPerSource", "filterDamageTypes", "labelLength", "idLength", "duration", "maxStacks", "multiplier"]) {
+    const value = ownDataValue(source, key);
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) defineOwnDataValue(limits, key, value);
+  }
+  return limits;
+}
+
+function mechanicsReactionLimits() {
+  const source = MechanicsUI.capabilities?.reactions?.authoring?.limits;
+  return source && typeof source === "object" && !Array.isArray(source) ? source : {};
+}
+
+function mechanicsHighGroundLimits() {
+  const source = MechanicsUI.capabilities?.elevation?.authoring?.limits?.highGround;
+  return source && typeof source === "object" && !Array.isArray(source) ? source : {};
+}
+
+function mechanicsBoundedEntries(record, limit) {
+  const entries = Object.entries(record ?? {});
+  return Number.isInteger(limit) && limit >= 0 ? entries.slice(0, limit) : entries;
+}
+
+function mechanicsMaximumAttribute(name, value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? ` ${name}="${esc(value)}"`
+    : "";
+}
+
+function mechanicsAuthoredMatrixEntryCount() {
+  return Object.values(MechanicsUI.draft?.armorTypes ?? {}).reduce((count, armorType) => (
+    count + Object.keys(armorType?.multipliers ?? {}).length
+  ), 0);
+}
+
+function mechanicsEffectiveModuleSchemaVersion() {
+  if (MechanicsUI.selectedModuleId === "elevation") {
+    const authoredVersion = Math.max(
+      mechanicsProjectModuleVersion(),
+      Number.isInteger(MechanicsUI.moduleSchemaVersion) ? MechanicsUI.moduleSchemaVersion : 1
+    );
+    if (MechanicsUI.draft?.highGround) return Math.max(authoredVersion, 3);
+    return MechanicsUI.draft?.lineOfSight ? Math.max(authoredVersion, 2) : authoredVersion;
+  }
+  if (MechanicsUI.selectedModuleId === "navigation") return 1;
+  if (MechanicsUI.selectedModuleId === "reactions") return 1;
+  if (MechanicsUI.selectedModuleId === "physics") return 1;
+  return Math.max(
+    mechanicsProjectModuleVersion(),
+    Number.isInteger(MechanicsUI.moduleSchemaVersion) ? MechanicsUI.moduleSchemaVersion : 1,
+    mechanicsDraftUsesArmor() ? 2 : 1,
+    mechanicsDraftUsesMarks() ? 3 : 1
+  );
+}
+
+function mechanicsRecipeProfile() {
+  return MechanicsUI.recipe?.entity?.profile ?? null;
+}
+
+function initializeMechanicsDraft() {
+  const capability = mechanicsSelectedCapability();
+  const moduleView = MechanicsUI.capabilities?.[MechanicsUI.selectedModuleId];
+  const missionId = mechanicsMissionId();
+  const mission = ownDataValue(S.project?.missions, missionId);
+  const selectedProfileId = moduleView?.selectedProfileId
+    ?? capability?.profileId
+    ?? mission?.mechanics?.profiles?.[MechanicsUI.selectedModuleId];
+  const selectedProfile = mechanicsSelectedProfile();
+  const describedVersion = moduleView?.moduleSchemaVersion
+    ?? capability?.moduleSchemaVersion
+    ?? capability?.schemaVersion;
+  MechanicsUI.moduleSchemaVersion = [1, 2, 3].includes(describedVersion)
+    ? describedVersion
+    : mechanicsProjectModuleVersion();
+  MechanicsUI.loadedProfileId = selectedProfile && selectedProfileId ? selectedProfileId : null;
+  MechanicsUI.profileId = selectedProfileId
+    ?? MechanicsUI.recipe?.entity?.profileId
+    ?? (MechanicsUI.selectedModuleId === "navigation"
+      ? "basic_dynamic_navigation"
+      : MechanicsUI.selectedModuleId === "reactions"
+        ? "elemental_shatter"
+        : MechanicsUI.selectedModuleId === "elevation"
+          ? "basic_authored_elevation"
+          : MechanicsUI.selectedModuleId === "physics" ? "basic_displacement_physics" : "basic_regenerating_shields");
+  MechanicsUI.draft = normalizeMechanicsDraft(selectedProfile ?? mechanicsRecipeProfile());
+  MechanicsUI.preview = null;
+  invalidateElevationLineOfSightAnalysis();
+}
+
+async function loadMechanicsRecipe() {
+  if (MechanicsUI.recipes.length) return MechanicsUI.recipe;
+  const result = await apiGet("/api/recipes?collection=mechanics");
+  MechanicsUI.recipes = Array.isArray(result.recipes) ? result.recipes.slice(0, 32) : [];
+  MechanicsUI.recipe = MechanicsUI.recipes.find((recipe) => recipe.id === MechanicsUI.recipeId)
+    ?? MechanicsUI.recipes.find((recipe) => recipe.id === "basic_regenerating_shields")
+    ?? MechanicsUI.recipes.find((recipe) => recipe.id === "basic_vulnerability_marks")
+    ?? MechanicsUI.recipes[0]
+    ?? null;
+  MechanicsUI.recipeId = MechanicsUI.recipe?.id ?? "";
+  if (!MechanicsUI.recipe?.entity?.profile) throw new Error("The mechanics shield recipe is unavailable.");
+  return MechanicsUI.recipe;
+}
+
+async function loadMechanicsCapabilities() {
+  if (MechanicsUI.loading || !S.project) return;
+  const missionId = mechanicsMissionId();
+  if (!missionId) return;
+  MechanicsUI.loading = true;
+  MechanicsUI.error = null;
+  renderMechanicsHub();
+  try {
+    const [capabilities] = await Promise.all([
+      apiGet(`/api/mechanics/capabilities?missionId=${encodeURIComponent(missionId)}`),
+      loadMechanicsRecipe()
+    ]);
+    if (mechanicsMissionId() !== missionId) return;
+    MechanicsUI.capabilities = capabilities;
+    initializeMechanicsDraft();
+  } catch (error) {
+    MechanicsUI.capabilities = null;
+    MechanicsUI.error = error;
+  } finally {
+    MechanicsUI.loading = false;
+    if (S.activeTab === "mechanics") renderMechanicsHub();
+  }
+}
+
+function loadMechanicsProfile() {
+  const profileId = $("mechanics-profile-select")?.value;
+  if (!profileId) {
+    toast("Choose an authored profile to load.", "warn");
+    return;
+  }
+  let profile = ownDataValue(mechanicsProjectProfiles(), profileId);
+  if (!profile && profileId === MechanicsUI.capabilities?.[MechanicsUI.selectedModuleId]?.selectedProfileId) {
+    profile = MechanicsUI.capabilities?.[MechanicsUI.selectedModuleId]?.selectedProfile;
+  }
+  if (!profile || typeof profile !== "object") {
+    toast(`Profile ${profileId} is no longer available. Reload the Hub.`, "err");
+    return;
+  }
+  MechanicsUI.profileId = profileId;
+  MechanicsUI.loadedProfileId = profileId;
+  const authoredVersion = MechanicsUI.capabilities?.[MechanicsUI.selectedModuleId]?.moduleSchemaVersion;
+  MechanicsUI.moduleSchemaVersion = [1, 2, 3].includes(authoredVersion)
+    ? authoredVersion
+    : mechanicsProjectModuleVersion();
+  MechanicsUI.draft = MechanicsUI.selectedModuleId === "navigation"
+    ? normalizeNavigationMechanicsDraft(profile)
+    : normalizeMechanicsDraft(profile);
+  MechanicsUI.preview = null;
+  MechanicsUI.error = null;
+  invalidateElevationLineOfSightAnalysis();
+  if (MechanicsUI.selectedModuleId === "elevation") loadElevationMap();
+  renderMechanicsHub();
+}
+
+function nextMechanicsProfileId(suggestedId) {
+  const existing = new Set(mechanicsProfileIds());
+  if (!existing.has(suggestedId)) return suggestedId;
+  let suffix = 2;
+  while (existing.has(`${suggestedId}_${suffix}`)) suffix += 1;
+  return `${suggestedId}_${suffix}`;
+}
+
+async function newMechanicsProfile() {
+  try {
+    await loadMechanicsRecipe();
+    const selectedRecipeId = $("mechanics-recipe-select")?.value || MechanicsUI.recipeId;
+    const recipe = MechanicsUI.recipes.find((candidate) => candidate.id === selectedRecipeId) ?? MechanicsUI.recipe;
+    if (!recipe?.entity?.profile) throw new Error("The selected mechanics recipe is unavailable.");
+    MechanicsUI.recipe = recipe;
+    MechanicsUI.recipeId = recipe.id;
+    MechanicsUI.profileId = nextMechanicsProfileId(recipe.entity.profileId || recipe.suggestedId || recipe.id);
+    MechanicsUI.loadedProfileId = null;
+    MechanicsUI.draft = normalizeMechanicsDraft(recipe.entity.profile);
+    MechanicsUI.moduleSchemaVersion = Math.max(
+      mechanicsProjectModuleVersion(),
+      Number.isInteger(recipe.entity.moduleSchemaVersion) ? recipe.entity.moduleSchemaVersion : 1,
+      mechanicsDraftUsesArmor(MechanicsUI.draft) ? 2 : 1,
+      mechanicsDraftUsesMarks(MechanicsUI.draft) ? 3 : 1
+    );
+    MechanicsUI.preview = null;
+    MechanicsUI.error = null;
+    invalidateElevationLineOfSightAnalysis();
+    renderMechanicsHub();
+    $("mechanics-profile-id")?.focus();
+  } catch (error) {
+    MechanicsUI.error = error;
+    renderMechanicsPreviewResult();
+  }
+}
+
+function mechanicsRecipeShieldDefault(collection, targetId) {
+  const shieldRecipe = MechanicsUI.recipes.find((recipe) => recipe.entity?.profile?.shields);
+  const recipeCollection = (shieldRecipe?.entity?.profile ?? mechanicsRecipeProfile())?.shields?.[collection];
+  const exact = ownDataValue(recipeCollection, targetId);
+  const template = exact ?? Object.values(recipeCollection ?? {})[0];
+  if (!template) throw new Error(`The shared mechanics recipe has no ${collection} shield template.`);
+  return deep(template);
+}
+
+function mechanicsProfileCollision() {
+  const profileId = MechanicsUI.profileId.trim();
+  return mechanicsProfileIds().includes(profileId) && MechanicsUI.loadedProfileId !== profileId;
+}
+
+function assertMechanicsProfileWritable() {
+  if (!MechanicsUI.profileId.trim()) throw new Error("Profile ID is required.");
+  if (mechanicsProfileCollision()) {
+    throw new Error(`Profile "${MechanicsUI.profileId.trim()}" already exists. Load the existing profile explicitly before editing it; silent overwrite is not allowed.`);
+  }
+}
+
+async function reloadMechanicsHub() {
+  if (S.dirty) {
+    toast("Save or discard ordinary project edits before reloading mechanics.", "err");
+    return;
+  }
+  MechanicsUI.capabilities = null;
+  MechanicsUI.recipes = [];
+  MechanicsUI.recipe = null;
+  MechanicsUI.draft = null;
+  MechanicsUI.loadedProfileId = null;
+  MechanicsUI.preview = null;
+  MechanicsUI.error = null;
+  ElevationLineOfSightUI.contextKey = null;
+  invalidateElevationLineOfSightAnalysis();
+  await load();
+}
+
+function mechanicsShieldRowHtml(targetId, definition, kind, label) {
+  const enabled = Boolean(definition);
+  const targetAttribute = kind === "enemy" ? 'data-shield-target="enemy"' : 'data-shield-target="tower"';
+  const regeneration = definition?.regeneration;
+  return `<div class="mechanics-shield-row${enabled ? " enabled" : ""}" ${targetAttribute} data-target-id="${esc(targetId)}">
+    <label class="mechanics-shield-toggle"><input type="checkbox" data-shield-enabled ${enabled ? "checked" : ""}><span><strong>${esc(label || targetId)}</strong><code>${esc(targetId)}</code></span></label>
+    <label>Capacity<input type="number" data-shield-field="capacity" min="0.000001" max="1000000000000" step="1" value="${esc(definition?.capacity ?? 25)}" ${enabled ? "" : "disabled"}></label>
+    <label>Regen / unit<input type="number" data-shield-field="ratePerUnit" min="0.000001" max="1000000000" step="0.1" value="${esc(regeneration?.ratePerUnit ?? "")}" placeholder="optional" ${enabled ? "" : "disabled"}></label>
+    <label>Regen delay<input type="number" data-shield-field="delayAfterDamage" min="0" max="1000000000" step="0.1" value="${esc(regeneration?.delayAfterDamage ?? "")}" placeholder="0" ${enabled ? "" : "disabled"}></label>
+  </div>`;
+}
+
+function renderMechanicsShieldRows() {
+  if (!MechanicsUI.draft) return;
+  const enemyRows = $("mechanics-enemy-shield-rows");
+  const towerRows = $("mechanics-tower-shield-rows");
+  const enemies = S.project?.enemies ?? {};
+  const towers = Object.fromEntries(Object.entries(S.project?.towers ?? {})
+    .filter(([, tower]) => Number.isFinite(tower.maxHp) && tower.maxHp > 0));
+  if (enemyRows) enemyRows.innerHTML = Object.entries(enemies).map(([id, enemy]) =>
+    mechanicsShieldRowHtml(id, ownDataValue(MechanicsUI.draft.shields.enemies, id), "enemy", enemy.label)).join("")
+    || `<div class="mechanics-empty">No enemy definitions.</div>`;
+  if (towerRows) towerRows.innerHTML = Object.entries(towers).map(([id, tower]) =>
+    mechanicsShieldRowHtml(id, ownDataValue(MechanicsUI.draft.shields.towers, id), "tower", tower.label)).join("")
+    || `<div class="mechanics-empty">No destructible tower definitions. Existing attack-only towers keep legacy behavior.</div>`;
+
+  document.querySelectorAll(".mechanics-shield-row").forEach((row) => {
+    const collection = row.dataset.shieldTarget === "enemy" ? "enemies" : "towers";
+    const targetId = row.dataset.targetId;
+    const toggle = row.querySelector("[data-shield-enabled]");
+    toggle?.addEventListener("change", () => {
+      if (toggle.checked) {
+        try {
+          defineOwnDataValue(MechanicsUI.draft.shields[collection], targetId, mechanicsRecipeShieldDefault(collection, targetId));
+        } catch (error) {
+          toggle.checked = false;
+          MechanicsUI.error = error;
+        }
+      }
+      else delete MechanicsUI.draft.shields[collection][targetId];
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    });
+    row.querySelectorAll("[data-shield-field]").forEach((input) => input.addEventListener("input", () => {
+      const definition = ownDataValue(MechanicsUI.draft.shields[collection], targetId);
+      if (!definition) return;
+      const field = input.dataset.shieldField;
+      if (field === "capacity") definition.capacity = Number(input.value);
+      else {
+        const rateInput = row.querySelector('[data-shield-field="ratePerUnit"]');
+        const delayInput = row.querySelector('[data-shield-field="delayAfterDamage"]');
+        if (rateInput.value === "") delete definition.regeneration;
+        else {
+          definition.regeneration = { ratePerUnit: Number(rateInput.value) };
+          if (delayInput.value !== "") definition.regeneration.delayAfterDamage = Number(delayInput.value);
+        }
+      }
+      MechanicsUI.preview = null;
+      renderMechanicsPreviewResult();
+    }));
+  });
+}
+
+function nextMechanicsDefinitionId(collection, base) {
+  const definitions = MechanicsUI.draft?.[collection] ?? {};
+  if (!Object.hasOwn(definitions, base)) return base;
+  let suffix = 2;
+  while (Object.hasOwn(definitions, `${base}_${suffix}`)) suffix += 1;
+  return `${base}_${suffix}`;
+}
+
+function invalidateMechanicsPreview() {
+  MechanicsUI.preview = null;
+  MechanicsUI.error = null;
+  MechanicsUI.moduleSchemaVersion = 2;
+}
+
+function renameMechanicsDefinition(collection, previousId, requestedId) {
+  const nextId = String(requestedId ?? "").trim();
+  const definitions = MechanicsUI.draft?.[collection];
+  if (!definitions || !nextId) {
+    toast("Definition ID is required.", "err");
+    renderMechanicsHub();
+    return;
+  }
+  if (nextId === previousId) return;
+  if (ownDataValue(definitions, nextId)) {
+    toast(`Definition "${nextId}" already exists.`, "err");
+    renderMechanicsHub();
+    return;
+  }
+  const definition = ownDataValue(definitions, previousId);
+  defineOwnDataValue(definitions, nextId, definition);
+  delete definitions[previousId];
+  if (collection === "damageTypes") {
+    for (const armor of Object.values(MechanicsUI.draft.armorTypes ?? {})) {
+      const multiplier = ownDataValue(armor?.multipliers, previousId);
+      if (multiplier === undefined) continue;
+      defineOwnDataValue(armor.multipliers, nextId, multiplier);
+      delete armor.multipliers[previousId];
+    }
+  } else if (collection === "armorTypes") {
+    for (const enemyId of Object.keys(MechanicsUI.draft.armorAssignments?.enemies ?? {})) {
+      if (ownDataValue(MechanicsUI.draft.armorAssignments.enemies, enemyId) === previousId) {
+        defineOwnDataValue(MechanicsUI.draft.armorAssignments.enemies, enemyId, nextId);
+      }
+    }
+  }
+  invalidateMechanicsPreview();
+  renderMechanicsHub();
+}
+
+function removeMechanicsDefinition(collection, definitionId) {
+  delete MechanicsUI.draft[collection][definitionId];
+  if (collection === "damageTypes") {
+    for (const armor of Object.values(MechanicsUI.draft.armorTypes ?? {})) {
+      if (armor?.multipliers) delete armor.multipliers[definitionId];
+    }
+  } else if (collection === "armorTypes") {
+    for (const enemyId of Object.keys(MechanicsUI.draft.armorAssignments?.enemies ?? {})) {
+      if (ownDataValue(MechanicsUI.draft.armorAssignments.enemies, enemyId) === definitionId) {
+        delete MechanicsUI.draft.armorAssignments.enemies[enemyId];
+      }
+    }
+  }
+  invalidateMechanicsPreview();
+  renderMechanicsHub();
+}
+
+function mechanicsDamageTypeRowHtml(damageTypeId, definition) {
+  const limits = mechanicsAuthoringLimits();
+  const labelLength = mechanicsMaximumAttribute("maxlength", limits.labelLength);
+  return `<div class="mechanics-definition-row" data-damage-row="${esc(damageTypeId)}">
+    <label>ID<input type="text" data-damage-type-id value="${esc(damageTypeId)}" spellcheck="false"></label>
+    <label>Label<input type="text"${labelLength} data-damage-type-label value="${esc(definition?.label ?? damageTypeId)}"></label>
+    <button type="button" class="btn btn-danger" data-remove-damage-type="${esc(damageTypeId)}">Remove</button>
+  </div>`;
+}
+
+function mechanicsArmorTypeRowHtml(armorTypeId, definition, damageTypes) {
+  const limits = mechanicsAuthoringLimits();
+  const labelLength = mechanicsMaximumAttribute("maxlength", limits.labelLength);
+  const multiplierMaximum = mechanicsMaximumAttribute("max", limits.multiplier);
+  const multipliers = definition?.multipliers ?? {};
+  return `<div class="mechanics-armor-row" data-armor-row="${esc(armorTypeId)}">
+    <div class="mechanics-definition-row">
+      <label>ID<input type="text" data-armor-type-id value="${esc(armorTypeId)}" spellcheck="false"></label>
+      <label>Label<input type="text"${labelLength} data-armor-type-label value="${esc(definition?.label ?? armorTypeId)}"></label>
+      <label>Default multiplier<input type="number" min="0"${multiplierMaximum} step="0.05" data-armor-default-multiplier value="${esc(definition?.defaultMultiplier ?? "")}" placeholder="1"></label>
+      <button type="button" class="btn btn-danger" data-remove-armor-type="${esc(armorTypeId)}">Remove</button>
+    </div>
+    <div class="mechanics-matrix-grid">${damageTypes.map(([damageTypeId, damageType]) => `<label><span>${esc(damageType?.label ?? damageTypeId)} <code>${esc(damageTypeId)}</code></span><input type="number" min="0"${multiplierMaximum} step="0.05" data-armor-multiplier="${esc(damageTypeId)}" value="${esc(ownDataValue(multipliers, damageTypeId) ?? "")}" placeholder="default"></label>`).join("") || `<div class="mechanics-empty">Add a damage type to author matrix overrides.</div>`}</div>
+  </div>`;
+}
+
+function renderMechanicsArmorEditors() {
+  if (!MechanicsUI.draft) return;
+  const limits = mechanicsAuthoringLimits();
+  const damageRows = $("mechanics-damage-type-rows");
+  const armorRows = $("mechanics-armor-type-rows");
+  const enemyRows = $("mechanics-enemy-armor-rows");
+  const damageTypes = mechanicsBoundedEntries(MechanicsUI.draft.damageTypes, limits.damageTypes);
+  const armorTypes = mechanicsBoundedEntries(MechanicsUI.draft.armorTypes, limits.armorTypes);
+  if (damageRows) damageRows.innerHTML = damageTypes.map(([id, definition]) => mechanicsDamageTypeRowHtml(id, definition)).join("")
+    || `<div class="mechanics-empty">No damage types. Legacy physical damage remains unchanged.</div>`;
+  if (armorRows) armorRows.innerHTML = armorTypes.map(([id, definition]) =>
+    mechanicsArmorTypeRowHtml(id, definition, damageTypes)).join("")
+    || `<div class="mechanics-empty">No armor types. Add one only when this profile needs an armor matrix.</div>`;
+  if (enemyRows) {
+    const options = armorTypes.map(([armorTypeId, armorType]) => `<option value="${esc(armorTypeId)}">${esc(armorType?.label ?? armorTypeId)} (${esc(armorTypeId)})</option>`).join("");
+    enemyRows.innerHTML = mechanicsBoundedEntries(S.project?.enemies, limits.assignments).map(([enemyId, enemy]) => {
+      const selected = ownDataValue(MechanicsUI.draft.armorAssignments.enemies, enemyId);
+      return `<label class="mechanics-assignment-row"><span><strong>${esc(enemy.label ?? enemyId)}</strong><code>${esc(enemyId)}</code></span><select data-enemy-armor-id="${esc(enemyId)}"><option value="">No armor</option>${options}</select></label>`;
+    }).join("") || `<div class="mechanics-empty">No enemy definitions.</div>`;
+    enemyRows.querySelectorAll("[data-enemy-armor-id]").forEach((select) => {
+      const selected = ownDataValue(MechanicsUI.draft.armorAssignments.enemies, select.dataset.enemyArmorId);
+      if (typeof selected === "string" && armorTypes.some(([armorTypeId]) => armorTypeId === selected)) select.value = selected;
+      select.addEventListener("change", () => {
+        if (select.value) defineOwnDataValue(MechanicsUI.draft.armorAssignments.enemies, select.dataset.enemyArmorId, select.value);
+        else delete MechanicsUI.draft.armorAssignments.enemies[select.dataset.enemyArmorId];
+        invalidateMechanicsPreview();
+        renderMechanicsPreviewResult();
+      });
+    });
+  }
+
+  damageRows?.querySelectorAll("[data-damage-type-id]").forEach((input) => input.addEventListener("change", () =>
+    renameMechanicsDefinition("damageTypes", input.closest("[data-damage-row]").dataset.damageRow, input.value)));
+  damageRows?.querySelectorAll("[data-damage-type-label]").forEach((input) => input.addEventListener("input", () => {
+    const definition = ownDataValue(MechanicsUI.draft.damageTypes, input.closest("[data-damage-row]").dataset.damageRow);
+    if (definition) definition.label = input.value;
+    invalidateMechanicsPreview();
+    renderMechanicsPreviewResult();
+  }));
+  damageRows?.querySelectorAll("[data-remove-damage-type]").forEach((button) => button.addEventListener("click", () =>
+    removeMechanicsDefinition("damageTypes", button.dataset.removeDamageType)));
+
+  armorRows?.querySelectorAll("[data-armor-type-id]").forEach((input) => input.addEventListener("change", () =>
+    renameMechanicsDefinition("armorTypes", input.closest("[data-armor-row]").dataset.armorRow, input.value)));
+  armorRows?.querySelectorAll("[data-armor-type-label]").forEach((input) => input.addEventListener("input", () => {
+    const definition = ownDataValue(MechanicsUI.draft.armorTypes, input.closest("[data-armor-row]").dataset.armorRow);
+    if (definition) definition.label = input.value;
+    invalidateMechanicsPreview();
+    renderMechanicsPreviewResult();
+  }));
+  armorRows?.querySelectorAll("[data-armor-default-multiplier]").forEach((input) => input.addEventListener("input", () => {
+    const definition = ownDataValue(MechanicsUI.draft.armorTypes, input.closest("[data-armor-row]").dataset.armorRow);
+    if (!definition) return;
+    if (input.value === "") delete definition.defaultMultiplier;
+    else definition.defaultMultiplier = Number(input.value);
+    invalidateMechanicsPreview();
+    renderMechanicsPreviewResult();
+  }));
+  armorRows?.querySelectorAll("[data-armor-multiplier]").forEach((input) => input.addEventListener("input", () => {
+    const definition = ownDataValue(MechanicsUI.draft.armorTypes, input.closest("[data-armor-row]").dataset.armorRow);
+    if (!definition) return;
+    definition.multipliers ??= {};
+    const hadOverride = Object.hasOwn(definition.multipliers, input.dataset.armorMultiplier);
+    if (input.value === "") delete definition.multipliers[input.dataset.armorMultiplier];
+    else {
+      if (
+        !hadOverride
+        && Number.isInteger(limits.matrixEntries)
+        && mechanicsAuthoredMatrixEntryCount() >= limits.matrixEntries
+      ) {
+        input.value = "";
+        toast("Armor matrix override limit reached.", "err");
+        return;
+      }
+      defineOwnDataValue(definition.multipliers, input.dataset.armorMultiplier, Number(input.value));
+    }
+    invalidateMechanicsPreview();
+    renderMechanicsPreviewResult();
+  }));
+  armorRows?.querySelectorAll("[data-remove-armor-type]").forEach((button) => button.addEventListener("click", () =>
+    removeMechanicsDefinition("armorTypes", button.dataset.removeArmorType)));
+
+  $("btn-mechanics-add-damage-type").onclick = () => {
+    if (Number.isInteger(limits.damageTypes) && Object.keys(MechanicsUI.draft.damageTypes).length >= limits.damageTypes) return toast("Damage type limit reached.", "err");
+    const id = nextMechanicsDefinitionId("damageTypes", "damage_type");
+    defineOwnDataValue(MechanicsUI.draft.damageTypes, id, { label: "Damage type" });
+    invalidateMechanicsPreview();
+    renderMechanicsHub();
+    document.querySelector(`[data-damage-row="${CSS.escape(id)}"] [data-damage-type-id]`)?.focus();
+  };
+  $("btn-mechanics-add-armor-type").onclick = () => {
+    if (Number.isInteger(limits.armorTypes) && Object.keys(MechanicsUI.draft.armorTypes).length >= limits.armorTypes) return toast("Armor type limit reached.", "err");
+    const id = nextMechanicsDefinitionId("armorTypes", "armor_type");
+    defineOwnDataValue(MechanicsUI.draft.armorTypes, id, { label: "Armor type", multipliers: {} });
+    invalidateMechanicsPreview();
+    renderMechanicsHub();
+    document.querySelector(`[data-armor-row="${CSS.escape(id)}"] [data-armor-type-id]`)?.focus();
+  };
+}
+
+function invalidateMechanicsMarksPreview() {
+  MechanicsUI.preview = null;
+  MechanicsUI.error = null;
+  MechanicsUI.moduleSchemaVersion = Math.max(3, MechanicsUI.moduleSchemaVersion || 1);
+}
+
+function nextMechanicsMarkId(base = "mark") {
+  const definitions = MechanicsUI.draft?.marks?.definitions ?? {};
+  if (!Object.hasOwn(definitions, base)) return base;
+  let suffix = 2;
+  while (Object.hasOwn(definitions, `${base}_${suffix}`)) suffix += 1;
+  return `${base}_${suffix}`;
+}
+
+function mechanicsMarkSourceOptions() {
+  const groups = [
+    ["towers", "Tower", S.project?.towers ?? {}],
+    ["abilities", "Ability", S.project?.abilities ?? {}],
+    ["towerScripts", "TowerScript", S.project?.scripts ?? {}]
+  ];
+  return groups.flatMap(([kind, label, definitions]) => Object.keys(definitions)
+    .sort((left, right) => left < right ? -1 : left > right ? 1 : 0)
+    .map((id) => ({ kind, id, label: `${label}: ${definitions[id]?.label ?? id}` })));
+}
+
+function mechanicsMarkDefinitionRowHtml(markId, definition) {
+  const limits = mechanicsMarkLimits();
+  const labelLength = mechanicsMaximumAttribute("maxlength", limits.labelLength);
+  const durationMaximum = mechanicsMaximumAttribute("max", limits.duration);
+  const stacksMaximum = mechanicsMaximumAttribute("max", limits.maxStacks);
+  const multiplierMaximum = mechanicsMaximumAttribute("max", limits.multiplier);
+  const damageTypes = Array.isArray(definition?.damageTypes)
+    ? definition.damageTypes.join(", ")
+    : "";
+  return `<div class="mechanics-mark-row" data-mark-row="${esc(markId)}">
+    <div class="mechanics-definition-row mechanics-mark-definition-grid">
+      <label>ID<input type="text" data-mark-id value="${esc(markId)}" spellcheck="false"></label>
+      <label>Label<input type="text"${labelLength} data-mark-label value="${esc(definition?.label ?? markId)}"></label>
+      <label>Duration<input type="number" min="0.000001"${durationMaximum} step="0.1" data-mark-duration value="${esc(definition?.duration ?? 3)}"></label>
+      <label>Max stacks<input type="number" min="1"${stacksMaximum} step="1" data-mark-max-stacks value="${esc(definition?.maxStacks ?? 3)}"></label>
+      <label>Multiplier<input type="number" min="1.000001"${multiplierMaximum} step="0.05" data-mark-multiplier value="${esc(definition?.multiplier ?? 1.25)}"></label>
+      <label>Consume<select data-mark-consume-policy><option value="retain">Retain</option><option value="consume_one">Consume one</option><option value="consume_all">Consume all</option></select></label>
+      <label>Damage type filter<input type="text" data-mark-damage-type value="${esc(damageTypes)}" placeholder="optional: physical, fire"></label>
+      <button type="button" class="btn btn-danger" data-remove-mark="${esc(markId)}">Remove</button>
+    </div>
+  </div>`;
+}
+
+function mechanicsMarkBindingRows() {
+  const rows = [];
+  for (const kind of ["towers", "abilities", "towerScripts"]) {
+    for (const [sourceId, applications] of Object.entries(MechanicsUI.draft?.marks?.bindings?.[kind] ?? {})) {
+      if (!Array.isArray(applications)) continue;
+      applications.forEach((application, index) => rows.push({ kind, sourceId, application, index }));
+    }
+  }
+  return rows;
+}
+
+function removeMechanicsMarkBinding(kind, sourceId, index) {
+  const source = MechanicsUI.draft?.marks?.bindings?.[kind];
+  const applications = ownDataValue(source, sourceId);
+  if (!Array.isArray(applications)) return;
+  applications.splice(index, 1);
+  if (applications.length === 0) delete source[sourceId];
+}
+
+function addMechanicsMarkBinding(kind, sourceId, application) {
+  const source = MechanicsUI.draft.marks.bindings[kind];
+  const applications = ownDataValue(source, sourceId);
+  if (Array.isArray(applications)) applications.push(application);
+  else defineOwnDataValue(source, sourceId, [application]);
+}
+
+function renderMechanicsMarkEditors() {
+  if (!MechanicsUI.draft) return;
+  const limits = mechanicsMarkLimits();
+  const definitionRows = $("mechanics-mark-definition-rows");
+  const bindingRows = $("mechanics-mark-binding-rows");
+  const definitions = mechanicsBoundedEntries(MechanicsUI.draft.marks.definitions, limits.definitions);
+  if (definitionRows) {
+    definitionRows.innerHTML = definitions.map(([markId, definition]) => mechanicsMarkDefinitionRowHtml(markId, definition)).join("")
+      || `<div class="mechanics-empty">No marks. Add one only when this profile needs a vulnerability.</div>`;
+    definitionRows.querySelectorAll("[data-mark-row]").forEach((row) => {
+      const markId = row.dataset.markRow;
+      const definition = ownDataValue(MechanicsUI.draft.marks.definitions, markId);
+      const consume = row.querySelector("[data-mark-consume-policy]");
+      if (consume) consume.value = definition?.consumePolicy ?? "retain";
+      row.querySelector("[data-mark-id]")?.addEventListener("change", (event) => {
+        const nextId = String(event.target.value ?? "").trim();
+        if (!nextId || (nextId !== markId && ownDataValue(MechanicsUI.draft.marks.definitions, nextId))) {
+          toast("Mark ID must be non-empty and unique.", "err");
+          return renderMechanicsHub();
+        }
+        if (nextId === markId) return;
+        defineOwnDataValue(MechanicsUI.draft.marks.definitions, nextId, definition);
+        delete MechanicsUI.draft.marks.definitions[markId];
+        for (const binding of mechanicsMarkBindingRows()) {
+          if (binding.application.markId === markId) binding.application.markId = nextId;
+        }
+        invalidateMechanicsMarksPreview();
+        renderMechanicsHub();
+      });
+      for (const [selector, field, convert] of [
+        ["[data-mark-label]", "label", String],
+        ["[data-mark-duration]", "duration", Number],
+        ["[data-mark-max-stacks]", "maxStacks", Number],
+        ["[data-mark-multiplier]", "multiplier", Number],
+        ["[data-mark-consume-policy]", "consumePolicy", String]
+      ]) row.querySelector(selector)?.addEventListener("input", (event) => {
+        definition[field] = convert(event.target.value);
+        invalidateMechanicsMarksPreview();
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-mark-damage-type]")?.addEventListener("input", (event) => {
+        const damageTypes = String(event.target.value ?? "").split(",").map((id) => id.trim()).filter(Boolean);
+        if (damageTypes.length) definition.damageTypes = [...new Set(damageTypes)];
+        else delete definition.damageTypes;
+        invalidateMechanicsMarksPreview();
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-remove-mark]")?.addEventListener("click", () => {
+        delete MechanicsUI.draft.marks.definitions[markId];
+        for (const kind of ["towers", "abilities", "towerScripts"]) {
+          for (const [sourceId, applications] of Object.entries(MechanicsUI.draft.marks.bindings[kind] ?? {})) {
+            const retained = applications.filter((application) => application.markId !== markId);
+            if (retained.length) MechanicsUI.draft.marks.bindings[kind][sourceId] = retained;
+            else delete MechanicsUI.draft.marks.bindings[kind][sourceId];
+          }
+        }
+        invalidateMechanicsMarksPreview();
+        renderMechanicsHub();
+      });
+    });
+  }
+
+  if (bindingRows) {
+    const sourceOptions = mechanicsMarkSourceOptions();
+    const sourceHtml = sourceOptions.map((source) => `<option value="${esc(`${source.kind}:${source.id}`)}">${esc(source.label)}</option>`).join("");
+    const markHtml = definitions.map(([markId, definition]) => `<option value="${esc(markId)}">${esc(definition?.label ?? markId)} (${esc(markId)})</option>`).join("");
+    bindingRows.innerHTML = mechanicsMarkBindingRows().map(({ kind, sourceId, application, index }) => `<div class="mechanics-mark-binding-row" data-mark-binding-kind="${esc(kind)}" data-mark-binding-source-id="${esc(sourceId)}" data-mark-binding-index="${index}">
+      <label>Source<select data-mark-binding-source>${sourceHtml}</select></label>
+      <label>Mark<select data-mark-binding-mark>${markHtml}</select></label>
+      <label>Stacks<input type="number" min="1"${mechanicsMaximumAttribute("max", limits.maxStacks)} step="1" data-mark-binding-stacks value="${esc(application?.stacks ?? 1)}"></label>
+      <button type="button" class="btn btn-danger" data-remove-mark-binding>Remove</button>
+    </div>`).join("") || `<div class="mechanics-empty">No source bindings. Marks can also be applied through typed TowerScript actions.</div>`;
+    bindingRows.querySelectorAll("[data-mark-binding-kind]").forEach((row) => {
+      const kind = row.dataset.markBindingKind;
+      const sourceId = row.dataset.markBindingSourceId;
+      const index = Number(row.dataset.markBindingIndex);
+      const application = MechanicsUI.draft.marks.bindings[kind]?.[sourceId]?.[index];
+      const sourceSelect = row.querySelector("[data-mark-binding-source]");
+      const markSelect = row.querySelector("[data-mark-binding-mark]");
+      if (sourceSelect) sourceSelect.value = `${kind}:${sourceId}`;
+      if (markSelect) markSelect.value = application?.markId ?? "";
+      sourceSelect?.addEventListener("change", () => {
+        const separator = sourceSelect.value.indexOf(":");
+        const nextKind = sourceSelect.value.slice(0, separator);
+        const nextSourceId = sourceSelect.value.slice(separator + 1);
+        removeMechanicsMarkBinding(kind, sourceId, index);
+        addMechanicsMarkBinding(nextKind, nextSourceId, application);
+        invalidateMechanicsMarksPreview();
+        renderMechanicsHub();
+      });
+      markSelect?.addEventListener("change", () => {
+        application.markId = markSelect.value;
+        invalidateMechanicsMarksPreview();
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-mark-binding-stacks]")?.addEventListener("input", (event) => {
+        application.stacks = Number(event.target.value);
+        invalidateMechanicsMarksPreview();
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-remove-mark-binding]")?.addEventListener("click", () => {
+        removeMechanicsMarkBinding(kind, sourceId, index);
+        invalidateMechanicsMarksPreview();
+        renderMechanicsHub();
+      });
+    });
+  }
+
+  const addMark = $("btn-mechanics-add-mark");
+  if (addMark) addMark.onclick = () => {
+    if (Number.isInteger(limits.definitions) && Object.keys(MechanicsUI.draft.marks.definitions).length >= limits.definitions) return toast("Mark definition limit reached.", "err");
+    const markId = nextMechanicsMarkId();
+    defineOwnDataValue(MechanicsUI.draft.marks.definitions, markId, {
+      label: "Mark",
+      duration: 3,
+      maxStacks: 3,
+      multiplier: 1.25,
+      consumePolicy: "consume_one"
+    });
+    invalidateMechanicsMarksPreview();
+    renderMechanicsHub();
+  };
+  const addBinding = $("btn-mechanics-add-mark-binding");
+  if (addBinding) addBinding.onclick = () => {
+    const source = mechanicsMarkSourceOptions()[0];
+    const markId = Object.keys(MechanicsUI.draft.marks.definitions).sort()[0];
+    if (!source || !markId) return toast("Add a mark and an eligible source first.", "err");
+    addMechanicsMarkBinding(source.kind, source.id, { markId, stacks: 1 });
+    invalidateMechanicsMarksPreview();
+    renderMechanicsHub();
+  };
+}
+
+function invalidateReactionMechanicsPreview() {
+  MechanicsUI.preview = null;
+  MechanicsUI.error = null;
+}
+
+function nextReactionAuthoringId(record, prefix) {
+  let index = 1;
+  while (ownDataValue(record, `${prefix}_${index}`)) index += 1;
+  return `${prefix}_${index}`;
+}
+
+function mechanicsExposureApplicationRows() {
+  const rows = [];
+  for (const damageTypeId of Object.keys(MechanicsUI.draft?.exposures?.applications?.damageTypes ?? {}).sort()) {
+    const applications = MechanicsUI.draft.exposures.applications.damageTypes[damageTypeId];
+    if (!Array.isArray(applications)) continue;
+    applications.forEach((application, index) => rows.push({ damageTypeId, application, index }));
+  }
+  return rows;
+}
+
+function mechanicsReactionDefinitionRowHtml(reactionId, definition) {
+  const triggerDamageTypes = Array.isArray(definition?.trigger?.damageTypes)
+    ? definition.trigger.damageTypes.join(", ") : "";
+  const authoredRequirements = Array.isArray(definition?.requirements) ? definition.requirements : [];
+  const requirementsHtml = authoredRequirements.map((requirement, index) => {
+    const requirementRef = requirement?.kind === "exposure" ? requirement.exposureId
+      : requirement?.kind === "status" ? requirement.statusId : requirement?.tag;
+    return `<div class="mechanics-reaction-requirement-row" data-reaction-requirement-index="${index}">
+      <label>Requirement<select data-reaction-requirement-kind><option value="exposure">Exposure</option><option value="status">Status</option><option value="terrain_tag">Terrain tag</option></select></label>
+      <label>Requirement ID<input data-reaction-requirement-ref value="${esc(requirementRef ?? "")}" spellcheck="false"></label>
+      <label>Min stacks<input type="number" min="1" max="256" step="1" data-reaction-requirement-min-stacks value="${esc(requirement?.minStacks ?? 1)}"></label>
+      <label>Consume<select data-reaction-consume><option value="none">None</option><option value="one">One</option><option value="all">All</option><option value="clear">Clear</option></select></label>
+      <button type="button" class="btn btn-danger" data-remove-reaction-requirement>Remove requirement</button>
+    </div>`;
+  }).join("");
+  const effectsHtml = Object.entries(definition?.effects ?? {}).sort(([left], [right]) => left.localeCompare(right)).map(([effectId, effect]) => {
+    const amountValue = effect?.amount?.kind === "flat" ? effect.amount.value : effect?.amount?.multiplier;
+    return `<div class="mechanics-reaction-effect-row" data-reaction-effect-id="${esc(effectId)}">
+      <label>Effect ID<input data-reaction-effect-key value="${esc(effectId)}" spellcheck="false"></label>
+      <label>Amount<select data-reaction-effect-amount-kind><option value="flat">Flat</option><option value="source_after_modifiers">Source multiplier</option></select></label>
+      <label>Value<input type="number" min="0.000001" step="0.1" data-reaction-effect-amount-value value="${esc(amountValue ?? 1)}"></label>
+      <label>Damage type<input data-reaction-effect-damage-type value="${esc(effect?.damageType ?? "")}" spellcheck="false"></label>
+      <label>Target<select data-reaction-effect-target><option value="primary">Primary</option><option value="radius">Radius</option><option value="terrain_tag">Terrain tag</option></select></label>
+      <label>Target tag<input data-reaction-effect-target-tag value="${esc(effect?.target?.tag ?? "")}" spellcheck="false"></label>
+      <label>Radius<input type="number" min="1" max="64" step="1" data-reaction-effect-radius value="${esc(effect?.target?.radius ?? 1)}"></label>
+      <label>Max targets<input type="number" min="1" max="64" step="1" data-reaction-effect-max-targets value="${esc(effect?.target?.maxTargets ?? 1)}"></label>
+      <label><input type="checkbox" data-reaction-allow-chaining ${effect?.allowReactions ? "checked" : ""}> allowReactions</label>
+      <button type="button" class="btn btn-danger" data-remove-reaction-effect>Remove effect</button>
+    </div>`;
+  }).join("");
+  return `<div class="mechanics-reaction-row" data-reaction-row="${esc(reactionId)}">
+    <div class="mechanics-definition-row mechanics-reaction-definition-grid">
+      <label>ID<input data-reaction-id value="${esc(reactionId)}" spellcheck="false"></label>
+      <label>Label<input data-reaction-label value="${esc(definition?.label ?? reactionId)}"></label>
+      <label>Trigger damage<input data-reaction-trigger-damage-type value="${esc(triggerDamageTypes)}" spellcheck="false"></label>
+      <label><input type="checkbox" data-reaction-suppress-trigger ${definition?.suppressTriggerExposureApplications ? "checked" : ""}> suppressTriggerExposureApplications</label>
+      <div class="mechanics-reaction-requirements">${requirementsHtml || `<div class="mechanics-empty">No requirements.</div>`}</div>
+      <button type="button" class="btn btn-outline" data-add-reaction-requirement>+ Add requirement</button>
+      <div class="mechanics-reaction-effects">${effectsHtml || `<div class="mechanics-empty">No effects.</div>`}</div>
+      <button type="button" class="btn btn-outline" data-add-reaction-effect>+ Add effect</button>
+      <button type="button" class="btn btn-danger" data-remove-reaction>Remove</button>
+    </div>
+  </div>`;
+}
+
+function updateMechanicsReactionRow(row, previousReactionId) {
+  const reactionId = row.querySelector("[data-reaction-id]").value.trim();
+  if (!reactionId || (reactionId !== previousReactionId && ownDataValue(MechanicsUI.draft.reactions, reactionId))) {
+    toast("Reaction ID must be non-empty and unique.", "err");
+    renderMechanicsHub();
+    return false;
+  }
+  const currentDefinition = ownDataValue(MechanicsUI.draft.reactions, previousReactionId) ?? {};
+  const authoredRequirements = Array.isArray(currentDefinition.requirements) ? currentDefinition.requirements : [];
+  const nextRequirements = [...row.querySelectorAll("[data-reaction-requirement-index]")].map((requirementRow) => {
+    const requirementIndex = Number(requirementRow.dataset.reactionRequirementIndex);
+    const currentRequirement = authoredRequirements[requirementIndex] ?? {};
+    const kind = requirementRow.querySelector("[data-reaction-requirement-kind]").value;
+    const reference = requirementRow.querySelector("[data-reaction-requirement-ref]").value.trim();
+    const minStacks = Number(requirementRow.querySelector("[data-reaction-requirement-min-stacks]").value);
+    const consume = requirementRow.querySelector("[data-reaction-consume]").value;
+    const requirement = { ...currentRequirement, kind };
+    delete requirement.exposureId;
+    delete requirement.statusId;
+    delete requirement.tag;
+    delete requirement.minStacks;
+    if (kind === "exposure") {
+      requirement.exposureId = reference;
+      if (minStacks !== 1 || Object.hasOwn(currentRequirement, "minStacks")) requirement.minStacks = minStacks;
+    }
+    else if (kind === "status") requirement.statusId = reference;
+    else requirement.tag = reference;
+    const normalizedConsume = kind === "exposure"
+      ? (["none", "one", "all"].includes(consume) ? consume : "none")
+      : kind === "status" ? (consume === "clear" ? "clear" : "none") : undefined;
+    if (normalizedConsume !== undefined && (normalizedConsume !== "none" || Object.hasOwn(currentRequirement, "consume"))) {
+      requirement.consume = normalizedConsume;
+    } else {
+      delete requirement.consume;
+    }
+    return requirement;
+  });
+  const nextEffects = {};
+  const seenEffectIds = new Set();
+  for (const effectRow of row.querySelectorAll("[data-reaction-effect-id]")) {
+    const previousEffectId = effectRow.dataset.reactionEffectId;
+    const effectId = effectRow.querySelector("[data-reaction-effect-key]").value.trim();
+    if (!effectId || seenEffectIds.has(effectId)) {
+      toast("Effect IDs must be non-empty and unique within a reaction.", "err");
+      renderMechanicsHub();
+      return false;
+    }
+    seenEffectIds.add(effectId);
+    const currentEffect = ownDataValue(currentDefinition.effects ?? {}, previousEffectId) ?? {};
+    const amountKind = effectRow.querySelector("[data-reaction-effect-amount-kind]").value;
+    const amountValue = Number(effectRow.querySelector("[data-reaction-effect-amount-value]").value);
+    const targetKind = effectRow.querySelector("[data-reaction-effect-target]").value;
+    const target = targetKind === "radius"
+      ? { kind: "radius", radius: Number(effectRow.querySelector("[data-reaction-effect-radius]").value), maxTargets: Number(effectRow.querySelector("[data-reaction-effect-max-targets]").value) }
+      : targetKind === "terrain_tag"
+        ? { kind: "terrain_tag", tag: effectRow.querySelector("[data-reaction-effect-target-tag]").value.trim(), maxTargets: Number(effectRow.querySelector("[data-reaction-effect-max-targets]").value) }
+        : { kind: "primary" };
+    const nextEffect = {
+      ...currentEffect,
+      kind: "damage",
+      amount: amountKind === "flat" ? { kind: "flat", value: amountValue } : { kind: "source_after_modifiers", multiplier: amountValue },
+      damageType: effectRow.querySelector("[data-reaction-effect-damage-type]").value.trim(),
+      target
+    };
+    const allowReactions = effectRow.querySelector("[data-reaction-allow-chaining]").checked;
+    if (allowReactions || Object.hasOwn(currentEffect, "allowReactions")) nextEffect.allowReactions = allowReactions;
+    else delete nextEffect.allowReactions;
+    defineOwnDataValue(nextEffects, effectId, nextEffect);
+  }
+  const definition = {
+    ...currentDefinition,
+    label: row.querySelector("[data-reaction-label]").value,
+    trigger: {
+      ...(currentDefinition.trigger ?? {}),
+      damageTypes: row.querySelector("[data-reaction-trigger-damage-type]").value
+        .split(",").map((value) => value.trim()).filter(Boolean)
+    },
+    requirements: nextRequirements,
+    effects: nextEffects
+  };
+  const suppressApplications = row.querySelector("[data-reaction-suppress-trigger]").checked;
+  if (suppressApplications || Object.hasOwn(currentDefinition, "suppressTriggerExposureApplications")) {
+    definition.suppressTriggerExposureApplications = suppressApplications;
+  } else {
+    delete definition.suppressTriggerExposureApplications;
+  }
+  if (reactionId !== previousReactionId) delete MechanicsUI.draft.reactions[previousReactionId];
+  defineOwnDataValue(MechanicsUI.draft.reactions, reactionId, definition);
+  invalidateReactionMechanicsPreview();
+  renderMechanicsPreviewResult();
+  return true;
+}
+
+function renderMechanicsReactionPrerequisites() {
+  const panel = $("mechanics-reaction-prerequisites");
+  if (!panel) return;
+  const unmetPrerequisites = Array.isArray(MechanicsUI.recipe?.unmetPrerequisites)
+    ? MechanicsUI.recipe.unmetPrerequisites : [];
+  panel.classList.toggle("hidden", unmetPrerequisites.length === 0);
+  panel.textContent = unmetPrerequisites.length
+    ? `Recipe prerequisites are not met: ${unmetPrerequisites.map((item) => item.code).join(", ")}`
+    : "";
+}
+
+function renderMechanicsReactionEditors() {
+  if (MechanicsUI.selectedModuleId !== "reactions" || !MechanicsUI.draft) return;
+  const reactionLimits = mechanicsReactionLimits();
+  const definitions = $("mechanics-exposure-definition-rows");
+  const applications = $("mechanics-exposure-application-rows");
+  const reactions = $("mechanics-reaction-definition-rows");
+  if (definitions) {
+    definitions.innerHTML = Object.entries(MechanicsUI.draft.exposures.definitions).sort(([left], [right]) => left.localeCompare(right)).map(([exposureId, definition]) => `<div class="mechanics-definition-row" data-exposure-row="${esc(exposureId)}">
+      <label>ID<input data-exposure-id value="${esc(exposureId)}" spellcheck="false"></label>
+      <label>Label<input data-exposure-label value="${esc(definition?.label ?? exposureId)}"></label>
+      <label>Duration<input type="number" min="0.000001" max="1000000000" step="0.1" data-exposure-duration value="${esc(definition?.duration ?? 4)}"></label>
+      <label>Max stacks<input type="number" min="1" max="256" step="1" data-exposure-max-stacks value="${esc(definition?.maxStacks ?? 1)}"></label>
+      <button type="button" class="btn btn-danger" data-remove-exposure>Remove</button>
+    </div>`).join("") || `<div class="mechanics-empty">No exposure definitions.</div>`;
+    definitions.querySelectorAll("[data-exposure-row]").forEach((row) => {
+      const exposureId = row.dataset.exposureRow;
+      const definition = MechanicsUI.draft.exposures.definitions[exposureId];
+      row.querySelector("[data-exposure-id]").addEventListener("change", () => {
+        const nextId = row.querySelector("[data-exposure-id]").value.trim();
+        if (!nextId || (nextId !== exposureId && ownDataValue(MechanicsUI.draft.exposures.definitions, nextId))) return renderMechanicsHub();
+        if (nextId !== exposureId) delete MechanicsUI.draft.exposures.definitions[exposureId];
+        defineOwnDataValue(MechanicsUI.draft.exposures.definitions, nextId, definition);
+        invalidateReactionMechanicsPreview();
+        renderMechanicsHub();
+      });
+      for (const [selector, field, convert] of [
+        ["[data-exposure-label]", "label", String],
+        ["[data-exposure-duration]", "duration", Number],
+        ["[data-exposure-max-stacks]", "maxStacks", Number]
+      ]) row.querySelector(selector)?.addEventListener("input", (event) => {
+        definition[field] = convert(event.target.value);
+        invalidateReactionMechanicsPreview();
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-remove-exposure]").onclick = () => {
+        delete MechanicsUI.draft.exposures.definitions[exposureId];
+        invalidateReactionMechanicsPreview();
+        renderMechanicsHub();
+      };
+    });
+  }
+  if (applications) {
+    applications.innerHTML = mechanicsExposureApplicationRows().map(({ damageTypeId, application, index }) => `<div class="mechanics-definition-row" data-exposure-application-row="${esc(`${damageTypeId}:${index}`)}">
+      <label>Damage type<input data-exposure-damage-type value="${esc(damageTypeId)}" spellcheck="false"></label>
+      <label>Exposure<input data-exposure-application-id value="${esc(application?.exposureId ?? "")}" spellcheck="false"></label>
+      <label>Stacks<input type="number" min="1" max="256" step="1" data-exposure-application-stacks value="${esc(application?.stacks ?? 1)}"></label>
+      <button type="button" class="btn btn-danger" data-remove-exposure-application>Remove</button>
+    </div>`).join("") + `<button type="button" class="btn btn-outline" data-add-exposure-application>+ Add application</button>`;
+    applications.querySelectorAll("[data-exposure-application-row]").forEach((row) => {
+      const separator = row.dataset.exposureApplicationRow.lastIndexOf(":");
+      const damageTypeId = row.dataset.exposureApplicationRow.slice(0, separator);
+      const index = Number(row.dataset.exposureApplicationRow.slice(separator + 1));
+      const update = () => {
+        const nextDamageTypeId = row.querySelector("[data-exposure-damage-type]").value.trim();
+        const next = {
+          exposureId: row.querySelector("[data-exposure-application-id]").value.trim(),
+          stacks: Number(row.querySelector("[data-exposure-application-stacks]").value)
+        };
+        MechanicsUI.draft.exposures.applications.damageTypes[damageTypeId].splice(index, 1);
+        if (MechanicsUI.draft.exposures.applications.damageTypes[damageTypeId].length === 0) {
+          delete MechanicsUI.draft.exposures.applications.damageTypes[damageTypeId];
+        }
+        const target = MechanicsUI.draft.exposures.applications.damageTypes[nextDamageTypeId] ?? [];
+        target.push(next);
+        defineOwnDataValue(MechanicsUI.draft.exposures.applications.damageTypes, nextDamageTypeId, target);
+        invalidateReactionMechanicsPreview();
+        renderMechanicsHub();
+      };
+      row.querySelectorAll("input").forEach((input) => input.addEventListener("change", update));
+      row.querySelector("[data-remove-exposure-application]").onclick = () => {
+        const entries = MechanicsUI.draft.exposures.applications.damageTypes[damageTypeId];
+        if (Array.isArray(entries)) entries.splice(index, 1);
+        if (!entries?.length) delete MechanicsUI.draft.exposures.applications.damageTypes[damageTypeId];
+        invalidateReactionMechanicsPreview();
+        renderMechanicsHub();
+      };
+    });
+    applications.querySelector("[data-add-exposure-application]").onclick = () => {
+      const exposureId = Object.keys(MechanicsUI.draft.exposures.definitions).sort()[0];
+      if (!exposureId) return toast("Add an exposure definition first.", "err");
+      const damageTypeId = "damage_type";
+      const entries = MechanicsUI.draft.exposures.applications.damageTypes[damageTypeId] ?? [];
+      entries.push({ exposureId, stacks: 1 });
+      defineOwnDataValue(MechanicsUI.draft.exposures.applications.damageTypes, damageTypeId, entries);
+      invalidateReactionMechanicsPreview();
+      renderMechanicsHub();
+    };
+  }
+  if (reactions) {
+    reactions.innerHTML = Object.entries(MechanicsUI.draft.reactions).sort(([left], [right]) => left.localeCompare(right))
+      .map(([reactionId, definition]) => mechanicsReactionDefinitionRowHtml(reactionId, definition)).join("")
+      || `<div class="mechanics-empty">No reaction definitions.</div>`;
+    reactions.querySelectorAll("[data-reaction-row]").forEach((row) => {
+      const reactionId = row.dataset.reactionRow;
+      const definition = MechanicsUI.draft.reactions[reactionId];
+      const currentDefinition = () => ownDataValue(MechanicsUI.draft.reactions, reactionId);
+      row.querySelectorAll("[data-reaction-requirement-index]").forEach((requirementRow) => {
+        const requirementIndex = Number(requirementRow.dataset.reactionRequirementIndex);
+        const requirement = definition?.requirements?.[requirementIndex];
+        requirementRow.querySelector("[data-reaction-requirement-kind]").value = requirement?.kind ?? "exposure";
+        requirementRow.querySelector("[data-reaction-consume]").value = requirement?.consume ?? "none";
+        requirementRow.querySelectorAll("input, select").forEach((input) => {
+          input.addEventListener(input.matches("input:not([type=checkbox])") ? "input" : "change", () => updateMechanicsReactionRow(row, reactionId));
+        });
+        requirementRow.querySelector("[data-remove-reaction-requirement]").onclick = () => {
+          const activeDefinition = currentDefinition();
+          const requirements = Array.isArray(activeDefinition?.requirements) ? activeDefinition.requirements : [];
+          requirements.splice(requirementIndex, 1);
+          activeDefinition.requirements = requirements;
+          invalidateReactionMechanicsPreview();
+          renderMechanicsHub();
+        };
+      });
+      row.querySelectorAll("[data-reaction-effect-id]").forEach((effectRow) => {
+        const effectId = effectRow.dataset.reactionEffectId;
+        const effect = ownDataValue(definition?.effects ?? {}, effectId);
+        effectRow.querySelector("[data-reaction-effect-amount-kind]").value = effect?.amount?.kind ?? "flat";
+        effectRow.querySelector("[data-reaction-effect-target]").value = effect?.target?.kind ?? "primary";
+        effectRow.querySelectorAll("input:not([data-reaction-effect-key]), select").forEach((input) => {
+          input.addEventListener(input.matches("input:not([type=checkbox])") ? "input" : "change", () => updateMechanicsReactionRow(row, reactionId));
+        });
+        effectRow.querySelector("[data-reaction-effect-key]").addEventListener("change", () => {
+          if (updateMechanicsReactionRow(row, reactionId)) renderMechanicsHub();
+        });
+        effectRow.querySelector("[data-remove-reaction-effect]").onclick = () => {
+          const activeDefinition = currentDefinition();
+          if (activeDefinition?.effects) delete activeDefinition.effects[effectId];
+          invalidateReactionMechanicsPreview();
+          renderMechanicsHub();
+        };
+      });
+      for (const selector of ["[data-reaction-label]", "[data-reaction-trigger-damage-type]"]) {
+        row.querySelector(selector).addEventListener("input", () => updateMechanicsReactionRow(row, reactionId));
+      }
+      row.querySelector("[data-reaction-suppress-trigger]").addEventListener("change", () => updateMechanicsReactionRow(row, reactionId));
+      row.querySelector("[data-reaction-id]").addEventListener("change", () => {
+        if (updateMechanicsReactionRow(row, reactionId)) renderMechanicsHub();
+      });
+      row.querySelector("[data-add-reaction-requirement]").onclick = () => {
+        const activeDefinition = currentDefinition();
+        if (!activeDefinition) return;
+        const requirements = Array.isArray(activeDefinition.requirements) ? activeDefinition.requirements : [];
+        if (requirements.length >= (reactionLimits.requirementsPerReaction ?? 8)) return toast("Requirement limit reached for this reaction.", "err");
+        requirements.push({ kind: "exposure", exposureId: "", consume: "none" });
+        activeDefinition.requirements = requirements;
+        invalidateReactionMechanicsPreview();
+        renderMechanicsHub();
+      };
+      row.querySelector("[data-add-reaction-effect]").onclick = () => {
+        const activeDefinition = currentDefinition();
+        if (!activeDefinition) return;
+        const effects = activeDefinition.effects ?? {};
+        if (Object.keys(effects).length >= (reactionLimits.effectsPerReaction ?? 8)) return toast("Effect limit reached for this reaction.", "err");
+        const effectId = nextReactionAuthoringId(effects, "effect");
+        defineOwnDataValue(effects, effectId, {
+          kind: "damage",
+          amount: { kind: "flat", value: 1 },
+          damageType: "",
+          target: { kind: "primary" },
+          allowReactions: false
+        });
+        activeDefinition.effects = effects;
+        invalidateReactionMechanicsPreview();
+        renderMechanicsHub();
+      };
+      row.querySelector("[data-remove-reaction]").onclick = () => {
+        delete MechanicsUI.draft.reactions[reactionId];
+        invalidateReactionMechanicsPreview();
+        renderMechanicsHub();
+      };
+    });
+  }
+  const addExposure = $("btn-mechanics-add-exposure");
+  if (addExposure) addExposure.onclick = () => {
+    if (Object.keys(MechanicsUI.draft.exposures.definitions).length >= (reactionLimits.exposureDefinitions ?? 256)) return toast("Exposure definition limit reached.", "err");
+    const exposureId = nextReactionAuthoringId(MechanicsUI.draft.exposures.definitions, "exposure");
+    defineOwnDataValue(MechanicsUI.draft.exposures.definitions, exposureId, { label: "Exposure", duration: 4, maxStacks: 1 });
+    invalidateReactionMechanicsPreview();
+    renderMechanicsHub();
+  };
+  const addReaction = $("btn-mechanics-add-reaction");
+  if (addReaction) addReaction.onclick = () => {
+    if (Object.keys(MechanicsUI.draft.reactions).length >= (reactionLimits.reactionDefinitions ?? 256)) return toast("Reaction definition limit reached.", "err");
+    const reactionId = nextReactionAuthoringId(MechanicsUI.draft.reactions, "reaction");
+    defineOwnDataValue(MechanicsUI.draft.reactions, reactionId, {
+      label: "Reaction",
+      trigger: { damageTypes: [""] },
+      requirements: [{ kind: "exposure", exposureId: "", consume: "none" }],
+      effects: { damage: { kind: "damage", amount: { kind: "flat", value: 1 }, damageType: "", target: { kind: "primary" }, allowReactions: false } }
+    });
+    invalidateReactionMechanicsPreview();
+    renderMechanicsHub();
+  };
+  renderMechanicsReactionPrerequisites();
+}
+
+function updateMechanicsNavigationDraft() {
+  const mode = $("mechanics-navigation-mode")?.value === "dynamic_flow" ? "dynamic_flow" : "authored_routes";
+  if (mode === "authored_routes") {
+    MechanicsUI.draft = { mode: "authored_routes" };
+    MechanicsUI.preview = null;
+    return;
+  }
+
+  const movementProfiles = {};
+  const profileIdRemap = new Map();
+  const movementRows = [...document.querySelectorAll("#mechanics-navigation-movement-profile-rows [data-navigation-profile-row]")];
+  for (const row of movementRows) {
+    const previousProfileId = row.dataset.profileId;
+    const profileId = row.querySelector("[data-navigation-profile-id]")?.value.trim();
+    if (!profileId) throw new Error("Movement profile ID cannot be empty.");
+    if (ownDataValue(movementProfiles, profileId)) throw new Error(`Duplicate movement profile ID "${profileId}".`);
+    if (previousProfileId) profileIdRemap.set(previousProfileId, profileId);
+    const terrainCostsInput = row.querySelector("[data-navigation-terrain-costs]");
+    let terrainCosts;
+    if (terrainCostsInput?.value.trim()) {
+      const parsed = JSON.parse(terrainCostsInput.value);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Terrain costs must be a JSON object.");
+      terrainCosts = Object.fromEntries(Object.entries(parsed)
+        .filter(([, cost]) => cost === null || Number.isSafeInteger(cost)));
+    }
+    const costValue = row.querySelector("[data-navigation-default-terrain-cost]")?.value ?? "";
+    defineOwnDataValue(movementProfiles, profileId, {
+      label: row.querySelector("[data-navigation-profile-label]")?.value.trim() || profileId,
+      terrainMode: row.querySelector("[data-navigation-terrain-mode]")?.value === "ignore_walkable" ? "ignore_walkable" : "respect_walkable",
+      towerOccupancy: row.querySelector("[data-navigation-tower-occupancy]")?.value === "ignored" ? "ignored" : "blocked",
+      defaultTerrainCost: costValue === "" ? null : Number(costValue),
+      ...(terrainCosts === undefined ? {} : { terrainCosts })
+    });
+  }
+  if (Object.keys(movementProfiles).length === 0) throw new Error("Dynamic flow requires at least one movement profile.");
+
+  const selectedDefault = $("mechanics-navigation-default-profile")?.value;
+  const defaultMovementProfileId = profileIdRemap.get(selectedDefault) ?? selectedDefault;
+  if (!ownDataValue(movementProfiles, defaultMovementProfileId)) {
+    throw new Error(`Default movement profile "${selectedDefault}" was removed without a replacement.`);
+  }
+  const enemyMovementProfiles = {};
+  for (const row of document.querySelectorAll("#mechanics-navigation-enemy-profile-rows [data-navigation-enemy-row]")) {
+    const selectedProfileId = row.querySelector("[data-navigation-enemy-profile]")?.value;
+    const movementProfileId = profileIdRemap.get(selectedProfileId) ?? selectedProfileId;
+    if (selectedProfileId && !ownDataValue(movementProfiles, movementProfileId)) {
+      throw new Error(`Enemy "${row.dataset.enemyId}" references removed movement profile "${selectedProfileId}".`);
+    }
+    if (movementProfileId) {
+      defineOwnDataValue(enemyMovementProfiles, row.dataset.enemyId, movementProfileId);
+    }
+  }
+  MechanicsUI.draft = {
+    mode: "dynamic_flow",
+    defaultMovementProfileId,
+    movementProfiles,
+    ...(Object.keys(enemyMovementProfiles).length === 0 ? {} : { enemyMovementProfiles })
+  };
+  MechanicsUI.preview = null;
+}
+
+function navigationMovementProfileRowHtml(profileId, definition) {
+  const terrainCosts = definition.terrainCosts && typeof definition.terrainCosts === "object"
+    ? JSON.stringify(definition.terrainCosts, null, 2)
+    : "";
+  return `<div class="mechanics-navigation-profile-row" data-navigation-profile-row data-profile-id="${esc(profileId)}">
+    <label>Profile ID<input data-navigation-profile-id type="text" value="${esc(profileId)}" spellcheck="false"></label>
+    <label>Label<input data-navigation-profile-label type="text" value="${esc(definition.label ?? profileId)}"></label>
+    <label>Terrain mode<select data-navigation-terrain-mode><option value="respect_walkable"${definition.terrainMode === "respect_walkable" ? " selected" : ""}>Respect walkable</option><option value="ignore_walkable"${definition.terrainMode === "ignore_walkable" ? " selected" : ""}>Ignore walkable</option></select></label>
+    <label>Tower occupancy<select data-navigation-tower-occupancy><option value="blocked"${definition.towerOccupancy === "blocked" ? " selected" : ""}>Blocked</option><option value="ignored"${definition.towerOccupancy === "ignored" ? " selected" : ""}>Ignored</option></select></label>
+    <label>Default terrain cost<input data-navigation-default-terrain-cost type="number" min="1" max="1000000" step="1" value="${definition.defaultTerrainCost ?? ""}" placeholder="null = blocked"></label>
+    <label>Terrain costs JSON<textarea data-navigation-terrain-costs spellcheck="false" placeholder='{"water": 2000}'>${esc(terrainCosts)}</textarea></label>
+    <button class="btn-icon" type="button" data-remove-navigation-profile title="Remove movement profile" aria-label="Remove movement profile">${ICO.trash}</button>
+  </div>`;
+}
+
+function renderMechanicsNavigationEditor() {
+  if (MechanicsUI.selectedModuleId !== "navigation" || !MechanicsUI.draft) return;
+  const draft = normalizeNavigationMechanicsDraft(MechanicsUI.draft);
+  MechanicsUI.draft = draft;
+  const mode = draft.mode === "dynamic_flow" ? "dynamic_flow" : "authored_routes";
+  const modeSelect = $("mechanics-navigation-mode");
+  if (modeSelect) modeSelect.value = mode;
+  const movementProfiles = mode === "dynamic_flow" ? draft.movementProfiles : {};
+  const profileIds = Object.keys(movementProfiles);
+  const defaultSelect = $("mechanics-navigation-default-profile");
+  if (defaultSelect) {
+    defaultSelect.innerHTML = profileIds.map((profileId) => `<option value="${esc(profileId)}">${esc(profileId)}</option>`).join("");
+    defaultSelect.value = draft.defaultMovementProfileId ?? profileIds[0] ?? "";
+    defaultSelect.disabled = mode !== "dynamic_flow";
+    defaultSelect.onchange = () => {
+      try { updateMechanicsNavigationDraft(); renderMechanicsPreviewResult(); }
+      catch (error) { MechanicsUI.error = error; renderMechanicsPreviewResult(); }
+    };
+  }
+
+  const movementRows = $("mechanics-navigation-movement-profile-rows");
+  if (movementRows) movementRows.innerHTML = mode === "dynamic_flow"
+    ? Object.entries(movementProfiles).map(([profileId, definition]) => navigationMovementProfileRowHtml(profileId, definition)).join("")
+    : `<div class="mechanics-empty">Authored routes preserve the standard movement and placement path.</div>`;
+  const enemyRows = $("mechanics-navigation-enemy-profile-rows");
+  if (enemyRows) enemyRows.innerHTML = mode === "dynamic_flow"
+    ? Object.entries(S.project?.enemies ?? {}).map(([enemyId, enemy]) => {
+      const assigned = ownDataValue(draft.enemyMovementProfiles, enemyId) ?? "";
+      return `<div class="mechanics-assignment-row" data-navigation-enemy-row data-enemy-id="${esc(enemyId)}"><span><strong>${esc(enemy.label ?? enemyId)}</strong><code>${esc(enemyId)}</code></span><select data-navigation-enemy-profile><option value="">Use default</option>${profileIds.map((profileId) => `<option value="${esc(profileId)}"${profileId === assigned ? " selected" : ""}>${esc(profileId)}</option>`).join("")}</select></div>`;
+    }).join("") || `<div class="mechanics-empty">No enemy definitions.</div>`
+    : `<div class="mechanics-empty">Enemy assignments are inactive in authored-routes mode.</div>`;
+
+  modeSelect.onchange = () => {
+    MechanicsUI.draft = modeSelect.value === "dynamic_flow"
+      ? normalizeNavigationMechanicsDraft({
+        mode: "dynamic_flow",
+        defaultMovementProfileId: "ground",
+        movementProfiles: { ground: { label: "Ground", terrainMode: "respect_walkable", towerOccupancy: "blocked", defaultTerrainCost: 1000 } }
+      })
+      : { mode: "authored_routes" };
+    MechanicsUI.preview = null;
+    clearNavigationOverlay();
+    renderMechanicsHub();
+  };
+  movementRows?.querySelectorAll("input,select,textarea").forEach((input) => input.addEventListener("change", () => {
+    try { MechanicsUI.error = null; updateMechanicsNavigationDraft(); renderMechanicsNavigationEditor(); renderMechanicsPreviewResult(); }
+    catch (error) { MechanicsUI.error = error; renderMechanicsPreviewResult(); }
+  }));
+  movementRows?.querySelectorAll("[data-remove-navigation-profile]").forEach((button) => button.onclick = () => {
+    const row = button.closest("[data-navigation-profile-row]");
+    const profileId = row?.dataset.profileId;
+    if (!profileId) return;
+    const movementProfiles = MechanicsUI.draft.movementProfiles ?? {};
+    const assignedEnemyIds = Object.entries(MechanicsUI.draft.enemyMovementProfiles ?? {})
+      .filter(([, assignedProfileId]) => assignedProfileId === profileId)
+      .map(([enemyId]) => enemyId);
+    if (MechanicsUI.draft.defaultMovementProfileId === profileId) {
+      MechanicsUI.error = new Error(`Movement profile "${profileId}" is the default and cannot be removed until another default is selected.`);
+      renderMechanicsPreviewResult();
+      return;
+    }
+    if (assignedEnemyIds.length) {
+      MechanicsUI.error = new Error(`Movement profile "${profileId}" is assigned to ${assignedEnemyIds.join(", ")} and cannot be removed.`);
+      renderMechanicsPreviewResult();
+      return;
+    }
+    if (Object.keys(movementProfiles).length <= 1) {
+      MechanicsUI.error = new Error("Dynamic navigation requires at least one movement profile.");
+      renderMechanicsPreviewResult();
+      return;
+    }
+    delete movementProfiles[profileId];
+    MechanicsUI.draft = normalizeNavigationMechanicsDraft(MechanicsUI.draft);
+    MechanicsUI.preview = null;
+    renderMechanicsHub();
+  });
+  enemyRows?.querySelectorAll("[data-navigation-enemy-profile]").forEach((select) => select.onchange = () => {
+    try { MechanicsUI.error = null; updateMechanicsNavigationDraft(); renderMechanicsPreviewResult(); }
+    catch (error) { MechanicsUI.error = error; renderMechanicsPreviewResult(); }
+  });
+  const addProfile = $("btn-mechanics-add-movement-profile");
+  if (addProfile) addProfile.onclick = () => {
+    if (MechanicsUI.draft.mode !== "dynamic_flow") return;
+    let suffix = Object.keys(MechanicsUI.draft.movementProfiles).length + 1;
+    while (ownDataValue(MechanicsUI.draft.movementProfiles, `profile_${suffix}`)) suffix += 1;
+    defineOwnDataValue(MechanicsUI.draft.movementProfiles, `profile_${suffix}`, {
+      label: `Profile ${suffix}`,
+      terrainMode: "respect_walkable",
+      towerOccupancy: "blocked",
+      defaultTerrainCost: 1000
+    });
+    MechanicsUI.preview = null;
+    renderMechanicsHub();
+  };
+  const overlayToggle = $("mechanics-navigation-overlay-toggle");
+  if (overlayToggle) {
+    overlayToggle.checked = MechanicsUI.navigationOverlayEnabled;
+    overlayToggle.onchange = () => {
+      MechanicsUI.navigationOverlayEnabled = overlayToggle.checked;
+      if (overlayToggle.checked) void refreshNavigationOverlay();
+      else clearNavigationOverlay("Overlay disabled");
+    };
+  }
+}
+
+function normalizeElevationOverrides(value, width = Number.MAX_SAFE_INTEGER, height = Number.MAX_SAFE_INTEGER) {
+  if (!Array.isArray(value) || value.length > 65_536) throw new Error("Elevation overrides must be a bounded array.");
+  const seen = new Set();
+  const normalized = [];
+  for (const authored of value) {
+    if (!authored || typeof authored !== "object" || Array.isArray(authored)) throw new Error("Each elevation row needs q, r, and elevation.");
+    const q = Number(authored.q);
+    const r = Number(authored.r);
+    const elevation = Number(authored.elevation);
+    if (!Number.isSafeInteger(q) || !Number.isSafeInteger(r) || q < 0 || r < 0 || q >= width || r >= height) {
+      throw new Error(`Elevation coordinate (${authored.q}, ${authored.r}) is outside the selected map.`);
+    }
+    if (!Number.isSafeInteger(elevation) || Math.abs(elevation) > 1_000_000) {
+      throw new Error("Elevation must be an integer from -1000000 to 1000000.");
+    }
+    const key = `${q},${r}`;
+    if (seen.has(key)) throw new Error(`Duplicate elevation coordinate (${q}, ${r}).`);
+    seen.add(key);
+    if (elevation !== 0) normalized.push({ q, r, elevation });
+  }
+  normalized.sort((left, right) => left.r - right.r || left.q - right.q);
+  return normalized;
+}
+
+function elevationCanvasWindow(map, focusedCoord) {
+  const mapWidth = Number(map?.width);
+  const mapHeight = Number(map?.height);
+  if (!Number.isSafeInteger(mapWidth) || !Number.isSafeInteger(mapHeight) || mapWidth < 1 || mapHeight < 1) {
+    return { startQ: 0, startR: 0, width: 0, height: 0, visibleCount: 0, partial: false, tiles: [] };
+  }
+  const width = Math.min(mapWidth, Math.floor(Math.sqrt(MAX_ELEVATION_CANVAS_TILES)));
+  const height = Math.min(mapHeight, Math.floor(MAX_ELEVATION_CANVAS_TILES / width));
+  const focusQ = Math.max(0, Math.min(mapWidth - 1, Number(focusedCoord?.q) || 0));
+  const focusR = Math.max(0, Math.min(mapHeight - 1, Number(focusedCoord?.r) || 0));
+  const startQ = Math.max(0, Math.min(mapWidth - width, focusQ - Math.floor(width / 2)));
+  const startR = Math.max(0, Math.min(mapHeight - height, focusR - Math.floor(height / 2)));
+  const tiles = [];
+  for (let r = 0; r < height; r += 1) {
+    for (let q = 0; q < width; q += 1) tiles.push({ q, r });
+  }
+  return {
+    startQ,
+    startR,
+    width,
+    height,
+    visibleCount: tiles.length,
+    partial: width < mapWidth || height < mapHeight,
+    tiles
+  };
+}
+
+function syncElevationCanvasWindow(map) {
+  const canvasWindow = elevationCanvasWindow(map, ElevationUI.focusedCoord);
+  ElevationUI.canvasWindow = canvasWindow;
+  ElevationUI.canvasTiles = canvasWindow.tiles;
+  return canvasWindow;
+}
+
+function elevationCanvasCoord(coord, canvasWindow = ElevationUI.canvasWindow) {
+  if (!coord || !canvasWindow) return null;
+  const q = coord.q - canvasWindow.startQ;
+  const r = coord.r - canvasWindow.startR;
+  return q >= 0 && r >= 0 && q < canvasWindow.width && r < canvasWindow.height ? { q, r } : null;
+}
+
+function loadElevationMap(requestedMapId = ElevationUI.mapId) {
+  const maps = S.project?.maps ?? {};
+  const missionMapId = ownDataValue(S.project?.missions, mechanicsMissionId())?.mapId;
+  const mapId = requestedMapId && ownDataValue(maps, requestedMapId)
+    ? requestedMapId
+    : missionMapId && ownDataValue(maps, missionMapId) ? missionMapId : Object.keys(maps)[0] ?? null;
+  ElevationUI.mapId = mapId;
+  const map = mapId ? ownDataValue(maps, mapId) : null;
+  ElevationUI.overrides = map
+    ? normalizeElevationOverrides(map.elevationOverrides ?? [], map.width, map.height)
+    : [];
+  ElevationUI.focusedCoord = map && ElevationUI.focusedCoord
+    && ElevationUI.focusedCoord.q < map.width && ElevationUI.focusedCoord.r < map.height
+    ? { ...ElevationUI.focusedCoord }
+    : map ? { q: 0, r: 0 } : null;
+  syncElevationCanvasWindow(map);
+  ElevationUI.preview = null;
+  ElevationUI.error = null;
+  ElevationLineOfSightUI.contextKey = null;
+  invalidateElevationLineOfSightAnalysis();
+}
+
+function elevationRowsDraft() {
+  const map = ownDataValue(S.project?.maps, ElevationUI.mapId);
+  if (!map) throw new Error("Choose a compiled map before authoring elevation.");
+  const next = ElevationUI.overrides.map((entry) => ({ ...entry }));
+  for (const row of document.querySelectorAll("#mechanics-elevation-override-rows [data-elevation-row]")) {
+    const index = Number(row.dataset.elevationIndex);
+    if (!Number.isSafeInteger(index) || index < 0 || index >= next.length) {
+      throw new Error("Elevation editor row no longer matches the guarded draft.");
+    }
+    next[index] = {
+      q: row.querySelector("[data-elevation-q]")?.value,
+      r: row.querySelector("[data-elevation-r]")?.value,
+      elevation: row.querySelector("[data-elevation-value]")?.value
+    };
+  }
+  return normalizeElevationOverrides(next, map.width, map.height);
+}
+
+function elevationEditorRowWindow() {
+  const rows = ElevationUI.overrides;
+  if (rows.length <= MAX_ELEVATION_EDITOR_ROWS) {
+    return rows.map((entry, index) => ({ entry, index }));
+  }
+  const focus = ElevationUI.focusedCoord ?? { q: 0, r: 0 };
+  const insertionIndex = rows.findIndex((entry) => entry.r > focus.r || (entry.r === focus.r && entry.q >= focus.q));
+  const centerIndex = insertionIndex < 0 ? rows.length - 1 : insertionIndex;
+  const start = Math.max(0, Math.min(
+    rows.length - MAX_ELEVATION_EDITOR_ROWS,
+    centerIndex - Math.floor(MAX_ELEVATION_EDITOR_ROWS / 2)
+  ));
+  return rows.slice(start, start + MAX_ELEVATION_EDITOR_ROWS)
+    .map((entry, offset) => ({ entry, index: start + offset }));
+}
+
+function elevationRowHtml(entry, index) {
+  return `<div class="mechanics-definition-row" data-elevation-row data-elevation-index="${index}">
+    <label>q<input data-elevation-q type="number" min="0" step="1" value="${entry.q}"></label>
+    <label>r<input data-elevation-r type="number" min="0" step="1" value="${entry.r}"></label>
+    <label>Elevation<input data-elevation-value type="number" min="-1000000" max="1000000" step="1" value="${entry.elevation}"></label>
+    <button class="btn-icon" data-remove-elevation type="button" title="Remove elevation tile" aria-label="Remove elevation tile">${ICO.trash}</button>
+  </div>`;
+}
+
+function setElevationAt(coord, elevation) {
+  const map = ownDataValue(S.project?.maps, ElevationUI.mapId);
+  if (!map || !coord || coord.q < 0 || coord.r < 0 || coord.q >= map.width || coord.r >= map.height) return false;
+  const value = Number(elevation);
+  if (!Number.isSafeInteger(value) || Math.abs(value) > 1_000_000) return false;
+  const next = ElevationUI.overrides.filter((entry) => entry.q !== coord.q || entry.r !== coord.r);
+  if (value !== 0) next.push({ q: coord.q, r: coord.r, elevation: value });
+  ElevationUI.overrides = normalizeElevationOverrides(next, map.width, map.height);
+  ElevationUI.focusedCoord = { q: coord.q, r: coord.r };
+  ElevationUI.preview = null;
+  ElevationUI.error = null;
+  invalidateElevationLineOfSightAnalysis();
+  return true;
+}
+
+function invalidateElevationLineOfSightAnalysis() {
+  ElevationLineOfSightUI.requestSerial += 1;
+  ElevationLineOfSightUI.analysis = null;
+  ElevationLineOfSightUI.error = null;
+  ElevationLineOfSightUI.loading = false;
+}
+
+function elevationLineOfSightTags(value) {
+  const source = String(value ?? "").trim();
+  if (!source) return [];
+  if (source.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(source);
+      return Array.isArray(parsed) ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return source.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function boundedElevationLineOfSightCoord(coord, map, label) {
+  const q = Number(coord?.q);
+  const r = Number(coord?.r);
+  if (!Number.isSafeInteger(q) || !Number.isSafeInteger(r)
+    || q < 0 || r < 0 || q >= Number(map?.width) || r >= Number(map?.height)) {
+    throw new Error(`${label} must be an integer coordinate inside the selected map.`);
+  }
+  return { q, r };
+}
+
+function elevationLineOfSightMissionMap() {
+  const missionId = mechanicsMissionId();
+  const mission = ownDataValue(S.project?.missions, missionId);
+  const mapId = ownDataValue(mission, "mapId");
+  const map = typeof mapId === "string" ? ownDataValue(S.project?.maps, mapId) : undefined;
+  return map ? { missionId, mapId, map } : null;
+}
+
+function renderElevationLineOfSightState() {
+  const state = $("mechanics-elevation-los-state");
+  if (!state) return;
+  state.classList.toggle("error", Boolean(ElevationLineOfSightUI.error));
+  state.textContent = ElevationLineOfSightUI.error
+    ? `${ElevationLineOfSightUI.error.code ? `${ElevationLineOfSightUI.error.code}: ` : ""}${ElevationLineOfSightUI.error.message}`
+    : ElevationLineOfSightUI.loading
+      ? "Analyzing the current mechanics preview candidate…"
+      : ElevationLineOfSightUI.analysis
+        ? JSON.stringify(ElevationLineOfSightUI.analysis, null, 2)
+        : "Preview this mechanics profile, then analyze a bounded source and target.";
+}
+
+function renderElevationLineOfSightEditor() {
+  const enabledInput = $("mechanics-elevation-los-enabled");
+  const lineOfSight = MechanicsUI.draft?.lineOfSight;
+  const tagsInput = $("mechanics-elevation-los-tags");
+  const terrainBlockerTags = Array.isArray(lineOfSight?.terrainBlockerTags) ? lineOfSight.terrainBlockerTags : [];
+  const missionMap = elevationLineOfSightMissionMap();
+  const map = missionMap?.map;
+  if (!enabledInput || !tagsInput || !map || MechanicsUI.selectedModuleId !== "elevation") return;
+
+  const contextKey = `${missionMap.missionId ?? ""}:${missionMap.mapId}`;
+  if (ElevationLineOfSightUI.contextKey !== contextKey) {
+    ElevationLineOfSightUI.contextKey = contextKey;
+    ElevationLineOfSightUI.source = map.spawnCoord ? { q: map.spawnCoord.q, r: map.spawnCoord.r } : { q: 0, r: 0 };
+    ElevationLineOfSightUI.targets = [map.coreCoord
+      ? { q: map.coreCoord.q, r: map.coreCoord.r }
+      : { q: Math.max(0, map.width - 1), r: Math.max(0, map.height - 1) }];
+    invalidateElevationLineOfSightAnalysis();
+  }
+
+  enabledInput.checked = Boolean(lineOfSight);
+  enabledInput.onchange = () => {
+    if (enabledInput.checked) {
+      const parsedTags = elevationLineOfSightTags(tagsInput.value);
+      if (!parsedTags) {
+        enabledInput.checked = false;
+        ElevationLineOfSightUI.error = {
+          code: "invalid_tags_json",
+          message: "Terrain blocker tags must be comma-separated text or a JSON array."
+        };
+        renderElevationLineOfSightState();
+        return;
+      }
+      MechanicsUI.draft.lineOfSight = { terrainBlockerTags: parsedTags };
+      MechanicsUI.moduleSchemaVersion = Math.max(2, MechanicsUI.moduleSchemaVersion || 1);
+    } else {
+      delete MechanicsUI.draft.lineOfSight;
+    }
+    MechanicsUI.preview = null;
+    invalidateElevationLineOfSightAnalysis();
+    renderMechanicsHub();
+  };
+
+  const serializedTerrainBlockerTags = JSON.stringify(terrainBlockerTags);
+  tagsInput.value = terrainBlockerTags.length === 0
+    ? ""
+    : terrainBlockerTags.length === 1
+      && typeof terrainBlockerTags[0] === "string"
+      && terrainBlockerTags[0] === terrainBlockerTags[0].trim()
+      && !terrainBlockerTags[0].startsWith("[")
+      && !/[\r\n,]/.test(terrainBlockerTags[0])
+      ? terrainBlockerTags[0]
+      : serializedTerrainBlockerTags;
+  tagsInput.disabled = !lineOfSight;
+  tagsInput.oninput = () => {
+    if (!MechanicsUI.draft?.lineOfSight) return;
+    const parsedTags = elevationLineOfSightTags(tagsInput.value);
+    invalidateElevationLineOfSightAnalysis();
+    if (!parsedTags) {
+      MechanicsUI.preview = null;
+      ElevationLineOfSightUI.error = {
+        code: "invalid_tags_json",
+        message: "Terrain blocker tags must be comma-separated text or a JSON array."
+      };
+      renderElevationLineOfSightState();
+      return;
+    }
+    MechanicsUI.draft.lineOfSight.terrainBlockerTags = parsedTags;
+    MechanicsUI.moduleSchemaVersion = Math.max(2, MechanicsUI.moduleSchemaVersion || 1);
+    MechanicsUI.preview = null;
+    renderElevationLineOfSightState();
+  };
+
+  const coordinateBindings = [
+    ["mechanics-elevation-los-source-q", "source", "q"],
+    ["mechanics-elevation-los-source-r", "source", "r"],
+    ["mechanics-elevation-los-target-q", "target", "q"],
+    ["mechanics-elevation-los-target-r", "target", "r"]
+  ];
+  for (const [id, kind, axis] of coordinateBindings) {
+    const input = $(id);
+    if (!input) continue;
+    const coord = kind === "source" ? ElevationLineOfSightUI.source : ElevationLineOfSightUI.targets[0];
+    input.max = String(axis === "q" ? map.width - 1 : map.height - 1);
+    input.value = String(coord?.[axis] ?? 0);
+    input.onchange = () => {
+      const value = Number(input.value);
+      if (!Number.isSafeInteger(value)) return renderElevationLineOfSightEditor();
+      if (kind === "source") ElevationLineOfSightUI.source = { ...ElevationLineOfSightUI.source, [axis]: value };
+      else ElevationLineOfSightUI.targets = [{ ...ElevationLineOfSightUI.targets[0], [axis]: value }];
+      invalidateElevationLineOfSightAnalysis();
+      renderElevationLineOfSightState();
+    };
+  }
+
+  const analyzeButton = $("btn-elevation-los-analyze");
+  if (analyzeButton) {
+    analyzeButton.disabled = !lineOfSight || S.dirty || MechanicsUI.loading || MechanicsUI.applying
+      || ElevationLineOfSightUI.loading;
+    analyzeButton.onclick = () => void analyzeElevationLineOfSight();
+  }
+  renderElevationLineOfSightState();
+}
+
+function renderElevationHighGroundEditor() {
+  const enabledInput = $("mechanics-elevation-high-ground-enabled");
+  const maxDeltaInput = $("mechanics-elevation-high-ground-max-delta");
+  const rangeBonusInput = $("mechanics-elevation-high-ground-range-bonus");
+  const damageBonusInput = $("mechanics-elevation-high-ground-damage-bps");
+  if (!enabledInput || !maxDeltaInput || !rangeBonusInput || !damageBonusInput
+    || MechanicsUI.selectedModuleId !== "elevation") return;
+
+  const highGround = MechanicsUI.draft?.highGround;
+  const limits = mechanicsHighGroundLimits();
+  maxDeltaInput.min = "1";
+  maxDeltaInput.max = String(limits.maximumEffectiveElevationDelta ?? 64);
+  rangeBonusInput.min = "0";
+  rangeBonusInput.max = String(limits.rangeBonusPerElevation ?? 16);
+  damageBonusInput.min = "0";
+  damageBonusInput.max = String(limits.damageBonusBasisPointsPerElevation ?? 10000);
+  for (const input of [maxDeltaInput, rangeBonusInput, damageBonusInput]) input.step = "1";
+
+  enabledInput.checked = Boolean(highGround);
+  enabledInput.onchange = () => {
+    if (enabledInput.checked) {
+      MechanicsUI.draft.highGround = {
+        maximumEffectiveElevationDelta: 3,
+        rangeBonusPerElevation: 1,
+        damageBonusBasisPointsPerElevation: 1000
+      };
+      MechanicsUI.moduleSchemaVersion = Math.max(3, MechanicsUI.moduleSchemaVersion || 1);
+    } else {
+      delete MechanicsUI.draft.highGround;
+    }
+    MechanicsUI.preview = null;
+    renderMechanicsHub();
+  };
+
+  const bindings = [
+    [maxDeltaInput, "maximumEffectiveElevationDelta"],
+    [rangeBonusInput, "rangeBonusPerElevation"],
+    [damageBonusInput, "damageBonusBasisPointsPerElevation"]
+  ];
+  for (const [input, field] of bindings) {
+    input.disabled = !highGround;
+    input.value = String(highGround?.[field] ?? (field === "maximumEffectiveElevationDelta" ? 3 : field === "rangeBonusPerElevation" ? 1 : 1000));
+    input.oninput = () => {
+      if (!MechanicsUI.draft?.highGround) return;
+      const value = Number(input.value);
+      if (!Number.isSafeInteger(value)) return;
+      MechanicsUI.draft.highGround[field] = value;
+      MechanicsUI.moduleSchemaVersion = Math.max(3, MechanicsUI.moduleSchemaVersion || 1);
+      MechanicsUI.preview = null;
+      renderMechanicsPreviewResult();
+    };
+  }
+}
+
+function physicsListFromEditor(value, maximumEntries) {
+  const seen = new Set();
+  const values = [];
+  for (const raw of String(value ?? "").split(/[\r\n,]+/)) {
+    const entry = raw.trim();
+    if (!entry || new TextEncoder().encode(entry).length > 128 || seen.has(entry)) continue;
+    seen.add(entry);
+    values.push(entry);
+    if (values.length >= maximumEntries) break;
+  }
+  return values;
+}
+
+function renderPhysicsMechanicsEditor() {
+  if (MechanicsUI.selectedModuleId !== "physics" || !MechanicsUI.draft) return;
+  MechanicsUI.draft = normalizePhysicsMechanicsDraft(MechanicsUI.draft);
+  const bindings = [
+    ["mechanics-physics-displacement-immunity", "displacementImmuneEnemyTypeIds", 4096],
+    ["mechanics-physics-fall-immunity", "fallImmuneEnemyTypeIds", 4096],
+    ["mechanics-physics-hazard-tags", "fallHazardTerrainTags", 64]
+  ];
+  for (const [inputId, field, maximumEntries] of bindings) {
+    const input = $(inputId);
+    if (!input) continue;
+    input.value = (MechanicsUI.draft[field] ?? []).join("\n");
+    input.oninput = () => {
+      const values = physicsListFromEditor(input.value, maximumEntries);
+      if (values.length) MechanicsUI.draft[field] = values;
+      else delete MechanicsUI.draft[field];
+      MechanicsUI.moduleSchemaVersion = 1;
+      MechanicsUI.preview = null;
+      renderMechanicsPreviewResult();
+    };
+  }
+}
+
+async function analyzeElevationLineOfSight() {
+  if (MechanicsUI.selectedModuleId !== "elevation" || !MechanicsUI.draft?.lineOfSight) return null;
+  const requestSerial = ElevationLineOfSightUI.requestSerial + 1;
+  ElevationLineOfSightUI.requestSerial = requestSerial;
+  ElevationLineOfSightUI.analysis = null;
+  ElevationLineOfSightUI.error = null;
+  ElevationLineOfSightUI.loading = true;
+  renderElevationLineOfSightEditor();
+  try {
+    const missionMap = elevationLineOfSightMissionMap();
+    const map = missionMap?.map;
+    if (!map) throw new Error("The selected mission must reference a compiled map before analyzing line of sight.");
+    const source = boundedElevationLineOfSightCoord(ElevationLineOfSightUI.source, map, "Source");
+    const targets = [boundedElevationLineOfSightCoord(ElevationLineOfSightUI.targets[0], map, "Target")];
+    const requestSnapshot = Object.freeze(mechanicsRequest(true));
+    const preview = await previewMechanics(requestSnapshot);
+    if (requestSerial !== ElevationLineOfSightUI.requestSerial) return null;
+    if (!preview?.revision || MechanicsUI.preview?.revision !== preview.revision) {
+      throw new Error("The mechanics preview did not return a stable revision for LoS analysis.");
+    }
+    const analysis = await apiPost("/api/elevation/line-of-sight/analyze", {
+      missionId: requestSnapshot.missionId,
+      source,
+      targets,
+      candidate: {
+        moduleSchemaVersion: requestSnapshot.moduleSchemaVersion,
+        profileId: requestSnapshot.profileId,
+        profile: requestSnapshot.profile
+      },
+      ifRevision: MechanicsUI.preview.revision
+    });
+    if (requestSerial !== ElevationLineOfSightUI.requestSerial) return null;
+    ElevationLineOfSightUI.analysis = analysis;
+    recordActivity("Line of sight analysis", "ok", `${requestSnapshot.profileId} · ${missionMap.mapId}`);
+    return analysis;
+  } catch (error) {
+    if (requestSerial !== ElevationLineOfSightUI.requestSerial) return null;
+    ElevationLineOfSightUI.analysis = null;
+    ElevationLineOfSightUI.error = error;
+    recordActivity("Line of sight analysis", "error", error.code ?? error.message);
+    return null;
+  } finally {
+    if (requestSerial === ElevationLineOfSightUI.requestSerial) ElevationLineOfSightUI.loading = false;
+    renderElevationLineOfSightEditor();
+  }
+}
+
+function drawElevationCanvas() {
+  const canvas = $("mechanics-elevation-canvas");
+  const map = ownDataValue(S.project?.maps, ElevationUI.mapId);
+  if (!canvas || !map) return;
+  if (!elevationRenderer) elevationRenderer = createCanvasRenderer({
+    canvas,
+    content: { towers: {}, enemies: {}, visuals: S.project?.visuals ?? {} }
+  });
+  elevationRenderer.content.visuals = S.project?.visuals ?? {};
+  elevationRenderer.resize();
+  const canvasWindow = syncElevationCanvasWindow(map);
+  const inWindow = (coord) => elevationCanvasCoord(coord, canvasWindow) !== null;
+  const previewMap = {
+    width: canvasWindow.width,
+    height: canvasWindow.height,
+    grid: map.grid,
+    defaultTerrain: map.defaultTerrain,
+    terrainOverrides: (map.terrainOverrides ?? []).filter(inWindow).map((entry) => ({
+      ...entry,
+      q: entry.q - canvasWindow.startQ,
+      r: entry.r - canvasWindow.startR
+    })),
+    pathCenterline: (map.pathCenterline ?? []).filter(inWindow).map((coord) => elevationCanvasCoord(coord, canvasWindow))
+  };
+  elevationRenderer.drawMapDefinition(previewMap);
+  const visibleOverrides = ElevationUI.overrides.filter(inWindow).map((entry) => ({
+    q: entry.q - canvasWindow.startQ,
+    r: entry.r - canvasWindow.startR,
+    elevation: entry.elevation
+  }));
+  const section = { schemaVersion: 1, defaultElevation: 0, overrides: visibleOverrides };
+  const presentation = projectElevationCues(section);
+  if (presentation?.active) {
+    const geometry = elevationRenderer.geometry(ElevationUI.canvasTiles, map.grid);
+    elevationRenderer.drawElevationCues(section, geometry);
+    const focusedCanvasCoord = elevationCanvasCoord(ElevationUI.focusedCoord, canvasWindow);
+    if (focusedCanvasCoord) elevationRenderer.drawFocusCell(focusedCanvasCoord, geometry);
+  }
+}
+
+function installElevationCanvasInput(canvas) {
+  if (!canvas || canvas.dataset.elevationInputInstalled === "true") return;
+  canvas.dataset.elevationInputInstalled = "true";
+  const paintFromPointer = (event) => {
+    if (S.dirty || ElevationUI.applying || ElevationUI.loading || !elevationRenderer) return;
+    const canvasCoord = elevationRenderer.pickTile(event, ElevationUI.canvasTiles);
+    if (!canvasCoord || !ElevationUI.canvasWindow) return;
+    const coord = {
+      q: canvasCoord.q + ElevationUI.canvasWindow.startQ,
+      r: canvasCoord.r + ElevationUI.canvasWindow.startR
+    };
+    const key = `${coord.q},${coord.r}`;
+    ElevationUI.focusedCoord = coord;
+    if (key === ElevationUI.lastPaintedCoordKey) { drawElevationCanvas(); return; }
+    const section = { schemaVersion: 1, defaultElevation: 0, overrides: ElevationUI.overrides };
+    if (!projectElevationCues(section)) return;
+    ElevationUI.lastPaintedCoordKey = key;
+    if (setElevationAt(coord, ElevationUI.brushLevel)) renderElevationEditor();
+  };
+  canvas.addEventListener("pointerdown", (event) => {
+    if (event.button !== undefined && event.button !== 0) return;
+    event.preventDefault();
+    canvas.focus();
+    ElevationUI.paintingPointerId = event.pointerId;
+    ElevationUI.lastPaintedCoordKey = null;
+    try { canvas.setPointerCapture(event.pointerId); } catch {}
+    paintFromPointer(event);
+  });
+  canvas.addEventListener("pointermove", (event) => {
+    if (ElevationUI.paintingPointerId !== event.pointerId) return;
+    event.preventDefault();
+    paintFromPointer(event);
+  });
+  const finishPointer = (event) => {
+    if (ElevationUI.paintingPointerId !== event.pointerId) return;
+    ElevationUI.paintingPointerId = null;
+    ElevationUI.lastPaintedCoordKey = null;
+    try { canvas.releasePointerCapture(event.pointerId); } catch {}
+  };
+  canvas.addEventListener("pointerup", finishPointer);
+  canvas.addEventListener("pointercancel", finishPointer);
+  canvas.addEventListener("keydown", (event) => {
+    const map = ownDataValue(S.project?.maps, ElevationUI.mapId);
+    if (!map) return;
+    const current = ElevationUI.focusedCoord ?? { q: 0, r: 0 };
+    const moves = {
+      ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1]
+    };
+    if (moves[event.key]) {
+      event.preventDefault();
+      const [dq, dr] = moves[event.key];
+      ElevationUI.focusedCoord = {
+        q: Math.max(0, Math.min(map.width - 1, current.q + dq)),
+        r: Math.max(0, Math.min(map.height - 1, current.r + dr))
+      };
+      drawElevationCanvas();
+      return;
+    }
+    if (event.key === "[" || event.key === "]") {
+      event.preventDefault();
+      ElevationUI.brushLevel = Math.max(-1_000_000, Math.min(1_000_000, ElevationUI.brushLevel + (event.key === "]" ? 1 : -1)));
+      const input = $("mechanics-elevation-brush");
+      if (input) input.value = String(ElevationUI.brushLevel);
+      return;
+    }
+    if (event.key === "0") {
+      event.preventDefault();
+      ElevationUI.brushLevel = 0;
+      const input = $("mechanics-elevation-brush");
+      if (input) input.value = "0";
+      return;
+    }
+    if (event.key === "Enter" || event.code === "Space") {
+      event.preventDefault();
+      if (setElevationAt(current, ElevationUI.brushLevel)) renderElevationEditor();
+    }
+  });
+}
+
+function renderElevationEditor() {
+  if (MechanicsUI.selectedModuleId !== "elevation") return;
+  if (!ElevationUI.mapId) loadElevationMap();
+  const mapSelect = $("mechanics-elevation-map");
+  if (mapSelect) {
+    mapSelect.innerHTML = Object.entries(S.project?.maps ?? {}).map(([mapId, map]) =>
+      `<option value="${esc(mapId)}">${esc(map.label ?? mapId)} · ${map.width}×${map.height}</option>`).join("");
+    mapSelect.value = ElevationUI.mapId ?? "";
+    mapSelect.onchange = () => { loadElevationMap(mapSelect.value); renderElevationEditor(); };
+  }
+  const rows = $("mechanics-elevation-override-rows");
+  if (rows) {
+    const editorRows = elevationEditorRowWindow().slice(0, MAX_ELEVATION_EDITOR_ROWS);
+    ElevationUI.editorRowCount = editorRows.length;
+    rows.innerHTML = editorRows.length
+      ? editorRows.map(({ entry, index }) => elevationRowHtml(entry, index)).join("")
+      : `<div class="mechanics-empty">No authored levels. Every tile uses elevation 0.</div>`;
+    rows.querySelectorAll("input").forEach((input) => input.onchange = () => {
+      try {
+        ElevationUI.overrides = elevationRowsDraft();
+        ElevationUI.preview = null;
+        ElevationUI.error = null;
+        invalidateElevationLineOfSightAnalysis();
+        renderElevationEditor();
+      } catch (error) {
+        ElevationUI.error = error;
+        renderElevationState();
+      }
+    });
+    rows.querySelectorAll("[data-remove-elevation]").forEach((button) => button.onclick = () => {
+      const index = Number(button.closest("[data-elevation-row]")?.dataset.elevationIndex);
+      if (!Number.isInteger(index)) return;
+      ElevationUI.overrides.splice(index, 1);
+      ElevationUI.preview = null;
+      invalidateElevationLineOfSightAnalysis();
+      renderElevationEditor();
+    });
+  }
+  const brush = $("mechanics-elevation-brush");
+  if (brush) {
+    brush.value = String(ElevationUI.brushLevel);
+    brush.onchange = () => {
+      const value = Number(brush.value);
+      if (!Number.isSafeInteger(value) || Math.abs(value) > 1_000_000) return renderElevationEditor();
+      ElevationUI.brushLevel = value;
+    };
+  }
+  const canvas = $("mechanics-elevation-canvas");
+  installElevationCanvasInput(canvas);
+  drawElevationCanvas();
+  const add = $("btn-elevation-add-override");
+  if (add) add.onclick = () => {
+    const occupied = new Set(ElevationUI.overrides.map((entry) => `${entry.q},${entry.r}`));
+    const map = ownDataValue(S.project?.maps, ElevationUI.mapId);
+    let candidate = null;
+    for (let r = 0; map && r < map.height && !candidate; r += 1) {
+      for (let q = 0; q < map.width; q += 1) if (!occupied.has(`${q},${r}`)) { candidate = { q, r, elevation: 1 }; break; }
+    }
+    if (!candidate) return toast("Every tile already has an elevation row.", "warn");
+    ElevationUI.overrides.push(candidate);
+    ElevationUI.preview = null;
+    invalidateElevationLineOfSightAnalysis();
+    renderElevationEditor();
+  };
+  if ($("btn-elevation-preview")) $("btn-elevation-preview").onclick = () => void previewMapElevations();
+  if ($("btn-elevation-apply")) $("btn-elevation-apply").onclick = () => void applyMapElevations();
+  const blocked = S.dirty || ElevationUI.loading || ElevationUI.applying || !ElevationUI.mapId;
+  if ($("btn-elevation-add-override")) $("btn-elevation-add-override").disabled = blocked;
+  if ($("btn-elevation-preview")) $("btn-elevation-preview").disabled = blocked;
+  if ($("btn-elevation-apply")) $("btn-elevation-apply").disabled = blocked;
+  renderElevationState();
+  renderElevationLineOfSightEditor();
+  renderElevationHighGroundEditor();
+}
+
+function renderElevationState() {
+  const state = $("mechanics-elevation-state");
+  if (!state) return;
+  state.classList.toggle("error", Boolean(ElevationUI.error));
+  const windowStatus = ElevationUI.canvasWindow?.partial
+    ? `Partial map window: showing ${ElevationUI.canvasWindow.visibleCount} tiles.`
+    : ElevationUI.canvasWindow ? `Showing all ${ElevationUI.canvasWindow.visibleCount} map tiles.` : "";
+  const rowStatus = ElevationUI.overrides.length > ElevationUI.editorRowCount
+    ? `Partial override rows: showing ${ElevationUI.editorRowCount} of ${ElevationUI.overrides.length}.`
+    : ElevationUI.overrides.length ? `Showing all ${ElevationUI.overrides.length} override rows.` : "";
+  const status = ElevationUI.error
+    ? ElevationUI.error.message
+    : ElevationUI.preview ? JSON.stringify(ElevationUI.preview, null, 2)
+      : "Elevation badges and contours are visual-only; preview before applying the canonical sparse layer.";
+  state.textContent = [status, windowStatus, rowStatus].filter(Boolean).join("\n");
+}
+
+async function previewMapElevations() {
+  ElevationUI.loading = true;
+  ElevationUI.error = null;
+  invalidateElevationLineOfSightAnalysis();
+  try {
+    ElevationUI.overrides = elevationRowsDraft();
+    ElevationUI.preview = await apiPost("/api/maps/elevation/preview", {
+      mapId: ElevationUI.mapId,
+      elevationOverrides: ElevationUI.overrides
+    });
+    if (ElevationUI.preview?.candidate?.elevationOverrides) {
+      ElevationUI.overrides = normalizeElevationOverrides(ElevationUI.preview.candidate.elevationOverrides);
+    }
+    recordActivity("Elevation preview", "ok", ElevationUI.mapId);
+    return ElevationUI.preview;
+  } catch (error) {
+    ElevationUI.preview = null;
+    ElevationUI.error = error;
+    recordActivity("Elevation preview", "error", error.code ?? error.message);
+    return null;
+  } finally {
+    ElevationUI.loading = false;
+    renderElevationEditor();
+  }
+}
+
+async function applyMapElevations() {
+  if (S.dirty || ElevationUI.applying) return toast("Save or discard ordinary project edits before applying elevations.", "err");
+  ElevationUI.applying = true;
+  const preview = await previewMapElevations();
+  if (!preview) { ElevationUI.applying = false; renderElevationEditor(); return; }
+  try {
+    await apiPost("/api/maps/elevation/apply", {
+      mapId: ElevationUI.mapId,
+      elevationOverrides: ElevationUI.overrides,
+      ifRevision: ElevationUI.preview.revision
+    });
+    const retainedMapId = ElevationUI.mapId;
+    MechanicsUI.capabilities = null;
+    await load();
+    loadElevationMap(retainedMapId);
+    recordActivity("Elevation applied", "ok", retainedMapId);
+    toast("Elevation layer applied with validation and backup.", "ok");
+  } catch (error) {
+    ElevationUI.error = error;
+    recordActivity("Elevation apply", "error", error.code ?? error.message);
+    toast(error.message, "err");
+  } finally {
+    ElevationUI.applying = false;
+    if (S.activeTab === "mechanics") renderMechanicsHub();
+  }
+}
+
+function renderMechanicsPreviewResult() {
+  const output = $("mechanics-preview-result");
+  if (!output) return;
+  if (MechanicsUI.error) {
+    output.textContent = `${MechanicsUI.error.code ? `${MechanicsUI.error.code}: ` : ""}${MechanicsUI.error.message}${MechanicsUI.error.guidance ? `\n${MechanicsUI.error.guidance}` : ""}`;
+    output.classList.add("error");
+    return;
+  }
+  output.classList.remove("error");
+  output.textContent = MechanicsUI.preview
+    ? JSON.stringify(MechanicsUI.preview, null, 2)
+    : "Preview changes before applying them.";
+}
+
+function mechanicsRequest(enabled) {
+  const moduleSchemaVersion = mechanicsEffectiveModuleSchemaVersion();
+  const request = {
+    moduleId: MechanicsUI.selectedModuleId,
+    moduleSchemaVersion,
+    missionId: mechanicsMissionId(),
+    enabled
+  };
+  if (!enabled) return request;
+  const profile = deep(MechanicsUI.draft);
+  if (MechanicsUI.selectedModuleId === "combat" && moduleSchemaVersion === 1) {
+    delete profile.damageTypes;
+    delete profile.armorTypes;
+    delete profile.armorAssignments;
+    delete profile.marks;
+  } else if (MechanicsUI.selectedModuleId === "combat" && moduleSchemaVersion === 2) {
+    delete profile.marks;
+  }
+  return {
+    ...request,
+    profileId: MechanicsUI.profileId.trim(),
+    profile
+  };
+}
+
+async function previewMechanics(requestOrEnabled = true) {
+  const requestSnapshot = requestOrEnabled && typeof requestOrEnabled === "object"
+    ? requestOrEnabled
+    : Object.freeze(mechanicsRequest(requestOrEnabled));
+  MechanicsUI.error = null;
+  try {
+    if (requestSnapshot.enabled) assertMechanicsProfileWritable();
+    MechanicsUI.preview = await apiPost("/api/mechanics/preview", requestSnapshot);
+    recordActivity("Mechanics preview", "ok", `${MechanicsUI.selectedModuleId} · ${mechanicsMissionId()}`);
+    renderMechanicsHub();
+    return MechanicsUI.preview;
+  } catch (error) {
+    MechanicsUI.preview = null;
+    MechanicsUI.error = error;
+    recordActivity("Mechanics preview", "error", error.code ?? error.message);
+    renderMechanicsHub();
+    return null;
+  }
+}
+
+async function applyMechanics(enabled) {
+  if (MechanicsUI.applying) return;
+  if (S.dirty) {
+    toast("Save or discard ordinary project edits before applying mechanics.", "err");
+    return;
+  }
+  // Capture the complete detached request exactly once. Preview and apply must describe
+  // the same candidate even if the user changes a Hub field while preview is in flight.
+  const requestSnapshot = Object.freeze(mechanicsRequest(enabled));
+  MechanicsUI.applying = true;
+  renderMechanicsHub();
+  const preview = await previewMechanics(requestSnapshot);
+  if (!preview) { MechanicsUI.applying = false; renderMechanicsHub(); return; }
+  try {
+    await apiPost("/api/mechanics/apply", { ...requestSnapshot, ifRevision: preview.revision });
+    clearNavigationOverlay("Mechanics changed; refreshing analysis");
+    recordActivity(enabled ? "Mechanics applied" : "Mechanics disabled", "ok", `${MechanicsUI.selectedModuleId} · ${mechanicsMissionId()}`);
+    MechanicsUI.capabilities = null;
+    MechanicsUI.recipes = [];
+    MechanicsUI.recipe = null;
+    MechanicsUI.draft = null;
+    MechanicsUI.preview = null;
+    MechanicsUI.error = null;
+    await load();
+    await refreshNavigationOverlay();
+  } catch (error) {
+    MechanicsUI.error = error;
+    recordActivity("Mechanics apply", "error", error.code ?? error.message);
+    toast(error.message, "err");
+  } finally {
+    MechanicsUI.applying = false;
+    if (S.activeTab === "mechanics") renderMechanicsHub();
+  }
+}
+
+function renderMechanicsHub() {
+  const missionSelect = $("mechanics-mission-select");
+  const grid = $("mechanics-module-grid");
+  if (!missionSelect || !grid || !S.project) return;
+  MechanicsUI.missionId = mechanicsMissionId();
+  if ($("mechanics-combat-title")) $("mechanics-combat-title").textContent = mechanicsSelectedModuleLabel();
+  const editorDescription = $("mechanics-editor-description");
+  if (editorDescription) editorDescription.textContent = MechanicsUI.selectedModuleId === "navigation"
+    ? "Author movement profiles and explicitly enable one for this mission."
+    : MechanicsUI.selectedModuleId === "reactions"
+      ? "Author exposure and reaction rules, then explicitly select the profile for this mission."
+      : MechanicsUI.selectedModuleId === "elevation"
+        ? "Author a sparse map layer separately, then opt into elevation v1 or deterministic line of sight with a v2 profile."
+        : MechanicsUI.selectedModuleId === "physics"
+          ? "Author a closed physics v1 profile for bounded push/pull immunity and explicit fall hazards."
+        : "Author a reusable combat profile, then explicitly select it for this mission.";
+  missionSelect.innerHTML = Object.entries(S.project.missions ?? {}).map(([id, mission]) =>
+    `<option value="${esc(id)}" ${id === MechanicsUI.missionId ? "selected" : ""}>${esc(mission.label ?? id)}</option>`).join("");
+  missionSelect.onchange = () => {
+    MechanicsUI.missionId = missionSelect.value;
+    MechanicsUI.capabilities = null;
+    MechanicsUI.draft = null;
+    MechanicsUI.preview = null;
+    MechanicsUI.error = null;
+    ElevationUI.mapId = null;
+    ElevationUI.preview = null;
+    ElevationUI.error = null;
+    ElevationLineOfSightUI.contextKey = null;
+    invalidateElevationLineOfSightAnalysis();
+    clearNavigationOverlay("Mission changed");
+    void refreshNavigationOverlay();
+    renderMechanicsHub();
+  };
+
+  const capabilities = MechanicsUI.capabilities?.capabilities ?? {};
+  const prerequisiteCodes = new Set(["dependency_missing", "reaction_terrain_tag_missing"]);
+  const selectedCapabilityReason = capabilities[MechanicsUI.selectedModuleId]?.reason;
+  if (selectedCapabilityReason && prerequisiteCodes.has(selectedCapabilityReason)) {
+    MechanicsUI.error ??= { code: selectedCapabilityReason, message: "Selected module prerequisites are not satisfied for this mission." };
+  }
+  grid.innerHTML = MECHANICS_MODULES.map((module) => {
+    const capability = capabilities[module.id];
+    const available = Boolean(capability?.available);
+    const active = Boolean(capability?.active);
+    const status = active ? "Active" : available ? "Available" : "Planned";
+    const selected = module.id === MechanicsUI.selectedModuleId;
+    return `<button type="button" class="mechanics-module-card${available ? " available" : ""}${active ? " active" : ""}${selected ? " selected" : ""}" data-mechanics-module="${esc(module.id)}" data-status="${status.toLowerCase()}" ${available ? "" : "disabled aria-disabled=\"true\""}>
+      <span class="mechanics-module-status">${esc(status)}</span><h3>${esc(module.title)}</h3><p>${esc(module.description)}</p>
+    </button>`;
+  }).join("");
+  grid.querySelectorAll("[data-mechanics-module]").forEach((button) => {
+    button.onclick = () => {
+      const selectedModuleId = button.dataset.mechanicsModule;
+      if (!capabilities[selectedModuleId]?.available || selectedModuleId === MechanicsUI.selectedModuleId) return;
+      MechanicsUI.selectedModuleId = selectedModuleId;
+      const availableRecipes = MechanicsUI.recipes.filter((recipe) => recipe.entity?.moduleId === selectedModuleId
+        && (selectedModuleId !== "reactions" || REACTION_RECIPE_IDS.has(recipe.id))
+        && (selectedModuleId !== "elevation" || ELEVATION_RECIPE_IDS.has(recipe.id))
+        && (selectedModuleId !== "physics" || PHYSICS_RECIPE_IDS.has(recipe.id)));
+      MechanicsUI.recipe = availableRecipes[0] ?? null;
+      MechanicsUI.recipeId = MechanicsUI.recipe?.id ?? "";
+      MechanicsUI.loadedProfileId = null;
+      if (selectedModuleId === "elevation") loadElevationMap(null);
+      ElevationLineOfSightUI.contextKey = null;
+      invalidateElevationLineOfSightAnalysis();
+      clearNavigationOverlay("Mechanics module changed");
+      initializeMechanicsDraft();
+      renderMechanicsHub();
+    };
+  });
+
+  const authoring = mechanicsAuthoringState();
+  const migrationRequired = authoring.writable === false && authoring.code === "project_migration_required";
+  const migrationPanel = $("mechanics-migration-panel");
+  migrationPanel?.classList.toggle("hidden", !migrationRequired);
+  if (migrationPanel) migrationPanel.textContent = migrationRequired
+    ? authoring.guidance ?? "Migrate this project to schema v2 before enabling mechanics. Legacy play remains unchanged."
+    : "";
+  const capability = mechanicsSelectedCapability();
+  const editor = $("mechanics-combat-editor");
+  editor?.classList.toggle("hidden", !capability?.available);
+  $("mechanics-combat-fields")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "combat");
+  $("mechanics-reaction-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "reactions");
+  $("mechanics-navigation-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "navigation");
+  $("mechanics-elevation-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "elevation");
+  $("mechanics-physics-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "physics");
+  const state = $("mechanics-hub-state");
+  if (state) state.textContent = MechanicsUI.loading ? "Loading capabilities…"
+    : MechanicsUI.error ? "Mechanics unavailable"
+      : capability?.active ? `${mechanicsSelectedModuleLabel()} active for mission`
+        : "Opt-in modules";
+  const revision = $("mechanics-revision");
+  if (revision) revision.textContent = MechanicsUI.capabilities?.revision
+    ? `Revision ${MechanicsUI.capabilities.revision.slice(0, 12)}`
+    : "Revision pending";
+
+  if (MechanicsUI.draft && capability?.available) {
+    const profileSelect = $("mechanics-profile-select");
+    const profileIds = mechanicsProfileIds();
+    if (profileSelect) {
+      const previousSelection = profileSelect.value;
+      profileSelect.innerHTML = `<option value="">Select a profile…</option>${profileIds.map((profileId) =>
+        `<option value="${esc(profileId)}">${esc(profileId)}</option>`).join("")}`;
+      if (profileIds.includes(previousSelection)) profileSelect.value = previousSelection;
+      else if (MechanicsUI.loadedProfileId && profileIds.includes(MechanicsUI.loadedProfileId)) profileSelect.value = MechanicsUI.loadedProfileId;
+    }
+    const recipeSelect = $("mechanics-recipe-select");
+    if (recipeSelect) {
+      const moduleRecipes = MechanicsUI.recipes.filter((recipe) => recipe.entity?.moduleId === MechanicsUI.selectedModuleId);
+      recipeSelect.innerHTML = moduleRecipes.slice(0, 32).map((recipe) =>
+        `<option value="${esc(recipe.id)}">${esc(recipe.label ?? recipe.id)}</option>`).join("");
+      if (moduleRecipes.some((recipe) => recipe.id === MechanicsUI.recipeId)) recipeSelect.value = MechanicsUI.recipeId;
+      recipeSelect.onchange = () => {
+        MechanicsUI.recipeId = recipeSelect.value;
+        MechanicsUI.recipe = moduleRecipes.find((recipe) => recipe.id === MechanicsUI.recipeId) ?? MechanicsUI.recipe;
+        renderMechanicsReactionPrerequisites();
+      };
+    }
+    const profileInput = $("mechanics-profile-id");
+    if (profileInput) {
+      profileInput.value = MechanicsUI.profileId;
+      profileInput.oninput = () => {
+        MechanicsUI.profileId = profileInput.value;
+        MechanicsUI.preview = null;
+        invalidateElevationLineOfSightAnalysis();
+        renderMechanicsPreviewResult();
+      };
+    }
+    if (MechanicsUI.selectedModuleId === "combat") {
+      renderMechanicsShieldRows();
+      renderMechanicsArmorEditors();
+      renderMechanicsMarkEditors();
+    } else if (MechanicsUI.selectedModuleId === "reactions") {
+      renderMechanicsReactionEditors();
+    } else if (MechanicsUI.selectedModuleId === "navigation") {
+      renderMechanicsNavigationEditor();
+    } else if (MechanicsUI.selectedModuleId === "elevation") {
+      renderElevationEditor();
+    } else if (MechanicsUI.selectedModuleId === "physics") {
+      renderPhysicsMechanicsEditor();
+    }
+    // Recipe prerequisites are shared authoring metadata. Keep them visible for every module,
+    // including elevation recipes, instead of hiding them inside the reactions-only editor.
+    renderMechanicsReactionPrerequisites();
+  }
+  const busy = MechanicsUI.loading || MechanicsUI.applying;
+  const writable = authoring.writable !== false && capability?.available && !busy;
+  const dirtyWriteGuard = Boolean(S.dirty);
+  if ($("btn-mechanics-preview")) $("btn-mechanics-preview").disabled = !writable;
+  $("btn-mechanics-enable").disabled = dirtyWriteGuard || !writable || Boolean(capability?.active);
+  $("btn-mechanics-save").disabled = dirtyWriteGuard || !writable || !capability?.moduleEnabled;
+  $("btn-mechanics-disable").disabled = dirtyWriteGuard || !writable || !capability?.moduleEnabled;
+  $("btn-mechanics-load-profile").disabled = busy || mechanicsProfileIds().length === 0;
+  $("btn-mechanics-new-profile").disabled = busy || !MechanicsUI.recipe;
+  if ($("mechanics-recipe-select")) $("mechanics-recipe-select").disabled = busy || MechanicsUI.recipes.length === 0;
+  if ($("btn-mechanics-add-damage-type")) $("btn-mechanics-add-damage-type").disabled = !writable;
+  if ($("btn-mechanics-add-armor-type")) $("btn-mechanics-add-armor-type").disabled = !writable;
+  if ($("btn-mechanics-add-mark")) $("btn-mechanics-add-mark").disabled = !writable;
+  if ($("btn-mechanics-add-mark-binding")) $("btn-mechanics-add-mark-binding").disabled = !writable;
+  if ($("btn-mechanics-add-exposure")) $("btn-mechanics-add-exposure").disabled = !writable;
+  if ($("btn-mechanics-add-reaction")) $("btn-mechanics-add-reaction").disabled = !writable;
+  if ($("btn-mechanics-add-movement-profile")) $("btn-mechanics-add-movement-profile").disabled = !writable || MechanicsUI.draft?.mode !== "dynamic_flow";
+  $("btn-mechanics-reload").disabled = dirtyWriteGuard || busy;
+  if ($("mechanics-profile-id")) $("mechanics-profile-id").disabled = !writable;
+  $("btn-mechanics-load-profile").onclick = loadMechanicsProfile;
+  $("btn-mechanics-new-profile").onclick = () => void newMechanicsProfile();
+  $("btn-mechanics-reload").onclick = () => void reloadMechanicsHub();
+  $("btn-mechanics-preview").onclick = () => previewMechanics(true);
+  $("btn-mechanics-enable").onclick = () => applyMechanics(true);
+  $("btn-mechanics-save").onclick = () => applyMechanics(true);
+  $("btn-mechanics-disable").onclick = () => {
+    if (window.confirm(`Disable ${MechanicsUI.selectedModuleId} mechanics globally? Authored profiles are preserved.`)) void applyMechanics(false);
+  };
+  renderMechanicsPreviewResult();
+
+  if (!MechanicsUI.capabilities && !MechanicsUI.loading && !MechanicsUI.error) void loadMechanicsCapabilities();
 }
 
 function homeWorkflowIcon(kind) {
@@ -2444,6 +4994,99 @@ function defaultAttackModel(kind) {
   return deep(defaults[kind] ?? defaults.single);
 }
 
+function isPhysicsMechanicsActive(missionId = mechanicsMissionId()) {
+  const capability = MechanicsUI.capabilities?.capabilities?.physics;
+  if (capability && missionId === mechanicsMissionId()) return capability.active === true;
+  const mission = ownDataValue(S.project?.missions, missionId);
+  const selectedProfileId = mission?.mechanics?.profiles?.physics;
+  const physics = ownDataValue(S.project?.mechanics?.modules, "physics");
+  return Boolean(
+    physics?.enabled === true
+    && physics.schemaVersion === 1
+    && typeof selectedProfileId === "string"
+    && ownDataValue(physics.profiles, selectedProfileId)
+  );
+}
+
+function renderDisplacementEffectEditor(effects, options = null) {
+  const { scope, ownerId, missionId = mechanicsMissionId() } = options ?? {};
+  if (!isPhysicsMechanicsActive(missionId)) return "";
+  const displacementDistance = 8;
+  const rows = (Array.isArray(effects) ? effects : []).map((effect, effectIndex) => ({ effect, effectIndex }))
+    .filter(({ effect }) => effect?.kind === "displacement")
+    .map(({ effect, effectIndex }) => `<div class="mechanics-definition-row displacement-effect-row" data-displacement-index="${effectIndex}">
+      <select data-displacement-field="mode" aria-label="Displacement mode">
+        <option value="push"${effect.mode === "push" ? " selected" : ""}>push</option>
+        <option value="pull"${effect.mode === "pull" ? " selected" : ""}>pull</option>
+      </select>
+      <input data-displacement-field="distance" aria-label="Displacement distance" type="number" min="1" max="${displacementDistance}" step="1" value="${esc(effect.distance ?? 1)}">
+      <label class="check-item"><input data-displacement-field="stopAtBlocker" type="checkbox"${effect.stopAtBlocker !== false ? " checked" : ""}> stop at blocker</label>
+      <button type="button" class="btn-icon danger" data-displacement-remove aria-label="Remove displacement effect">${ICO.trash}</button>
+    </div>`).join("");
+  return `<div class="displacement-effect-editor" data-displacement-editor data-displacement-scope="${esc(scope ?? "")}" data-displacement-owner="${esc(ownerId ?? "")}" data-displacement-mission="${esc(missionId ?? "")}">
+    <div class="mechanics-section-head"><div><strong>Physics displacement</strong><p>Ordered push/pull effects; maximum distance 8.</p></div><button type="button" class="btn btn-outline" data-displacement-add>+ Add displacement</button></div>
+    ${rows || `<div class="mechanics-empty">No displacement effects.</div>`}
+  </div>`;
+}
+
+function renderPipelineDisplacementEffectEditor(effects, towerId) {
+  return renderDisplacementEffectEditor(effects, { scope: "pipeline", ownerId: towerId });
+}
+
+function renderAbilityDisplacementEffectEditor(effects, abilityId, missionId) {
+  return renderDisplacementEffectEditor(effects, { scope: "ability", ownerId: abilityId, missionId });
+}
+
+function bindDisplacementEffectEditors() {
+  for (const editor of document.querySelectorAll("[data-displacement-editor]")) {
+    const effectOwner = () => {
+      if (editor.dataset.displacementScope === "pipeline") {
+        return S.project?.towers?.[editor.dataset.displacementOwner]?.attack;
+      }
+      return S.project?.abilities?.[editor.dataset.displacementOwner];
+    };
+    // Preserve raw existing effects while physics is inactive; active edits only replace the
+    // selected displacement row inside a detached array and leave every other effect untouched.
+    const effects = () => {
+      const owner = effectOwner();
+      if (!owner) return null;
+      if (!Array.isArray(owner.effects)) owner.effects = [];
+      return owner.effects;
+    };
+    const rerender = () => {
+      markDirty(true);
+      if (editor.dataset.displacementScope === "pipeline") renderTowerDetail(editor.dataset.displacementOwner);
+      else renderMissionDetail(editor.dataset.displacementMission);
+    };
+    editor.querySelector("[data-displacement-add]")?.addEventListener("click", () => {
+      const authored = effects();
+      if (!authored) return;
+      authored.push({ kind: "displacement", mode: "push", distance: 1, stopAtBlocker: true });
+      rerender();
+    });
+    for (const row of editor.querySelectorAll("[data-displacement-index]")) {
+      const effectIndex = Number(row.dataset.displacementIndex);
+      row.querySelector("[data-displacement-remove]")?.addEventListener("click", () => {
+        const authored = effects();
+        if (!authored?.[effectIndex]) return;
+        authored.splice(effectIndex, 1);
+        rerender();
+      });
+      for (const input of row.querySelectorAll("[data-displacement-field]")) {
+        input.addEventListener("change", () => {
+          const effect = effects()?.[effectIndex];
+          if (!effect || effect.kind !== "displacement") return;
+          const field = input.dataset.displacementField;
+          if (field === "distance") effect.distance = Math.max(1, Math.min(8, Math.trunc(Number(input.value) || 1)));
+          else if (field === "stopAtBlocker") effect.stopAtBlocker = input.checked;
+          else if (field === "mode") effect.mode = input.value === "pull" ? "pull" : "push";
+          rerender();
+        });
+      }
+    }
+  }
+}
+
 function buildAttackFields(a) {
   const v = (key, def, step = 1, label = null, help = null) =>
     `<div class="field"><label>${esc(label ?? key)}${help ? helpIcon(help) : ""}</label><input class="af" data-f="${esc(key)}" type="number" step="${step}" value="${a[key] ?? def}"></div>`;
@@ -2508,6 +5151,7 @@ function buildAttackFields(a) {
         ${targetClassEditor(targeting.classes ?? ["ground"], "af-pipeline-class", "Targets")}
         <div class="form-row"><div class="field"><label>Delivery</label><select id="af-pipeline-delivery">${["single", "multi", "area", "chain", "aura"].map(kind => `<option value="${kind}"${delivery.kind === kind ? " selected" : ""}>${kind}</option>`).join("")}</select></div>${deliveryFields}</div>
         <div class="field field-full"><label>Ordered Effects ${helpIcon("Effects run in order for every delivered target: damage, status, or resource.")}</label><textarea id="af-pipeline-effects" class="mono" rows="8" spellcheck="false">${esc(JSON.stringify(a.effects ?? [{ kind: "damage", amount: 1 }], null, 2))}</textarea></div>
+        ${renderPipelineDisplacementEffectEditor(a.effects ?? [], S.selectedTowerId)}
         ${lvl("intervalByLevel", [a.interval ?? 1], "Interval by Level")}
         ${lvl("rangeByLevel", [S.project.towers?.[S.selectedTowerId]?.range ?? 3], "Range by Level", { step: 0.5 })}
         ${costs("Upgrade Costs")}`;
@@ -2727,6 +5371,7 @@ function bindAttackFieldListeners(id) {
       toast(`Invalid pipeline effects: ${error.message}`, "err");
     }
   });
+  bindDisplacementEffectEditors();
 }
 
 function persistTower(oldId) {
@@ -2871,6 +5516,9 @@ function renderMissionDetail(id) {
       <input type="checkbox" class="mission-ability-cb" data-aid="${esc(aid)}"${abilitySet.has(aid)?" checked":""}>
       ${esc(aid)}
     </label>`).join("");
+  const abilityEffectEditors = allAbilities.map((aid) =>
+    renderAbilityDisplacementEffectEditor(S.project.abilities?.[aid]?.effects ?? [], aid, id)
+  ).filter(Boolean).join("");
 
   const sun = m.sunlight;
   const economy = m.economy;
@@ -2926,6 +5574,7 @@ function renderMissionDetail(id) {
     <div class="form-section">
       <div class="form-section-title">Abilities</div>
       <div class="check-grid">${abilityChecks}</div>
+      ${abilityEffectEditors}
     </div>` : ""}
 
     <div class="form-section">
@@ -3008,6 +5657,7 @@ function renderMissionDetail(id) {
     markDirty(true); renderMissionDetail(id);
   }));
 
+  bindDisplacementEffectEditors();
   detail.querySelectorAll("input, select, textarea").forEach(inp => {
     inp.addEventListener("change", () => persistMission(id));
   });
@@ -5350,7 +8000,8 @@ function svgCurve(waveStats, key, unit) {
 const PT = {
   mod: null, rmod: null, content: null, game: null, renderer: null, raf: null,
   towerId: null, missionId: null, difficultyId: null, keyboardCoord: null, dirty: true, lastFrame: 0, error: null,
-  events: [], selectedDebug: null, resumeSpeed: 1, lastDebugRender: 0
+  events: [], selectedDebug: null, resumeSpeed: 1, lastDebugRender: 0,
+  navigationOverlayKey: null, navigationOverlayRequest: 0
 };
 const PT_KIND_COLOR = { single: "#e8a44a", pulse: "#a07ec8", sniper: "#7eb87e", antiair: "#e8c84a", splash: "#6ea8d8", support: "#7ec8b8", support_buff: "#c87e9c", pipeline: "#79c8d3" };
 const PT_TARGET_MODES = [["first", "First"], ["last", "Last"], ["closest", "Closest"], ["furthest", "Furthest"], ["strongest", "Strongest"], ["weakest", "Weakest"]];
@@ -5386,6 +8037,7 @@ function buildPlaytestContent() {
       maps: S.project.maps ?? {},
       worldMap: S.project.worldMap ?? { width: 800, height: 600, regions: [], missionNodes: [] },
       scripts: S.project.scripts ?? {},
+      mechanics: S.project.mechanics,
       visuals: S.project.visuals ?? {}
     });
     return true;
@@ -5397,7 +8049,108 @@ async function refreshPlaytestMaps() {
   const result = await apiPost("/api/maps/preview", { mapSources });
   S.project.maps = result.maps;
 }
+
+function clearNavigationOverlay(message = "Navigation overlay inactive") {
+  PT.navigationOverlayRequest += 1;
+  PT.navigationOverlayKey = null;
+  PT.renderer?.clearNavigationOverlay?.();
+  const overlayState = $("mechanics-navigation-overlay-state");
+  if (overlayState) overlayState.textContent = message;
+}
+
+function navigationOverlayViewportCoordinates() {
+  const viewportTiles = PT.game?.getSnapshot().tiles ?? [];
+  const totalTiles = viewportTiles.length;
+  const maximumCoordinates = 4096;
+  if (totalTiles <= maximumCoordinates) {
+    const coordinates = viewportTiles.map((tile) => ({ q: tile.q, r: tile.r }));
+    PT.navigationOverlayCoverage = { partial: false, selectedCount: coordinates.length, totalCount: totalTiles };
+    return coordinates;
+  }
+  const canonicalCoordinates = viewportTiles.map((tile) => ({ q: tile.q, r: tile.r }));
+  const requestedAnchor = PT.keyboardCoord;
+  const interactionAnchor = requestedAnchor
+    && canonicalCoordinates.some((coord) => coord.q === requestedAnchor.q && coord.r === requestedAnchor.r)
+    ? { q: requestedAnchor.q, r: requestedAnchor.r }
+    : canonicalCoordinates.reduce((best, coord) => (
+      !best || coord.r < best.r || (coord.r === best.r && coord.q < best.q) ? coord : best
+    ), null);
+  canonicalCoordinates.sort((left, right) => (
+    (Math.abs(left.q - interactionAnchor.q) + Math.abs(left.r - interactionAnchor.r))
+    - (Math.abs(right.q - interactionAnchor.q) + Math.abs(right.r - interactionAnchor.r))
+    || left.r - right.r
+    || left.q - right.q
+  ));
+  const coordinates = canonicalCoordinates.slice(0, maximumCoordinates);
+  const selectedCount = coordinates.length;
+  PT.navigationOverlayCoverage = { partial: selectedCount < totalTiles, selectedCount, totalCount: totalTiles };
+  return coordinates;
+}
+
+async function refreshNavigationOverlay() {
+  if (!MechanicsUI.navigationOverlayEnabled || PT.dirty || !PT.game || !PT.renderer || !PT.towerId) {
+    clearNavigationOverlay(PT.towerId ? "Navigation overlay inactive" : "Choose a tower for buildability analysis");
+    return;
+  }
+  const selectedNavigation = PT.mod?.resolveActiveNavigationMechanics?.(PT.content, PT.missionId);
+  if (selectedNavigation?.mode !== "dynamic_flow") {
+    const inactiveReason = selectedNavigation?.mode ?? PT.content?.missions?.[PT.missionId]?.capabilities?.navigation?.reason;
+    const knownInactive = new Set(["module_disabled", "mode_inactive", "authored_routes"]);
+    clearNavigationOverlay(knownInactive.has(inactiveReason) ? `Overlay inactive: ${inactiveReason}` : "Navigation module inactive");
+    return;
+  }
+  const coordinates = navigationOverlayViewportCoordinates();
+  if (!coordinates.length) {
+    clearNavigationOverlay("No viewport coordinates to analyze");
+    return;
+  }
+  const snapshot = PT.game.getSnapshot();
+  const fieldRevisions = (snapshot.navigation?.fields ?? []).map((field) => field.revision);
+  const placementState = (snapshot.towers ?? []).map((tower) => [tower.typeId, tower.coord.q, tower.coord.r]);
+  const cacheKey = JSON.stringify({ missionId: PT.missionId, towerTypeId: PT.towerId, fieldRevisions, placementState, coordinates });
+  if (cacheKey === PT.navigationOverlayKey) return;
+  const requestId = ++PT.navigationOverlayRequest;
+  const overlayState = $("mechanics-navigation-overlay-state");
+  if (overlayState) overlayState.textContent = "Analyzing viewport buildability…";
+  try {
+    const result = typeof PT.game.analyzeNavigation === "function"
+      ? PT.game.analyzeNavigation({ towerTypeId: PT.towerId, coordinates })
+      : await apiPost("/api/navigation/analyze", {
+        missionId: PT.missionId,
+        towerTypeId: PT.towerId,
+        coordinates,
+        compact: true
+      });
+    if (requestId !== PT.navigationOverlayRequest) return;
+    if (!result || result.active === false) {
+      clearNavigationOverlay(`Overlay inactive: ${result?.reason ?? "mode_inactive"}`);
+      return;
+    }
+    const placementRows = Array.isArray(result.placementRows) ? result.placementRows : [];
+    PT.renderer.setNavigationOverlay?.({
+      schemaVersion: result.schemaVersion,
+      mode: result.mode,
+      profileId: result.profileId,
+      fields: result.fields,
+      placementRows
+    });
+    PT.navigationOverlayKey = cacheKey;
+    if (overlayState) {
+      const blocked = placementRows.filter((row) => row.ok === false).length;
+      const coverage = PT.navigationOverlayCoverage;
+      const partialCoverage = coverage?.partial
+        ? ` · partial focus window ${coverage.selectedCount}/${coverage.totalCount} tiles`
+        : "";
+      overlayState.textContent = `Buildability overlay: ${placementRows.length - blocked} allowed · ${blocked} blocked${partialCoverage}`;
+    }
+  } catch (error) {
+    if (requestId !== PT.navigationOverlayRequest) return;
+    clearNavigationOverlay(`Navigation analysis unavailable: ${error.message}`);
+  }
+}
+
 function newPlaytestGame() {
+  clearNavigationOverlay("Loading mission navigation");
   if (!PT.content) return null;
   const ids = Object.keys(PT.content.missions ?? {});
   if (!PT.missionId || !PT.content.missions[PT.missionId])
@@ -5415,6 +8168,7 @@ function newPlaytestGame() {
   PT.keyboardCoord = null;
   syncPlaytestKeyboardCoord(ensurePlaytestKeyboardCoord());
   renderPlaytestDebugger(PT.game.getSnapshot());
+  void refreshNavigationOverlay();
   return PT.game;
 }
 async function renderPlaytestTab() {
@@ -5447,6 +8201,7 @@ async function renderPlaytestTab() {
     difficulty.value = PT.difficultyId;
   }
   renderPlaytestPalette();
+  void refreshNavigationOverlay();
   startPlaytestLoop();
 }
 function renderPlaytestPalette() {
@@ -5461,7 +8216,7 @@ function renderPlaytestPalette() {
     const btn = document.createElement("button");
     btn.className = "pt-tower" + (tid === PT.towerId && !PT.armed ? " active" : "");
     btn.innerHTML = `<span class="sw" style="background:${PT_KIND_COLOR[t.attack?.kind] ?? "#7eb87e"}"></span><span class="pt-tname">${esc(t.label || tid)}</span><span class="pt-tcost">${t.cost?.coins ?? 0}c</span>`;
-    btn.addEventListener("click", () => { PT.towerId = tid; PT.armed = null; if ($("pt-interaction-mode")) $("pt-interaction-mode").value = "build"; renderPlaytestPalette(); });
+    btn.addEventListener("click", () => { PT.towerId = tid; PT.armed = null; clearNavigationOverlay("Tower changed"); void refreshNavigationOverlay(); if ($("pt-interaction-mode")) $("pt-interaction-mode").value = "build"; renderPlaytestPalette(); });
     list.appendChild(btn);
   }
   // Mission abilities — click to arm, then click the map to use.
@@ -5549,6 +8304,10 @@ function presentPlaytestSnapshot(snapshot, events) {
   recordPlaytestEvents(events, snapshot);
   snapshot.lastEvents = events;
   PT.renderer.drawSnapshot(snapshot);
+  if (events.some((event) => ["towerPlaced", "towerMoved", "towerSold", "towerDestroyed", "terrainChanged"].includes(event.type))) {
+    clearNavigationOverlay("Navigation field changed");
+    void refreshNavigationOverlay();
+  }
   if (PT.audio && $("pt-sound")?.checked) PT.audio.handleEvents(events);
   updatePlaytestHud(snapshot);
   const now = performance.now();
@@ -5616,10 +8375,10 @@ function updatePlaytestHud(s = PT.game.getSnapshot()) {
   }
 }
 function ptMsg(result, success = "Action completed.") { const el = $("pt-msg"); if (el) el.textContent = result.ok ? success : (result.reason || "Action rejected."); }
-$("pt-mission")?.addEventListener("change", () => { PT.missionId = $("pt-mission").value; newPlaytestGame(); renderPlaytestPalette(); const el = $("pt-msg"); if (el) el.textContent = "Mission loaded — place towers and start a wave."; });
-$("pt-difficulty")?.addEventListener("change", () => { PT.difficultyId = $("pt-difficulty").value; newPlaytestGame(); renderPlaytestPalette(); const el = $("pt-msg"); if (el) el.textContent = `Difficulty: ${PT.game?.getSnapshot().difficultyLabel ?? PT.difficultyId}.`; });
+$("pt-mission")?.addEventListener("change", () => { PT.missionId = $("pt-mission").value; clearNavigationOverlay("Mission changed"); newPlaytestGame(); renderPlaytestPalette(); void refreshNavigationOverlay(); const el = $("pt-msg"); if (el) el.textContent = "Mission loaded — place towers and start a wave."; });
+$("pt-difficulty")?.addEventListener("change", () => { PT.difficultyId = $("pt-difficulty").value; clearNavigationOverlay("Difficulty changed"); newPlaytestGame(); renderPlaytestPalette(); void refreshNavigationOverlay(); const el = $("pt-msg"); if (el) el.textContent = `Difficulty: ${PT.game?.getSnapshot().difficultyLabel ?? PT.difficultyId}.`; });
 $("pt-start")?.addEventListener("click", () => { PT.audio?.resume(); if (PT.game) ptMsg(PT.game.startNextWave(), "Wave started."); });
-$("pt-reset")?.addEventListener("click", () => { if (buildPlaytestContent()) { newPlaytestGame(); renderPlaytestPalette(); } const el = $("pt-msg"); if (el) el.textContent = "Run reset."; });
+$("pt-reset")?.addEventListener("click", () => { clearNavigationOverlay("Run reset"); if (buildPlaytestContent()) { newPlaytestGame(); renderPlaytestPalette(); void refreshNavigationOverlay(); } const el = $("pt-msg"); if (el) el.textContent = "Run reset."; });
 $("pt-speed")?.addEventListener("input", () => { const o = $("pt-speed-out"); if (o) o.textContent = $("pt-speed").value + "×"; if (Number($("pt-speed").value) > 0) PT.resumeSpeed = Number($("pt-speed").value); syncPlaytestPauseButton(); });
 $("pt-pause")?.addEventListener("click", () => {
   const speed = $("pt-speed");
@@ -5666,7 +8425,16 @@ function actAtPlaytestCoord(coord) {
     return;
   }
   if (PT.armed) { const result = PT.game.useAbility(PT.armed, coord); ptMsg(result, "Ability used."); if (result.ok) PT.armed = null; renderPlaytestPalette(); return; }
-  if (PT.towerId) ptMsg(PT.game.placeTower(PT.towerId, coord), "Tower planted.");
+  if (PT.towerId) {
+    const preflight = PT.game.canPlaceTower(PT.towerId, coord);
+    if (!preflight.ok) { ptMsg(preflight, "Tower can be placed."); return; }
+    const result = PT.game.placeTower(PT.towerId, coord);
+    ptMsg(result, "Tower planted.");
+    if (result.ok) {
+      clearNavigationOverlay("Placement changed");
+      void refreshNavigationOverlay();
+    }
+  }
 }
 
 function ensurePlaytestKeyboardCoord() {
@@ -5677,12 +8445,19 @@ function ensurePlaytestKeyboardCoord() {
 }
 
 function syncPlaytestKeyboardCoord(coord) {
-  PT.keyboardCoord = coord ? { q: coord.q, r: coord.r } : null;
+  const nextCoord = coord ? { q: coord.q, r: coord.r } : null;
+  const anchorChanged = (PT.keyboardCoord?.q ?? null) !== (nextCoord?.q ?? null)
+    || (PT.keyboardCoord?.r ?? null) !== (nextCoord?.r ?? null);
+  PT.keyboardCoord = nextCoord;
   PT.renderer?.setFocusCoord(PT.keyboardCoord);
   const tile = PT.keyboardCoord && PT.game?.getSnapshot().tiles.find(item => item.q === PT.keyboardCoord.q && item.r === PT.keyboardCoord.r);
   $("playtest-canvas")?.setAttribute("aria-label", tile
     ? `Hex battlefield. Selected tile q ${tile.q}, r ${tile.r}, ${tile.terrain}. Arrow keys move; Enter acts; Escape cancels.`
     : "Hex battlefield. Arrow keys move between tiles; Enter acts; Escape cancels.");
+  if (anchorChanged) {
+    clearNavigationOverlay("Interaction focus changed; refreshing analysis");
+    void refreshNavigationOverlay();
+  }
 }
 
 function movePlaytestKeyboardCoord(dq, dr) {

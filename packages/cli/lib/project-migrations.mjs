@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { PROJECT_SCHEMA_VERSION, normalizeManifest, normalizeVisuals } from "./project-schema.mjs";
+import { normalizeManifest, normalizeVisuals } from "./project-schema.mjs";
 
 // Legacy mushroom-themed mechanic identifiers → generic, reskinnable names.
 const ATTACK_KIND_RENAMES = {
@@ -276,7 +276,9 @@ export function migrateProjectFiles(rawFiles) {
     }
   }
 
-  files.manifest.schemaVersion = PROJECT_SCHEMA_VERSION;
+  // Project schema v3 is an explicit mechanics-authoring boundary. Legacy projects continue to
+  // normalize to v2, and authored mechanics on a v1/v2 manifest remains visible to validation.
+  files.manifest.schemaVersion = fromVersion < 2 ? 2 : fromVersion;
   return { files, migrations };
 }
 
@@ -286,7 +288,8 @@ export function writeMigratedProjectFiles(projectDir, files) {
     ["content/visuals.json", files.visuals],
     ["content/balance.json", files.balance],
     ["maps/compiled/maps.json", files.maps],
-    ["build-targets.json", files.buildTargets]
+    ["build-targets.json", files.buildTargets],
+    ...(files.mechanics === undefined ? [] : [["content/mechanics.json", files.mechanics]])
   ];
   for (const [relPath, data] of writes) {
     const filePath = path.join(projectDir, relPath);

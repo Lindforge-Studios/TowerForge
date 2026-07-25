@@ -9,12 +9,22 @@ describe("Studio AI tool policy", () => {
     { name: "list_theme_packs", riskClass: "read_only" },
     { name: "preview_theme_pack", riskClass: "compute_only" },
     { name: "apply_theme_pack", riskClass: "write_local" },
+    { name: "get_capabilities", riskClass: "read_only" },
+    { name: "analyze_line_of_sight", riskClass: "compute_only" },
+    { name: "preview_map_elevations", riskClass: "read_only" },
+    { name: "apply_map_elevations", riskClass: "write_local" },
+    { name: "preview_mechanics_module", riskClass: "read_only" },
+    { name: "apply_mechanics_module", riskClass: "write_local" },
     { name: "build_project", riskClass: "write_local" },
     { name: "package_desktop", riskClass: "write_local" }
   ];
 
   it("exposes authoring tools but keeps build and packaging outside chat", () => {
-    expect(selectAiTools(tools).map((tool) => tool.name)).toEqual(["get_entity", "upsert_entity", "write_map", "list_theme_packs", "preview_theme_pack", "apply_theme_pack"]);
+    expect(selectAiTools(tools).map((tool) => tool.name)).toEqual([
+      "get_entity", "upsert_entity", "write_map", "list_theme_packs", "preview_theme_pack", "apply_theme_pack",
+      "get_capabilities", "analyze_line_of_sight", "preview_map_elevations", "apply_map_elevations",
+      "preview_mechanics_module", "apply_mechanics_module"
+    ]);
     expect(selectAiTools(tools)[0].inputSchema.properties).not.toHaveProperty("projectDir");
     expect(selectAiTools(tools)[0].inputSchema.required).toEqual(["id"]);
     expect(AI_TOOL_NAMES).toContain("compile_maps");
@@ -26,12 +36,20 @@ describe("Studio AI tool policy", () => {
     expect(AI_TOOL_NAMES).toContain("apply_progression_patch");
     expect(AI_TOOL_NAMES).toContain("dry_run_progression_patch");
     expect(AI_TOOL_NAMES).toContain("get_progression");
+    expect(AI_TOOL_NAMES).toContain("get_capabilities");
+    expect(AI_TOOL_NAMES).toContain("analyze_line_of_sight");
+    expect(AI_TOOL_NAMES).toContain("preview_map_elevations");
+    expect(AI_TOOL_NAMES).toContain("apply_map_elevations");
+    expect(AI_TOOL_NAMES).toContain("preview_mechanics_module");
+    expect(AI_TOOL_NAMES).toContain("apply_mechanics_module");
     expect(isAiToolName("build_project")).toBe(false);
     expect(isAiToolName("package_desktop")).toBe(false);
   });
 
   it("derives write detection from MCP risk metadata", () => {
-    expect([...aiWriteToolNames(tools)].sort()).toEqual(["apply_theme_pack", "upsert_entity", "write_map"]);
+    expect([...aiWriteToolNames(tools)].sort()).toEqual([
+      "apply_map_elevations", "apply_mechanics_module", "apply_theme_pack", "upsert_entity", "write_map"
+    ]);
   });
 
   it("enforces Ask, Plan, and Act capability levels", () => {
@@ -39,10 +57,25 @@ describe("Studio AI tool policy", () => {
       { name: "get_entity", riskClass: "read_only", inputSchema: { type: "object", properties: {} } },
       { name: "balance_report", riskClass: "compute_only", inputSchema: { type: "object", properties: {} } },
       { name: "dry_run_balance_patch", riskClass: "compute_only", inputSchema: { type: "object", properties: {} } },
-      { name: "upsert_entity", riskClass: "write_local", inputSchema: { type: "object", properties: {} } }
+      { name: "upsert_entity", riskClass: "write_local", inputSchema: { type: "object", properties: {} } },
+      { name: "get_capabilities", riskClass: "read_only", inputSchema: { type: "object", properties: {} } },
+      { name: "analyze_line_of_sight", riskClass: "compute_only", inputSchema: { type: "object", properties: {} } },
+      { name: "preview_map_elevations", riskClass: "read_only", inputSchema: { type: "object", properties: {} } },
+      { name: "apply_map_elevations", riskClass: "write_local", inputSchema: { type: "object", properties: {} } },
+      { name: "preview_mechanics_module", riskClass: "read_only", inputSchema: { type: "object", properties: {} } },
+      { name: "apply_mechanics_module", riskClass: "write_local", inputSchema: { type: "object", properties: {} } }
     ];
-    expect(selectAiToolsForMode(modeTools, "ask").map((tool) => tool.name)).toEqual(["get_entity", "balance_report"]);
-    expect(selectAiToolsForMode(modeTools, "plan").map((tool) => tool.name)).toEqual(["get_entity", "balance_report", "dry_run_balance_patch"]);
-    expect(selectAiToolsForMode(modeTools, "act").map((tool) => tool.name)).toEqual(["get_entity", "balance_report", "dry_run_balance_patch", "upsert_entity"]);
+    expect(selectAiToolsForMode(modeTools, "ask").map((tool) => tool.name)).toEqual([
+      "get_entity", "balance_report", "get_capabilities", "analyze_line_of_sight", "preview_map_elevations", "preview_mechanics_module"
+    ]);
+    expect(selectAiToolsForMode(modeTools, "plan").map((tool) => tool.name)).toEqual([
+      "get_entity", "balance_report", "dry_run_balance_patch", "get_capabilities", "analyze_line_of_sight",
+      "preview_map_elevations", "preview_mechanics_module"
+    ]);
+    expect(selectAiToolsForMode(modeTools, "act").map((tool) => tool.name)).toEqual([
+      "get_entity", "balance_report", "dry_run_balance_patch", "upsert_entity",
+      "get_capabilities", "analyze_line_of_sight", "preview_map_elevations", "apply_map_elevations",
+      "preview_mechanics_module", "apply_mechanics_module"
+    ]);
   });
 });

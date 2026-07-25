@@ -1,7 +1,69 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { migrateProjectFiles } from "./project-migrations.mjs";
+import { migrateProjectFiles, writeMigratedProjectFiles } from "./project-migrations.mjs";
 
 describe("project migrations", () => {
+  it("does not silently upgrade legacy projects to v3 without authored mechanics", () => {
+    const v1 = migrateProjectFiles({ manifest: { schemaVersion: 1 }, balance: {}, visuals: {} });
+    const v2 = migrateProjectFiles({ manifest: { schemaVersion: 2 }, balance: {}, visuals: {} });
+
+    expect(v1.files.manifest.schemaVersion).toBe(2);
+    expect(v2.files.manifest.schemaVersion).toBe(2);
+    expect(v1.files.mechanics).toBeUndefined();
+    expect(v2.files.mechanics).toBeUndefined();
+  });
+
+  it("preserves an authored mechanics catalog for validation instead of hiding a v2 manifest mismatch", () => {
+    const mechanics = {
+      schemaVersion: 1,
+      modules: {
+        combat: { schemaVersion: 1, enabled: true, profiles: { elemental: {} } }
+      }
+    };
+    const { files } = migrateProjectFiles({
+      manifest: { schemaVersion: 2 },
+      balance: {},
+      visuals: {},
+      mechanics
+    });
+
+    expect(files.manifest.schemaVersion).toBe(2);
+    expect(files.mechanics).toEqual(mechanics);
+  });
+
+  it("writes an authored mechanics catalog but does not synthesize one for legacy migrations", () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "towerforge-migrate-mechanics-"));
+    const contentDir = path.join(projectDir, "content");
+    const mapsDir = path.join(projectDir, "maps", "compiled");
+    fs.mkdirSync(contentDir, { recursive: true });
+    fs.mkdirSync(mapsDir, { recursive: true });
+
+    const baseFiles = {
+      manifest: { schemaVersion: 3, name: "Mechanics migration" },
+      visuals: { schemaVersion: 2 },
+      balance: {},
+      maps: {},
+      buildTargets: { schemaVersion: 1, targets: {} }
+    };
+    const mechanics = {
+      schemaVersion: 1,
+      modules: { combat: { schemaVersion: 1, enabled: false, profiles: {} } }
+    };
+
+    try {
+      writeMigratedProjectFiles(projectDir, { ...baseFiles, mechanics });
+      expect(JSON.parse(fs.readFileSync(path.join(contentDir, "mechanics.json"), "utf8"))).toEqual(mechanics);
+
+      fs.rmSync(path.join(contentDir, "mechanics.json"));
+      writeMigratedProjectFiles(projectDir, baseFiles);
+      expect(fs.existsSync(path.join(contentDir, "mechanics.json"))).toBe(false);
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
   it("applies v1 migrations in memory without changing package boundaries", () => {
     const { files, migrations } = migrateProjectFiles({
       manifest: { name: "Legacy" },

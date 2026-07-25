@@ -1,0 +1,9 @@
+{
+  "name": "Starter Tower Defense",
+  "short_name": "Web PWA",
+  "start_url": ".",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#111111",
+  "background_color": "#111111"
+}
