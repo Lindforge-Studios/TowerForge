@@ -5,6 +5,7 @@ import {
   NAVIGATION_LIMITS,
   NavigationProfileValidationError,
   normalizeMovementProfileV1,
+  resolveActiveNavigationMechanics,
   type MovementProfileV1
 } from "./navigation-mechanics.js";
 import type { ModifierOperation, ModifierTarget } from "../simulation/modifiers.js";
@@ -35,6 +36,12 @@ export const HERO_PASSIVE_AURA_LIMITS = Object.freeze({
   additiveRatioMaximum: 1_000,
   multiplierMinimum: 0,
   multiplierMaximum: 1_000
+});
+
+/** Closed budgets for the independently optional v7 dynamic-enemy hold. */
+export const HERO_BLOCKING_LIMITS = Object.freeze({
+  blockCapacity: 64,
+  movementProfileIds: NAVIGATION_LIMITS.movementProfiles
 });
 
 const HERO_ABILITY_COOLDOWN_MAX = 86_400;
@@ -207,13 +214,34 @@ export interface ActiveHeroesMechanicsV6 extends HeroesProfileV6 {
   readonly profileId: string;
 }
 
+export interface HeroBlockingDefinitionV7 {
+  readonly blockCapacity: number;
+  readonly movementProfileIds: readonly string[];
+}
+
+export interface HeroUnitDefinitionV7 extends HeroUnitDefinitionV6 {
+  readonly blocking: HeroBlockingDefinitionV7 | null;
+}
+
+export interface HeroesProfileV7 {
+  readonly selectedHeroId: string;
+  readonly definitions: Readonly<Record<string, HeroUnitDefinitionV7>>;
+  readonly movementProfiles: Readonly<Record<string, MovementProfileV1>>;
+}
+
+export interface ActiveHeroesMechanicsV7 extends HeroesProfileV7 {
+  readonly schemaVersion: 7;
+  readonly profileId: string;
+}
+
 export type ActiveHeroesMechanics =
   | ActiveHeroesMechanicsV1
   | ActiveHeroesMechanicsV2
   | ActiveHeroesMechanicsV3
   | ActiveHeroesMechanicsV4
   | ActiveHeroesMechanicsV5
-  | ActiveHeroesMechanicsV6;
+  | ActiveHeroesMechanicsV6
+  | ActiveHeroesMechanicsV7;
 
 const PROFILE_SCHEMA = Object.freeze({
   requiredFields: Object.freeze(["selectedHeroId", "definitions"] as const),
@@ -293,6 +321,33 @@ const DEFINITION_SCHEMA_V6 = Object.freeze({
   optionalFields: Object.freeze([] as const),
   additionalProperties: false,
   spawnValues: Object.freeze(["core"] as const)
+});
+
+const DEFINITION_SCHEMA_V7 = Object.freeze({
+  requiredFields: Object.freeze([
+    "label", "spawn", "movement", "durability", "mana", "activeAbility", "skillTree", "passiveAura", "blocking"
+  ] as const),
+  optionalFields: Object.freeze([] as const),
+  additionalProperties: false,
+  spawnValues: Object.freeze(["core"] as const)
+});
+
+const BLOCKING_SCHEMA_V7 = Object.freeze({
+  nullable: true,
+  requiredFields: Object.freeze(["blockCapacity", "movementProfileIds"] as const),
+  optionalFields: Object.freeze([] as const),
+  additionalProperties: false,
+  blockCapacity: Object.freeze({
+    integer: true,
+    minimum: 1,
+    maximum: HERO_BLOCKING_LIMITS.blockCapacity
+  }),
+  movementProfileIds: Object.freeze({
+    minimumItems: 1,
+    maximumItems: HERO_BLOCKING_LIMITS.movementProfileIds,
+    uniqueItems: true,
+    itemUtf8Bytes: HEROES_LIMITS.idUtf8Bytes
+  })
 });
 
 const PASSIVE_AURA_SCHEMA_V6 = Object.freeze({
@@ -394,9 +449,9 @@ const ACTIVE_ABILITY_SCHEMA_V4 = Object.freeze({
 
 /** Capability-aware authoring descriptor shared by Studio and MCP. */
 export const HEROES_MECHANICS_SCHEMA = Object.freeze({
-  schemaVersion: 6,
+  schemaVersion: 7,
   moduleId: "heroes" as const,
-  supportedModuleSchemaVersions: Object.freeze([1, 2, 3, 4, 5, 6] as const),
+  supportedModuleSchemaVersions: Object.freeze([1, 2, 3, 4, 5, 6, 7] as const),
   profile: PROFILE_SCHEMA,
   definition: DEFINITION_SCHEMA,
   versions: Object.freeze({
@@ -457,12 +512,35 @@ export const HEROES_MECHANICS_SCHEMA = Object.freeze({
       passiveAura: PASSIVE_AURA_SCHEMA_V6,
       passiveAuraEffect: PASSIVE_AURA_EFFECT_SCHEMA_V6,
       passiveAuraModifier: PASSIVE_AURA_MODIFIER_SCHEMA_V6
+    }),
+    7: Object.freeze({
+      profile: PROFILE_SCHEMA_V2,
+      definition: DEFINITION_SCHEMA_V7,
+      movement: MOVEMENT_SCHEMA_V2,
+      movementProfile: MOVEMENT_PROFILE_V1_SCHEMA,
+      durability: DURABILITY_SCHEMA_V3,
+      shield: SHIELD_SCHEMA_V3,
+      mana: MANA_SCHEMA_V4,
+      activeAbility: ACTIVE_ABILITY_SCHEMA_V4,
+      skillTree: SKILL_TREE_SCHEMA_V5,
+      skillPoints: SKILL_POINTS_SCHEMA_V5,
+      skillNode: SKILL_NODE_SCHEMA_V5,
+      skillEffect: SKILL_EFFECT_SCHEMA_V5,
+      skillModifier: SKILL_MODIFIER_SCHEMA_V5,
+      passiveAura: PASSIVE_AURA_SCHEMA_V6,
+      passiveAuraEffect: PASSIVE_AURA_EFFECT_SCHEMA_V6,
+      passiveAuraModifier: PASSIVE_AURA_MODIFIER_SCHEMA_V6,
+      blocking: BLOCKING_SCHEMA_V7,
+      limits: Object.freeze({
+        blockCapacity: Object.freeze({ minimum: 1, maximum: HERO_BLOCKING_LIMITS.blockCapacity }),
+        movementProfileIds: HERO_BLOCKING_LIMITS.movementProfileIds
+      })
     })
   }),
   limits: HEROES_LIMITS,
   runtimeSnapshot: Object.freeze({
     path: "snapshot.heroes",
-    schemaVersions: Object.freeze([1, 2, 3, 4, 5, 6] as const),
+    schemaVersions: Object.freeze([1, 2, 3, 4, 5, 6, 7] as const),
     optionalUnlessActive: true,
     versions: Object.freeze({
       1: Object.freeze({ unitFields: Object.freeze(["id", "definitionId", "label", "coord"] as const) }),
@@ -514,6 +592,21 @@ export const HEROES_MECHANICS_SCHEMA = Object.freeze({
         ] as const),
         skillsNullable: true,
         passiveAuraFields: Object.freeze(["id", "label", "radius", "active", "affectedTowerIds"] as const)
+      }),
+      7: Object.freeze({
+        unitFields: Object.freeze([
+          "id", "definitionId", "label", "coord", "movement", "durability", "mana", "activeAbility",
+          "skills", "passiveAura", "blocking"
+        ] as const),
+        movementFields: Object.freeze(["targetCoord", "nextCoord", "edgeProgress"] as const),
+        durabilityFields: Object.freeze(["hp", "maxHp", "shield", "defeated"] as const),
+        manaFields: Object.freeze(["current", "max", "regenerationPerUnit"] as const),
+        activeAbilityFields: Object.freeze([
+          "id", "label", "target", "manaCost", "cooldown", "cooldownRemaining", "range", "damage", "ready"
+        ] as const),
+        skillsNullable: true,
+        passiveAuraNullable: true,
+        blockingFields: Object.freeze(["blockCapacity", "active", "blockedEnemyIds"] as const)
       })
     })
   })
@@ -1330,13 +1423,98 @@ export function normalizeHeroesProfileV6(input: unknown, root = "profile"): Hero
   });
 }
 
+/** Normalize the closed nullable R5.6A dynamic-enemy blocking profile. */
+export function normalizeHeroesProfileV7(input: unknown, root = "profile"): HeroesProfileV7 {
+  const profile = dataRecord(input, root, "Heroes profile");
+  exactFields(profile, PROFILE_SCHEMA_V2.requiredFields, root, "Heroes profile");
+  const rawDefinitions = dataRecord(profile.definitions, `${root}.definitions`, "Heroes definitions");
+  const v6Definitions: Record<string, unknown> = {};
+  for (const heroId of Object.keys(rawDefinitions).sort(compareBinary)) {
+    const definitionRoot = `${root}.definitions.${heroId}`;
+    const rawDefinition = dataRecord(rawDefinitions[heroId], definitionRoot, `Hero definition "${heroId}"`);
+    exactFields(rawDefinition, DEFINITION_SCHEMA_V7.requiredFields, definitionRoot, `Hero definition "${heroId}"`);
+    Object.defineProperty(v6Definitions, heroId, {
+      value: {
+        label: rawDefinition.label,
+        spawn: rawDefinition.spawn,
+        movement: rawDefinition.movement,
+        durability: rawDefinition.durability,
+        mana: rawDefinition.mana,
+        activeAbility: rawDefinition.activeAbility,
+        skillTree: rawDefinition.skillTree,
+        passiveAura: rawDefinition.passiveAura
+      },
+      enumerable: true
+    });
+  }
+  const auraProfile = normalizeHeroesProfileV6({
+    selectedHeroId: profile.selectedHeroId,
+    definitions: v6Definitions,
+    movementProfiles: profile.movementProfiles
+  }, root);
+  const definitions: Record<string, HeroUnitDefinitionV7> = {};
+  for (const heroId of Object.keys(auraProfile.definitions).sort(compareBinary)) {
+    const definitionRoot = `${root}.definitions.${heroId}`;
+    const rawDefinition = dataRecord(rawDefinitions[heroId], definitionRoot, `Hero definition "${heroId}"`);
+    let blocking: HeroBlockingDefinitionV7 | null = null;
+    if (rawDefinition.blocking !== null) {
+      const blockingRoot = `${definitionRoot}.blocking`;
+      const rawBlocking = dataRecord(rawDefinition.blocking, blockingRoot, `Hero blocking "${heroId}"`);
+      exactFields(rawBlocking, BLOCKING_SCHEMA_V7.requiredFields, blockingRoot, `Hero blocking "${heroId}"`);
+      const blockCapacity = boundedInteger(
+        rawBlocking.blockCapacity,
+        1,
+        HERO_BLOCKING_LIMITS.blockCapacity,
+        `${blockingRoot}.blockCapacity`,
+        "Hero block capacity"
+      );
+      const rawMovementProfileIds = dataArray(
+        rawBlocking.movementProfileIds,
+        `${blockingRoot}.movementProfileIds`,
+        `Hero blocking movement profile ids "${heroId}"`
+      );
+      if (rawMovementProfileIds.length < 1
+        || rawMovementProfileIds.length > HERO_BLOCKING_LIMITS.movementProfileIds) {
+        throw new HeroesProfileValidationError(
+          `${blockingRoot}.movementProfileIds`,
+          `Hero blocking movement profile ids must contain 1..${HERO_BLOCKING_LIMITS.movementProfileIds} entries.`
+        );
+      }
+      const movementProfileIds = rawMovementProfileIds.map((movementProfileId, index) => boundedText(
+        movementProfileId,
+        HEROES_LIMITS.idUtf8Bytes,
+        `${blockingRoot}.movementProfileIds[${index}]`,
+        "Hero blocking movement profile id"
+      )).sort(compareBinary);
+      for (let index = 1; index < movementProfileIds.length; index += 1) {
+        if (movementProfileIds[index - 1] === movementProfileIds[index]) {
+          throw new HeroesProfileValidationError(
+            `${blockingRoot}.movementProfileIds[${index}]`,
+            `Hero blocking movement profile ids must be unique; duplicate "${movementProfileIds[index]}".`
+          );
+        }
+      }
+      blocking = Object.freeze({ blockCapacity, movementProfileIds: Object.freeze(movementProfileIds) });
+    }
+    Object.defineProperty(definitions, heroId, {
+      value: Object.freeze({ ...auraProfile.definitions[heroId]!, blocking }),
+      enumerable: true
+    });
+  }
+  return Object.freeze({
+    selectedHeroId: auraProfile.selectedHeroId,
+    definitions: Object.freeze(definitions),
+    movementProfiles: auraProfile.movementProfiles
+  });
+}
+
 /** Reserve only the modifiers of the selected, non-null active v6 aura. */
 export function activeHeroAuraModifierReserve(
   content: GameContentRegistry,
   missionId: string
 ): number {
   const active = resolveActiveHeroesMechanics(content, missionId);
-  if (active?.schemaVersion !== 6) return 0;
+  if (active?.schemaVersion !== 6 && active?.schemaVersion !== 7) return 0;
   return active.definitions[active.selectedHeroId]?.passiveAura?.effects.length ?? 0;
 }
 
@@ -1463,12 +1641,13 @@ export function resolveActiveHeroesMechanics(
   const module = ownData(ownData(content.mechanics, "modules"), "heroes");
   const schemaVersion = ownData(module, "schemaVersion");
   if ((schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3 && schemaVersion !== 4
-    && schemaVersion !== 5 && schemaVersion !== 6)
+    && schemaVersion !== 5 && schemaVersion !== 6 && schemaVersion !== 7)
     || ownData(module, "enabled") !== true) {
     return undefined;
   }
   const profile = ownData(ownData(module, "profiles"), capability.profileId);
-  let normalized: HeroesProfileV1 | HeroesProfileV2 | HeroesProfileV3 | HeroesProfileV4 | HeroesProfileV5 | HeroesProfileV6;
+  let normalized: HeroesProfileV1 | HeroesProfileV2 | HeroesProfileV3 | HeroesProfileV4 | HeroesProfileV5
+    | HeroesProfileV6 | HeroesProfileV7;
   try {
     normalized = schemaVersion === 1
       ? normalizeHeroesProfileV1(profile, `modules.heroes.profiles.${capability.profileId}`)
@@ -1480,24 +1659,52 @@ export function resolveActiveHeroesMechanics(
             ? normalizeHeroesProfileV4(profile, `modules.heroes.profiles.${capability.profileId}`)
             : schemaVersion === 5
               ? normalizeHeroesProfileV5(profile, `modules.heroes.profiles.${capability.profileId}`)
-              : normalizeHeroesProfileV6(profile, `modules.heroes.profiles.${capability.profileId}`);
+              : schemaVersion === 6
+                ? normalizeHeroesProfileV6(profile, `modules.heroes.profiles.${capability.profileId}`)
+                : normalizeHeroesProfileV7(profile, `modules.heroes.profiles.${capability.profileId}`);
   } catch {
     return undefined;
   }
   if (!Object.prototype.hasOwnProperty.call(normalized.definitions, normalized.selectedHeroId)) return undefined;
-  if (schemaVersion === 2 || schemaVersion === 3 || schemaVersion === 4 || schemaVersion === 5 || schemaVersion === 6) {
-    const moving = normalized as HeroesProfileV2 | HeroesProfileV3 | HeroesProfileV4 | HeroesProfileV5 | HeroesProfileV6;
+  if (schemaVersion === 2 || schemaVersion === 3 || schemaVersion === 4 || schemaVersion === 5
+    || schemaVersion === 6 || schemaVersion === 7) {
+    const moving = normalized as HeroesProfileV2 | HeroesProfileV3 | HeroesProfileV4 | HeroesProfileV5
+      | HeroesProfileV6 | HeroesProfileV7;
     const definition = moving.definitions[moving.selectedHeroId];
     if (!definition || !Object.prototype.hasOwnProperty.call(moving.movementProfiles, definition.movement.movementProfileId)) {
       return undefined;
     }
-    if (schemaVersion === 5 || schemaVersion === 6) {
-      const v5 = moving as HeroesProfileV5 | HeroesProfileV6;
+    if (schemaVersion === 5 || schemaVersion === 6 || schemaVersion === 7) {
+      const v5 = moving as HeroesProfileV5 | HeroesProfileV6 | HeroesProfileV7;
       if (validateHeroSkillTreeSemanticsV5(
         v5,
         `modules.heroes.profiles.${capability.profileId}`,
         [content.missions[missionId]?.waves.length ?? 0]
       ).length > 0) return undefined;
+      if (schemaVersion === 7) {
+        const v7 = v5 as HeroesProfileV7;
+        const blocking = v7.definitions[v7.selectedHeroId]?.blocking;
+        if (blocking !== null) {
+          let navigation: ReturnType<typeof resolveActiveNavigationMechanics>;
+          try {
+            navigation = resolveActiveNavigationMechanics(content, missionId);
+          } catch {
+            return undefined;
+          }
+          if (navigation?.mode !== "dynamic_flow"
+            || blocking === undefined
+            || blocking.movementProfileIds.some((movementProfileId) => (
+              !Object.prototype.hasOwnProperty.call(navigation.movementProfiles, movementProfileId)
+            ))) return undefined;
+        }
+        return Object.freeze({
+          schemaVersion: 7 as const,
+          profileId: capability.profileId,
+          selectedHeroId: v7.selectedHeroId,
+          definitions: v7.definitions,
+          movementProfiles: v7.movementProfiles
+        });
+      }
       return schemaVersion === 5
         ? Object.freeze({
             schemaVersion: 5 as const,

@@ -11,6 +11,7 @@ const MAX_SKILL_REQUIREMENTS = 8;
 const MAX_DESCRIPTION_BYTES = 512;
 // An authoritative aura can cover every cell in the engine's maximum active map.
 const MAX_AURA_TOWER_IDS = 65_536;
+const MAX_BLOCKED_ENEMY_IDS = 64;
 
 const INACTIVE = Object.freeze({ active: false, units: Object.freeze([]) });
 
@@ -272,6 +273,29 @@ function passiveAura(value) {
   });
 }
 
+function blocking(value) {
+  const record = exactRecord(value, ["blockCapacity", "active", "blockedEnemyIds"]);
+  if (!record || !Number.isSafeInteger(record.blockCapacity)
+    || record.blockCapacity < 1 || record.blockCapacity > MAX_BLOCKED_ENEMY_IDS
+    || typeof record.active !== "boolean") return null;
+  const sourceIds = denseArray(record.blockedEnemyIds, MAX_BLOCKED_ENEMY_IDS);
+  if (!sourceIds || sourceIds.length > record.blockCapacity) return null;
+  const blockedEnemyIds = [];
+  let previous = null;
+  for (const value of sourceIds) {
+    const enemyId = boundedText(value, MAX_ID_BYTES);
+    if (!enemyId || (previous !== null && previous >= enemyId)) return null;
+    blockedEnemyIds.push(enemyId);
+    previous = enemyId;
+  }
+  if (!record.active && blockedEnemyIds.length > 0) return null;
+  return Object.freeze({
+    blockCapacity: record.blockCapacity,
+    active: record.active,
+    blockedEnemyIds: Object.freeze(blockedEnemyIds)
+  });
+}
+
 /**
  * Project only the authoritative optional engine snapshot. Invalid/future/untrusted shapes fail
  * closed to the same inactive sentinel; renderers never reconstruct a hero from mechanics data.
@@ -282,7 +306,8 @@ export function projectHeroesPresentation(snapshot) {
   const section = exactRecord(value, ["schemaVersion", "units"]);
   if (!section || (section.schemaVersion !== 1 && section.schemaVersion !== 2
     && section.schemaVersion !== 3 && section.schemaVersion !== 4
-    && section.schemaVersion !== 5 && section.schemaVersion !== 6)) return INACTIVE;
+    && section.schemaVersion !== 5 && section.schemaVersion !== 6
+    && section.schemaVersion !== 7)) return INACTIVE;
   const authoredUnits = denseArray(section.units, MAX_UNITS);
   if (!authoredUnits || authoredUnits.length !== 1) return INACTIVE;
   const units = [];
@@ -299,10 +324,15 @@ export function projectHeroesPresentation(snapshot) {
             ? ["id", "definitionId", "label", "coord", "movement", "durability", "mana", "activeAbility"]
             : section.schemaVersion === 5
               ? ["id", "definitionId", "label", "coord", "movement", "durability", "mana", "activeAbility", "skills"]
-              : [
+              : section.schemaVersion === 6
+                ? [
                   "id", "definitionId", "label", "coord", "movement", "durability", "mana",
                   "activeAbility", "skills", "passiveAura"
-                ]);
+                ]
+                : [
+                    "id", "definitionId", "label", "coord", "movement", "durability", "mana",
+                    "activeAbility", "skills", "passiveAura", "blocking"
+                  ]);
     if (!unit) return INACTIVE;
     const id = boundedText(unit.id, MAX_ID_BYTES);
     const definitionId = boundedText(unit.definitionId, MAX_ID_BYTES);
@@ -342,7 +372,7 @@ export function projectHeroesPresentation(snapshot) {
       }));
       continue;
     }
-    const projectedSkills = section.schemaVersion === 6 && unit.skills === null
+    const projectedSkills = section.schemaVersion >= 6 && unit.skills === null
       ? null
       : skills(unit.skills);
     if (unit.skills !== null && !projectedSkills) return INACTIVE;
@@ -354,6 +384,19 @@ export function projectHeroesPresentation(snapshot) {
         id, definitionId, label, coord, movement: projectedMovement, durability: projectedDurability,
         mana: projectedMana, activeAbility: projectedAbility, skills: projectedSkills,
         passiveAura: projectedAura
+      }));
+      continue;
+    }
+    if (section.schemaVersion === 7) {
+      const projectedAura = unit.passiveAura === null ? null : passiveAura(unit.passiveAura);
+      const projectedBlocking = blocking(unit.blocking);
+      if ((unit.passiveAura !== null && !projectedAura) || !projectedBlocking
+        || (projectedAura?.active && projectedDurability.defeated)
+        || (projectedBlocking.active && projectedDurability.defeated)) return INACTIVE;
+      units.push(Object.freeze({
+        id, definitionId, label, coord, movement: projectedMovement, durability: projectedDurability,
+        mana: projectedMana, activeAbility: projectedAbility, skills: projectedSkills,
+        passiveAura: projectedAura, blocking: projectedBlocking
       }));
       continue;
     }

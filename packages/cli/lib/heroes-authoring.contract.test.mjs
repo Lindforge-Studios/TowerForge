@@ -612,7 +612,7 @@ describe("R5.5A CLI passive hero damage-aura authoring", () => {
 
     const mechanicsPath = path.join(projectDir, "content", "mechanics.json");
     const future = JSON.parse(fs.readFileSync(mechanicsPath, "utf8"));
-    future.modules.heroes.schemaVersion = 7;
+    future.modules.heroes.schemaVersion = 8;
     fs.writeFileSync(mechanicsPath, `${JSON.stringify(future, null, 2)}\n`, "utf8");
     const futureBefore = transactionBytes(projectDir);
     const rejected = await previewMechanicsModule(projectDir, request({

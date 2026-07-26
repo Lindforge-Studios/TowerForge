@@ -618,6 +618,33 @@ checkpoint v1, project v3, PlayerProfile v3, CampaignRun v1, and TowerScript v6 
 [ADR 0042](adr/0042-opt-in-passive-hero-damage-aura.md) and
 `docs/examples/opt-in-hero-roster/mechanics-passive-aura.json`.
 
+### R5.6A dynamic hero blocking
+
+Heroes v7 retains the complete v6 definition and adds required nullable `blocking`. A non-null
+value has a safe-integer `blockCapacity` from 1 through 64 and one-to-32 unique, binary-sorted
+`movementProfileIds`. These IDs are explicit references into the same mission's selected, enabled
+Navigation v1 `dynamic_flow` profile. Structural checks always fail closed; broken cross-capability
+references are activation errors only on the selected active path and warnings otherwise. Neither
+the engine nor authoring surfaces infer eligibility from profile names, terrain mode, enemy class,
+or tower-occupancy policy.
+
+The living selected hero blocks at its authoritative `currentCoord`; interpolation remains a
+presentation detail. At each enemy movement boundary the engine derives up to the authored
+capacity of eligible co-located enemies in binary ID order. An exact-boundary arrival can take a
+free slot before consuming remaining movement or leaking at the core. Overflow continues normally.
+The hero is never inserted into flow-field occupancy, so blocking does not dirty or rebuild a
+resolver, alter reachability or placement, or run per-enemy pathfinding.
+
+Only non-null active blocking publishes snapshot v7 with nullable skills/aura and an authoritative
+`blocking:{blockCapacity,active,blockedEnemyIds}` section. Null blocking retains literal snapshot
+v4/v5/v6 and nested checkpoint v3/v4 forms; held IDs are derived after restore, so no checkpoint
+field is added. Mechanics Hub performs an explicit module-wide v6→v7 null promotion. MCP guide v27
+and the inert `basic_dynamic_hero_blocking` recipe use guarded preview/apply and never enable or
+select Navigation. GameCommand/Journal v6, events, outer checkpoint v1, project v3, profile v3,
+CampaignRun v1, and TowerScript v6 remain unchanged. See
+[ADR 0043](adr/0043-opt-in-dynamic-hero-blocking.md) and
+`docs/examples/opt-in-hero-roster/mechanics-blocking.json`.
+
 ## Done Criteria For Constructor Changes
 
 - Engine changes pass `npm run typecheck`.

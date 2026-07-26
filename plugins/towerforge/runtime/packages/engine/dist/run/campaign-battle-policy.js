@@ -204,7 +204,8 @@ function rogueliteRunDamageBound(content, missionId, towerTypeId, deck) {
  */
 export function preflightHeroAuraDamageFinite(content, missionId, options = {}) {
     const active = resolveActiveHeroesMechanics(content, missionId);
-    const profile = options.heroesProfile ?? (active?.schemaVersion === 6 ? active : undefined);
+    const profile = options.heroesProfile
+        ?? (active?.schemaVersion === 6 || active?.schemaVersion === 7 ? active : undefined);
     if (!profile)
         return Object.freeze({ ok: true });
     const definition = profile.definitions[profile.selectedHeroId];

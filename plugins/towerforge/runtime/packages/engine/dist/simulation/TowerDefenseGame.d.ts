@@ -81,6 +81,7 @@ export declare class TowerDefenseGame {
     private readonly activeRogueliteMechanics;
     private readonly activeHeroesMechanics;
     private readonly activeHeroPassiveAura;
+    private readonly activeHeroBlocking;
     private readonly heroesSnapshotV1;
     private heroStateV2;
     private heroMovementField;
@@ -335,6 +336,10 @@ export declare class TowerDefenseGame {
     private buildSunlightTilesSnapshot;
     private moveEnemies;
     private moveDynamicEnemies;
+    private heroBlockingActive;
+    private heroBlockingCandidate;
+    private deriveHeroBlockedEnemyIds;
+    private tryAcquireHeroBlock;
     private leakDynamicEnemy;
     private applyDotDamage;
     private isPulseTower;

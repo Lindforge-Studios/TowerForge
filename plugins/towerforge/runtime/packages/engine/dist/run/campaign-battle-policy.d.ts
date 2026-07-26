@@ -1,5 +1,5 @@
 import type { GameContentRegistry } from "../content/registry.js";
-import { type HeroesProfileV6 } from "../content/heroes-mechanics.js";
+import { type HeroesProfileV6, type HeroesProfileV7 } from "../content/heroes-mechanics.js";
 export interface CampaignBattleDeckEntry {
     readonly cardId: string;
 }
@@ -13,7 +13,7 @@ export declare function campaignBattleWorstCaseModifierCount(deck: readonly Camp
 export interface HeroAuraDamageFinitePreflightOptions {
     readonly deck?: readonly CampaignBattleDeckEntry[];
     /** Structurally normalized profile used to diagnose inactive/unselected authoring as a warning. */
-    readonly heroesProfile?: HeroesProfileV6;
+    readonly heroesProfile?: HeroesProfileV6 | HeroesProfileV7;
 }
 export type HeroAuraDamageFinitePreflightResult = {
     readonly ok: true;

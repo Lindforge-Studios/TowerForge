@@ -30,7 +30,8 @@ describe("R5.1A Studio static heroes foundation surface", () => {
     expect(copy).toMatch(/abilit/i);
     expect(copy).toMatch(/skill|tree/i);
     expect(copy).toMatch(/aura/i);
-    expect(copy).not.toMatch(/blocking|command(?:er)?\s+units?/i);
+    expect(copy).toMatch(/blocking/i);
+    expect(copy).not.toMatch(/command(?:er)?\s+units?/i);
   });
 
   it("keeps the exact roster editor isolated inside Mechanics Hub", () => {
@@ -82,7 +83,7 @@ describe("R5.1A Studio static heroes foundation surface", () => {
     expect(apply).toMatch(/await\s+load\(\)/);
   });
 
-  it("enables v1, preserves it across disable/re-enable, and keeps future v7 read-only", () => {
+  it("enables v1, preserves it across disable/re-enable, and keeps future v8 read-only", () => {
     const hub = functionSource(app, "renderMechanicsHub");
     const effectiveVersion = functionSource(app, "mechanicsEffectiveModuleSchemaVersion");
     const load = functionSource(app, "loadMechanicsProfile");
@@ -92,7 +93,7 @@ describe("R5.1A Studio static heroes foundation surface", () => {
     expect(hub).toMatch(/btn-mechanics-enable[\s\S]*applyMechanics\(true\)/);
     expect(effectiveVersion).toMatch(/heroes[\s\S]*(?:1|moduleSchemaVersion)/i);
     expect(load).toMatch(/normalizeHeroesMechanicsDraft/);
-    expect(app).toMatch(/heroes[\s\S]{0,500}(?:future|read-only|schemaVersion\s*7)/i);
+    expect(app).toMatch(/heroes[\s\S]{0,500}(?:future|read-only|schemaVersion\s*8)/i);
   });
 });
 
@@ -121,7 +122,7 @@ describe("R5.1B Studio hero movement authoring", () => {
     // V1 remains a complete opt-in static profile; the new controls are conditional on v2.
     const render = functionSource(app, "renderHeroesMechanicsEditor");
     expect(render).toMatch(/movementEnabled\s*=\s*editorVersion\s*>=\s*2/);
-    expect(app).toMatch(/HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS\s*=\s*Object\.freeze\(\[1,\s*2,\s*3,\s*4,\s*5,\s*6\]\)/);
+    expect(app).toMatch(/HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS\s*=\s*Object\.freeze\(\[1,\s*2,\s*3,\s*4,\s*5,\s*6,\s*7\]\)/);
   });
 
   it("round-trips exact nested movement and heroes-owned MovementProfileV1 records", () => {
@@ -145,13 +146,13 @@ describe("R5.1B Studio hero movement authoring", () => {
     expect(`${normalize}\n${render}`).not.toMatch(/navigation\.mode|dynamic_flow|enableNavigation/i);
   });
 
-  it("edits v1-v6, while preserving future v7+ modules read-only", () => {
+  it("edits v1-v7, while preserving future v8+ modules read-only", () => {
     const render = functionSource(app, "renderHeroesMechanicsEditor");
     const load = functionSource(app, "loadMechanicsProfile");
 
     expect(load).toMatch(/normalizeHeroesMechanicsDraft/);
-    expect(app).toMatch(/supportedModuleSchemaVersions[\s\S]{0,300}1[\s\S]{0,100}2[\s\S]{0,100}3[\s\S]{0,100}4[\s\S]{0,100}5[\s\S]{0,100}6|heroes[\s\S]{0,500}\[\s*1\s*,\s*2\s*,\s*3\s*,\s*4\s*,\s*5\s*,\s*6\s*\]/i);
-    expect(render).toMatch(/future[\s\S]{0,200}(?:7\+|schemaVersion\s*7)|read-only/i);
+    expect(app).toMatch(/supportedModuleSchemaVersions[\s\S]{0,300}1[\s\S]{0,100}2[\s\S]{0,100}3[\s\S]{0,100}4[\s\S]{0,100}5[\s\S]{0,100}6[\s\S]{0,100}7|heroes[\s\S]{0,500}\[\s*1\s*,\s*2\s*,\s*3\s*,\s*4\s*,\s*5\s*,\s*6\s*,\s*7\s*\]/i);
+    expect(render).toMatch(/future[\s\S]{0,200}(?:8\+|schemaVersion\s*8)|read-only/i);
     expect(app).not.toMatch(/future heroes schemaVersion 2\+/i);
   });
 });
@@ -168,7 +169,7 @@ describe("R5.2A Studio hero durability authoring", () => {
       expect(outside).not.toContain(marker);
     }
     const render = functionSource(app, "renderHeroesMechanicsEditor");
-    expect(render).toMatch(/durabilityEnabled\s*=\s*editorVersion\s*>=\s*3\s*&&\s*editorVersion\s*<=\s*6/);
+    expect(render).toMatch(/durabilityEnabled\s*=\s*editorVersion\s*>=\s*3\s*&&\s*editorVersion\s*<=\s*7/);
     expect(render).toMatch(/durability/);
     expect(render).toMatch(/maxHp/);
     expect(render).toMatch(/shield/);
@@ -205,19 +206,19 @@ describe("R5.3A Studio targeted hero ability authoring", () => {
       expect(outside).not.toContain(marker);
     }
     const render = functionSource(app, "renderHeroesMechanicsEditor");
-    expect(render).toMatch(/abilityEnabled\s*=\s*editorVersion\s*>=\s*4\s*&&\s*editorVersion\s*<=\s*6/);
+    expect(render).toMatch(/abilityEnabled\s*=\s*editorVersion\s*>=\s*4\s*&&\s*editorVersion\s*<=\s*7/);
     expect(render).toMatch(/descriptor\?\.versions\?\.\[?4\]?/);
     expect(render).toMatch(/target[\s\S]{0,160}enemy/i);
   });
 
-  it("keeps v1-v6 behavior and preserves future v7 losslessly read-only", () => {
+  it("keeps v1-v7 behavior and preserves future v8 losslessly read-only", () => {
     const normalize = functionSource(app, "normalizeHeroesMechanicsDraft");
     const render = functionSource(app, "renderHeroesMechanicsEditor");
     const request = functionSource(app, "mechanicsRequest");
-    expect(app).toMatch(/HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS\s*=\s*Object\.freeze\(\[1,\s*2,\s*3,\s*4,\s*5,\s*6\]\)/);
-    expect(render).toMatch(/movementEnabled\s*=\s*editorVersion\s*>=\s*2\s*&&\s*editorVersion\s*<=\s*6/);
-    expect(render).toMatch(/durabilityEnabled\s*=\s*editorVersion\s*>=\s*3\s*&&\s*editorVersion\s*<=\s*6/);
-    expect(app).toMatch(/Future heroes schemaVersion 7\+/);
+    expect(app).toMatch(/HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS\s*=\s*Object\.freeze\(\[1,\s*2,\s*3,\s*4,\s*5,\s*6,\s*7\]\)/);
+    expect(render).toMatch(/movementEnabled\s*=\s*editorVersion\s*>=\s*2\s*&&\s*editorVersion\s*<=\s*7/);
+    expect(render).toMatch(/durabilityEnabled\s*=\s*editorVersion\s*>=\s*3\s*&&\s*editorVersion\s*<=\s*7/);
+    expect(app).toMatch(/Future heroes schemaVersion 8\+/);
     expect(normalize).toMatch(/return\s+deep\(source\)/);
     expect(request).toMatch(/profile\s*=\s*deep\(MechanicsUI\.draft\)/);
   });
@@ -265,7 +266,7 @@ describe("R5.4A Studio battle-local hero skill-tree authoring", () => {
     expect(render).toMatch(/label[\s\S]{0,200}description[\s\S]{0,200}cost[\s\S]{0,200}requires/);
     expect(render).toMatch(/hero_ability_damage/);
     expect(render).toMatch(/flat[\s\S]{0,160}additive_ratio[\s\S]{0,160}multiplier/);
-    expect(render).not.toMatch(/blockCapacity|logistics|TowerScript/i);
+    expect(render).not.toMatch(/logistics|TowerScript/i);
   });
 
   it("promotes v4 to v5 only through an explicit nullable-tree edit and preserves the whole profile", () => {
@@ -277,14 +278,14 @@ describe("R5.4A Studio battle-local hero skill-tree authoring", () => {
     expect(normalize).toMatch(/return\s+deep\(source\)/);
     expect(normalize).not.toMatch(/skillTree\s*=|starting\s*=|perInterwave\s*=/);
     expect(effectiveVersion).toMatch(/hasSkillTree[\s\S]{0,360}Math\.max\(authoredVersion,\s*5\)/);
-    expect(render).toMatch(/editorVersion\s*===\s*5|editorVersion\s*>=\s*5\s*&&\s*editorVersion\s*<=\s*6/);
+    expect(render).toMatch(/editorVersion\s*===\s*5|editorVersion\s*>=\s*5\s*&&\s*editorVersion\s*<=\s*7/);
     expect(render).toMatch(/data-hero-skill-tree-enabled[\s\S]{0,900}skillTree\s*=\s*(?:event\.target\.checked\s*\?|null|\{)/);
     expect(render).toMatch(/MechanicsUI\.moduleSchemaVersion\s*=\s*(?:Math\.max\([^)]*5\)|5)/);
     expect(request).toMatch(/profile\s*=\s*deep\(MechanicsUI\.draft\)/);
     expect(request).not.toMatch(/delete\s+profile\.(?:definitions|movementProfiles)/);
   });
 
-  it("passes visible tree values to shared validation and keeps future v7 read-only", () => {
+  it("passes visible tree values to shared validation and keeps future v8 read-only", () => {
     const render = functionSource(app, "renderHeroesMechanicsEditor");
     for (const marker of [
       "data-hero-skill-starting-points",
@@ -297,8 +298,8 @@ describe("R5.4A Studio battle-local hero skill-tree authoring", () => {
       ));
     }
     expect(render).not.toMatch(/data-hero-skill[\s\S]{0,350}Number\.isFinite\([\s\S]{0,120}(?:>|>=)\s*0/);
-    expect(app).toMatch(/HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS\s*=\s*Object\.freeze\(\[1,\s*2,\s*3,\s*4,\s*5,\s*6\]\)/);
-    expect(app).toMatch(/Future heroes schemaVersion 7\+/);
+    expect(app).toMatch(/HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS\s*=\s*Object\.freeze\(\[1,\s*2,\s*3,\s*4,\s*5,\s*6,\s*7\]\)/);
+    expect(app).toMatch(/Future heroes schemaVersion 8\+/);
   });
 });
 
@@ -328,7 +329,7 @@ describe("R5.5A Studio passive hero damage-aura authoring", () => {
     expect(render).toMatch(/flat[\s\S]{0,180}additive_ratio[\s\S]{0,180}multiplier/);
     expect(render).toMatch(/effects\.length\s*<\s*4/);
     expect(render).toMatch(/effects\.length\s*>\s*1/);
-    expect(render).not.toMatch(/blockCapacity|logistics|TowerScript/i);
+    expect(render).not.toMatch(/logistics|TowerScript/i);
   });
 
   it("promotes every v5 definition to explicit v6 aura-or-null only after an aura edit", () => {
@@ -349,7 +350,7 @@ describe("R5.5A Studio passive hero damage-aura authoring", () => {
     expect(request).not.toMatch(/delete\s+profile\.(?:definitions|movementProfiles)/);
   });
 
-  it("passes visible aura numbers to shared validation and preserves future v7 read-only", () => {
+  it("passes visible aura numbers to shared validation and preserves future v8 read-only", () => {
     const render = functionSource(app, "renderHeroesMechanicsEditor");
     for (const marker of [
       "data-hero-passive-aura-radius",
@@ -360,7 +361,59 @@ describe("R5.5A Studio passive hero damage-aura authoring", () => {
       ));
     }
     expect(render).not.toMatch(/data-hero-passive-aura[\s\S]{0,350}Number\.isFinite\([\s\S]{0,120}(?:>|>=)\s*0/);
-    expect(app).toMatch(/HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS\s*=\s*Object\.freeze\(\[1,\s*2,\s*3,\s*4,\s*5,\s*6\]\)/);
-    expect(app).toMatch(/Future heroes schemaVersion 7\+/);
+    expect(app).toMatch(/HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS\s*=\s*Object\.freeze\(\[1,\s*2,\s*3,\s*4,\s*5,\s*6,\s*7\]\)/);
+    expect(app).toMatch(/Future heroes schemaVersion 8\+/);
+  });
+});
+
+describe("R5.6A Studio dynamic-navigation hero blocking authoring", () => {
+  it("keeps the exact nullable v7 blocking controls isolated inside Mechanics Hub", () => {
+    const hubStart = html.indexOf('<section id="tab-mechanics"');
+    const hubEnd = html.indexOf('<section id="tab-settings"', hubStart);
+    const outside = `${html.slice(0, hubStart)}${html.slice(hubEnd)}`;
+    for (const marker of [
+      "data-hero-blocking-enabled",
+      "data-hero-block-capacity",
+      "data-hero-blocking-movement-profile-id",
+      "data-add-hero-blocking-movement-profile",
+      "data-remove-hero-blocking-movement-profile"
+    ]) {
+      expect(`${html}\n${app}`).toContain(marker);
+      expect(outside).not.toContain(marker);
+    }
+    const render = functionSource(app, "renderHeroesMechanicsEditor");
+    expect(render).toMatch(/blocking/);
+    expect(render).toMatch(/blockCapacity/);
+    expect(render).toMatch(/movementProfileIds/);
+    expect(render).toMatch(/Dynamic Navigation|dynamic_flow/i);
+    expect(render).toMatch(/1[\s\S]{0,100}64/);
+    expect(render).not.toMatch(/enableNavigation|applyMechanics\([^)]*navigation/i);
+  });
+
+  it("promotes every v6 definition to explicit blocking-or-null only after an edit", () => {
+    const normalize = functionSource(app, "normalizeHeroesMechanicsDraft");
+    const effectiveVersion = functionSource(app, "mechanicsEffectiveModuleSchemaVersion");
+    const render = functionSource(app, "renderHeroesMechanicsEditor");
+    const request = functionSource(app, "mechanicsRequest");
+
+    expect(normalize).toMatch(/return\s+deep\(source\)/);
+    expect(normalize).not.toMatch(/blocking\s*=/);
+    expect(effectiveVersion).toMatch(/hasBlocking[\s\S]{0,360}Math\.max\(authoredVersion,\s*7\)/);
+    expect(render).toMatch(
+      /data-hero-blocking-enabled[\s\S]{0,1800}Object\.values\(MechanicsUI\.draft\.definitions\)[\s\S]{0,600}blocking\s*===\s*undefined[\s\S]{0,260}blocking\s*=\s*null/
+    );
+    expect(render).toMatch(/definition\.blocking\s*=\s*event\.target\.checked[\s\S]{0,700}:\s*null/);
+    expect(render).toMatch(/MechanicsUI\.moduleSchemaVersion\s*=\s*7/);
+    expect(request).toMatch(/profile\s*=\s*deep\(MechanicsUI\.draft\)/);
+    expect(request).not.toMatch(/delete\s+profile\.(?:definitions|movementProfiles)/);
+  });
+
+  it("passes exact capacity and profile IDs to shared validation without inferring navigation", () => {
+    const render = functionSource(app, "renderHeroesMechanicsEditor");
+    expect(render).toMatch(/data-hero-block-capacity[\s\S]{0,600}Number\(event\.target\.value\)/);
+    expect(render).toMatch(/data-hero-blocking-movement-profile-id/);
+    expect(render).not.toMatch(/movementProfileIds[\s\S]{0,500}(?:ground|towerOccupancy|defaultMovementProfileId)/i);
+    expect(app).toMatch(/HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS\s*=\s*Object\.freeze\(\[1,\s*2,\s*3,\s*4,\s*5,\s*6,\s*7\]\)/);
+    expect(app).toMatch(/Future heroes schemaVersion 8\+/);
   });
 });

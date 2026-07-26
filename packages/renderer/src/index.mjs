@@ -147,6 +147,7 @@ export class TowerForgeCanvasRenderer {
       this.drawHero(hero, geom);
     }
     for (const enemy of snapshot.enemies ?? []) this.drawEnemy(enemy, snapshot, geom);
+    for (const hero of heroPresentation.units) this.drawHeroBlocking(hero, positions, geom);
     this.drawEffects(geom);
 
     this.ctx.restore();
@@ -730,6 +731,27 @@ export class TowerForgeCanvasRenderer {
       if (!towerPoint) continue;
       this.ctx.beginPath();
       this.ctx.arc(towerPoint.x, towerPoint.y, geom.r * 0.62, 0, Math.PI * 2);
+      this.ctx.stroke();
+    }
+    this.ctx.restore();
+  }
+
+  drawHeroBlocking(hero, enemyPositions, geom) {
+    const blocking = hero.blocking;
+    if (!blocking?.active) return;
+    const heroPoint = projectHeroPresentationPoint(hero, (coord) => this.center(coord, geom));
+    if (!heroPoint) return;
+    this.ctx.save();
+    this.ctx.strokeStyle = "rgba(255, 187, 92, .92)";
+    this.ctx.lineWidth = Math.max(2, geom.r * 0.11);
+    this.ctx.beginPath();
+    this.ctx.arc(heroPoint.x, heroPoint.y, geom.r * 0.72, 0, Math.PI * 2);
+    this.ctx.stroke();
+    for (const enemyId of blocking.blockedEnemyIds) {
+      const enemyPoint = enemyPositions.get(enemyId);
+      if (!enemyPoint) continue;
+      this.ctx.beginPath();
+      this.ctx.arc(enemyPoint.x, enemyPoint.y, geom.r * 0.54, 0, Math.PI * 2);
       this.ctx.stroke();
     }
     this.ctx.restore();

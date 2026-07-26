@@ -4,13 +4,13 @@ import { coordKey } from "../simulation/hex.js";
 import { createGridTopology, normalizeGridDefinition } from "../simulation/topology.js";
 import { validateTowerScriptDefinitions } from "../scripting/validate.js";
 import { ARMOR_MATRIX_LIMITS, MARK_LIMITS, MECHANICS_MODULE_IDS, REACTION_LIMITS, SHIELD_LIMITS } from "./mechanics.js";
-import { NAVIGATION_LIMITS, NavigationProfileValidationError, normalizeNavigationProfileV1 } from "./navigation-mechanics.js";
+import { NAVIGATION_LIMITS, NavigationProfileValidationError, normalizeNavigationProfileV1, resolveActiveNavigationMechanics } from "./navigation-mechanics.js";
 import { GridElevationValidationError, inspectGridElevationOverrides, normalizeGridElevationOverrides } from "../simulation/map.js";
 import { HIGH_GROUND_LIMITS, LINE_OF_SIGHT_LIMITS } from "./elevation-mechanics.js";
 import { PHYSICS_LIMITS, inspectOwnDataEffect, parseDisplacementEffectV1, resolveActivePhysicsMechanics } from "./physics-mechanics.js";
 import { TERRAFORMING_LIMITS, TerraformingProfileValidationError, normalizeTerraformingProfileV1 } from "./terraforming-mechanics.js";
 import { ROGUELITE_SYNERGY_LIMITS, ROGUELITE_DRAFT_LIMITS, RogueliteProfileValidationError, assertRogueliteV2ModifierBudget, assertRogueliteV3ModifierBudget, normalizeRogueliteProfileV1, normalizeRogueliteProfileV2, normalizeRogueliteProfileV3, normalizeRogueliteProfileV4, normalizeTowerTagsV1 } from "./roguelite-mechanics.js";
-import { HeroesProfileValidationError, normalizeHeroesProfileV1, normalizeHeroesProfileV2, normalizeHeroesProfileV3, normalizeHeroesProfileV4, normalizeHeroesProfileV5, normalizeHeroesProfileV6, validateHeroSkillTreeSemanticsV5 } from "./heroes-mechanics.js";
+import { HeroesProfileValidationError, normalizeHeroesProfileV1, normalizeHeroesProfileV2, normalizeHeroesProfileV3, normalizeHeroesProfileV4, normalizeHeroesProfileV5, normalizeHeroesProfileV6, normalizeHeroesProfileV7, validateHeroSkillTreeSemanticsV5 } from "./heroes-mechanics.js";
 import { normalizeAuthoredWorldCampaign, WorldCampaignValidationError } from "../run/campaign-world.js";
 import { campaignBattleRogueliteWorstCaseModifierCount, preflightHeroAuraDamageFinite } from "../run/campaign-battle-policy.js";
 import { MAX_MODIFIERS_PER_RESOLUTION } from "../simulation/modifiers.js";
@@ -1971,8 +1971,9 @@ export function validateGameContentRegistry(content) {
             return;
         unknownFields(module, ["schemaVersion", "enabled", "profiles"], "heroes", "modules.heroes");
         if (module.schemaVersion !== 1 && module.schemaVersion !== 2 && module.schemaVersion !== 3
-            && module.schemaVersion !== 4 && module.schemaVersion !== 5 && module.schemaVersion !== 6) {
-            err("mechanics", "heroes", "modules.heroes.schemaVersion", "Heroes future or unsupported schemaVersion; only versions 1, 2, 3, 4, 5 and 6 are supported.");
+            && module.schemaVersion !== 4 && module.schemaVersion !== 5 && module.schemaVersion !== 6
+            && module.schemaVersion !== 7) {
+            err("mechanics", "heroes", "modules.heroes.schemaVersion", "Heroes future or unsupported schemaVersion; only versions 1, 2, 3, 4, 5, 6 and 7 are supported.");
         }
         if (typeof module.enabled !== "boolean") {
             err("mechanics", "heroes", "modules.heroes.enabled", "Heroes mechanics enabled must be boolean.");
@@ -1985,7 +1986,8 @@ export function validateGameContentRegistry(content) {
                 continue;
             const active = module.enabled === true
                 && (module.schemaVersion === 1 || module.schemaVersion === 2 || module.schemaVersion === 3
-                    || module.schemaVersion === 4 || module.schemaVersion === 5 || module.schemaVersion === 6);
+                    || module.schemaVersion === 4 || module.schemaVersion === 5 || module.schemaVersion === 6
+                    || module.schemaVersion === 7);
             (active ? err : warn)("mission", missionId, "mechanics.profiles.heroes", `Mission selects missing heroes profile "${profileId}"${active ? "" : " from an inactive module"}.`);
         }
         const selectedProfileIds = new Set(selections.values());
@@ -1993,17 +1995,19 @@ export function validateGameContentRegistry(content) {
             const root = `modules.heroes.profiles.${profileId}`;
             let profile;
             try {
-                profile = module.schemaVersion === 6
-                    ? normalizeHeroesProfileV6(profiles[profileId], root)
-                    : module.schemaVersion === 5
-                        ? normalizeHeroesProfileV5(profiles[profileId], root)
-                        : module.schemaVersion === 4
-                            ? normalizeHeroesProfileV4(profiles[profileId], root)
-                            : module.schemaVersion === 3
-                                ? normalizeHeroesProfileV3(profiles[profileId], root)
-                                : module.schemaVersion === 2
-                                    ? normalizeHeroesProfileV2(profiles[profileId], root)
-                                    : normalizeHeroesProfileV1(profiles[profileId], root);
+                profile = module.schemaVersion === 7
+                    ? normalizeHeroesProfileV7(profiles[profileId], root)
+                    : module.schemaVersion === 6
+                        ? normalizeHeroesProfileV6(profiles[profileId], root)
+                        : module.schemaVersion === 5
+                            ? normalizeHeroesProfileV5(profiles[profileId], root)
+                            : module.schemaVersion === 4
+                                ? normalizeHeroesProfileV4(profiles[profileId], root)
+                                : module.schemaVersion === 3
+                                    ? normalizeHeroesProfileV3(profiles[profileId], root)
+                                    : module.schemaVersion === 2
+                                        ? normalizeHeroesProfileV2(profiles[profileId], root)
+                                        : normalizeHeroesProfileV1(profiles[profileId], root);
             }
             catch (error) {
                 err("mechanics", profileId, error instanceof HeroesProfileValidationError ? error.fieldPath : root, error instanceof Error ? error.message : `Heroes profile "${profileId}" is invalid.`);
@@ -2012,10 +2016,11 @@ export function validateGameContentRegistry(content) {
             const selectedExists = Object.prototype.hasOwnProperty.call(profile.definitions, profile.selectedHeroId);
             const active = module.enabled === true
                 && (module.schemaVersion === 1 || module.schemaVersion === 2 || module.schemaVersion === 3
-                    || module.schemaVersion === 4 || module.schemaVersion === 5 || module.schemaVersion === 6)
+                    || module.schemaVersion === 4 || module.schemaVersion === 5 || module.schemaVersion === 6
+                    || module.schemaVersion === 7)
                 && selectedProfileIds.has(profileId);
             if (module.schemaVersion === 2 || module.schemaVersion === 3 || module.schemaVersion === 4
-                || module.schemaVersion === 5 || module.schemaVersion === 6) {
+                || module.schemaVersion === 5 || module.schemaVersion === 6 || module.schemaVersion === 7) {
                 const v2 = profile;
                 const semantic = (fieldPath, message) => {
                     (active ? err : warn)("mechanics", profileId, fieldPath, message);
@@ -2041,7 +2046,7 @@ export function validateGameContentRegistry(content) {
                             validateActiveHeroMapBudget(profileId, missionId);
                     }
                 }
-                if (module.schemaVersion === 5 || module.schemaVersion === 6) {
+                if (module.schemaVersion === 5 || module.schemaVersion === 6 || module.schemaVersion === 7) {
                     const selectedWaveCounts = [...selections]
                         .filter(([, selectedProfileId]) => selectedProfileId === profileId)
                         .map(([missionId]) => content.missions[missionId]?.waves.length ?? 0);
@@ -2049,8 +2054,9 @@ export function validateGameContentRegistry(content) {
                         semantic(issue.fieldPath, issue.message);
                     }
                 }
-                if (module.schemaVersion === 6 && selectedExists) {
-                    const aura = profile.definitions[profile.selectedHeroId]
+                if ((module.schemaVersion === 6 || module.schemaVersion === 7) && selectedExists) {
+                    const auraProfile = profile;
+                    const aura = auraProfile.definitions[auraProfile.selectedHeroId]
                         ?.passiveAura;
                     if (aura) {
                         const selectedMissionIds = [...selections]
@@ -2067,11 +2073,55 @@ export function validateGameContentRegistry(content) {
                                     + `for mission "${missionId}".`);
                             }
                             const numeric = preflightHeroAuraDamageFinite(content, missionId, {
-                                heroesProfile: profile
+                                heroesProfile: auraProfile
                             });
                             if (!numeric.ok) {
                                 semantic(`${root}.definitions.${profile.selectedHeroId}.passiveAura.effects`, numeric.message);
                             }
+                        }
+                    }
+                }
+                if (module.schemaVersion === 7 && selectedExists) {
+                    const v7 = profile;
+                    const selectedMissionIds = [...selections]
+                        .filter(([, selectedProfileId]) => selectedProfileId === profileId)
+                        .map(([missionId]) => missionId)
+                        .sort();
+                    for (const [heroId, definition] of Object.entries(v7.definitions)) {
+                        const blocking = definition.blocking;
+                        if (blocking === null)
+                            continue;
+                        const blockingRoot = `${root}.definitions.${heroId}.blocking.movementProfileIds`;
+                        const heroSelected = heroId === v7.selectedHeroId;
+                        const dependencyActive = active && heroSelected && selectedMissionIds.length > 0;
+                        const report = dependencyActive ? err : warn;
+                        const candidateMissionIds = selectedMissionIds.length > 0
+                            ? selectedMissionIds
+                            : Object.keys(content.missions).sort();
+                        let checkedDynamicProfile = false;
+                        for (const missionId of candidateMissionIds) {
+                            let navigation;
+                            try {
+                                navigation = resolveActiveNavigationMechanics(content, missionId);
+                            }
+                            catch {
+                                navigation = undefined;
+                            }
+                            if (navigation?.mode !== "dynamic_flow") {
+                                if (heroSelected) {
+                                    report("mechanics", profileId, blockingRoot, `Hero blocking requires an active dynamic_flow Navigation dependency for mission "${missionId}".`);
+                                }
+                                continue;
+                            }
+                            checkedDynamicProfile = true;
+                            for (const movementProfileId of blocking.movementProfileIds) {
+                                if (Object.prototype.hasOwnProperty.call(navigation.movementProfiles, movementProfileId))
+                                    continue;
+                                report("mechanics", profileId, blockingRoot, `Hero blocking movement profile "${movementProfileId}" is missing from mission "${missionId}" Navigation.`);
+                            }
+                        }
+                        if (!heroSelected && !checkedDynamicProfile) {
+                            warn("mechanics", profileId, blockingRoot, "Unselected hero blocking references cannot be resolved without an active dynamic_flow Navigation profile.");
                         }
                     }
                 }

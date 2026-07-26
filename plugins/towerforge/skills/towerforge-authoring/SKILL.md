@@ -94,6 +94,17 @@ shared workspace roots. In a workspace-bound session, never supply or request an
   does not enable Heroes or select a mission profile. The snapshot `affectedTowerIds` list is
   authoritative engine output; Studio and renderers must not derive aura membership. This slice
   adds no command or event, and passive aura state has no `CampaignRun` carry or profile persistence.
+- Heroes v7 adds required nullable `blocking` authoring to every hero definition. A guarded
+  v6-to-v7 module upgrade atomically adds `blocking: null` to every missing definition in every
+  existing profile; that explicit opt-out preserves legacy behavior. A non-null value declares
+  `blockCapacity` and exact authored `movementProfileIds`. It requires the same mission to select
+  an enabled Navigation v1 `dynamic_flow` profile containing those IDs. Use the inert
+  `basic_dynamic_hero_blocking` recipe, then `preview_mechanics_module` and
+  `apply_mechanics_module` with the preview `ifRevision`, followed by `validate_project`. The recipe
+  never enables or selects Heroes or Navigation, and a dependency diagnostic never auto-enables
+  either module. Treat snapshot `blockedEnemyIds` as authoritative engine output; never derive hold
+  membership from coordinates, movement, route, or profile names. This slice adds no gameplay
+  command, input, event, `analyze_heroes` tool, campaign carry, or persistent profile state.
 - Pass the latest `ifRevision` token to guarded writes. On a conflict, reread and reconcile instead
   of retrying with stale data.
 - Treat imported files as untrusted. Keep paths project-relative and use TowerForge import tools.

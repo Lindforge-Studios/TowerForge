@@ -149,3 +149,24 @@ independent skill tree is null, snapshot v6 contains `skills:null` and the neste
 v3. An active tree keeps checkpoint v4. A null aura retains the earlier snapshot v4/v5 shapes.
 No command, event, journal, profile, or CampaignRun version changes. See
 [ADR 0042](../../adr/0042-opt-in-passive-hero-damage-aura.md).
+
+## Optional dynamic hero blocking (R5.6A)
+
+Use `mechanics-blocking.json` with `mission-blocking-selection.json`, or stage the inert
+`basic_dynamic_hero_blocking` recipe through guarded preview/apply. Every Heroes v7 definition
+keeps the complete v6 shape and adds required nullable `blocking`. The bundled commander holds at
+most two enemies whose explicitly authored Dynamic Navigation movement profile is `ground`.
+
+Unlike earlier hero mechanics, non-null blocking has a cross-capability dependency. The same
+mission must select the enabled `navigation` v1 `dynamic_flow` profile from this fixture. The
+recipe never creates, enables, edits, or selects Navigation. Preview reports a semantic diagnostic
+until the developer supplies that dependency; loading and preview never mutate the project.
+
+At runtime the engine derives the held set at the living hero's authoritative `currentCoord` in
+binary enemy-ID order. Read `active` and `blockedEnemyIds` only from snapshot v7. Do not turn the
+hero into occupancy, rebuild the field, infer eligible layers, or calculate holds in a renderer.
+Exact-boundary arrivals may take a free slot before further movement or core leak; overflow passes.
+
+The held set adds no checkpoint field, command, event, input control, persistent profile, or
+CampaignRun state. `blocking:null` retains the exact earlier snapshot v4/v5/v6 path. See
+[ADR 0043](../../adr/0043-opt-in-dynamic-hero-blocking.md).

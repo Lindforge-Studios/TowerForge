@@ -236,8 +236,8 @@ describe("R5.5A Heroes v6 passive-aura authoring contract (RED)", () => {
       multiplierMaximum: 1_000
     });
     expect((Engine as any).HEROES_MECHANICS_SCHEMA).toMatchObject({
-      schemaVersion: 6,
-      supportedModuleSchemaVersions: [1, 2, 3, 4, 5, 6],
+      schemaVersion: 7,
+      supportedModuleSchemaVersions: [1, 2, 3, 4, 5, 6, 7],
       versions: {
         6: {
           definition: {
@@ -277,7 +277,7 @@ describe("R5.5A Heroes v6 passive-aura authoring contract (RED)", () => {
         }
       },
       runtimeSnapshot: {
-        schemaVersions: [1, 2, 3, 4, 5, 6],
+        schemaVersions: [1, 2, 3, 4, 5, 6, 7],
         versions: {
           6: {
             unitFields: [
@@ -322,12 +322,12 @@ describe("R5.5A Heroes v6 passive-aura authoring contract (RED)", () => {
     }
   });
 
-  it("keeps an unchanged v5 profile valid and makes future v7 fail closed", () => {
+  it("keeps an unchanged v5 profile valid and makes future v8 fail closed", () => {
     const legacy = createGameContentRegistry(input({ version: 5 }));
     expect(validateGameContentRegistry(legacy)).toEqual({ ok: true, issues: [] });
     expect(Engine.resolveActiveHeroesMechanics(legacy, "hero_aura")).toMatchObject({ schemaVersion: 5 });
 
-    const future = createGameContentRegistry(input({ version: 7 }));
+    const future = createGameContentRegistry(input({ version: 8 }));
     expect(Engine.resolveCapabilitySet(
       future.mechanics,
       future.missions.hero_aura!.mechanics

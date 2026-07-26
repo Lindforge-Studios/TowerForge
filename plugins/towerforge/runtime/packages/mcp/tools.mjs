@@ -550,7 +550,7 @@ export const TOOLS = [
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
         moduleId: { type: "string", description: "Engine-owned mechanics module id." },
-        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3, 4, 5, 6], description: "Module contract version: navigation, physics, and terraforming support v1; roguelite supports v1 for synergies, v2 for artifact loot, v3 for optional wave draft, and v4 for an optional campaign marker; heroes supports v1 for a static roster, v2 for movement, v3 for durability, v4 for mana plus one targeted ability, v5 for an optional battle-local skill tree, and v6 for an optional passive tower-damage aura; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Omitted edits preserve an existing version and new modules default to v1." },
+        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3, 4, 5, 6, 7], description: "Module contract version: navigation, physics, and terraforming support v1; roguelite supports v1 for synergies, v2 for artifact loot, v3 for optional wave draft, and v4 for an optional campaign marker; heroes supports v1 for a static roster, v2 for movement, v3 for durability, v4 for mana plus one targeted ability, v5 for an optional battle-local skill tree, v6 for an optional passive tower-damage aura, and v7 for explicit dynamic-navigation blocking; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Omitted edits preserve an existing version and new modules default to v1." },
         missionId: { type: "string", description: "Mission that would select the profile; defaults to the project's default mission." },
         profileId: { type: "string", description: "Profile id to preview." },
         profile: { type: "object", description: "Versioned module profile payload." },
@@ -572,7 +572,7 @@ export const TOOLS = [
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
         moduleId: { type: "string", description: "Engine-owned mechanics module id." },
-        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3, 4, 5, 6], description: "Module contract version: navigation, physics, and terraforming support v1; roguelite supports v1 for synergies, v2 for artifact loot, v3 for optional wave draft, and v4 for an optional campaign marker; heroes supports v1 for a static roster, v2 for movement, v3 for durability, v4 for mana plus one targeted ability, v5 for an optional battle-local skill tree, and v6 for an optional passive tower-damage aura; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Upgrades are guarded and version downgrades are rejected." },
+        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3, 4, 5, 6, 7], description: "Module contract version: navigation, physics, and terraforming support v1; roguelite supports v1 for synergies, v2 for artifact loot, v3 for optional wave draft, and v4 for an optional campaign marker; heroes supports v1 for a static roster, v2 for movement, v3 for durability, v4 for mana plus one targeted ability, v5 for an optional battle-local skill tree, v6 for an optional passive tower-damage aura, and v7 for explicit dynamic-navigation blocking; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Upgrades are guarded and version downgrades are rejected." },
         missionId: { type: "string", description: "Mission that would select the profile; defaults to the project's default mission." },
         profileId: { type: "string", description: "Profile id to enable." },
         profile: { type: "object", description: "Versioned module profile payload." },
@@ -1455,8 +1455,10 @@ export async function callTool(name, args = {}, ctx = {}) {
     };
     const heroesAuthoringV5 = engine.HEROES_MECHANICS_SCHEMA.versions?.[5];
     const heroesAuthoringV6 = engine.HEROES_MECHANICS_SCHEMA.versions?.[6];
+    const heroesAuthoringV7 = engine.HEROES_MECHANICS_SCHEMA.versions?.[7];
     const heroesSnapshotV5 = engine.HEROES_MECHANICS_SCHEMA.runtimeSnapshot.versions?.[5];
     const heroesSnapshotV6 = engine.HEROES_MECHANICS_SCHEMA.runtimeSnapshot.versions?.[6];
+    const heroesSnapshotV7 = engine.HEROES_MECHANICS_SCHEMA.runtimeSnapshot.versions?.[7];
     const heroes = {
       authoring: {
         ...engine.HEROES_MECHANICS_SCHEMA,
@@ -1471,13 +1473,19 @@ export async function callTool(name, args = {}, ctx = {}) {
               modifier: heroesAuthoringV5.skillModifier
             }
           } : {}),
-          ...(heroesAuthoringV6 ? { 6: { ...heroesAuthoringV6 } } : {})
+          ...(heroesAuthoringV6 ? { 6: { ...heroesAuthoringV6 } } : {}),
+          ...(heroesAuthoringV7 ? {
+            7: {
+              ...heroesAuthoringV7,
+              limits: heroesAuthoringV7.limits
+            }
+          } : {})
         }
       },
       snapshot: {
         field: "heroes",
         optional: true,
-        supportedSchemaVersions: [1, 2, 3, 4, 5, 6],
+        supportedSchemaVersions: [1, 2, 3, 4, 5, 6, 7],
         versions: {
           ...engine.HEROES_MECHANICS_SCHEMA.runtimeSnapshot.versions,
           ...(heroesSnapshotV5 ? {
@@ -1489,7 +1497,8 @@ export async function callTool(name, args = {}, ctx = {}) {
               ]
             }
           } : {}),
-          ...(heroesSnapshotV6 ? { 6: { ...heroesSnapshotV6 } } : {})
+          ...(heroesSnapshotV6 ? { 6: { ...heroesSnapshotV6 } } : {}),
+          ...(heroesSnapshotV7 ? { 7: { ...heroesSnapshotV7 } } : {})
         }
       },
       commands: {
@@ -1803,10 +1812,19 @@ export async function callTool(name, args = {}, ctx = {}) {
 
     case "preview_mechanics_module":
       await assertMechanicsModuleAvailable(args.moduleId);
-      return unwrapMechanicsAuthoringResult(await previewMechanicsModule(
+      {
+        const result = await previewMechanicsModule(
         projectDir,
         mechanicsAuthoringRequest(args)
-      ));
+        );
+        const blockingDiagnostic = args.moduleId === "heroes" && args.moduleSchemaVersion === 7
+          && result?.ok === false && result?.conflict !== true
+          && result?.validation?.issues?.some((issue) => (
+            issue?.severity === "error" && /(?:heroes|blocking|navigation)/i.test(issue?.fieldPath ?? "")
+              && /(?:dynamic_flow|Navigation)/i.test(issue?.message ?? "")
+          ));
+        return blockingDiagnostic ? scrubMechanicsResult(result) : unwrapMechanicsAuthoringResult(result);
+      }
 
     case "apply_mechanics_module":
       await assertMechanicsModuleAvailable(args.moduleId);

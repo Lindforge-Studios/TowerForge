@@ -213,6 +213,25 @@ It adds no command, event, pause, persistent profile/run state, navigation, bloc
 TowerScript surface. A null aura retains snapshot v4/v5 and nested checkpoint v3/v4. See
 [ADR 0042](adr/0042-opt-in-passive-hero-damage-aura.md).
 
+For R5.6A, stage the inert `basic_dynamic_hero_blocking` recipe or copy
+`docs/examples/opt-in-hero-roster/mechanics-blocking.json`. Heroes v7 requires nullable `blocking`
+on every definition. A non-null value contains `blockCapacity` and explicit Dynamic Navigation
+`movementProfileIds`. Before enabling it, independently author and select an enabled Navigation v1
+`dynamic_flow` profile for the same mission; the recipe and Studio never create or auto-enable that
+dependency. Use `mission-blocking-selection.json` as the reference selection fragment.
+
+Follow `describe -> capabilities -> recipe -> preview -> guarded apply -> validate`. Promotion is
+an explicit atomic v6→v7 transaction that writes `blocking:null` to every definition in every
+Heroes profile. A missing profile, `authored_routes`, unknown movement-profile ID, stale revision,
+or malformed candidate must remain a no-write result. Future Heroes v8 remains opaque/read-only.
+
+At runtime, consume only snapshot v7 `blocking.active` and `blockedEnemyIds`. Do not recompute
+co-location, liveness, reachability, profile eligibility, capacity, or assignment in Studio or a
+renderer. Blocking does not modify flow-field occupancy and must not trigger navigation rebuilds.
+It adds no input, command, event, checkpoint field, campaign/profile state, logistics, or
+TowerScript surface. A null value retains the literal v4/v5/v6 snapshot path. See
+[ADR 0043](adr/0043-opt-in-dynamic-hero-blocking.md).
+
 Combat v1 accepts only `shields`. A target definition requires positive bounded `capacity` and may add `{ ratePerUnit, delayAfterDamage }` regeneration. Tower shields require a tower with `maxHp`. At runtime shield state is keyed by entity instance ID and appears only under active `snapshot.combat`; Canvas and Phaser consume the same presentation projection. A copyable v1 reference is under `docs/examples/opt-in-basic-shields/`.
 
 Combat v2 retains shields and adds `damageTypes`, `armorTypes`, and `armorAssignments.enemies`. Every assigned enemy requires an existing armor type, and any non-empty assignment set requires a declared `physical` damage type because an untyped packet falls back to `physical`. Multipliers are finite numbers from `0` through `1,000,000`; `0` is a valid immunity, an absent explicit/default multiplier means `1`, and per-enemy `resistances` apply after the matrix. The fixed order is `source modifiers → armor matrix → entity resistance → legacy pierce_only → shield → HP`. `armor_piercing` bypasses only legacy `pierce_only`, not the matrix.

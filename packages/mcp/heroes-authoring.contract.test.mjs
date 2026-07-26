@@ -43,11 +43,11 @@ describe("R5.1A MCP/AI static hero authoring", () => {
       heroes: {
         authoring: {
           moduleId: "heroes",
-          schemaVersion: 6,
-          supportedModuleSchemaVersions: [1, 2, 3, 4, 5, 6],
+          schemaVersion: 7,
+          supportedModuleSchemaVersions: [1, 2, 3, 4, 5, 6, 7],
           limits: { definitions: 32, idUtf8Bytes: 128, labelUtf8Bytes: 128 }
         },
-        snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2, 3, 4, 5, 6] },
+        snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2, 3, 4, 5, 6, 7] },
         events: {
           heroShieldChanged: {
             requiredFields: ["heroId", "previous", "current", "capacity", "cause", "amount"],
@@ -230,8 +230,8 @@ describe("R5.1B MCP/AI deterministic hero movement", () => {
     expect(described.heroes).toMatchObject({
       authoring: {
         moduleId: "heroes",
-        schemaVersion: 6,
-        supportedModuleSchemaVersions: [1, 2, 3, 4, 5, 6],
+        schemaVersion: 7,
+        supportedModuleSchemaVersions: [1, 2, 3, 4, 5, 6, 7],
         versions: {
           2: {
             movementProfile: {
@@ -248,7 +248,7 @@ describe("R5.1B MCP/AI deterministic hero movement", () => {
           }
         }
       },
-      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2, 3, 4, 5, 6] },
+      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2, 3, 4, 5, 6, 7] },
       commands: {
         schemaVersion: 6,
         moveHero: {
@@ -404,8 +404,8 @@ describe("R5.2A MCP/AI durable hero authoring", () => {
     const described = await callTool("describe_schema", { domain: "heroes" }, {});
     expect(described.heroes).toMatchObject({
       authoring: {
-        schemaVersion: 6,
-        supportedModuleSchemaVersions: [1, 2, 3, 4, 5, 6],
+        schemaVersion: 7,
+        supportedModuleSchemaVersions: [1, 2, 3, 4, 5, 6, 7],
         versions: {
           3: {
             durability: {
@@ -420,7 +420,7 @@ describe("R5.2A MCP/AI durable hero authoring", () => {
           }
         }
       },
-      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2, 3, 4, 5, 6] }
+      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2, 3, 4, 5, 6, 7] }
     });
 
     const projectDir = fixture();
@@ -491,8 +491,8 @@ describe("R5.3A MCP/AI targeted hero ability authoring", () => {
     const described = await callTool("describe_schema", { domain: "heroes" }, {});
     expect(described.heroes).toMatchObject({
       authoring: {
-        schemaVersion: 6,
-        supportedModuleSchemaVersions: [1, 2, 3, 4, 5, 6],
+        schemaVersion: 7,
+        supportedModuleSchemaVersions: [1, 2, 3, 4, 5, 6, 7],
         versions: {
           4: {
             definition: {
@@ -517,7 +517,7 @@ describe("R5.3A MCP/AI targeted hero ability authoring", () => {
       snapshot: {
         field: "heroes",
         optional: true,
-        supportedSchemaVersions: [1, 2, 3, 4, 5, 6],
+        supportedSchemaVersions: [1, 2, 3, 4, 5, 6, 7],
         versions: {
           4: {
             unitFields: [
@@ -643,8 +643,8 @@ describe("R5.4A MCP/AI battle-local hero skill-tree authoring", () => {
     const described = await callTool("describe_schema", { domain: "heroes" }, {});
     expect(described.heroes).toMatchObject({
       authoring: {
-        schemaVersion: 6,
-        supportedModuleSchemaVersions: [1, 2, 3, 4, 5, 6],
+        schemaVersion: 7,
+        supportedModuleSchemaVersions: [1, 2, 3, 4, 5, 6, 7],
         versions: {
           5: {
             definition: {
@@ -690,7 +690,7 @@ describe("R5.4A MCP/AI battle-local hero skill-tree authoring", () => {
       snapshot: {
         field: "heroes",
         optional: true,
-        supportedSchemaVersions: [1, 2, 3, 4, 5, 6],
+        supportedSchemaVersions: [1, 2, 3, 4, 5, 6, 7],
         versions: {
           5: {
             unitFields: [
@@ -799,8 +799,8 @@ describe("R5.4A MCP/AI battle-local hero skill-tree authoring", () => {
     expect(stale).toMatchObject({ code: "conflict" });
   });
 
-  it("publishes guide v26 with the guarded tree flow and authoritative v6 command contract", () => {
-    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(26);
+  it("keeps the guarded tree flow in guide v27 with the authoritative v6 command contract", () => {
+    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(27);
     expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/Heroes v5[\s\S]*skillTree[\s\S]*basic_hero_skill_tree/i);
     expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(
       /get_capabilities[\s\S]*get_recipe[\s\S]*preview_mechanics_module[\s\S]*apply_mechanics_module[\s\S]*ifRevision/i
@@ -833,8 +833,8 @@ describe("R5.5A MCP/AI passive hero damage-aura authoring", () => {
     const described = await callTool("describe_schema", { domain: "heroes" }, {});
     expect(described.heroes).toMatchObject({
       authoring: {
-        schemaVersion: 6,
-        supportedModuleSchemaVersions: [1, 2, 3, 4, 5, 6],
+        schemaVersion: 7,
+        supportedModuleSchemaVersions: [1, 2, 3, 4, 5, 6, 7],
         versions: {
           6: {
             definition: {
@@ -871,7 +871,7 @@ describe("R5.5A MCP/AI passive hero damage-aura authoring", () => {
       snapshot: {
         field: "heroes",
         optional: true,
-        supportedSchemaVersions: [1, 2, 3, 4, 5, 6],
+        supportedSchemaVersions: [1, 2, 3, 4, 5, 6, 7],
         versions: {
           6: {
             unitFields: [
@@ -1034,8 +1034,8 @@ describe("R5.5A MCP/AI passive hero damage-aura authoring", () => {
     expect(await callTool("validate_project", { projectDir }, {})).toMatchObject({ ok: true });
   }, 30_000);
 
-  it("publishes guide v26 with explicit null promotion and authoritative aura membership", () => {
-    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(26);
+  it("keeps explicit aura promotion and membership in guide v27", () => {
+    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(27);
     expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(
       /Heroes v6[\s\S]*passiveAura[\s\S]*basic_passive_hero_aura/i
     );
@@ -1059,6 +1059,194 @@ describe("R5.5A MCP/AI passive hero damage-aura authoring", () => {
     expect(skill).toMatch(/affectedTowerIds[\s\S]*(?:authoritative|engine)/i);
     expect(skill).toMatch(/(?:no command|adds no command|does not add a command)/i);
     expect(skill).not.toMatch(/(?:dispatch|send).{0,80}(?:aura|toggle)/i);
+  });
+});
+
+describe("R5.6A MCP/AI dynamic-navigation hero blocking authoring", () => {
+  it("describes exact v7 authoring and authoritative snapshot without a new command or event", async () => {
+    const described = await callTool("describe_schema", { domain: "heroes" }, {});
+    expect(described.heroes).toMatchObject({
+      authoring: {
+        schemaVersion: 7,
+        supportedModuleSchemaVersions: [1, 2, 3, 4, 5, 6, 7],
+        versions: {
+          7: {
+            definition: {
+              requiredFields: [
+                "label", "spawn", "movement", "durability", "mana", "activeAbility",
+                "skillTree", "passiveAura", "blocking"
+              ],
+              optionalFields: [],
+              additionalProperties: false
+            },
+            blocking: {
+              nullable: true,
+              requiredFields: ["blockCapacity", "movementProfileIds"],
+              optionalFields: [],
+              additionalProperties: false
+            }
+          }
+        }
+      },
+      snapshot: {
+        field: "heroes",
+        optional: true,
+        supportedSchemaVersions: [1, 2, 3, 4, 5, 6, 7],
+        versions: {
+          7: {
+            unitFields: [
+              "id", "definitionId", "label", "coord", "movement", "durability", "mana",
+              "activeAbility", "skills", "passiveAura", "blocking"
+            ],
+            skillsNullable: true,
+            passiveAuraNullable: true,
+            blockingFields: ["blockCapacity", "active", "blockedEnemyIds"]
+          }
+        }
+      },
+      commands: { schemaVersion: 6 }
+    });
+    expect(described.heroes.authoring.versions[7]).toMatchObject({
+      limits: {
+        blockCapacity: { minimum: 1, maximum: 64 },
+        movementProfileIds: 32
+      }
+    });
+    expect(described.heroes.commands).not.toHaveProperty("assignHeroBlock");
+    expect(described.heroes.events).not.toHaveProperty("heroBlockingChanged");
+    expect(TOOLS.map((tool) => tool.name)).not.toContain("analyze_heroes");
+  });
+
+  it("keeps the recipe inert, rejects missing navigation, then completes the guarded AI flow", async () => {
+    const projectDir = fixture();
+    expect((await callTool("get_capabilities", {
+      projectDir, missionId: "tutorial_01"
+    }, {})).capabilities.heroes).toMatchObject({ active: false, reason: "module_missing" });
+
+    const materialized = await callTool("get_recipe", {
+      projectDir,
+      collection: "mechanics",
+      recipeId: "basic_dynamic_hero_blocking"
+    }, {});
+    expect(materialized.recipe).toMatchObject({
+      id: "basic_dynamic_hero_blocking",
+      moduleId: "heroes",
+      moduleSchemaVersion: 7,
+      entity: {
+        moduleId: "heroes",
+        moduleSchemaVersion: 7,
+        missionId: "tutorial_01",
+        profileId: "basic_dynamic_hero_blocking",
+        profile: {
+          definitions: {
+            commander: {
+              skillTree: null,
+              passiveAura: null,
+              blocking: { blockCapacity: 2, movementProfileIds: ["ground"] }
+            }
+          }
+        }
+      }
+    });
+    expect(materialized.recipe.entity).not.toHaveProperty("enabled");
+    expect(materialized.recipe.entity).not.toHaveProperty("navigation");
+
+    const mechanicsPath = path.join(projectDir, "content", "mechanics.json");
+    const beforeMissingNavigation = fs.existsSync(mechanicsPath)
+      ? fs.readFileSync(mechanicsPath, "utf8")
+      : null;
+    const heroRequest = { projectDir, ...materialized.recipe.entity, enabled: true };
+    const rejected = await callTool("preview_mechanics_module", heroRequest, {});
+    expect(rejected.ok).toBe(false);
+    expect(rejected.validation.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        severity: "error",
+        fieldPath: expect.stringMatching(/heroes|blocking|navigation/i),
+        message: expect.stringMatching(/dynamic.flow|navigation/i)
+      })
+    ]));
+    expect(fs.existsSync(mechanicsPath) ? fs.readFileSync(mechanicsPath, "utf8") : null)
+      .toBe(beforeMissingNavigation);
+
+    const navigationRecipe = await callTool("get_recipe", {
+      projectDir,
+      collection: "mechanics",
+      recipeId: "basic_dynamic_navigation"
+    }, {});
+    const navigationEntity = structuredClone(navigationRecipe.recipe.entity);
+    navigationEntity.profile.enemyMovementProfiles = {
+      basic_grunt: "ground", armored_brute: "ground", swift_runner: "ground"
+    };
+    const navigationPreview = await callTool("preview_mechanics_module", {
+      projectDir, ...navigationEntity, enabled: true
+    }, {});
+    expect(navigationPreview).toMatchObject({ ok: true, validation: { ok: true } });
+    await callTool("apply_mechanics_module", {
+      projectDir, ...navigationEntity, enabled: true, ifRevision: navigationPreview.revision
+    }, {});
+    const navigationBeforeHeroes = structuredClone(
+      JSON.parse(fs.readFileSync(mechanicsPath, "utf8")).modules.navigation
+    );
+
+    const preview = await callTool("preview_mechanics_module", heroRequest, {});
+    expect(preview).toMatchObject({
+      ok: true,
+      dryRun: true,
+      validation: { ok: true, issues: [] },
+      candidate: {
+        mechanics: {
+          modules: {
+            heroes: { schemaVersion: 7, enabled: true },
+            navigation: navigationBeforeHeroes
+          }
+        }
+      }
+    });
+    expect(preview.candidate.mechanics.modules.navigation).toEqual(navigationBeforeHeroes);
+    const applied = await callTool("apply_mechanics_module", {
+      ...heroRequest,
+      ifRevision: preview.revision
+    }, {});
+    expect(applied).toMatchObject({ ok: true, previousRevision: preview.revision });
+    expect(await callTool("validate_project", { projectDir }, {})).toMatchObject({ ok: true });
+    expect((await callTool("get_capabilities", {
+      projectDir, missionId: "tutorial_01"
+    }, {})).capabilities).toMatchObject({
+      heroes: {
+        active: true, moduleSchemaVersion: 7, profileId: "basic_dynamic_hero_blocking"
+      },
+      navigation: { active: true, moduleSchemaVersion: 1 }
+    });
+    expect(await rejection(callTool("apply_mechanics_module", {
+      ...heroRequest,
+      ifRevision: preview.revision
+    }, {}))).toMatchObject({ code: "conflict" });
+  }, 30_000);
+
+  it("publishes guide v27 with explicit dependency, promotion, and snapshot-only presentation", () => {
+    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(27);
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(
+      /Heroes v7[\s\S]*blocking[\s\S]*basic_dynamic_hero_blocking/i
+    );
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(
+      /v6[\s\S]*(?:promot|upgrade)[\s\S]*every definition[\s\S]*blocking\s*:\s*null/i
+    );
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(
+      /dynamic_flow[\s\S]*(?:required|requires)[\s\S]*(?:never|does not)[\s\S]*(?:enable|select)/i
+    );
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(
+      /blockedEnemyIds[\s\S]*(?:authoritative|engine)[\s\S]*(?:never|do not)[\s\S]*(?:recompute|derive)/i
+    );
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/no (?:new )?(?:command|input|event)|adds no (?:gameplay )?command/i);
+
+    const skill = fs.readFileSync(PLUGIN_SKILL, "utf8");
+    expect(skill).toMatch(/Heroes v7[\s\S]*blocking/i);
+    expect(skill).toMatch(/blocking\s*:\s*null[\s\S]*(?:opt-out|preserve|legacy)/i);
+    expect(skill).toMatch(
+      /basic_dynamic_hero_blocking[\s\S]*preview_mechanics_module[\s\S]*apply_mechanics_module[\s\S]*ifRevision/i
+    );
+    expect(skill).toMatch(/dynamic_flow[\s\S]*(?:required|requires)/i);
+    expect(skill).toMatch(/blockedEnemyIds[\s\S]*(?:authoritative|engine)/i);
   });
 });
 

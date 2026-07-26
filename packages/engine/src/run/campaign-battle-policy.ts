@@ -8,7 +8,8 @@ import {
   activeHeroAuraModifierReserve,
   heroPassiveAuraModifierIdV6,
   resolveActiveHeroesMechanics,
-  type HeroesProfileV6
+  type HeroesProfileV6,
+  type HeroesProfileV7
 } from "../content/heroes-mechanics.js";
 import { resolveActiveHighGroundMechanics } from "../content/elevation-mechanics.js";
 import type { SynergyModifierV1 } from "../content/roguelite-mechanics.js";
@@ -74,7 +75,7 @@ export function campaignBattleWorstCaseModifierCount(
 export interface HeroAuraDamageFinitePreflightOptions {
   readonly deck?: readonly CampaignBattleDeckEntry[];
   /** Structurally normalized profile used to diagnose inactive/unselected authoring as a warning. */
-  readonly heroesProfile?: HeroesProfileV6;
+  readonly heroesProfile?: HeroesProfileV6 | HeroesProfileV7;
 }
 
 export type HeroAuraDamageFinitePreflightResult =
@@ -307,7 +308,8 @@ export function preflightHeroAuraDamageFinite(
   options: HeroAuraDamageFinitePreflightOptions = {}
 ): HeroAuraDamageFinitePreflightResult {
   const active = resolveActiveHeroesMechanics(content, missionId);
-  const profile = options.heroesProfile ?? (active?.schemaVersion === 6 ? active : undefined);
+  const profile = options.heroesProfile
+    ?? (active?.schemaVersion === 6 || active?.schemaVersion === 7 ? active : undefined);
   if (!profile) return Object.freeze({ ok: true });
   const definition = profile.definitions[profile.selectedHeroId];
   const aura = definition?.passiveAura;

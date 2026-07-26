@@ -168,8 +168,8 @@ describe("R5.4A heroes v5 skill-tree authoring contract (RED)", () => {
     const schema = (Engine as unknown as { HEROES_MECHANICS_SCHEMA: Record<string, any> })
       .HEROES_MECHANICS_SCHEMA;
     expect(schema).toMatchObject({
-      schemaVersion: 6,
-      supportedModuleSchemaVersions: [1, 2, 3, 4, 5, 6],
+      schemaVersion: 7,
+      supportedModuleSchemaVersions: [1, 2, 3, 4, 5, 6, 7],
       versions: {
         5: {
           definition: {
@@ -182,7 +182,7 @@ describe("R5.4A heroes v5 skill-tree authoring contract (RED)", () => {
         }
       },
       runtimeSnapshot: {
-        schemaVersions: [1, 2, 3, 4, 5, 6],
+        schemaVersions: [1, 2, 3, 4, 5, 6, 7],
         versions: {
           5: {
             unitFields: [
@@ -310,14 +310,14 @@ describe("R5.4A heroes v5 skill-tree authoring contract (RED)", () => {
     }));
   });
 
-  it("keeps v1-v4 literal compatibility and rejects future v7", () => {
+  it("keeps v1-v4 literal compatibility and rejects future v8", () => {
     const legacy = input({ version: 4 });
     const definition = (legacy.mechanics!.modules.heroes as any).profiles.commanders
       .definitions.commander;
     delete definition.skillTree;
     expect(validateGameContentRegistry(createGameContentRegistry(legacy))).toEqual({ ok: true, issues: [] });
 
-    const future = validateGameContentRegistry(createGameContentRegistry(input({ version: 7 })));
+    const future = validateGameContentRegistry(createGameContentRegistry(input({ version: 8 })));
     expect(future.ok).toBe(false);
     expect(future.issues).toContainEqual(expect.objectContaining({
       severity: "error",

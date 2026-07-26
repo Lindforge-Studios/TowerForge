@@ -71,13 +71,13 @@ const MECHANICS_MODULES = [
   { id: "physics", title: "Physics", description: "Bounded push/pull displacement, immunities, and explicit fall hazards." },
   { id: "terraforming", title: "Terraforming", description: "Transactional terrain transitions and bounded elevation edits authored as an independent opt-in profile." },
   { id: "roguelite", title: "Rogue-lite", description: "Synergies, artifacts, draft choices, and campaign runs." },
-  { id: "heroes", title: "Heroes", description: "Optional opt-in hero roster spawning at the core; v2 adds movement, v3 durability, v4 one targeted ability, v5 a nullable battle-local skill tree, and v6 a passive tower aura." },
+  { id: "heroes", title: "Heroes", description: "Optional opt-in hero roster spawning at the core; later versions add movement, durability, an ability, skill tree, aura, and explicit dynamic-navigation blocking." },
   { id: "logistics", title: "Logistics", description: "Power grids, inventories, ammunition, and production." },
   { id: "director", title: "AI Director", description: "Deterministic adaptation and generative Studio hooks." },
   { id: "scriptingDx", title: "TowerScript DX", description: "Visual graphs, structured traces, and step debugging." },
   { id: "multiplayer", title: "Multiplayer", description: "Deterministic matches, replay, and local transport." }
 ];
-const HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4, 5, 6]);
+const HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4, 5, 6, 7]);
 const REACTION_RECIPE_IDS = new Set(["elemental_shatter", "wet_chain_shock", "poison_combustion"]);
 const ELEVATION_RECIPE_IDS = new Set([
   "basic_authored_elevation",
@@ -1039,6 +1039,9 @@ function mechanicsEffectiveModuleSchemaVersion() {
       .some((definition) => definition?.skillTree !== undefined);
     const hasPassiveAura = Object.values(MechanicsUI.draft?.definitions ?? {})
       .some((definition) => definition?.passiveAura !== undefined);
+    const hasBlocking = Object.values(MechanicsUI.draft?.definitions ?? {})
+      .some((definition) => definition?.blocking !== undefined);
+    if (hasBlocking) return Math.max(authoredVersion, 7);
     if (hasPassiveAura) return Math.max(authoredVersion, 6);
     if (hasSkillTree) return Math.max(authoredVersion, 5);
     if (hasActiveAbility) return Math.max(authoredVersion, 4);
@@ -2771,6 +2774,20 @@ function renderPhysicsMechanicsEditor() {
   }
 }
 
+function mechanicsHeroBlockingNavigationState(movementProfileIds) {
+  const navigationView = MechanicsUI.capabilities?.navigation;
+  const profile = navigationView?.selectedProfile;
+  const authoredIds = Object.keys(profile?.movementProfiles ?? {});
+  const missingIds = movementProfileIds.filter((movementProfileId) => !authoredIds.includes(movementProfileId));
+  return {
+    ready: navigationView?.enabled === true
+      && navigationView?.moduleSchemaVersion === 1
+      && profile?.mode === "dynamic_flow"
+      && missingIds.length === 0,
+    missingIds
+  };
+}
+
 function renderHeroesMechanicsEditor() {
   if (MechanicsUI.selectedModuleId !== "heroes" || !MechanicsUI.draft) return;
   const limits = mechanicsHeroesAuthoringLimits();
@@ -2779,11 +2796,12 @@ function renderHeroesMechanicsEditor() {
   const editorVersion = Math.max(projectVersion, Number.isInteger(MechanicsUI.moduleSchemaVersion) ? MechanicsUI.moduleSchemaVersion : 1);
   const supportedVersion = HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS.includes(editorVersion)
     && descriptor?.supportedModuleSchemaVersions?.includes(editorVersion) !== false;
-  const movementEnabled = editorVersion >= 2 && editorVersion <= 6;
-  const durabilityEnabled = editorVersion >= 3 && editorVersion <= 6;
-  const abilityEnabled = editorVersion >= 4 && editorVersion <= 6;
-  const skillTreeVisible = editorVersion >= 4 && editorVersion <= 6;
-  const passiveAuraVisible = editorVersion >= 5 && editorVersion <= 6;
+  const movementEnabled = editorVersion >= 2 && editorVersion <= 7;
+  const durabilityEnabled = editorVersion >= 3 && editorVersion <= 7;
+  const abilityEnabled = editorVersion >= 4 && editorVersion <= 7;
+  const skillTreeVisible = editorVersion >= 4 && editorVersion <= 7;
+  const passiveAuraVisible = editorVersion >= 5 && editorVersion <= 7;
+  const blockingVisible = editorVersion >= 6 && editorVersion <= 7;
   const durabilityDescriptor = descriptor?.versions?.[3]?.durability;
   const shieldDescriptor = descriptor?.versions?.[3]?.shield;
   const manaDescriptor = descriptor?.versions?.[4]?.mana;
@@ -2793,7 +2811,7 @@ function renderHeroesMechanicsEditor() {
     notice.classList.toggle("hidden", supportedVersion);
     notice.textContent = supportedVersion
       ? ""
-      : "Future heroes schemaVersion 7+ is preserved losslessly and read-only by this Studio version.";
+      : "Future heroes schemaVersion 8+ is preserved losslessly and read-only by this Studio version.";
   }
 
   const definitions = MechanicsUI.draft.definitions ?? {};
@@ -2851,6 +2869,17 @@ function renderHeroesMechanicsEditor() {
       const passiveAura = definition?.passiveAura && typeof definition.passiveAura === "object"
         ? definition.passiveAura
         : null;
+      const blocking = definition?.blocking && typeof definition.blocking === "object"
+        ? definition.blocking
+        : null;
+      const blockingMovementProfileIds = Array.isArray(blocking?.movementProfileIds)
+        ? blocking.movementProfileIds.slice(0, 32)
+        : [];
+      const blockingDependency = mechanicsHeroBlockingNavigationState(blockingMovementProfileIds);
+      const blockingMovementProfileRows = blockingMovementProfileIds.map((movementProfileId, index) => (
+        `<label>Navigation movement profile ID<input data-hero-blocking-movement-profile-id data-hero-blocking-movement-profile-index="${index}" type="text" autocomplete="off" spellcheck="false" value="${esc(movementProfileId)}" ${supportedVersion ? "" : "disabled"}>
+        <button type="button" class="btn btn-danger" data-remove-hero-blocking-movement-profile ${supportedVersion && blockingMovementProfileIds.length > 1 ? "" : "disabled"}>Remove profile</button></label>`
+      )).join("");
       const effects = Array.isArray(passiveAura?.effects) ? passiveAura.effects : [];
       const passiveAuraEffectRows = effects.map((effect, effectIndex) => {
         const operation = effect?.modifier?.operation ?? "additive_ratio";
@@ -2904,12 +2933,66 @@ function renderHeroesMechanicsEditor() {
         <div class="mechanics-definition-rows">${passiveAuraEffectRows}</div>
         <button type="button" class="btn btn-outline" data-add-hero-passive-aura-effect ${supportedVersion && effects.length < 4 ? "" : "disabled"}>+ Add effect</button>` : ""}
       </fieldset>` : ""}
+      ${blockingVisible ? `<fieldset class="mechanics-heroes-section">
+        <label><input data-hero-blocking-enabled type="checkbox" ${blocking ? "checked" : ""} ${supportedVersion ? "" : "disabled"}> Dynamic Navigation blocking (Heroes v7)</label>
+        ${blocking ? `<label>Block capacity (1–64)<input data-hero-block-capacity type="number" min="1" max="64" step="1" value="${esc(blocking.blockCapacity ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+        <div class="mechanics-definition-rows">${blockingMovementProfileRows}</div>
+        <button type="button" class="btn btn-outline" data-add-hero-blocking-movement-profile ${supportedVersion && blockingMovementProfileIds.length < 32 ? "" : "disabled"}>+ Add movement profile</button>
+        <div class="mechanics-notice ${blockingDependency.ready ? "" : "warning"}" role="status">${blockingDependency.ready
+          ? "Dynamic Navigation dependency is active and every explicit movement profile ID exists."
+          : `Requires an enabled, selected Dynamic Navigation v1 flow profile${blockingDependency.missingIds.length ? ` containing: ${blockingDependency.missingIds.map(esc).join(", ")}` : ""}. Studio never enables or selects Navigation automatically.`}</div>` : ""}
+      </fieldset>` : ""}
       <button type="button" class="btn btn-danger" data-remove-hero ${supportedVersion && entries.length > 1 ? "" : "disabled"}>Remove</button>
     </div>`;
     }).join("");
     rows.querySelectorAll("[data-hero-definition-id]").forEach((row) => {
       const heroId = row.dataset.heroDefinitionId;
       const definition = ownDataValue(MechanicsUI.draft.definitions, heroId);
+      row.querySelector("[data-hero-blocking-enabled]")?.addEventListener("change", (event) => {
+        for (const candidate of Object.values(MechanicsUI.draft.definitions)) {
+          if (candidate.blocking === undefined) candidate.blocking = null;
+        }
+        definition.blocking = event.target.checked
+          ? (definition.blocking && typeof definition.blocking === "object"
+              ? definition.blocking
+              : { blockCapacity: 2, movementProfileIds: [""] })
+          : null;
+        MechanicsUI.moduleSchemaVersion = 7;
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      });
+      row.querySelector("[data-hero-block-capacity]")?.addEventListener("input", (event) => {
+        definition.blocking.blockCapacity = Number(event.target.value);
+        MechanicsUI.moduleSchemaVersion = 7;
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelectorAll("[data-hero-blocking-movement-profile-id]").forEach((input) => {
+        const index = Number(input.dataset.heroBlockingMovementProfileIndex);
+        input.addEventListener("input", (event) => {
+          definition.blocking.movementProfileIds[index] = String(event.target.value ?? "");
+          MechanicsUI.moduleSchemaVersion = 7;
+          MechanicsUI.preview = null;
+          renderMechanicsPreviewResult();
+        });
+        input.parentElement?.querySelector("[data-remove-hero-blocking-movement-profile]")
+          ?.addEventListener("click", () => {
+            if (!Array.isArray(definition.blocking?.movementProfileIds)
+              || definition.blocking.movementProfileIds.length <= 1) return;
+            definition.blocking.movementProfileIds.splice(index, 1);
+            MechanicsUI.moduleSchemaVersion = 7;
+            MechanicsUI.preview = null;
+            renderMechanicsHub();
+          });
+      });
+      row.querySelector("[data-add-hero-blocking-movement-profile]")?.addEventListener("click", () => {
+        if (!Array.isArray(definition.blocking?.movementProfileIds)
+          || definition.blocking.movementProfileIds.length >= 32) return;
+        definition.blocking.movementProfileIds.push("");
+        MechanicsUI.moduleSchemaVersion = 7;
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      });
       row.querySelector("[data-hero-passive-aura-enabled]")?.addEventListener("change", (event) => {
         for (const candidate of Object.values(MechanicsUI.draft.definitions)) {
           if (candidate.passiveAura === undefined) candidate.passiveAura = null;
@@ -3271,7 +3354,8 @@ function renderHeroesMechanicsEditor() {
             manaCost: 20, cooldown: 3, range: 6, damage: 30
           },
           ...(editorVersion >= 5 ? { skillTree: null } : {}),
-          ...(editorVersion === 6 ? { passiveAura: null } : {})
+          ...(editorVersion >= 6 ? { passiveAura: null } : {}),
+          ...(editorVersion >= 7 ? { blocking: null } : {})
         } : {})
       });
       MechanicsUI.preview = null;
@@ -4357,8 +4441,8 @@ function renderMechanicsPreviewResult() {
 }
 
 function mechanicsRequest(enabled) {
-  if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 6) {
-    throw new Error("Future heroes schemaVersion 7+ modules are read-only in this Studio version.");
+  if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 7) {
+    throw new Error("Future heroes schemaVersion 8+ modules are read-only in this Studio version.");
   }
   if (MechanicsUI.selectedModuleId === "roguelite" && mechanicsProjectModuleVersion() > 4) {
     throw new Error("Future roguelite schemaVersion 5+ modules are read-only in this Studio version.");
@@ -4622,7 +4706,7 @@ function renderMechanicsHub() {
     mechanicsProjectModuleVersion() <= 4
     && !hasUnsupportedRogueliteCampaignMarker(MechanicsUI.draft)
   );
-  const supportedHeroesVersion = MechanicsUI.selectedModuleId !== "heroes" || mechanicsProjectModuleVersion() <= 6;
+  const supportedHeroesVersion = MechanicsUI.selectedModuleId !== "heroes" || mechanicsProjectModuleVersion() <= 7;
   const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion
     && supportedRogueliteVersion && supportedHeroesVersion && !busy;
   const dirtyWriteGuard = Boolean(S.dirty);

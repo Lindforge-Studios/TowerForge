@@ -2677,6 +2677,18 @@ class PlayScene extends Phaser.Scene {
       if (!seenExposureLabels.has(key)) { label.destroy(); this.exposureLabels.delete(key); }
     }
 
+    for (const hero of heroPresentation.units) {
+      const blocking = hero.blocking;
+      if (!blocking?.active) continue;
+      const heroPoint = projectHeroPresentationPoint(hero, (coord) => this.center(coord, g));
+      this.entG.lineStyle(Math.max(2, g.r * 0.11), 0xffbb5c, 0.92);
+      if (heroPoint) this.entG.strokeCircle(heroPoint.x, heroPoint.y, g.r * 0.72);
+      for (const enemyId of blocking.blockedEnemyIds) {
+        const enemyPoint = enemyPositions.get(enemyId);
+        if (enemyPoint) this.entG.strokeCircle(enemyPoint.x, enemyPoint.y, g.r * 0.54);
+      }
+    }
+
     // Outcome banner (VICTORY/DEFEAT), matching the canvas renderer so the phaser build doesn't
     // hide the end-of-mission state.
     const ended = snap.outcome === "victory" || snap.outcome === "defeat";

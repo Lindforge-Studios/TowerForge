@@ -26,6 +26,11 @@ export declare const HERO_PASSIVE_AURA_LIMITS: Readonly<{
     multiplierMinimum: 0;
     multiplierMaximum: 1000;
 }>;
+/** Closed budgets for the independently optional v7 dynamic-enemy hold. */
+export declare const HERO_BLOCKING_LIMITS: Readonly<{
+    blockCapacity: 64;
+    movementProfileIds: 32;
+}>;
 export interface HeroUnitDefinitionV1 {
     readonly label: string;
     readonly spawn: "core";
@@ -165,12 +170,28 @@ export interface ActiveHeroesMechanicsV6 extends HeroesProfileV6 {
     readonly schemaVersion: 6;
     readonly profileId: string;
 }
-export type ActiveHeroesMechanics = ActiveHeroesMechanicsV1 | ActiveHeroesMechanicsV2 | ActiveHeroesMechanicsV3 | ActiveHeroesMechanicsV4 | ActiveHeroesMechanicsV5 | ActiveHeroesMechanicsV6;
+export interface HeroBlockingDefinitionV7 {
+    readonly blockCapacity: number;
+    readonly movementProfileIds: readonly string[];
+}
+export interface HeroUnitDefinitionV7 extends HeroUnitDefinitionV6 {
+    readonly blocking: HeroBlockingDefinitionV7 | null;
+}
+export interface HeroesProfileV7 {
+    readonly selectedHeroId: string;
+    readonly definitions: Readonly<Record<string, HeroUnitDefinitionV7>>;
+    readonly movementProfiles: Readonly<Record<string, MovementProfileV1>>;
+}
+export interface ActiveHeroesMechanicsV7 extends HeroesProfileV7 {
+    readonly schemaVersion: 7;
+    readonly profileId: string;
+}
+export type ActiveHeroesMechanics = ActiveHeroesMechanicsV1 | ActiveHeroesMechanicsV2 | ActiveHeroesMechanicsV3 | ActiveHeroesMechanicsV4 | ActiveHeroesMechanicsV5 | ActiveHeroesMechanicsV6 | ActiveHeroesMechanicsV7;
 /** Capability-aware authoring descriptor shared by Studio and MCP. */
 export declare const HEROES_MECHANICS_SCHEMA: Readonly<{
-    schemaVersion: 6;
+    schemaVersion: 7;
     moduleId: "heroes";
-    supportedModuleSchemaVersions: readonly [1, 2, 3, 4, 5, 6];
+    supportedModuleSchemaVersions: readonly [1, 2, 3, 4, 5, 6, 7];
     profile: Readonly<{
         requiredFields: readonly ["selectedHeroId", "definitions"];
         optionalFields: readonly [];
@@ -765,6 +786,225 @@ export declare const HEROES_MECHANICS_SCHEMA: Readonly<{
                 }>;
             }>;
         }>;
+        7: Readonly<{
+            profile: Readonly<{
+                requiredFields: readonly ["selectedHeroId", "definitions", "movementProfiles"];
+                optionalFields: readonly [];
+                additionalProperties: false;
+            }>;
+            definition: Readonly<{
+                requiredFields: readonly ["label", "spawn", "movement", "durability", "mana", "activeAbility", "skillTree", "passiveAura", "blocking"];
+                optionalFields: readonly [];
+                additionalProperties: false;
+                spawnValues: readonly ["core"];
+            }>;
+            movement: Readonly<{
+                requiredFields: readonly ["movementProfileId", "speed"];
+                optionalFields: readonly [];
+                additionalProperties: false;
+                speed: Readonly<{
+                    exclusiveMinimum: 0;
+                    maximum: 20;
+                }>;
+            }>;
+            movementProfile: Readonly<{
+                requiredFields: readonly ["label", "terrainMode", "towerOccupancy", "defaultTerrainCost"];
+                optionalFields: readonly ["terrainCosts"];
+                additionalProperties: false;
+                label: Readonly<{
+                    minLength: 1;
+                    maxLength: 128;
+                }>;
+                terrainModeValues: readonly ["respect_walkable", "ignore_walkable"];
+                towerOccupancyValues: readonly ["blocked", "ignored"];
+                defaultTerrainCost: Readonly<{
+                    integer: true;
+                    minimum: 1;
+                    maximum: 1000000;
+                    nullable: true;
+                }>;
+                terrainCosts: Readonly<{
+                    maximumEntries: 256;
+                    values: Readonly<{
+                        integer: true;
+                        minimum: 1;
+                        maximum: 1000000;
+                        nullable: true;
+                    }>;
+                }>;
+            }>;
+            durability: Readonly<{
+                requiredFields: readonly ["maxHp", "shield"];
+                optionalFields: readonly [];
+                additionalProperties: false;
+                maxHp: Readonly<{
+                    exclusiveMinimum: 0;
+                    maximum: 1000000000000;
+                }>;
+            }>;
+            shield: Readonly<{
+                nullable: true;
+                requiredFields: readonly ["capacity"];
+                optionalFields: readonly [];
+                additionalProperties: false;
+                capacity: Readonly<{
+                    exclusiveMinimum: 0;
+                    maximum: 1000000000000;
+                }>;
+            }>;
+            mana: Readonly<{
+                requiredFields: readonly ["max", "starting", "regenerationPerUnit"];
+                optionalFields: readonly [];
+                additionalProperties: false;
+                max: Readonly<{
+                    exclusiveMinimum: 0;
+                    maximum: 1000000000000;
+                }>;
+                starting: Readonly<{
+                    minimum: 0;
+                    maximumFrom: "mana.max";
+                }>;
+                regenerationPerUnit: Readonly<{
+                    minimum: 0;
+                    maximum: 1000000000000;
+                }>;
+            }>;
+            activeAbility: Readonly<{
+                requiredFields: readonly ["id", "label", "target", "manaCost", "cooldown", "range", "damage"];
+                optionalFields: readonly [];
+                additionalProperties: false;
+                targetValues: readonly ["enemy"];
+                manaCost: Readonly<{
+                    exclusiveMinimum: 0;
+                    maximumFrom: "mana.max";
+                }>;
+                cooldown: Readonly<{
+                    minimum: 0;
+                    maximum: 86400;
+                }>;
+                range: Readonly<{
+                    integer: true;
+                    minimum: 0;
+                    maximum: 65536;
+                }>;
+                damage: Readonly<{
+                    exclusiveMinimum: 0;
+                    maximum: 1000000000000;
+                }>;
+            }>;
+            skillTree: Readonly<{
+                nullable: true;
+                requiredFields: readonly ["points", "nodes"];
+                optionalFields: readonly [];
+                additionalProperties: false;
+            }>;
+            skillPoints: Readonly<{
+                requiredFields: readonly ["starting", "perInterwave"];
+                optionalFields: readonly [];
+                additionalProperties: false;
+                starting: Readonly<{
+                    integer: true;
+                    minimum: 0;
+                    maximum: 65536;
+                }>;
+                perInterwave: Readonly<{
+                    integer: true;
+                    minimum: 0;
+                    maximum: 65536;
+                }>;
+            }>;
+            skillNode: Readonly<{
+                requiredFields: readonly ["label", "description", "cost", "requires", "effects"];
+                optionalFields: readonly [];
+                additionalProperties: false;
+                cost: Readonly<{
+                    integer: true;
+                    minimum: 1;
+                    maximum: 65536;
+                }>;
+            }>;
+            skillEffect: Readonly<{
+                requiredFields: readonly ["kind", "scope", "modifier"];
+                optionalFields: readonly [];
+                additionalProperties: false;
+                kindValues: readonly ["modifier"];
+                scopeValues: readonly ["hero_ability_damage"];
+            }>;
+            skillModifier: Readonly<{
+                requiredFields: readonly ["target", "operation", "value"];
+                optionalFields: readonly [];
+                additionalProperties: false;
+                targetValues: readonly ["damage"];
+                operationValues: readonly ["flat", "additive_ratio", "multiplier"];
+            }>;
+            passiveAura: Readonly<{
+                nullable: true;
+                requiredFields: readonly ["id", "label", "radius", "effects"];
+                optionalFields: readonly [];
+                additionalProperties: false;
+                radius: Readonly<{
+                    integer: true;
+                    minimum: 0;
+                    maximum: 65536;
+                }>;
+                effects: Readonly<{
+                    minimumItems: 1;
+                    maximumItems: 4;
+                }>;
+            }>;
+            passiveAuraEffect: Readonly<{
+                requiredFields: readonly ["kind", "scope", "modifier"];
+                optionalFields: readonly [];
+                additionalProperties: false;
+                kindValues: readonly ["modifier"];
+                scopeValues: readonly ["tower_damage"];
+            }>;
+            passiveAuraModifier: Readonly<{
+                requiredFields: readonly ["target", "operation", "value"];
+                optionalFields: readonly [];
+                additionalProperties: false;
+                targetValues: readonly ["damage"];
+                operationValues: readonly ["flat", "additive_ratio", "multiplier"];
+                valueByOperation: Readonly<{
+                    flat: Readonly<{
+                        minimum: number;
+                        maximum: 1000000000000;
+                    }>;
+                    additive_ratio: Readonly<{
+                        minimum: -1;
+                        maximum: 1000;
+                    }>;
+                    multiplier: Readonly<{
+                        minimum: 0;
+                        maximum: 1000;
+                    }>;
+                }>;
+            }>;
+            blocking: Readonly<{
+                nullable: true;
+                requiredFields: readonly ["blockCapacity", "movementProfileIds"];
+                optionalFields: readonly [];
+                additionalProperties: false;
+                blockCapacity: Readonly<{
+                    integer: true;
+                    minimum: 1;
+                    maximum: 64;
+                }>;
+                movementProfileIds: Readonly<{
+                    minimumItems: 1;
+                    maximumItems: 32;
+                    uniqueItems: true;
+                    itemUtf8Bytes: 128;
+                }>;
+            }>;
+            limits: Readonly<{
+                blockCapacity: Readonly<{
+                    minimum: 1;
+                    maximum: 64;
+                }>;
+                movementProfileIds: 32;
+            }>;
+        }>;
     }>;
     limits: Readonly<{
         definitions: 32;
@@ -773,7 +1013,7 @@ export declare const HEROES_MECHANICS_SCHEMA: Readonly<{
     }>;
     runtimeSnapshot: Readonly<{
         path: "snapshot.heroes";
-        schemaVersions: readonly [1, 2, 3, 4, 5, 6];
+        schemaVersions: readonly [1, 2, 3, 4, 5, 6, 7];
         optionalUnlessActive: true;
         versions: Readonly<{
             1: Readonly<{
@@ -812,6 +1052,16 @@ export declare const HEROES_MECHANICS_SCHEMA: Readonly<{
                 skillsNullable: true;
                 passiveAuraFields: readonly ["id", "label", "radius", "active", "affectedTowerIds"];
             }>;
+            7: Readonly<{
+                unitFields: readonly ["id", "definitionId", "label", "coord", "movement", "durability", "mana", "activeAbility", "skills", "passiveAura", "blocking"];
+                movementFields: readonly ["targetCoord", "nextCoord", "edgeProgress"];
+                durabilityFields: readonly ["hp", "maxHp", "shield", "defeated"];
+                manaFields: readonly ["current", "max", "regenerationPerUnit"];
+                activeAbilityFields: readonly ["id", "label", "target", "manaCost", "cooldown", "cooldownRemaining", "range", "damage", "ready"];
+                skillsNullable: true;
+                passiveAuraNullable: true;
+                blockingFields: readonly ["blockCapacity", "active", "blockedEnemyIds"];
+            }>;
         }>;
     }>;
 }>;
@@ -835,6 +1085,8 @@ export declare function normalizeHeroesProfileV4(input: unknown, root?: string):
 export declare function normalizeHeroesProfileV5(input: unknown, root?: string): HeroesProfileV5;
 /** Normalize the closed nullable R5.5A passive tower-damage aura profile. */
 export declare function normalizeHeroesProfileV6(input: unknown, root?: string): HeroesProfileV6;
+/** Normalize the closed nullable R5.6A dynamic-enemy blocking profile. */
+export declare function normalizeHeroesProfileV7(input: unknown, root?: string): HeroesProfileV7;
 /** Reserve only the modifiers of the selected, non-null active v6 aura. */
 export declare function activeHeroAuraModifierReserve(content: GameContentRegistry, missionId: string): number;
 export interface HeroSkillTreeSemanticIssueV5 {

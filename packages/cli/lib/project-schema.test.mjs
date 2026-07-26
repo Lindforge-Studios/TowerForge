@@ -55,11 +55,11 @@ describe("project schema", () => {
     expect(v3Result.issues.some((issue) => issue.entityKind === "project" && issue.fieldPath === "schemaVersion")).toBe(false);
   });
 
-  it("accepts heroes v6 independently and rejects future heroes v7", () => {
+  it("accepts heroes v7 independently and rejects future heroes v8", () => {
     const valid = mechanicsSchemaFiles(3, {
       schemaVersion: 1,
       modules: {
-        heroes: { schemaVersion: 6, enabled: false, profiles: {} }
+        heroes: { schemaVersion: 7, enabled: false, profiles: {} }
       }
     });
     expect(validateProjectSchemas(valid).issues.filter((issue) => (
@@ -67,12 +67,12 @@ describe("project schema", () => {
     ))).toEqual([]);
 
     const future = structuredClone(valid);
-    future.mechanics.modules.heroes.schemaVersion = 7;
+    future.mechanics.modules.heroes.schemaVersion = 8;
     expect(validateProjectSchemas(future).issues).toContainEqual(expect.objectContaining({
       severity: "error",
       entityKind: "mechanics",
       fieldPath: "modules.heroes.schemaVersion",
-      message: expect.stringMatching(/newer|supported|must be.*6/i)
+      message: expect.stringMatching(/newer|supported|must be.*7/i)
     }));
   });
 

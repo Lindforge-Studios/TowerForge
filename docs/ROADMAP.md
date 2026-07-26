@@ -1,6 +1,6 @@
 # TowerForge — Roadmap расширяемых механик
 
-Последняя проверка: 2026-07-26
+Последняя проверка: 2026-07-27
 
 Цель программы — расширить TowerForge от классического TD до набора совместимых жанровых механик, не меняя поведение существующих проектов. Каждое расширение является opt-in: разработчик добавляет versioned-модуль в необязательный `content/mechanics.json`, а миссия выбирает профиль через `mission.mechanics`. Нет файла или выбора — игра, Studio, сборка и агенты работают по legacy-контракту.
 
@@ -36,6 +36,7 @@
 | R5.3A — targeted hero ability | Завершён; code + constructor sign-off; ADR Accepted | Heroes v4, bounded mana regeneration, один enemy-targeted damage spell, cooldown, GameCommand/Journal v5 и nested checkpoint v3 |
 | R5.4A — battle-local hero skill tree | Завершён; code + constructor sign-off; ADR Accepted | Heroes v5 nullable tree, GameCommand/Journal v6, authoritative snapshot v5, nested checkpoint v4 без CampaignRun/Profile carry |
 | R5.5A — passive hero damage aura | Завершён; code + constructor sign-off; ADR Accepted | Heroes v6 nullable aura, authoritative topology membership и tower-only `spatial` modifiers без нового command/event/checkpoint state |
+| R5.6A — dynamic hero blocking | Завершён; code + constructor sign-off; ADR Accepted | Heroes v7 nullable blocking, explicit dynamic movement-profile eligibility и bounded engine-owned holds без hero occupancy/path rebuild |
 | R5–R8 | Запланированы | Каждый срез закрывает engine, Studio, AI/MCP, renderers/player, docs и два независимых sign-off |
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Поставленные версии `combat`, `reactions`, `navigation` и `elevation` уже прошли полные вертикальные срезы. Остальные модули Mechanics Hub остаются planned, а preview/apply отклоняют их включение без записи.
@@ -307,6 +308,35 @@ Typecheck, engine/build, validate, sim, balance, maps и plugin build/validate/s
 Независимые Code Verifier и Constructor Integration Verifier выдали PASS без открытых P0–P3.
 Контракт: [ADR 0042](adr/0042-opt-in-passive-hero-damage-aura.md); fixture:
 `docs/examples/opt-in-hero-roster/mechanics-passive-aura.json`.
+
+R5.6A завершён как отдельный opt-in blocking-срез. `heroes` v7 добавляет required nullable
+`blocking:{blockCapacity,movementProfileIds}`. Ненулевая настройка требует выбранный той же миссией
+active Navigation v1 `dynamic_flow`; автор явно перечисляет профили, которые герой способен
+удерживать, без вывода слоя из ID, label, `terrainMode` или `towerOccupancy`. Engine на каждой
+границе движения выбирает до 64 живых врагов на authoritative `currentCoord` героя в binary ID
+порядке. Входящий враг занимает свободный слот на границе клетки до траты остатка движения и до
+core leak.
+
+Герой не становится occupancy для flow field: blocking не перестраивает NavigationResolver, не
+влияет на last-path placement/terraforming и не запускает отдельный поиск. Snapshot v7 публикует
+только authoritative `blockedEnemyIds`; держатели выводятся из уже checkpointed hero/enemy state,
+поэтому GameCommand/Journal v6, outer checkpoint v1, nested heroes checkpoint v3/v4 и TowerScript
+v6 не меняются. `blocking:null` сохраняет буквальный snapshot v4/v5/v6 в зависимости от независимо
+включённых tree/aura. Studio и MCP выполняют только явную module-wide v6→v7 promotion с
+`blocking:null`, никогда не включая Navigation автоматически.
+
+Начальный engine/content RED дал 44 ожидаемых падения при 8 baseline PASS; surface RED — 32
+падения при 49 baseline PASS. Code Verifier нашёл terminal-defeat P2: заранее вычисленный holder
+мог пережить переход в defeat после более раннего неблокируемого core leak. Отдельный regression
+воспроизвёл ошибку RED 1/1, после минимального исправления прошёл 1/1; повторный verifier run дал
+121/121 focused и 508/508 expanded PASS. Финальный Vitest прошёл 2 325/2 325 тестов в 206 файлах,
+Playwright — 107/107. Constructor Integration Verifier отдельно подтвердил 168/168 вертикальных
+контрактов, 61/61 Heroes regression, stale/rollback 4/4, v7/future-v8 E2E 6/6, template contracts
+19/19 и полный browser matrix. Typecheck, engine build, validation, tutorial simulation, balance,
+map compile, web build и plugin build/validate/smoke прошли. Оба независимых verifier выдали PASS
+без открытых P0–P3. Контракт: [ADR 0043](adr/0043-opt-in-dynamic-hero-blocking.md); fixtures:
+`docs/examples/opt-in-hero-roster/mechanics-blocking.json` и
+`docs/examples/opt-in-hero-roster/mission-blocking-selection.json`.
 
 ### R6 — TowerScript DX 2.0
 

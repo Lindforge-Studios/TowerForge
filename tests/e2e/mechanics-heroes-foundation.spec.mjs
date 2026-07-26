@@ -753,7 +753,163 @@ test.describe("R5.1A Studio static heroes lifecycle", () => {
     }
   });
 
-  test("enables, edits, reloads, disables, re-enables, and preserves future v7 read-only", async ({ page }) => {
+  test("promotes all v6 profiles and preserves the full v7 blocking lifecycle", async ({ page }) => {
+    test.setTimeout(120_000);
+    const balancePath = path.join(projectDir, "content", "balance.json");
+    const mechanicsPath = path.join(projectDir, "content", "mechanics.json");
+    const originalBalanceBytes = fs.readFileSync(balancePath, "utf8");
+    const originalMechanicsBytes = fs.existsSync(mechanicsPath)
+      ? fs.readFileSync(mechanicsPath, "utf8")
+      : null;
+    const definition = (label) => ({
+      label, spawn: "core",
+      movement: { movementProfileId: "hero_ground", speed: 1 },
+      durability: { maxHp: 100, shield: null },
+      mana: { max: 100, starting: 60, regenerationPerUnit: 5 },
+      activeAbility: {
+        id: "arc_bolt", label: "Arc Bolt", target: "enemy",
+        manaCost: 20, cooldown: 3, range: 6, damage: 30
+      },
+      skillTree: null,
+      passiveAura: null
+    });
+    const heroMovementProfiles = {
+      hero_ground: {
+        label: "Hero Ground", terrainMode: "respect_walkable",
+        towerOccupancy: "blocked", defaultTerrainCost: 1000
+      }
+    };
+    const beta = {
+      selectedHeroId: "warden",
+      definitions: { warden: definition("Beta Warden") },
+      movementProfiles: heroMovementProfiles
+    };
+    try {
+      const balance = JSON.parse(originalBalanceBytes);
+      balance.missions.tutorial_01.mechanics = balance.missions.tutorial_01.mechanics ?? {};
+      balance.missions.tutorial_01.mechanics.profiles = {
+        ...(balance.missions.tutorial_01.mechanics.profiles ?? {}),
+        heroes: "alpha",
+        navigation: "dynamic"
+      };
+      writeJson(balancePath, balance);
+      writeJson(mechanicsPath, {
+        schemaVersion: 1,
+        modules: {
+          navigation: {
+            schemaVersion: 1,
+            enabled: true,
+            profiles: {
+              dynamic: {
+                mode: "dynamic_flow",
+                defaultMovementProfileId: "ground",
+                movementProfiles: {
+                  ground: {
+                    label: "Ground", terrainMode: "respect_walkable",
+                    towerOccupancy: "blocked", defaultTerrainCost: 1000
+                  },
+                  flying: {
+                    label: "Flying", terrainMode: "ignore_walkable",
+                    towerOccupancy: "ignored", defaultTerrainCost: 1000
+                  }
+                },
+                enemyMovementProfiles: Object.fromEntries(
+                  Object.keys(balance.enemies).sort().map((enemyId) => [enemyId, "ground"])
+                )
+              }
+            }
+          },
+          heroes: {
+            schemaVersion: 6,
+            enabled: true,
+            profiles: {
+              alpha: {
+                selectedHeroId: "commander",
+                definitions: {
+                  commander: definition("Alpha Commander"),
+                  sentinel: definition("Alpha Sentinel")
+                },
+                movementProfiles: heroMovementProfiles
+              },
+              beta
+            }
+          }
+        }
+      });
+
+      await openStudio(page, studioUrl);
+      await openHeroesMechanics(page);
+      const commander = page.locator('[data-hero-definition-id="commander"]');
+      await expect(commander.locator("[data-hero-blocking-enabled]")).not.toBeChecked();
+      await commander.locator("[data-hero-blocking-enabled]").check();
+      await commander.locator("[data-hero-block-capacity]").fill("65");
+      const ids = commander.locator("[data-hero-blocking-movement-profile-id]");
+      await expect(ids).toHaveCount(1);
+      await ids.first().fill("ground");
+
+      const beforeInvalid = fs.readFileSync(mechanicsPath, "utf8");
+      await page.locator("#btn-mechanics-preview").click();
+      await expect(page.locator("#mechanics-preview-result"))
+        .toContainText(/blockCapacity|capacity|64|maximum/i);
+      await expect(page.locator("#mechanics-preview-result")).not.toContainText('"ok": true');
+      expect(fs.readFileSync(mechanicsPath, "utf8")).toBe(beforeInvalid);
+
+      await commander.locator("[data-hero-block-capacity]").fill("2");
+      await commander.locator("[data-add-hero-blocking-movement-profile]").click();
+      await expect(ids).toHaveCount(2);
+      await ids.nth(1).fill("flying");
+      await ids.nth(1).locator("xpath=..").locator("[data-remove-hero-blocking-movement-profile]").click();
+      await expect(ids).toHaveCount(1);
+      await page.locator("#btn-mechanics-preview").click();
+      await expect(page.locator("#mechanics-preview-result")).toContainText('"ok": true');
+      expect(fs.readFileSync(mechanicsPath, "utf8")).toBe(beforeInvalid);
+      await page.locator("#btn-mechanics-save").click();
+
+      await expect.poll(() => readHeroesState(projectDir)).toMatchObject({
+        moduleSchemaVersion: 7,
+        enabled: true,
+        selectedProfileId: "alpha",
+        profile: {
+          definitions: {
+            commander: {
+              blocking: { blockCapacity: 2, movementProfileIds: ["ground"] }
+            },
+            sentinel: { blocking: null }
+          }
+        }
+      });
+      const persisted = readJson(mechanicsPath);
+      expect(persisted.modules.heroes.profiles.beta).toEqual({
+        ...beta,
+        definitions: { warden: { ...beta.definitions.warden, blocking: null } }
+      });
+
+      await page.reload();
+      await openHeroesMechanics(page);
+      await expect(page.locator('[data-hero-definition-id="commander"] [data-hero-block-capacity]'))
+        .toHaveValue("2");
+      const preservedProfile = structuredClone(readHeroesState(projectDir).profile);
+      page.once("dialog", (dialog) => dialog.accept());
+      await page.locator("#btn-mechanics-disable").click();
+      await expect.poll(() => readHeroesState(projectDir)).toMatchObject({
+        enabled: false,
+        selectedProfileId: "alpha",
+        profile: preservedProfile
+      });
+      await page.locator("#btn-mechanics-enable").click();
+      await expect.poll(() => readHeroesState(projectDir)).toMatchObject({
+        enabled: true,
+        selectedProfileId: "alpha",
+        profile: preservedProfile
+      });
+    } finally {
+      fs.writeFileSync(balancePath, originalBalanceBytes, "utf8");
+      if (originalMechanicsBytes === null) fs.rmSync(mechanicsPath, { force: true });
+      else fs.writeFileSync(mechanicsPath, originalMechanicsBytes, "utf8");
+    }
+  });
+
+  test("enables, edits, reloads, disables, re-enables, and preserves future v8 read-only", async ({ page }) => {
     test.setTimeout(120_000);
     const browserErrors = captureBrowserErrors(page);
     await openStudio(page, studioUrl);
@@ -830,8 +986,8 @@ test.describe("R5.1A Studio static heroes lifecycle", () => {
 
     const mechanicsPath = path.join(projectDir, "content", "mechanics.json");
     const future = readJson(mechanicsPath);
-    future.modules.heroes.schemaVersion = 7;
-    future.modules.heroes.futureModuleRule = { preserve: ["exact", 7] };
+    future.modules.heroes.schemaVersion = 8;
+    future.modules.heroes.futureModuleRule = { preserve: ["exact", 8] };
     future.modules.heroes.profiles.basic_commander_hero.futureProfileRule = { preserve: true };
     writeJson(mechanicsPath, future);
     const futureBytes = fs.readFileSync(mechanicsPath, "utf8");
@@ -877,6 +1033,7 @@ test.describe("R5.1A generated-player static hero presentation", () => {
       buildAbilityHeroPlayerFixture(tempRoot, combination);
       buildSkillHeroPlayerFixture(tempRoot, combination);
       buildPassiveAuraHeroPlayerFixture(tempRoot, combination);
+      buildBlockingHeroPlayerFixture(tempRoot, combination);
     }
     buildLegacyPlayerFixture(tempRoot);
     port = await freeHttpPort();
@@ -884,7 +1041,7 @@ test.describe("R5.1A generated-player static hero presentation", () => {
       const relative = decodeURIComponent(new URL(request.url, `http://127.0.0.1:${port}`).pathname)
         .replace(/^\/+/, "");
       const [mode, grid, renderer, ...parts] = relative.split("/");
-      if (!(["active", "mobile", "durable", "ability", "skill", "aura", "legacy"].includes(mode)
+      if (!(["active", "mobile", "durable", "ability", "skill", "aura", "blocking", "legacy"].includes(mode)
         && ["hex", "square"].includes(grid)
         && ["canvas", "phaser"].includes(renderer))) return respond404(response);
       const fixture = mode === "legacy"
@@ -1301,6 +1458,61 @@ test.describe("R5.1A generated-player static hero presentation", () => {
       expect(browserErrors()).toEqual([]);
     });
   }
+
+  for (const { grid, renderer } of combinations) {
+    test(`presents authoritative v7 hero holds and release on ${grid}/${renderer} without new input`, async ({ page }) => {
+      test.setTimeout(120_000);
+      const browserErrors = captureBrowserErrors(page);
+      await page.goto(playerUrl(port, "blocking", grid, renderer));
+      await waitForPlayerBoot(page);
+
+      const initial = await inspectPlayer(page);
+      expect(initial.navigation).toMatchObject({ schemaVersion: 1, mode: "dynamic_flow" });
+      expect(initial.heroes).toMatchObject({
+        schemaVersion: 7,
+        units: [{
+          id: "commander",
+          definitionId: "commander",
+          skills: null,
+          passiveAura: null,
+          blocking: { blockCapacity: 2, active: true, blockedEnemyIds: [] }
+        }]
+      });
+      await expect(page.locator('[data-hero-blocking], #hero-blocking, [data-hero-block-button]'))
+        .toHaveCount(0);
+
+      await assignHeroTargetWithPointer(
+        page,
+        "mouse",
+        initial.heroes.units[0].coord,
+        initial.spawnCoord
+      );
+      await expect.poll(async () => {
+        const hero = (await inspectPlayer(page)).heroes?.units?.[0];
+        return hero?.movement?.targetCoord === null && coordinatesEqual(hero?.coord, initial.spawnCoord);
+      }, { timeout: 20_000 }).toBe(true);
+
+      await page.locator("#start-wave").click();
+      await expect.poll(async () => (
+        (await inspectPlayer(page)).heroes?.units?.[0]?.blocking?.blockedEnemyIds
+      ), {
+        message: `${grid}/${renderer} must publish an engine-owned hold`, timeout: 20_000
+      }).toHaveLength(1);
+      const held = (await inspectPlayer(page)).heroes.units[0].blocking.blockedEnemyIds;
+      expect(held).toEqual([...held].sort());
+      expect((await inspectPlayer(page)).enemies.map((enemy) => enemy.id)).toContain(held[0]);
+
+      await expect.poll(async () => (
+        (await inspectPlayer(page)).heroes?.units?.[0]?.durability?.defeated
+      ), {
+        message: `${grid}/${renderer} held enemy must retain ordinary attack phases`, timeout: 20_000
+      }).toBe(true);
+      await expect.poll(async () => (
+        (await inspectPlayer(page)).heroes?.units?.[0]?.blocking
+      )).toEqual({ blockCapacity: 2, active: false, blockedEnemyIds: [] });
+      expect(browserErrors()).toEqual([]);
+    });
+  }
 });
 
 function buildHeroPlayerFixture(root, { grid, renderer, visual }) {
@@ -1634,6 +1846,87 @@ function buildPassiveAuraHeroPlayerFixture(root, { grid, renderer }) {
                 terrainMode: "respect_walkable",
                 towerOccupancy: "blocked",
                 defaultTerrainCost: 1_000
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+  buildPlayer(projectDir, renderer, "heroes");
+}
+
+function buildBlockingHeroPlayerFixture(root, { grid, renderer }) {
+  const name = `hero_blocking_${grid}_${renderer}`;
+  const { projectDir } = createProject({
+    name, parentDir: root, templateName: "classic", gridKind: grid
+  });
+  const manifestPath = path.join(projectDir, "project.json");
+  const manifest = readJson(manifestPath);
+  manifest.schemaVersion = 3;
+  writeJson(manifestPath, manifest);
+
+  const balancePath = path.join(projectDir, "content", "balance.json");
+  const balance = readJson(balancePath);
+  const missionId = balance.defaultMissionId ?? Object.keys(balance.missions)[0];
+  balance.missions[missionId].mechanics = {
+    profiles: { navigation: "dynamic", heroes: "blocking_commanders" }
+  };
+  for (const enemy of Object.values(balance.enemies)) {
+    enemy.maxHp = Math.max(enemy.maxHp, 1_000);
+    enemy.speed = 0.01;
+    enemy.towerAttack = { interval: 0.5, damage: 20, range: 100 };
+  }
+  const enemyMovementProfiles = Object.fromEntries(
+    Object.keys(balance.enemies).sort().map((enemyId) => [enemyId, "ground"])
+  );
+  writeJson(balancePath, balance);
+  writeJson(path.join(projectDir, "content", "mechanics.json"), {
+    schemaVersion: 1,
+    modules: {
+      navigation: {
+        schemaVersion: 1,
+        enabled: true,
+        profiles: {
+          dynamic: {
+            mode: "dynamic_flow",
+            defaultMovementProfileId: "ground",
+            movementProfiles: {
+              ground: {
+                label: "Ground", terrainMode: "respect_walkable",
+                towerOccupancy: "blocked", defaultTerrainCost: 1_000
+              }
+            },
+            enemyMovementProfiles
+          }
+        }
+      },
+      heroes: {
+        schemaVersion: 7,
+        enabled: true,
+        profiles: {
+          blocking_commanders: {
+            selectedHeroId: "commander",
+            definitions: {
+              commander: {
+                label: "Blocking Commander",
+                spawn: "core",
+                movement: { movementProfileId: "hero_ground", speed: 20 },
+                durability: { maxHp: 100, shield: { capacity: 25 } },
+                mana: { max: 100, starting: 100, regenerationPerUnit: 5 },
+                activeAbility: {
+                  id: "arc_bolt", label: "Arc Bolt", target: "enemy", manaCost: 20,
+                  cooldown: 3, range: 65_536, damage: 30
+                },
+                skillTree: null,
+                passiveAura: null,
+                blocking: { blockCapacity: 2, movementProfileIds: ["ground"] }
+              }
+            },
+            movementProfiles: {
+              hero_ground: {
+                label: "Hero Ground", terrainMode: "respect_walkable",
+                towerOccupancy: "blocked", defaultTerrainCost: 1_000
               }
             }
           }

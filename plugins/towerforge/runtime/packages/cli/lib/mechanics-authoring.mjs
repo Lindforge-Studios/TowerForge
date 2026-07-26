@@ -34,7 +34,7 @@ const MECHANICS_MODULE_SCHEMA_VERSIONS = Object.freeze({
   physics: Object.freeze([1]),
   terraforming: Object.freeze([1]),
   roguelite: Object.freeze([1, 2, 3, 4]),
-  heroes: Object.freeze([1, 2, 3, 4, 5, 6])
+  heroes: Object.freeze([1, 2, 3, 4, 5, 6, 7])
 });
 const SOURCE_BYTE_LIMITS = Object.freeze({
   project: 256 * 1024,
@@ -530,6 +530,9 @@ function createCandidate(rawFiles, request) {
   if (request.moduleId === "heroes" && existingVersion === 5 && targetVersion === 6) {
     promoteHeroesProfilesToV6(module.profiles);
   }
+  if (request.moduleId === "heroes" && existingVersion === 6 && targetVersion === 7) {
+    promoteHeroesProfilesToV7(module.profiles);
+  }
   module.enabled = true;
 
   if (mission.mechanics !== undefined && !isRecord(mission.mechanics)) {
@@ -554,6 +557,20 @@ function promoteHeroesProfilesToV6(profiles) {
       const definition = ownValue(definitions, heroId);
       if (isRecord(definition) && !Object.hasOwn(definition, "passiveAura")) {
         defineOwn(definition, "passiveAura", null);
+      }
+    }
+  }
+}
+
+function promoteHeroesProfilesToV7(profiles) {
+  for (const profileId of Object.keys(profiles).sort(compareBinary)) {
+    const profile = ownValue(profiles, profileId);
+    const definitions = isRecord(profile) ? ownValue(profile, "definitions") : undefined;
+    if (!isRecord(definitions)) continue;
+    for (const heroId of Object.keys(definitions).sort(compareBinary)) {
+      const definition = ownValue(definitions, heroId);
+      if (isRecord(definition) && !Object.hasOwn(definition, "blocking")) {
+        defineOwn(definition, "blocking", null);
       }
     }
   }

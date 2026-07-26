@@ -1015,13 +1015,31 @@ export interface HeroesSnapshotV6 {
   readonly units: readonly HeroUnitStateV6[];
 }
 
+export interface HeroBlockingStateSnapshotV7 {
+  readonly blockCapacity: number;
+  readonly active: boolean;
+  readonly blockedEnemyIds: readonly string[];
+}
+
+export interface HeroUnitStateV7 extends HeroUnitStateV4 {
+  readonly skills: HeroSkillsStateSnapshotV5 | null;
+  readonly passiveAura: HeroPassiveAuraStateSnapshotV6 | null;
+  readonly blocking: HeroBlockingStateSnapshotV7;
+}
+
+export interface HeroesSnapshotV7 {
+  readonly schemaVersion: 7;
+  readonly units: readonly HeroUnitStateV7[];
+}
+
 export type HeroesSnapshot =
   | HeroesSnapshotV1
   | HeroesSnapshotV2
   | HeroesSnapshotV3
   | HeroesSnapshotV4
   | HeroesSnapshotV5
-  | HeroesSnapshotV6;
+  | HeroesSnapshotV6
+  | HeroesSnapshotV7;
 
 export interface GameSnapshot {
   /** Canonical authored map identity for presentation and renderer adapters. */

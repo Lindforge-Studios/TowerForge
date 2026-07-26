@@ -10,6 +10,7 @@ import {
   NAVIGATION_LIMITS,
   NavigationProfileValidationError,
   normalizeNavigationProfileV1,
+  resolveActiveNavigationMechanics,
   type DynamicFlowNavigationProfileV1
 } from "./navigation-mechanics.js";
 import {
@@ -49,13 +50,15 @@ import {
   normalizeHeroesProfileV4,
   normalizeHeroesProfileV5,
   normalizeHeroesProfileV6,
+  normalizeHeroesProfileV7,
   validateHeroSkillTreeSemanticsV5,
   type HeroesProfileV1,
   type HeroesProfileV2,
   type HeroesProfileV3,
   type HeroesProfileV4,
   type HeroesProfileV5,
-  type HeroesProfileV6
+  type HeroesProfileV6,
+  type HeroesProfileV7
 } from "./heroes-mechanics.js";
 import {
   normalizeAuthoredWorldCampaign,
@@ -2675,12 +2678,13 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
     if (!module) return;
     unknownFields(module, ["schemaVersion", "enabled", "profiles"], "heroes", "modules.heroes");
     if (module.schemaVersion !== 1 && module.schemaVersion !== 2 && module.schemaVersion !== 3
-      && module.schemaVersion !== 4 && module.schemaVersion !== 5 && module.schemaVersion !== 6) {
+      && module.schemaVersion !== 4 && module.schemaVersion !== 5 && module.schemaVersion !== 6
+      && module.schemaVersion !== 7) {
       err(
         "mechanics",
         "heroes",
         "modules.heroes.schemaVersion",
-        "Heroes future or unsupported schemaVersion; only versions 1, 2, 3, 4, 5 and 6 are supported."
+        "Heroes future or unsupported schemaVersion; only versions 1, 2, 3, 4, 5, 6 and 7 are supported."
       );
     }
     if (typeof module.enabled !== "boolean") {
@@ -2692,7 +2696,8 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
       if (Object.prototype.hasOwnProperty.call(profiles, profileId)) continue;
       const active = module.enabled === true
         && (module.schemaVersion === 1 || module.schemaVersion === 2 || module.schemaVersion === 3
-          || module.schemaVersion === 4 || module.schemaVersion === 5 || module.schemaVersion === 6);
+          || module.schemaVersion === 4 || module.schemaVersion === 5 || module.schemaVersion === 6
+          || module.schemaVersion === 7);
       (active ? err : warn)(
         "mission",
         missionId,
@@ -2703,10 +2708,13 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
     const selectedProfileIds = new Set(selections.values());
     for (const profileId of Object.keys(profiles).sort()) {
       const root = `modules.heroes.profiles.${profileId}`;
-      let profile: HeroesProfileV1 | HeroesProfileV2 | HeroesProfileV3 | HeroesProfileV4 | HeroesProfileV5 | HeroesProfileV6;
+      let profile: HeroesProfileV1 | HeroesProfileV2 | HeroesProfileV3 | HeroesProfileV4 | HeroesProfileV5
+        | HeroesProfileV6 | HeroesProfileV7;
       try {
-        profile = module.schemaVersion === 6
-          ? normalizeHeroesProfileV6(profiles[profileId], root)
+        profile = module.schemaVersion === 7
+          ? normalizeHeroesProfileV7(profiles[profileId], root)
+          : module.schemaVersion === 6
+            ? normalizeHeroesProfileV6(profiles[profileId], root)
           : module.schemaVersion === 5
             ? normalizeHeroesProfileV5(profiles[profileId], root)
           : module.schemaVersion === 4
@@ -2728,11 +2736,13 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
       const selectedExists = Object.prototype.hasOwnProperty.call(profile.definitions, profile.selectedHeroId);
       const active = module.enabled === true
         && (module.schemaVersion === 1 || module.schemaVersion === 2 || module.schemaVersion === 3
-          || module.schemaVersion === 4 || module.schemaVersion === 5 || module.schemaVersion === 6)
+          || module.schemaVersion === 4 || module.schemaVersion === 5 || module.schemaVersion === 6
+          || module.schemaVersion === 7)
         && selectedProfileIds.has(profileId);
       if (module.schemaVersion === 2 || module.schemaVersion === 3 || module.schemaVersion === 4
-        || module.schemaVersion === 5 || module.schemaVersion === 6) {
-        const v2 = profile as HeroesProfileV2 | HeroesProfileV3 | HeroesProfileV4 | HeroesProfileV5 | HeroesProfileV6;
+        || module.schemaVersion === 5 || module.schemaVersion === 6 || module.schemaVersion === 7) {
+        const v2 = profile as HeroesProfileV2 | HeroesProfileV3 | HeroesProfileV4 | HeroesProfileV5
+          | HeroesProfileV6 | HeroesProfileV7;
         const semantic = (fieldPath: string, message: string): void => {
           (active ? err : warn)("mechanics", profileId, fieldPath, message);
         };
@@ -2760,20 +2770,21 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
             if (selectedProfileId === profileId) validateActiveHeroMapBudget(profileId, missionId);
           }
         }
-        if (module.schemaVersion === 5 || module.schemaVersion === 6) {
+        if (module.schemaVersion === 5 || module.schemaVersion === 6 || module.schemaVersion === 7) {
           const selectedWaveCounts = [...selections]
             .filter(([, selectedProfileId]) => selectedProfileId === profileId)
             .map(([missionId]) => content.missions[missionId]?.waves.length ?? 0);
           for (const issue of validateHeroSkillTreeSemanticsV5(
-            profile as HeroesProfileV5 | HeroesProfileV6,
+            profile as HeroesProfileV5 | HeroesProfileV6 | HeroesProfileV7,
             root,
             selectedWaveCounts
           )) {
             semantic(issue.fieldPath, issue.message);
           }
         }
-        if (module.schemaVersion === 6 && selectedExists) {
-          const aura = (profile as HeroesProfileV6).definitions[(profile as HeroesProfileV6).selectedHeroId]
+        if ((module.schemaVersion === 6 || module.schemaVersion === 7) && selectedExists) {
+          const auraProfile = profile as HeroesProfileV6 | HeroesProfileV7;
+          const aura = auraProfile.definitions[auraProfile.selectedHeroId]
             ?.passiveAura;
           if (aura) {
             const selectedMissionIds = [...selections]
@@ -2793,7 +2804,7 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
                 );
               }
               const numeric = preflightHeroAuraDamageFinite(content, missionId, {
-                heroesProfile: profile as HeroesProfileV6
+                heroesProfile: auraProfile
               });
               if (!numeric.ok) {
                 semantic(
@@ -2801,6 +2812,62 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
                   numeric.message
                 );
               }
+            }
+          }
+        }
+        if (module.schemaVersion === 7 && selectedExists) {
+          const v7 = profile as HeroesProfileV7;
+          const selectedMissionIds = [...selections]
+            .filter(([, selectedProfileId]) => selectedProfileId === profileId)
+            .map(([missionId]) => missionId)
+            .sort();
+          for (const [heroId, definition] of Object.entries(v7.definitions)) {
+            const blocking = definition.blocking;
+            if (blocking === null) continue;
+            const blockingRoot = `${root}.definitions.${heroId}.blocking.movementProfileIds`;
+            const heroSelected = heroId === v7.selectedHeroId;
+            const dependencyActive = active && heroSelected && selectedMissionIds.length > 0;
+            const report = dependencyActive ? err : warn;
+            const candidateMissionIds = selectedMissionIds.length > 0
+              ? selectedMissionIds
+              : Object.keys(content.missions).sort();
+            let checkedDynamicProfile = false;
+            for (const missionId of candidateMissionIds) {
+              let navigation: ReturnType<typeof resolveActiveNavigationMechanics>;
+              try {
+                navigation = resolveActiveNavigationMechanics(content, missionId);
+              } catch {
+                navigation = undefined;
+              }
+              if (navigation?.mode !== "dynamic_flow") {
+                if (heroSelected) {
+                  report(
+                    "mechanics",
+                    profileId,
+                    blockingRoot,
+                    `Hero blocking requires an active dynamic_flow Navigation dependency for mission "${missionId}".`
+                  );
+                }
+                continue;
+              }
+              checkedDynamicProfile = true;
+              for (const movementProfileId of blocking.movementProfileIds) {
+                if (Object.prototype.hasOwnProperty.call(navigation.movementProfiles, movementProfileId)) continue;
+                report(
+                  "mechanics",
+                  profileId,
+                  blockingRoot,
+                  `Hero blocking movement profile "${movementProfileId}" is missing from mission "${missionId}" Navigation.`
+                );
+              }
+            }
+            if (!heroSelected && !checkedDynamicProfile) {
+              warn(
+                "mechanics",
+                profileId,
+                blockingRoot,
+                "Unselected hero blocking references cannot be resolved without an active dynamic_flow Navigation profile."
+              );
             }
           }
         }
