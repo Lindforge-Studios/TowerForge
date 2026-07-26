@@ -204,7 +204,7 @@ describe("R4.1A roguelite v1 schema and capability", () => {
         requiredFields: ["schemaVersion"],
         optionalFields: [],
         additionalProperties: false,
-        supportedSchemaVersions: [1],
+        supportedSchemaVersions: [1, 2],
         graph: {
           schemaVersion: 1,
           root: {

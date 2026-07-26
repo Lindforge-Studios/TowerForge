@@ -473,6 +473,22 @@ choice-list complexity, and prototype-key authoring regressions; constructor int
 the guarded Studio/AI lifecycle, both renderers and grids, pointer/keyboard/touch controls,
 packaging, legacy/future paths, and plugin parity. Both sign-offs are PASS with no open P0–P2.
 
+R4.4C keeps the graph and portable run schemas unchanged and advances only the independently
+versioned campaign marker to v2. `prepareCampaignBattle` validates the run once, reserves remaining
+DAG draft capacity and the shared modifier budget, derives a per-node seed/launch ID, and creates a
+battle whose carried cards apply immediately and whose carried artifacts start unsocketed. Active
+handoff checkpoints use nested campaignBattle v1, draft v2, and artifact v3 while the outer
+checkpoint remains v1. `settleCampaignBattleVictory` validates the exact victorious engine binding,
+removes socket assignments, merges launch-scoped card/loot instances, records the profile clear,
+and advances the node atomically. Marker v1, defeat, abandon, direct Studio Playtest, and absent or
+disabled campaigns retain their earlier behavior. See [ADR 0036](adr/0036-opt-in-campaign-battle-handoff.md).
+
+R4.4C acceptance is 1,994/1,994 full Vitest and 46/46 Playwright. Independent code verification
+closed hostile IDs, forged checkpoint carry, content-binding, aggregate-budget, and ordering
+boundaries; constructor verification covered guarded Studio/AI authoring, future-marker read-only,
+both renderers/grids/input families, packaging, legacy paths, and plugin parity. Both sign-offs are
+PASS with no open P0–P3.
+
 ## Done Criteria For Constructor Changes
 
 - Engine changes pass `npm run typecheck`.

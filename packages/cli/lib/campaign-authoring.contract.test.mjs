@@ -152,7 +152,7 @@ describe("R4.4A guarded CLI campaign authoring", () => {
       profiles: {
         campaign_run: {
           synergies: expect.objectContaining({ existing_synergy: expect.any(Object) }),
-          campaign: { schemaVersion: 1 }
+          campaign: { schemaVersion: 2 }
         }
       }
     });
@@ -171,7 +171,7 @@ describe("R4.4A guarded CLI campaign authoring", () => {
     const reread = readRawProjectFiles(projectDir);
     expect(reread.worldMap.campaign).toEqual(campaign());
     expect(reread.mechanics.modules.roguelite.enabled).toBe(true);
-    expect(reread.mechanics.modules.roguelite.profiles.campaign_run.campaign).toEqual({ schemaVersion: 1 });
+    expect(reread.mechanics.modules.roguelite.profiles.campaign_run.campaign).toEqual({ schemaVersion: 2 });
     const unchanged = await api.previewCampaignAuthoring(projectDir, request());
     const noOp = await api.applyCampaignAuthoring(projectDir, { ...request(), ifRevision: unchanged.revision });
     expect(noOp).toMatchObject({ ok: true, written: false, rolledBack: false, revision: unchanged.revision });
@@ -278,7 +278,7 @@ describe("R4.4A guarded CLI campaign authoring", () => {
       expect(preview.ok).toBe(true);
       const profiles = preview.candidate.mechanics.modules.roguelite.profiles;
       expect(Object.prototype.hasOwnProperty.call(profiles, "__proto__")).toBe(true);
-      expect(profiles.__proto__).toMatchObject({ synergies: {}, campaign: { schemaVersion: 1 } });
+      expect(profiles.__proto__).toMatchObject({ synergies: {}, campaign: { schemaVersion: 2 } });
       expect(Object.prototype).not.toHaveProperty("campaign");
 
       const missionDir = fixture();

@@ -95,8 +95,9 @@ copyable fixture; see [ADR 0033](adr/0033-opt-in-deterministic-wave-draft.md).
 
 For R4.4A use the dedicated flow `describe_schema({domain:"roguelite"}) → get_campaign →
 preview_campaign → apply_campaign` with the preview revision → `validate_project`. Enabling upgrades
-the selected rogue-lite profile to v4 without changing its synergies, artifacts, or draft; adds the
-exact `campaign:{schemaVersion:1}` marker; writes the bounded `worldMap.campaign` graph; and selects
+the selected rogue-lite profile to v4 without changing its synergies, artifacts, or draft; new
+authoring adds the exact `campaign:{schemaVersion:2}` marker; writes the bounded
+`worldMap.campaign` graph; and selects
 the profile for every mission-backed campaign node. Its revision covers `project.json`,
 `content/world-map.json`, `content/balance.json`, and `content/mechanics.json`. A stale write changes
 nothing, and a post-write failure rolls back every transaction-owned file. Disabling removes only
@@ -110,13 +111,29 @@ upgrade only the graph to schema v2, declare its root `runResources`, and add ex
 either graph version. The engine checks all costs before grants, rejects insufficient or overflowing
 transactions, removes zero balances, and advances the run only on full success.
 
+Campaign marker v2 additionally opts into the R4.4C battle handoff. Generated players must call
+`prepareCampaignBattle` before adopting a campaign mission and `settleCampaignBattleVictory` only
+for the matching victorious engine game. Carried cards and unsocketed artifacts are engine-owned
+loadout state; do not merge them from renderer snapshots. Marker v1 remains supported for projects
+that want the R4.4A/B graph lifecycle without carryover. Importing a different run while a prepared
+battle is active is rejected; defeat or abandon leaves both run and profile unchanged.
+
 Import and export run JSON explicitly in Canvas or Phaser. The player never copies it into
 persistent profile storage, a battle checkpoint, or a command journal, and renderer code never
 calculates resource effects. Without the v4 marker and matching graph the campaign controls remain
-hidden and legacy mission navigation is unchanged. Use `docs/examples/opt-in-campaign-run/` for v1
-and `docs/examples/opt-in-campaign-structural-choices/` for v2; see
+hidden and legacy mission navigation is unchanged. Use `docs/examples/opt-in-campaign-run/` for the
+marker-v1 coordinator, `docs/examples/opt-in-campaign-structural-choices/` for graph-v2 choices, and
+`docs/examples/opt-in-campaign-battle-handoff/` for marker-v2 carry; see
 [ADR 0034](adr/0034-opt-in-campaign-graph-and-run-lifecycle.md) and
-[ADR 0035](adr/0035-deterministic-campaign-structural-choices.md).
+[ADR 0035](adr/0035-deterministic-campaign-structural-choices.md), and
+[ADR 0036](adr/0036-opt-in-campaign-battle-handoff.md).
+
+Treat settlement as an atomic compare-and-swap: replace the exact input `CampaignRunV1` and
+`PlayerProfileV3` with both returned documents, then clear the pending launch before the next
+render/update. Never retry settlement with stale pre-battle inputs. The generated players already
+enforce this boundary. A future nested campaign marker (v3+) is opaque and read-only: Studio,
+`preview_mechanics_module`, and `preview_campaign` reject writes rather than dropping or
+downgrading it; disabling such a marker also requires a compatible runtime.
 
 Combat v1 accepts only `shields`. A target definition requires positive bounded `capacity` and may add `{ ratePerUnit, delayAfterDamage }` regeneration. Tower shields require a tower with `maxHp`. At runtime shield state is keyed by entity instance ID and appears only under active `snapshot.combat`; Canvas and Phaser consume the same presentation projection. A copyable v1 reference is under `docs/examples/opt-in-basic-shields/`.
 

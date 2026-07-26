@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "roguelite": {
+      "schemaVersion": 4,
+      "enabled": true,
+      "profiles": {
+        "campaign_handoff": {
+          "synergies": {},
+          "artifacts": {
+            "definitions": {
+              "boss_trophy": {
+                "label": "Boss Trophy",
+                "slotType": "core",
+                "modifiers": [
+                  {
+                    "target": "damage",
+                    "operation": "additive_ratio",
+                    "value": 0.1
+                  }
+                ]
+              }
+            },
+            "towerSlots": {
+              "arrow_tower": [
+                {
+                  "slotId": "core",
+                  "slotType": "core"
+                }
+              ]
+            },
+            "bossLootTables": {
+              "armored_brute": {
+                "rolls": 1,
+                "entries": [
+                  {
+                    "artifactId": "boss_trophy",
+                    "weight": 1
+                  }
+                ]
+              }
+            }
+          },
+          "draft": {
+            "definitions": {
+              "reinforced_volley": {
+                "label": "Reinforced Volley",
+                "effects": [
+                  {
+                    "kind": "modifier",
+                    "scope": {
+                      "kind": "all_towers"
+                    },
+                    "modifier": {
+                      "target": "damage",
+                      "operation": "additive_ratio",
+                      "value": 0.1
+                    }
+                  }
+                ]
+              },
+              "sniper_focus": {
+                "label": "Sniper Focus",
+                "effects": [
+                  {
+                    "kind": "modifier",
+                    "scope": {
+                      "kind": "tower_type",
+                      "towerTypeId": "arrow_tower"
+                    },
+                    "modifier": {
+                      "target": "damage",
+                      "operation": "multiplier",
+                      "value": 1.15
+                    }
+                  }
+                ]
+              },
+              "steady_aim": {
+                "label": "Steady Aim",
+                "effects": [
+                  {
+                    "kind": "modifier",
+                    "scope": {
+                      "kind": "all_towers"
+                    },
+                    "modifier": {
+                      "target": "damage",
+                      "operation": "flat",
+                      "value": 1
+                    }
+                  }
+                ]
+              }
+            },
+            "pools": {
+              "default": {
+                "entries": [
+                  {
+                    "cardId": "reinforced_volley",
+                    "weight": 3
+                  },
+                  {
+                    "cardId": "sniper_focus",
+                    "weight": 2
+                  },
+                  {
+                    "cardId": "steady_aim",
+                    "weight": 1
+                  }
+                ]
+              }
+            },
+            "defaultPoolId": "default"
+          },
+          "campaign": {
+            "schemaVersion": 2
+          }
+        }
+      }
+    }
+  }
+}

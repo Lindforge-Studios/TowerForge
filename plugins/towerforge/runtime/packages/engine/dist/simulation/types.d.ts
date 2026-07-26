@@ -930,7 +930,9 @@ export interface RogueliteSnapshotV4 {
 }
 export type RogueliteSnapshot = RogueliteSnapshotV1 | RogueliteSnapshotV2 | RogueliteSnapshotV3 | RogueliteSnapshotV4;
 export interface GameSnapshot {
+    /** Canonical authored map identity for presentation and renderer adapters. */
     mapId: string;
+    /** Normalized map topology; legacy maps are published as hex/odd-r. */
     grid: GridDefinition;
     missionId: string;
     missionLabel: string;

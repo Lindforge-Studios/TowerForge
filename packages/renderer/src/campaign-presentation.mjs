@@ -6,6 +6,8 @@ const MAX_RUN_RESOURCES = 256;
 const MAX_CHOICES_PER_NODE = 16;
 const MAX_RESOURCE_ENTRIES = 16;
 const MAX_RESOURCE_AMOUNT = 1_000_000_000;
+const MAX_CARRY_ENTRIES = 10_000;
+const MAX_CARRY_IDENTIFIER_CODE_UNITS = 256;
 
 const NODE_TYPES = new Set(["battle", "elite", "merchant", "event", "boss"]);
 const BATTLE_TYPES = new Set(["battle", "elite", "boss"]);
@@ -138,6 +140,31 @@ function projectChoices(value, resourceIds) {
   return Object.freeze(projected);
 }
 
+function projectCarryEntries(value, idField) {
+  const entries = denseArray(value, MAX_CARRY_ENTRIES);
+  if (!entries) return null;
+  const seen = new Set();
+  const projected = [];
+  for (const value of entries) {
+    const entry = ownRecord(value, ["instanceId", idField]);
+    if (!entry || !hasExactKeys(entry, ["instanceId", idField])) return null;
+    const instanceId = typeof entry.instanceId === "string"
+      && entry.instanceId.length > 0
+      && entry.instanceId.length <= MAX_CARRY_IDENTIFIER_CODE_UNITS
+      ? entry.instanceId
+      : undefined;
+    const definitionId = typeof entry[idField] === "string"
+      && entry[idField].length > 0
+      && entry[idField].length <= MAX_CARRY_IDENTIFIER_CODE_UNITS
+      ? entry[idField]
+      : undefined;
+    if (!instanceId || !definitionId || seen.has(instanceId)) return null;
+    seen.add(instanceId);
+    projected.push(Object.freeze({ instanceId, [idField]: definitionId }));
+  }
+  return Object.freeze(projected);
+}
+
 function projectNode(value, schemaVersion, resourceIds) {
   const commonFields = ["id", "type", "regionId", "x", "y", "difficulty", "nextNodeIds"];
   const rawType = ownRecord(value, [...commonFields, "missionId", "label", "choices"]);
@@ -198,6 +225,10 @@ export function projectCampaignPresentation(value) {
     || campaign.source !== "authored" || !run || Object.keys(run).length !== 6 || run.version !== 1) return undefined;
   const profileId = boundedText(campaign.rogueliteProfileId, MAX_ID_BYTES);
   if (!profileId) return undefined;
+  const deck = projectCarryEntries(run.deck, "cardId");
+  const artifacts = projectCarryEntries(run.artifacts, "artifactId");
+  if (!deck || !artifacts || deck.length + artifacts.length > MAX_CARRY_ENTRIES) return undefined;
+  const loadout = Object.freeze({ deck, artifacts });
 
   const resourceIds = new Set();
   const resourceLabels = new Map();
@@ -254,6 +285,7 @@ export function projectCampaignPresentation(value) {
     active: true,
     profileId,
     currentNodeId,
+    ...(deck.length > 0 || artifacts.length > 0 || currentNodeId === null ? { loadout } : {}),
     ...(schemaVersion === 2 ? { runResources: Object.freeze(runResources) } : {}),
     nodes: Object.freeze(nodes.map((node) => Object.freeze({
       ...node,

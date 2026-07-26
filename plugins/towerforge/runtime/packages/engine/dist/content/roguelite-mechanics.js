@@ -204,7 +204,7 @@ export const ROGUELITE_MECHANICS_SCHEMA = Object.freeze({
         requiredFields: REQUIRED_CAMPAIGN_MARKER_FIELDS,
         optionalFields: Object.freeze([]),
         additionalProperties: false,
-        supportedSchemaVersions: Object.freeze([1]),
+        supportedSchemaVersions: Object.freeze([1, 2]),
         graph: Object.freeze({
             schemaVersion: 1,
             root: Object.freeze({
@@ -802,10 +802,10 @@ export function normalizeRogueliteProfileV4(value) {
         const marker = inspectRecord(profile.campaign, "profile.campaign", "Roguelite campaign marker");
         rejectUnknownFields(marker, REQUIRED_CAMPAIGN_MARKER_FIELDS, "profile.campaign", "Roguelite campaign marker");
         requireFields(marker, REQUIRED_CAMPAIGN_MARKER_FIELDS, "profile.campaign", "Roguelite campaign marker");
-        if (marker.schemaVersion !== 1) {
-            throw new RogueliteProfileValidationError("profile.campaign.schemaVersion", "Roguelite campaign marker supports schema version 1 only.");
+        if (marker.schemaVersion !== 1 && marker.schemaVersion !== 2) {
+            throw new RogueliteProfileValidationError("profile.campaign.schemaVersion", "Roguelite campaign marker supports schema versions 1 and 2 only.");
         }
-        campaign = Object.freeze({ schemaVersion: 1 });
+        campaign = Object.freeze({ schemaVersion: marker.schemaVersion });
     }
     return Object.freeze({
         synergies: base.synergies,

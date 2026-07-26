@@ -85,7 +85,13 @@ export interface ArtifactCheckpointStateV2 {
     readonly nextInstanceSequence: number;
     readonly inventory: readonly ArtifactCheckpointInventoryEntryV2[];
 }
-export type ArtifactCheckpointState = ArtifactCheckpointStateV1 | ArtifactCheckpointStateV2;
+export interface ArtifactCheckpointStateV3 {
+    readonly schemaVersion: 3;
+    readonly rng: ArtifactCheckpointStateV2["rng"];
+    readonly nextInstanceSequence: number;
+    readonly inventory: readonly ArtifactCheckpointInventoryEntryV2[];
+}
+export type ArtifactCheckpointState = ArtifactCheckpointStateV1 | ArtifactCheckpointStateV2 | ArtifactCheckpointStateV3;
 export interface DraftCheckpointPendingOfferV1 {
     readonly offerId: string;
     readonly afterWaveIndex: number;
@@ -97,6 +103,9 @@ export interface DraftCheckpointSelectionV1 {
     readonly offerId: string;
     readonly cardId: string;
 }
+export interface DraftCheckpointSelectionV2 extends DraftCheckpointSelectionV1 {
+    readonly instanceId: string;
+}
 export interface DraftCheckpointStateV1 {
     readonly schemaVersion: 1;
     readonly rng: {
@@ -106,6 +115,28 @@ export interface DraftCheckpointStateV1 {
     readonly nextOfferSequence: number;
     readonly pendingOffer: DraftCheckpointPendingOfferV1 | null;
     readonly selections: readonly DraftCheckpointSelectionV1[];
+}
+export interface DraftCheckpointStateV2 {
+    readonly schemaVersion: 2;
+    readonly rng: DraftCheckpointStateV1["rng"];
+    readonly nextOfferSequence: number;
+    readonly pendingOffer: DraftCheckpointPendingOfferV1 | null;
+    readonly selections: readonly DraftCheckpointSelectionV2[];
+}
+export type DraftCheckpointState = DraftCheckpointStateV1 | DraftCheckpointStateV2;
+export interface CampaignBattleCheckpointStateV1 {
+    readonly schemaVersion: 1;
+    readonly launchId: string;
+    readonly nodeId: string;
+    readonly maxNewArtifactInstances: number;
+    readonly deck: readonly {
+        readonly instanceId: string;
+        readonly cardId: string;
+    }[];
+    readonly artifacts: readonly {
+        readonly instanceId: string;
+        readonly artifactId: string;
+    }[];
 }
 /** Authoritative mutable simulation state. Map occupancy and water cues are rebuilt derivatives. */
 export interface GameCheckpointStateV1 {
@@ -143,7 +174,8 @@ export interface GameCheckpointStateV1 {
     readonly combat?: CombatState;
     readonly reactions?: ReactionStateV1;
     readonly artifacts?: ArtifactCheckpointState;
-    readonly draft?: DraftCheckpointStateV1;
+    readonly draft?: DraftCheckpointState;
+    readonly campaignBattle?: CampaignBattleCheckpointStateV1;
 }
 export interface GameCheckpointV1 {
     readonly schemaVersion: typeof GAME_CHECKPOINT_SCHEMA_VERSION;

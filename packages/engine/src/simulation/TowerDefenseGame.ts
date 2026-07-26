@@ -39,6 +39,8 @@ import {
   type ActiveRogueliteMechanics,
   type RogueliteDraftDefinitionV3
 } from "../content/roguelite-mechanics.js";
+import { CAMPAIGN_RUN_LIMITS } from "../run/campaign-run.js";
+import { campaignBattleWorstCaseModifierCount } from "../run/campaign-battle-policy.js";
 import { evaluateTowerScriptExpression } from "../scripting/expression.js";
 import {
   TOWER_SCRIPT_EVENTS,
@@ -116,7 +118,7 @@ import {
   requireExactCheckpointKeys,
   type GameCheckpointIdentityV1,
   type ArtifactCheckpointState,
-  type DraftCheckpointStateV1,
+  type DraftCheckpointState,
   type RuntimeElevationOverrideV1,
   type TerraformingCheckpointStateV2,
   type GameCheckpointStateV1,
@@ -640,6 +642,107 @@ interface DraftSelection {
   readonly sequence: number;
   readonly offerId: string;
   readonly cardId: string;
+  readonly instanceId?: string;
+}
+
+export interface CampaignBattleLoadoutV1 {
+  readonly schemaVersion: 1;
+  readonly launchId: string;
+  readonly nodeId: string;
+  readonly maxNewArtifactInstances: number;
+  readonly deck: readonly { readonly instanceId: string; readonly cardId: string }[];
+  readonly artifacts: readonly { readonly instanceId: string; readonly artifactId: string }[];
+}
+
+export interface CampaignBattleSettlementV1 {
+  readonly schemaVersion: 1;
+  readonly launchId: string;
+  readonly nodeId: string;
+  readonly missionId: string;
+  readonly deck: readonly { readonly instanceId: string; readonly cardId: string }[];
+  readonly artifacts: readonly { readonly instanceId: string; readonly artifactId: string }[];
+}
+
+function normalizeCampaignBattleLoadout(
+  value: CampaignBattleLoadoutV1,
+  active: ActiveRogueliteMechanics | undefined,
+  content: GameContentRegistry,
+  missionId: string
+): CampaignBattleLoadoutV1 {
+  if (active?.schemaVersion !== 4 || active.campaign?.schemaVersion !== 2) {
+    throw new Error("Campaign battle handoff is inactive for this mission.");
+  }
+  const root = checkpointObjectDescriptors(value, "Campaign battle loadout");
+  requireExactCheckpointKeys(
+    root,
+    ["schemaVersion", "launchId", "nodeId", "maxNewArtifactInstances", "deck", "artifacts"],
+    "Campaign battle loadout"
+  );
+  if (checkpointDataField(root, "schemaVersion", "Campaign battle loadout") !== 1) {
+    throw new Error("Campaign battle loadout schema version is unsupported.");
+  }
+  const launchId = checkpointDataField(root, "launchId", "Campaign battle loadout");
+  const nodeId = checkpointDataField(root, "nodeId", "Campaign battle loadout");
+  const maxNewArtifactInstances = checkpointDataField(root, "maxNewArtifactInstances", "Campaign battle loadout");
+  if (
+    typeof launchId !== "string"
+    || !/^[0-9a-f]{16}$/.test(launchId)
+    || typeof nodeId !== "string"
+    || nodeId.length === 0
+    || nodeId.length > CAMPAIGN_RUN_LIMITS.identifierCodeUnits
+  ) {
+    throw new Error("Campaign battle loadout identity is invalid.");
+  }
+  if (
+    typeof maxNewArtifactInstances !== "number"
+    || !Number.isSafeInteger(maxNewArtifactInstances)
+    || maxNewArtifactInstances < 0
+    || maxNewArtifactInstances > ROGUELITE_ARTIFACT_INVENTORY_LIMIT
+  ) throw new Error("Campaign battle artifact acquisition limit is invalid.");
+  const normalizeEntries = <K extends "cardId" | "artifactId">(
+    input: unknown,
+    field: K,
+    definitions: Readonly<Record<string, unknown>> | undefined
+  ): readonly Readonly<{ instanceId: string } & Record<K, string>>[] => {
+    if (!Array.isArray(input) || Object.getPrototypeOf(input) !== Array.prototype) {
+      throw new Error("Campaign battle loadout collections must be plain arrays.");
+    }
+    const seen = new Set<string>();
+    return Object.freeze(input.map((entry, index) => {
+      const descriptors = checkpointObjectDescriptors(entry, `Campaign battle ${field} entry`);
+      requireExactCheckpointKeys(descriptors, ["instanceId", field], `Campaign battle ${field} entry`);
+      const instanceId = checkpointDataField(descriptors, "instanceId", `Campaign battle ${field} entry`);
+      const definitionId = checkpointDataField(descriptors, field, `Campaign battle ${field} entry`);
+      if (
+        typeof instanceId !== "string"
+        || instanceId.length === 0
+        || instanceId.length > 256
+        || seen.has(instanceId)
+        || typeof definitionId !== "string"
+        || !definitions
+        || !Object.prototype.hasOwnProperty.call(definitions, definitionId)
+      ) throw new Error(`Campaign battle ${field} entry ${index} is invalid.`);
+      seen.add(instanceId);
+      return Object.freeze({ instanceId, [field]: definitionId }) as Readonly<{ instanceId: string } & Record<K, string>>;
+    }));
+  };
+  const deck = normalizeEntries(
+    checkpointDataField(root, "deck", "Campaign battle loadout"),
+    "cardId",
+    active.draft?.definitions
+  );
+  const artifacts = normalizeEntries(
+    checkpointDataField(root, "artifacts", "Campaign battle loadout"),
+    "artifactId",
+    active.artifacts?.definitions
+  );
+  if (deck.length + artifacts.length > CAMPAIGN_RUN_LIMITS.collectionEntries) {
+    throw new Error("Campaign battle loadout exceeds the aggregate CampaignRun collection limit.");
+  }
+  if (campaignBattleWorstCaseModifierCount(deck, content, missionId) > MAX_MODIFIERS_PER_RESOLUTION) {
+    throw new Error("Campaign battle loadout exceeds the shared modifier budget.");
+  }
+  return Object.freeze({ schemaVersion: 1, launchId, nodeId, maxNewArtifactInstances, deck, artifacts });
 }
 
 export interface TowerDefenseGameOptions {
@@ -650,6 +753,8 @@ export interface TowerDefenseGameOptions {
   metaUpgradeLevels?: Record<string, number>;
   /** Deterministic simulation seed. Omitted legacy games use the stable numeric seed 0. */
   seed?: GameSeed;
+  /** Optional, already content-validated campaign run loadout. Legacy games omit it. */
+  campaignBattle?: CampaignBattleLoadoutV1;
 }
 
 interface TowerDefenseGameInternalOptions {
@@ -695,12 +800,14 @@ export class TowerDefenseGame {
   private artifactInventory: ArtifactInventoryEntry[] = [];
   private nextArtifactInstanceSequence = 1;
   /** Preserve historic artifact checkpoint v1 until a socket assignment first changes. */
-  private artifactCheckpointForm: 0 | 1 | 2 = 0;
+  private artifactCheckpointForm: 0 | 1 | 2 | 3 = 0;
   private draftInitialRngState: SeededRngStateV1 | undefined;
   private draftRng: SeededRng | undefined;
   private nextDraftOfferSequence = 1;
   private pendingDraftOffer: DraftPendingOffer | null = null;
   private draftSelections: DraftSelection[] = [];
+  private campaignBattle: CampaignBattleLoadoutV1 | undefined;
+  private campaignDeck: CampaignBattleLoadoutV1["deck"] = Object.freeze([]);
   private readonly navigationMandatoryPairs: readonly NavigationMandatoryPair[];
   private readonly navigationKnownPairs: readonly NavigationMandatoryPair[];
   private navigationResolver: NavigationResolver | undefined;
@@ -790,10 +897,23 @@ export class TowerDefenseGame {
     this.activePhysicsMechanics = resolveActivePhysicsMechanics(this.content, missionId);
     this.activeTerraformingMechanics = resolveActiveTerraformingMechanics(this.content, missionId);
     this.activeRogueliteMechanics = resolveActiveRogueliteMechanics(this.content, missionId);
+    if (options.campaignBattle !== undefined) {
+      this.campaignBattle = normalizeCampaignBattleLoadout(
+        options.campaignBattle,
+        this.activeRogueliteMechanics,
+        this.content,
+        missionId
+      );
+      this.campaignDeck = this.campaignBattle.deck;
+    }
     if (this.activeRogueliteMechanics?.artifacts) {
       this.artifactRng = new SeededRng(artifactLootSeed(options.seed ?? 0, missionId));
       this.artifactInitialRngState = this.artifactRng.exportState();
-      this.artifactCheckpointForm = 1;
+      this.artifactCheckpointForm = this.campaignBattle ? 3 : 1;
+      this.artifactInventory = this.campaignBattle
+        ? this.campaignBattle.artifacts.map((entry) => ({ ...entry, socket: null }))
+        : [];
+      this.nextArtifactInstanceSequence = this.artifactInventory.length + 1;
     }
     if (this.activeRogueliteMechanics?.draft) {
       this.draftRng = new SeededRng(waveDraftSeed(this.initialRngState, missionId));
@@ -904,9 +1024,11 @@ export class TowerDefenseGame {
     this.enemies = [];
     this.navigationEnemyFields?.clear();
     this.towers = [];
-    this.artifactInventory = [];
-    this.nextArtifactInstanceSequence = 1;
-    this.artifactCheckpointForm = this.activeRogueliteMechanics?.artifacts ? 1 : 0;
+    this.artifactInventory = this.campaignBattle
+      ? this.campaignBattle.artifacts.map((entry) => ({ ...entry, socket: null }))
+      : [];
+    this.nextArtifactInstanceSequence = this.artifactInventory.length + 1;
+    this.artifactCheckpointForm = this.activeRogueliteMechanics?.artifacts ? (this.campaignBattle ? 3 : 1) : 0;
     if (this.artifactInitialRngState) {
       this.artifactRng = SeededRng.fromState(this.artifactInitialRngState);
     }
@@ -1260,7 +1382,7 @@ export class TowerDefenseGame {
     if (index < 0 || !tower) return this.fail("Artifact socketing state changed.", "reason.artifactNotOwned");
     const previous = this.artifactInventory[index]!;
     this.artifactInventory[index] = { ...previous, socket: { towerId, slotId } };
-    this.artifactCheckpointForm = 2;
+    this.artifactCheckpointForm = this.campaignBattle ? 3 : 2;
     this.lastEvents.push({
       type: "artifactSocketed",
       artifactInstanceId,
@@ -1292,7 +1414,7 @@ export class TowerDefenseGame {
     const tower = this.towers.find((item) => item.id === towerId);
     if (!entry || !tower) return this.fail("Artifact socket assignment changed.", "reason.artifactSocketMismatch");
     this.replaceArtifactSocket(entry.instanceId, null);
-    this.artifactCheckpointForm = 2;
+    this.artifactCheckpointForm = this.campaignBattle ? 3 : 2;
     this.lastEvents.push({
       type: "artifactUnsocketed",
       artifactInstanceId,
@@ -1322,10 +1444,14 @@ export class TowerDefenseGame {
     if (!active.draft.definitions[cardId] || this.draftSelections.length >= ROGUELITE_DRAFT_LIMITS.selections) {
       return this.fail("Draft option is unavailable.", "reason.draftOptionUnavailable");
     }
+    const sequence = this.draftSelections.length + 1;
     this.draftSelections.push(Object.freeze({
-      sequence: this.draftSelections.length + 1,
+      sequence,
       offerId,
-      cardId
+      cardId,
+      ...(this.campaignBattle === undefined
+        ? {}
+        : { instanceId: `campaign:${this.campaignBattle.launchId}:card:${sequence}` })
     }));
     this.pendingDraftOffer = null;
     this.nextWaveStartAt = this.startedWaveCount < this.mission.waves.length
@@ -1753,6 +1879,37 @@ export class TowerDefenseGame {
 
   getRenderSnapshot(): GameSnapshot {
     return this.buildSnapshot(false);
+  }
+
+  /** Export only the portable run-owned result; sockets and other battle state never cross missions. */
+  exportCampaignBattleSettlement(): CampaignBattleSettlementV1 | undefined {
+    if (!this.campaignBattle || this.outcome !== "victory") return undefined;
+    return Object.freeze({
+      schemaVersion: 1,
+      launchId: this.campaignBattle.launchId,
+      nodeId: this.campaignBattle.nodeId,
+      missionId: this.mission.id,
+      deck: Object.freeze([
+        ...this.campaignDeck.map((entry) => Object.freeze({ ...entry })),
+        ...this.draftSelections.map((entry) => Object.freeze({
+          instanceId: entry.instanceId!,
+          cardId: entry.cardId
+        }))
+      ]),
+      artifacts: Object.freeze(this.artifactInventory.map((entry) => Object.freeze({
+        instanceId: entry.instanceId,
+        artifactId: entry.artifactId
+      })))
+    });
+  }
+
+  getCampaignBattleBinding(): Readonly<{ launchId: string; nodeId: string; missionId: string }> | undefined {
+    if (!this.campaignBattle) return undefined;
+    return Object.freeze({
+      launchId: this.campaignBattle.launchId,
+      nodeId: this.campaignBattle.nodeId,
+      missionId: this.mission.id
+    });
   }
 
   /** Pure, bounded diagnostics for active opt-in elevation v2 line of sight. */
@@ -2925,7 +3082,17 @@ export class TowerDefenseGame {
       },
       nextInstanceSequence: this.nextArtifactInstanceSequence
     };
-    return this.artifactCheckpointForm === 2
+    return this.artifactCheckpointForm === 3
+      ? {
+          schemaVersion: 3,
+          ...base,
+          inventory: this.artifactInventory.map((entry) => ({
+            instanceId: entry.instanceId,
+            artifactId: entry.artifactId,
+            socket: entry.socket === null ? null : { ...entry.socket }
+          }))
+        }
+      : this.artifactCheckpointForm === 2
       ? {
           schemaVersion: 2,
           ...base,
@@ -2945,10 +3112,10 @@ export class TowerDefenseGame {
         };
   }
 
-  private buildDraftCheckpointState(): DraftCheckpointStateV1 | undefined {
+  private buildDraftCheckpointState(): DraftCheckpointState | undefined {
     if (!this.activeRogueliteMechanics?.draft || !this.draftInitialRngState || !this.draftRng) return undefined;
     return {
-      schemaVersion: 1,
+      schemaVersion: this.campaignBattle ? 2 : 1,
       rng: {
         initial: this.draftInitialRngState,
         current: this.draftRng.exportState()
@@ -2961,7 +3128,7 @@ export class TowerDefenseGame {
         cardIds: [...this.pendingDraftOffer.cardIds] as [string, string, string]
       },
       selections: this.draftSelections.map((selection) => ({ ...selection }))
-    };
+    } as DraftCheckpointState;
   }
 
   private buildCheckpointState(): GameCheckpointStateV1 {
@@ -3108,7 +3275,17 @@ export class TowerDefenseGame {
       ...(combat === undefined ? {} : { combat }),
       ...(reactions === undefined ? {} : { reactions }),
       ...(artifacts === undefined ? {} : { artifacts }),
-      ...(draft === undefined ? {} : { draft })
+      ...(draft === undefined ? {} : { draft }),
+      ...(this.campaignBattle === undefined ? {} : {
+        campaignBattle: {
+          schemaVersion: 1 as const,
+          launchId: this.campaignBattle.launchId,
+          nodeId: this.campaignBattle.nodeId,
+          maxNewArtifactInstances: this.campaignBattle.maxNewArtifactInstances,
+          deck: this.campaignBattle.deck.map((entry) => ({ ...entry })),
+          artifacts: this.campaignBattle.artifacts.map((entry) => ({ ...entry }))
+        }
+      })
     };
     return cloneCheckpointJson(state);
   }
@@ -3198,13 +3375,16 @@ export class TowerDefenseGame {
       throw new Error("Game checkpoint draft state is unsupported for an inactive capability.");
     }
     if (hasDraftCheckpoint) checkpointDataField(descriptors, "draft", "Game checkpoint state");
+    const hasCampaignBattleCheckpoint = Object.prototype.hasOwnProperty.call(descriptors, "campaignBattle");
+    if (hasCampaignBattleCheckpoint) checkpointDataField(descriptors, "campaignBattle", "Game checkpoint state");
     requireExactCheckpointKeys(descriptors, [
       ...required,
       ...(hasTerraformingCheckpoint ? ["terraforming"] : []),
       ...(Object.prototype.hasOwnProperty.call(descriptors, "combat") ? ["combat"] : []),
       ...(Object.prototype.hasOwnProperty.call(descriptors, "reactions") ? ["reactions"] : []),
       ...(hasArtifactCheckpoint ? ["artifacts"] : []),
-      ...(hasDraftCheckpoint ? ["draft"] : [])
+      ...(hasDraftCheckpoint ? ["draft"] : []),
+      ...(hasCampaignBattleCheckpoint ? ["campaignBattle"] : [])
     ], "Game checkpoint state");
 
     const finite = (value: unknown, label: string, minimum = 0, maximum = Infinity): number => {
@@ -3264,6 +3444,73 @@ export class TowerDefenseGame {
       return result;
     };
 
+    let campaignBattleState: GameCheckpointStateV1["campaignBattle"];
+    if (hasCampaignBattleCheckpoint) {
+      if (checkpointRoguelite?.schemaVersion !== 4 || checkpointRoguelite.campaign?.schemaVersion !== 2) {
+        throw new Error("Game checkpoint campaign battle state is unsupported for an inactive handoff.");
+      }
+      const campaign = closed(
+        state.campaignBattle,
+        "campaign battle state",
+        ["schemaVersion", "launchId", "nodeId", "maxNewArtifactInstances", "deck", "artifacts"]
+      );
+      if (checkpointDataField(campaign, "schemaVersion", "campaign battle state") !== 1) {
+        throw new Error("Game checkpoint campaign battle state schema version is unsupported.");
+      }
+      const launchId = stringValue(checkpointDataField(campaign, "launchId", "campaign battle state"), "campaign launchId");
+      const nodeId = stringValue(checkpointDataField(campaign, "nodeId", "campaign battle state"), "campaign nodeId");
+      const maxNewArtifactInstances = integer(
+        checkpointDataField(campaign, "maxNewArtifactInstances", "campaign battle state"),
+        "campaign maxNewArtifactInstances"
+      );
+      if (maxNewArtifactInstances > ROGUELITE_ARTIFACT_INVENTORY_LIMIT) {
+        throw new Error("Game checkpoint campaign artifact acquisition limit is invalid.");
+      }
+      if (
+        !/^[0-9a-f]{16}$/.test(launchId)
+        || nodeId.length === 0
+        || nodeId.length > CAMPAIGN_RUN_LIMITS.identifierCodeUnits
+      ) {
+        throw new Error("Game checkpoint campaign battle identity is invalid.");
+      }
+      const normalizePortable = (value: unknown, field: "cardId" | "artifactId"): Array<Record<string, string>> => {
+        const definitions = field === "cardId" ? checkpointRoguelite.draft?.definitions : checkpointRoguelite.artifacts?.definitions;
+        const seen = new Set<string>();
+        return array(value, `campaign ${field} entries`).map((item) => {
+          const entry = closed(item, `campaign ${field} entry`, ["instanceId", field]);
+          const instanceId = stringValue(checkpointDataField(entry, "instanceId", `campaign ${field} entry`), `campaign ${field} instanceId`);
+          const definitionId = stringValue(checkpointDataField(entry, field, `campaign ${field} entry`), `campaign ${field}`);
+          if (
+            instanceId.length === 0
+            || instanceId.length > CAMPAIGN_RUN_LIMITS.identifierCodeUnits
+            || seen.has(instanceId)
+            || !definitions
+            || !Object.prototype.hasOwnProperty.call(definitions, definitionId)
+          ) throw new Error(`Game checkpoint campaign ${field} entry is invalid.`);
+          seen.add(instanceId);
+          return { instanceId, [field]: definitionId };
+        });
+      };
+      campaignBattleState = {
+        schemaVersion: 1,
+        launchId,
+        nodeId,
+        maxNewArtifactInstances,
+        deck: normalizePortable(checkpointDataField(campaign, "deck", "campaign battle state"), "cardId") as never,
+        artifacts: normalizePortable(checkpointDataField(campaign, "artifacts", "campaign battle state"), "artifactId") as never
+      };
+      if (
+        campaignBattleState.deck.length + campaignBattleState.artifacts.length
+        > CAMPAIGN_RUN_LIMITS.collectionEntries
+      ) throw new Error("Game checkpoint campaign loadout exceeds the aggregate CampaignRun collection limit.");
+      if (
+        campaignBattleWorstCaseModifierCount(campaignBattleState.deck, content, identity.missionId)
+        > MAX_MODIFIERS_PER_RESOLUTION
+      ) throw new Error("Game checkpoint campaign loadout exceeds the shared modifier budget.");
+    }
+
+    let campaignArtifactInventoryCount = 0;
+    let campaignDraftSelectionCount = 0;
     const artifactSockets: Array<{
       readonly instanceId: string;
       readonly artifactId: string;
@@ -3279,8 +3526,11 @@ export class TowerDefenseGame {
         ["schemaVersion", "rng", "nextInstanceSequence", "inventory"]
       );
       const artifactSchemaVersion = checkpointDataField(artifact, "schemaVersion", "artifact state");
-      if (artifactSchemaVersion !== 1 && artifactSchemaVersion !== 2) {
+      if (artifactSchemaVersion !== 1 && artifactSchemaVersion !== 2 && artifactSchemaVersion !== 3) {
         throw new Error("Game checkpoint artifact state schema version is unsupported.");
+      }
+      if ((artifactSchemaVersion === 3) !== Boolean(campaignBattleState)) {
+        throw new Error("Game checkpoint campaign artifact state and handoff context are inconsistent.");
       }
       const artifactRng = closed(
         checkpointDataField(artifact, "rng", "artifact state"),
@@ -3297,6 +3547,7 @@ export class TowerDefenseGame {
         checkpointDataField(artifact, "inventory", "artifact state"),
         "artifact inventory"
       );
+      if (campaignBattleState) campaignArtifactInventoryCount = inventory.length;
       if (inventory.length > ROGUELITE_ARTIFACT_INVENTORY_LIMIT) {
         throw new Error("Game checkpoint artifact inventory budget is exceeded.");
       }
@@ -3309,7 +3560,9 @@ export class TowerDefenseGame {
         const entry = closed(
           inventory[index],
           "artifact inventory entry",
-          artifactSchemaVersion === 2 ? ["instanceId", "artifactId", "socket"] : ["instanceId", "artifactId"]
+          artifactSchemaVersion === 2 || artifactSchemaVersion === 3
+            ? ["instanceId", "artifactId", "socket"]
+            : ["instanceId", "artifactId"]
         );
         const instanceId = stringValue(
           checkpointDataField(entry, "instanceId", "artifact inventory entry"),
@@ -3319,16 +3572,29 @@ export class TowerDefenseGame {
           checkpointDataField(entry, "artifactId", "artifact inventory entry"),
           "artifact inventory artifactId"
         );
-        if (instanceId !== `artifact_${index + 1}` || seenInstances.has(instanceId)) {
+        const carriedArtifact = campaignBattleState?.artifacts[index];
+        const validCampaignInstance = artifactSchemaVersion === 3 && (
+          carriedArtifact
+            ? carriedArtifact.instanceId === instanceId && carriedArtifact.artifactId === artifactId
+            : instanceId === `campaign:${campaignBattleState!.launchId}:artifact:${index + 1}`
+        );
+        if (
+          seenInstances.has(instanceId)
+          || (artifactSchemaVersion !== 3 && instanceId !== `artifact_${index + 1}`)
+          || (artifactSchemaVersion === 3 && !validCampaignInstance)
+        ) {
           throw new Error("Game checkpoint artifact inventory has an invalid or duplicate instance id.");
         }
         if (!checkpointRoguelite.artifacts.definitions[artifactId]) {
           throw new Error("Game checkpoint artifact inventory references an unknown definition.");
         }
-        if (!reachableArtifactIds.has(artifactId)) {
+        if (
+          (artifactSchemaVersion !== 3 || !carriedArtifact)
+          && !reachableArtifactIds.has(artifactId)
+        ) {
           throw new Error("Game checkpoint artifact inventory references an artifact unreachable from authored loot tables.");
         }
-        if (artifactSchemaVersion === 2) {
+        if (artifactSchemaVersion === 2 || artifactSchemaVersion === 3) {
           const socketValue = checkpointDataField(entry, "socket", "artifact inventory entry");
           if (socketValue !== null) {
             const socket = closed(socketValue, "artifact socket", ["towerId", "slotId"]);
@@ -3348,6 +3614,13 @@ export class TowerDefenseGame {
         }
         seenInstances.add(instanceId);
       }
+      if (artifactSchemaVersion === 3 && inventory.length < (campaignBattleState?.artifacts.length ?? 0)) {
+        throw new Error("Game checkpoint campaign artifact inventory is missing carried entries.");
+      }
+      if (
+        artifactSchemaVersion === 3
+        && inventory.length - (campaignBattleState?.artifacts.length ?? 0) > (campaignBattleState?.maxNewArtifactInstances ?? 0)
+      ) throw new Error("Game checkpoint campaign artifact acquisition limit is exceeded.");
       const nextInstanceSequence = integer(
         checkpointDataField(artifact, "nextInstanceSequence", "artifact state"),
         "artifact nextInstanceSequence",
@@ -3367,8 +3640,12 @@ export class TowerDefenseGame {
         "draft state",
         ["schemaVersion", "rng", "nextOfferSequence", "pendingOffer", "selections"]
       );
-      if (checkpointDataField(draft, "schemaVersion", "draft state") !== 1) {
+      const draftSchemaVersion = checkpointDataField(draft, "schemaVersion", "draft state");
+      if (draftSchemaVersion !== 1 && draftSchemaVersion !== 2) {
         throw new Error("Game checkpoint draft state schema version is unsupported.");
+      }
+      if ((draftSchemaVersion === 2) !== Boolean(campaignBattleState)) {
+        throw new Error("Game checkpoint campaign draft state and handoff context are inconsistent.");
       }
       const draftRng = closed(checkpointDataField(draft, "rng", "draft state"), "draft RNG", ["initial", "current"]);
       const draftInitial = checkpointDataField(draftRng, "initial", "draft RNG") as SeededRngStateV1;
@@ -3383,6 +3660,7 @@ export class TowerDefenseGame {
       }
       const replayDraftRng = SeededRng.fromState(draftInitial);
       const selections = array(checkpointDataField(draft, "selections", "draft state"), "draft selections");
+      if (campaignBattleState) campaignDraftSelectionCount = selections.length;
       if (selections.length > ROGUELITE_DRAFT_LIMITS.selections) {
         throw new Error("Game checkpoint draft selections exceed the selection budget.");
       }
@@ -3390,7 +3668,11 @@ export class TowerDefenseGame {
         throw new Error("Game checkpoint draft selections exceed the mission inter-wave opportunities.");
       }
       for (let index = 0; index < selections.length; index += 1) {
-        const selection = closed(selections[index], "draft selection", ["sequence", "offerId", "cardId"]);
+        const selection = closed(
+          selections[index],
+          "draft selection",
+          draftSchemaVersion === 2 ? ["sequence", "offerId", "cardId", "instanceId"] : ["sequence", "offerId", "cardId"]
+        );
         const sequence = integer(checkpointDataField(selection, "sequence", "draft selection"), "draft selection sequence", 1);
         const offerId = stringValue(checkpointDataField(selection, "offerId", "draft selection"), "draft selection offerId");
         const cardId = stringValue(checkpointDataField(selection, "cardId", "draft selection"), "draft selection cardId");
@@ -3402,6 +3684,12 @@ export class TowerDefenseGame {
           || !offeredCardIds.includes(cardId)
         ) {
           throw new Error("Game checkpoint draft selection sequence, offer, or card is invalid.");
+        }
+        if (draftSchemaVersion === 2) {
+          const instanceId = stringValue(checkpointDataField(selection, "instanceId", "draft selection"), "draft selection instanceId");
+          if (instanceId !== `campaign:${campaignBattleState!.launchId}:card:${sequence}`) {
+            throw new Error("Game checkpoint campaign draft selection instance is invalid.");
+          }
         }
       }
       const pendingValue = checkpointDataField(draft, "pendingOffer", "draft state");
@@ -3483,6 +3771,12 @@ export class TowerDefenseGame {
         throw new Error("Game checkpoint draft RNG is incoherent with recorded offers and selections.");
       }
     }
+
+    if (
+      campaignBattleState
+      && campaignBattleState.deck.length + campaignDraftSelectionCount + campaignArtifactInventoryCount
+        > CAMPAIGN_RUN_LIMITS.collectionEntries
+    ) throw new Error("Game checkpoint campaign state exceeds the aggregate CampaignRun collection limit.");
 
     finite(state.coreHp, "coreHp");
     const currencyIds = new Set(content.currencies.map((currency) => currency.id));
@@ -4973,13 +5267,27 @@ export class TowerDefenseGame {
     }));
     this.navigationEnemyFields?.clear();
     this.towers = [...state.towers] as TowerState[];
+    if (state.campaignBattle) {
+      this.campaignBattle = Object.freeze({
+        schemaVersion: 1,
+        launchId: state.campaignBattle.launchId,
+        nodeId: state.campaignBattle.nodeId,
+        maxNewArtifactInstances: state.campaignBattle.maxNewArtifactInstances,
+        deck: Object.freeze(state.campaignBattle.deck.map((entry) => Object.freeze({ ...entry }))),
+        artifacts: Object.freeze(state.campaignBattle.artifacts.map((entry) => Object.freeze({ ...entry })))
+      });
+      this.campaignDeck = this.campaignBattle.deck;
+    } else {
+      this.campaignBattle = undefined;
+      this.campaignDeck = Object.freeze([]);
+    }
     if (this.activeRogueliteMechanics?.artifacts && state.artifacts) {
       const artifacts = state.artifacts;
       this.artifactInitialRngState = cloneCheckpointJson(artifacts.rng.initial);
       this.artifactRng = SeededRng.fromState(artifacts.rng.current);
       this.nextArtifactInstanceSequence = artifacts.nextInstanceSequence;
       this.artifactCheckpointForm = artifacts.schemaVersion;
-      this.artifactInventory = artifacts.schemaVersion === 2
+      this.artifactInventory = artifacts.schemaVersion === 2 || artifacts.schemaVersion === 3
         ? artifacts.inventory.map((entry) => ({
             instanceId: entry.instanceId,
             artifactId: entry.artifactId,
@@ -7892,13 +8200,19 @@ export class TowerDefenseGame {
       return this.fail("Artifacts are not available.", "reason.artifactsUnavailable");
     }
     if (this.outcome !== "playing") return this.fail("Mission already ended.", "reason.missionEnded");
-    if (
-      this.waveState !== "between"
-      || this.startedWaveCount <= 0
-      || this.startedWaveCount >= this.mission.waves.length
-      || this.enemies.length !== 0
-      || this.spawnQueue.length !== 0
-    ) {
+    const campaignPreparation = Boolean(
+      this.campaignBattle
+      && this.waveState === "ready"
+      && this.startedWaveCount === 0
+      && this.enemies.length === 0
+      && this.spawnQueue.length === 0
+    );
+    const interwave = this.waveState === "between"
+      && this.startedWaveCount > 0
+      && this.startedWaveCount < this.mission.waves.length
+      && this.enemies.length === 0
+      && this.spawnQueue.length === 0;
+    if (!campaignPreparation && !interwave) {
       return this.fail("Artifacts can only be managed between waves.", "reason.artifactBetweenWavesOnly");
     }
     return { ok: true };
@@ -7923,7 +8237,7 @@ export class TowerDefenseGame {
     for (const entry of assignments) {
       const slotId = entry.socket!.slotId;
       this.replaceArtifactSocket(entry.instanceId, null);
-      this.artifactCheckpointForm = 2;
+      this.artifactCheckpointForm = this.campaignBattle ? 3 : 2;
       this.lastEvents.push({
         type: "artifactUnsocketed",
         artifactInstanceId: entry.instanceId,
@@ -8029,7 +8343,7 @@ export class TowerDefenseGame {
 
     if (active.draft) {
       const selectionCounts = new Map<string, { label: string; count: number }>();
-      for (const selection of this.draftSelections) {
+      for (const selection of [...this.campaignDeck, ...this.draftSelections]) {
         const definition = active.draft.definitions[selection.cardId];
         if (!definition) throw new Error(`Draft selection references unknown card "${selection.cardId}".`);
         const previous = selectionCounts.get(selection.cardId);
@@ -9131,10 +9445,22 @@ export class TowerDefenseGame {
 
   private draftDamageModifiersForTower(tower: TowerState): readonly ModifierSpec[] {
     const active = this.activeRogueliteMechanics;
-    if (!active?.draft || this.draftSelections.length === 0) return [];
+    if (!active?.draft || (this.campaignDeck.length === 0 && this.draftSelections.length === 0)) return [];
     const tags = new Set(active.towerTagsByTypeId[tower.typeId] ?? []);
     const modifiers: ModifierSpec[] = [];
-    for (const selection of this.draftSelections) {
+    const entries = [
+      ...this.campaignDeck.map((entry, index) => ({
+        cardId: entry.cardId,
+        modifierIdentity: `campaign:${entry.instanceId.length}:${entry.instanceId}`,
+        order: index + 1
+      })),
+      ...this.draftSelections.map((selection) => ({
+        cardId: selection.cardId,
+        modifierIdentity: `battle:${selection.sequence}`,
+        order: this.campaignDeck.length + selection.sequence
+      }))
+    ];
+    for (const selection of entries) {
       const definition = active.draft.definitions[selection.cardId];
       if (!definition) throw new Error(`Draft selection references unknown card "${selection.cardId}".`);
       definition.effects.forEach((effect, effectIndex) => {
@@ -9143,7 +9469,7 @@ export class TowerDefenseGame {
           || (effect.scope.kind === "tower_tag" && tags.has(effect.scope.tag));
         if (!matches) return;
         modifiers.push(Object.freeze({
-          id: `roguelite:draft:${selection.sequence}:${selection.cardId.length}:${selection.cardId}:modifier:${String(effectIndex).padStart(2, "0")}`,
+          id: `roguelite:draft:${selection.order}:${selection.modifierIdentity}:${selection.cardId.length}:${selection.cardId}:modifier:${String(effectIndex).padStart(2, "0")}`,
           target: effect.modifier.target,
           stage: "run",
           operation: effect.modifier.operation,
@@ -9930,8 +10256,17 @@ export class TowerDefenseGame {
         }
         cursor -= entry.weight;
       }
-      if (!selectedArtifactId || this.artifactInventory.length >= ROGUELITE_ARTIFACT_INVENTORY_LIMIT) continue;
-      const artifactInstanceId = `artifact_${this.nextArtifactInstanceSequence}`;
+      const campaignArtifactLimit = this.campaignBattle
+        ? this.campaignBattle.artifacts.length + this.campaignBattle.maxNewArtifactInstances
+        : ROGUELITE_ARTIFACT_INVENTORY_LIMIT;
+      if (
+        !selectedArtifactId
+        || this.artifactInventory.length >= ROGUELITE_ARTIFACT_INVENTORY_LIMIT
+        || this.artifactInventory.length >= campaignArtifactLimit
+      ) continue;
+      const artifactInstanceId = this.campaignBattle
+        ? `campaign:${this.campaignBattle.launchId}:artifact:${this.nextArtifactInstanceSequence}`
+        : `artifact_${this.nextArtifactInstanceSequence}`;
       this.nextArtifactInstanceSequence += 1;
       this.artifactInventory.push(Object.freeze({
         instanceId: artifactInstanceId,

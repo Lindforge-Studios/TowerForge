@@ -122,6 +122,7 @@ const CampaignUI = {
   campaign: null,
   source: "",
   active: false,
+  markerSchemaVersion: null,
   preview: null,
   error: null
 };
@@ -492,6 +493,7 @@ async function load() {
     CampaignUI.loaded = false;
     CampaignUI.preview = null;
     CampaignUI.error = null;
+    CampaignUI.markerSchemaVersion = null;
     markDirty(false);
     historyInit();
     PT.dirty = true; // force playtest to rebuild from the freshly loaded project
@@ -760,11 +762,17 @@ function normalizeRogueliteMechanicsDraft(profile) {
   const waveDraft = normalizeRogueliteDraft(source?.draft);
   if (waveDraft) draft.draft = waveDraft;
   const campaign = ownDataValue(source, "campaign");
-  if (campaign && typeof campaign === "object" && !Array.isArray(campaign)
-    && ownDataValue(campaign, "schemaVersion") === 1) {
+  if (campaign && typeof campaign === "object" && !Array.isArray(campaign)) {
     draft.campaign = deep(campaign);
   }
   return draft;
+}
+
+function hasUnsupportedRogueliteCampaignMarker(profile) {
+  const campaign = ownDataValue(profile, "campaign");
+  if (!campaign || typeof campaign !== "object" || Array.isArray(campaign)) return false;
+  const schemaVersion = ownDataValue(campaign, "schemaVersion");
+  return Number.isSafeInteger(schemaVersion) && ![1, 2].includes(schemaVersion);
 }
 
 function normalizeRogueliteDraft(value) {
@@ -3614,8 +3622,11 @@ function renderCampaignAuthoring() {
     campaignSchemaVersion = null;
   }
   const futureCampaignVersion = Number.isSafeInteger(campaignSchemaVersion) && campaignSchemaVersion > 2;
+  const futureMarkerVersion = Number.isSafeInteger(CampaignUI.markerSchemaVersion)
+    && CampaignUI.markerSchemaVersion > 2;
   const supportedVersion = mechanicsProjectModuleVersion() <= 4
-    && (!Number.isSafeInteger(campaignSchemaVersion) || campaignSchemaVersion <= 2);
+    && (!Number.isSafeInteger(campaignSchemaVersion) || campaignSchemaVersion <= 2)
+    && !futureMarkerVersion;
   if (profileInput && document.activeElement !== profileInput) profileInput.value = CampaignUI.profileId;
   if (jsonInput && document.activeElement !== jsonInput) {
     if (jsonInput.value !== CampaignUI.source) jsonInput.value = CampaignUI.source;
@@ -3624,8 +3635,8 @@ function renderCampaignAuthoring() {
     output.classList.toggle("error", Boolean(CampaignUI.error));
     output.textContent = CampaignUI.error
       ? `${CampaignUI.error.code ? `${CampaignUI.error.code}: ` : ""}${CampaignUI.error.message}`
-      : futureCampaignVersion
-        ? `WorldCampaign v${campaignSchemaVersion} is newer than this Studio supports. The source is read-only.`
+      : futureCampaignVersion || futureMarkerVersion
+        ? `${futureMarkerVersion ? `Campaign marker v${CampaignUI.markerSchemaVersion}` : `WorldCampaign v${campaignSchemaVersion}`} is newer than this Studio supports. The source is read-only.`
       : CampaignUI.preview
         ? JSON.stringify(CampaignUI.preview, null, 2)
         : CampaignUI.loading
@@ -3674,6 +3685,7 @@ async function loadCampaignAuthoring() {
     };
     CampaignUI.source = JSON.stringify(CampaignUI.campaign, null, 2);
     CampaignUI.active = response.active === true;
+    CampaignUI.markerSchemaVersion = response.campaignMarkerSchemaVersion ?? null;
     CampaignUI.loaded = true;
   } catch (error) {
     CampaignUI.error = error;
@@ -3997,7 +4009,10 @@ function renderMechanicsHub() {
   }
   const busy = MechanicsUI.loading || MechanicsUI.applying || MechanicsUI.terraformingRecipeLoading;
   const supportedTerraformingVersion = MechanicsUI.selectedModuleId !== "terraforming" || mechanicsProjectModuleVersion() === 1;
-  const supportedRogueliteVersion = MechanicsUI.selectedModuleId !== "roguelite" || mechanicsProjectModuleVersion() <= 4;
+  const supportedRogueliteVersion = MechanicsUI.selectedModuleId !== "roguelite" || (
+    mechanicsProjectModuleVersion() <= 4
+    && !hasUnsupportedRogueliteCampaignMarker(MechanicsUI.draft)
+  );
   const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion && supportedRogueliteVersion && !busy;
   const dirtyWriteGuard = Boolean(S.dirty);
   if ($("btn-mechanics-preview")) $("btn-mechanics-preview").disabled = !writable;

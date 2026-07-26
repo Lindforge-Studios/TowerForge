@@ -213,7 +213,7 @@ export const ROGUELITE_MECHANICS_SCHEMA = Object.freeze({
     requiredFields: REQUIRED_CAMPAIGN_MARKER_FIELDS,
     optionalFields: Object.freeze([] as const),
     additionalProperties: false,
-    supportedSchemaVersions: Object.freeze([1] as const),
+    supportedSchemaVersions: Object.freeze([1, 2] as const),
     graph: Object.freeze({
       schemaVersion: 1,
       root: Object.freeze({
@@ -359,8 +359,14 @@ export interface RogueliteCampaignMarkerV1 {
   readonly schemaVersion: 1;
 }
 
+export interface RogueliteCampaignMarkerV2 {
+  readonly schemaVersion: 2;
+}
+
+export type RogueliteCampaignMarker = RogueliteCampaignMarkerV1 | RogueliteCampaignMarkerV2;
+
 export interface RogueliteMechanicsProfileV4 extends RogueliteMechanicsProfileV3 {
-  readonly campaign?: RogueliteCampaignMarkerV1;
+  readonly campaign?: RogueliteCampaignMarker;
 }
 
 export interface ActiveRogueliteMechanicsV1 extends RogueliteMechanicsProfileV1 {
@@ -1221,18 +1227,18 @@ export function normalizeRogueliteProfileV4(value: unknown): RogueliteMechanicsP
     ...(Object.prototype.hasOwnProperty.call(profile, "artifacts") ? { artifacts: profile.artifacts } : {}),
     ...(Object.prototype.hasOwnProperty.call(profile, "draft") ? { draft: profile.draft } : {})
   });
-  let campaign: RogueliteCampaignMarkerV1 | undefined;
+  let campaign: RogueliteCampaignMarker | undefined;
   if (Object.prototype.hasOwnProperty.call(profile, "campaign")) {
     const marker = inspectRecord(profile.campaign, "profile.campaign", "Roguelite campaign marker");
     rejectUnknownFields(marker, REQUIRED_CAMPAIGN_MARKER_FIELDS, "profile.campaign", "Roguelite campaign marker");
     requireFields(marker, REQUIRED_CAMPAIGN_MARKER_FIELDS, "profile.campaign", "Roguelite campaign marker");
-    if (marker.schemaVersion !== 1) {
+    if (marker.schemaVersion !== 1 && marker.schemaVersion !== 2) {
       throw new RogueliteProfileValidationError(
         "profile.campaign.schemaVersion",
-        "Roguelite campaign marker supports schema version 1 only."
+        "Roguelite campaign marker supports schema versions 1 and 2 only."
       );
     }
-    campaign = Object.freeze({ schemaVersion: 1 as const });
+    campaign = Object.freeze({ schemaVersion: marker.schemaVersion });
   }
   return Object.freeze({
     synergies: base.synergies,

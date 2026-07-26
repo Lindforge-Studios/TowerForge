@@ -206,7 +206,7 @@ export async function inspectCampaignAuthoring(projectDir) {
     campaignAuthored
     && module?.enabled === true
     && module?.schemaVersion === 4
-    && campaignMarker?.schemaVersion === 1
+    && (campaignMarker?.schemaVersion === 1 || campaignMarker?.schemaVersion === 2)
   );
   if (active) {
     try {
@@ -234,6 +234,9 @@ export async function inspectCampaignAuthoring(projectDir) {
     rawProjectSchemaVersion: raw.manifest?.schemaVersion,
     campaignAuthored,
     active,
+    ...(Number.isSafeInteger(campaignMarker?.schemaVersion)
+      ? { campaignMarkerSchemaVersion: campaignMarker.schemaVersion }
+      : {}),
     ...(profileId ? { profileId } : {}),
     ...(campaignAuthored ? { campaign: cloneJson(campaign) } : {})
   };
@@ -415,8 +418,19 @@ function createCandidate(rawFiles, request) {
     throw inputError("module_version_unsupported", "mechanics.modules.roguelite.schemaVersion", "Campaign authoring supports roguelite module versions 1 through 4.");
   }
 
+  const existingProfiles = ownRecord(ownValue(ownRecord(existingModule), "profiles"));
+  const existingProfile = ownValue(existingProfiles, request.profileId);
+  const existingCampaignMarker = ownValue(ownRecord(existingProfile), "campaign");
+  const existingCampaignMarkerVersion = ownValue(ownRecord(existingCampaignMarker), "schemaVersion");
+  if (Number.isSafeInteger(existingCampaignMarkerVersion) && existingCampaignMarkerVersion > 2) {
+    throw inputError(
+      "nested_version_unsupported",
+      `mechanics.modules.roguelite.profiles.${request.profileId}.campaign.schemaVersion`,
+      `Roguelite profile "${request.profileId}" contains a newer campaign marker and is read-only in this runtime.`
+    );
+  }
+
   if (request.enabled === false) {
-    const existingProfiles = ownRecord(ownValue(ownRecord(existingModule), "profiles"));
     if (existingModule?.schemaVersion === 4 && existingProfiles) {
       const profile = ownValue(existingProfiles, request.profileId);
       if (ownRecord(profile)) delete profile.campaign;
@@ -439,12 +453,12 @@ function createCandidate(rawFiles, request) {
   }
   module.schemaVersion = 4;
   module.enabled = true;
-  const existingProfile = ownValue(profiles, request.profileId);
-  if (existingProfile !== undefined && !ownRecord(existingProfile)) {
+  const selectedExistingProfile = ownValue(profiles, request.profileId);
+  if (selectedExistingProfile !== undefined && !ownRecord(selectedExistingProfile)) {
     throw inputError("roguelite_profile_invalid", `mechanics.modules.roguelite.profiles.${request.profileId}`, "The selected roguelite profile must be an object.");
   }
-  const profile = existingProfile ?? { synergies: {} };
-  defineOwnData(profile, "campaign", { schemaVersion: 1 });
+  const profile = selectedExistingProfile ?? { synergies: {} };
+  defineOwnData(profile, "campaign", { schemaVersion: 2 });
   defineOwnData(profiles, request.profileId, profile);
   defineOwnData(modules, "roguelite", module);
 

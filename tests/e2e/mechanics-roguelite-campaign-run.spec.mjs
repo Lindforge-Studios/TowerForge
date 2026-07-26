@@ -103,7 +103,23 @@ test.describe("R4.4B Studio campaign lifecycle", () => {
       .toEqual(["campaign", "sniper"]);
     expect(campaignState(projectDir)).toMatchObject({ authored: true, active: true });
     expect(readJson(path.join(projectDir, "content", "mechanics.json"))
-      .modules.roguelite.profiles.browser_campaign.campaign).toEqual({ schemaVersion: 1 });
+      .modules.roguelite.profiles.browser_campaign.campaign).toEqual({ schemaVersion: 2 });
+
+    const mechanicsPath = path.join(projectDir, "content", "mechanics.json");
+    const futureMechanics = readJson(mechanicsPath);
+    futureMechanics.modules.roguelite.profiles.browser_campaign.campaign = {
+      schemaVersion: 3,
+      rawFutureField: { preserve: ["exact", 3] }
+    };
+    writeJson(mechanicsPath, futureMechanics);
+    const futureBytes = fs.readFileSync(mechanicsPath, "utf8");
+    await page.reload();
+    await openRogueliteMechanics(page);
+    await expect(page.locator("#btn-mechanics-preview")).toBeDisabled();
+    await expect(page.locator("#btn-mechanics-save")).toBeDisabled();
+    await expect(page.locator("#mechanics-roguelite-campaign-json")).toBeDisabled();
+    await expect(page.locator("#campaign-preview-result")).toContainText(/newer|read-only/i);
+    expect(fs.readFileSync(mechanicsPath, "utf8")).toBe(futureBytes);
     expect(browserErrors()).toEqual([]);
   });
 });
@@ -384,7 +400,7 @@ function campaignState(projectDir) {
     active: Boolean(
       mechanics?.modules?.roguelite?.enabled === true
       && mechanics.modules.roguelite.schemaVersion === 4
-      && mechanics.modules.roguelite.profiles?.[profileId]?.campaign?.schemaVersion === 1
+      && mechanics.modules.roguelite.profiles?.[profileId]?.campaign?.schemaVersion === 2
       && balance.missions.tutorial_01.mechanics?.profiles?.roguelite === profileId
     ),
     profileId,

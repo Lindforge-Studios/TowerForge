@@ -248,7 +248,7 @@ describe("R4.4A campaign authoring and graph contracts", () => {
         requiredFields: ["schemaVersion"],
         optionalFields: [],
         additionalProperties: false,
-        supportedSchemaVersions: [1]
+        supportedSchemaVersions: [1, 2]
       }
     });
     expect((Engine as unknown as Record<string, any>).WORLD_CAMPAIGN_SCHEMA).toMatchObject({
@@ -351,7 +351,7 @@ describe("R4.4A campaign authoring and graph contracts", () => {
 
   it("fails closed on malformed/future markers, closed shapes, invalid graph references, cycles, and unreachable nodes", () => {
     const invalidCases: readonly [string, Parameters<typeof input>[0], RegExp][] = [
-      ["future marker", { profileCampaign: { schemaVersion: 2 } }, /campaign.*schema|version/i],
+      ["future marker", { profileCampaign: { schemaVersion: 3 } }, /campaign.*schema|version/i],
       ["extra marker field", { profileCampaign: { schemaVersion: 1, future: true } }, /campaign.*future|unsupported|unknown/i],
       ["future graph", { campaign: { ...authoredCampaign(), schemaVersion: 3 } }, /campaign.*schema|version/i],
       ["duplicate node", { campaign: { ...authoredCampaign(), nodes: [battleNode("same", "start", []), battleNode("same", "elite", [])], entryNodeIds: ["same"] } }, /duplicate.*node|node.*duplicate/i],

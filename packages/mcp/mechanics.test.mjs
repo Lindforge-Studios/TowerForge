@@ -160,7 +160,16 @@ describe("R1 combat mechanics MCP contract", () => {
         nodeTypes: engine.WORLD_CAMPAIGN_SCHEMA.nodeTypes,
         limits: engine.WORLD_CAMPAIGN_SCHEMA.limits,
         graph: engine.WORLD_CAMPAIGN_SCHEMA,
-        inputSchema: campaignInputSchema
+        inputSchema: campaignInputSchema,
+        handoff: {
+          markerSchemaVersion: 2,
+          campaignRunSchemaVersion: 1,
+          prepare: "prepareCampaignBattle",
+          settle: "settleCampaignBattleVictory",
+          carries: ["deck", "artifacts"],
+          socketPolicy: "cleared_between_battles",
+          persistence: "explicit_import_export_only"
+        }
       },
       snapshot: { field: "roguelite", optional: true, supportedSchemaVersions: [1, 2, 3, 4] },
       events: ["artifactDropped", "artifactSocketed", "artifactUnsocketed"],

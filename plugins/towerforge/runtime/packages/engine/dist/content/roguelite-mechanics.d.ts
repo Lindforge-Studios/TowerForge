@@ -175,7 +175,7 @@ export declare const ROGUELITE_MECHANICS_SCHEMA: Readonly<{
         requiredFields: readonly ["schemaVersion"];
         optionalFields: readonly [];
         additionalProperties: false;
-        supportedSchemaVersions: readonly [1];
+        supportedSchemaVersions: readonly [1, 2];
         graph: Readonly<{
             schemaVersion: 1;
             root: Readonly<{
@@ -355,8 +355,12 @@ export interface RogueliteMechanicsProfileV3 extends RogueliteMechanicsProfileV1
 export interface RogueliteCampaignMarkerV1 {
     readonly schemaVersion: 1;
 }
+export interface RogueliteCampaignMarkerV2 {
+    readonly schemaVersion: 2;
+}
+export type RogueliteCampaignMarker = RogueliteCampaignMarkerV1 | RogueliteCampaignMarkerV2;
 export interface RogueliteMechanicsProfileV4 extends RogueliteMechanicsProfileV3 {
-    readonly campaign?: RogueliteCampaignMarkerV1;
+    readonly campaign?: RogueliteCampaignMarker;
 }
 export interface ActiveRogueliteMechanicsV1 extends RogueliteMechanicsProfileV1 {
     readonly schemaVersion: 1;

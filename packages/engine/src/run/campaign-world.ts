@@ -937,7 +937,11 @@ function activeCampaignProfile(
 ): ActiveRogueliteMechanicsV4 | undefined {
   for (const missionId of Object.keys(content.missions).sort(binaryCompare)) {
     const active = resolveActiveRogueliteMechanics(content, missionId);
-    if (active?.schemaVersion === 4 && active.profileId === profileId && active.campaign?.schemaVersion === 1) return active;
+    if (
+      active?.schemaVersion === 4
+      && active.profileId === profileId
+      && (active.campaign?.schemaVersion === 1 || active.campaign?.schemaVersion === 2)
+    ) return active;
   }
   return undefined;
 }
@@ -977,10 +981,14 @@ function validateCapturedCampaignRunAgainstContent(
   }
   const profile = activeCampaignProfile(content, campaign.rogueliteProfileId!);
   if (!profile) return Object.freeze({ ok: false, code: "campaign_inactive" as const, run });
-  if (run.deck.some((entry) => !profile.draft?.definitions[entry.cardId])) {
+  if (run.deck.some((entry) => (
+    !profile.draft || !Object.prototype.hasOwnProperty.call(profile.draft.definitions, entry.cardId)
+  ))) {
     return Object.freeze({ ok: false, code: "unknown_card" as const, run });
   }
-  if (run.artifacts.some((entry) => !profile.artifacts?.definitions[entry.artifactId])) {
+  if (run.artifacts.some((entry) => (
+    !profile.artifacts || !Object.prototype.hasOwnProperty.call(profile.artifacts.definitions, entry.artifactId)
+  ))) {
     return Object.freeze({ ok: false, code: "unknown_artifact" as const, run });
   }
   if (campaign.schemaVersion === 2) {

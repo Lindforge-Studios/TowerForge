@@ -475,6 +475,21 @@ function createCandidate(rawFiles, request) {
     return { manifest, balance, mechanics };
   }
 
+  if (request.moduleId === "roguelite" && isRecord(existingModule?.profiles)) {
+    for (const existingProfileId of Object.keys(existingModule.profiles).sort(compareBinary)) {
+      const existingProfile = ownValue(existingModule.profiles, existingProfileId);
+      const campaign = isRecord(existingProfile) ? ownValue(existingProfile, "campaign") : undefined;
+      const campaignSchemaVersion = isRecord(campaign) ? ownValue(campaign, "schemaVersion") : undefined;
+      if (Number.isSafeInteger(campaignSchemaVersion) && campaignSchemaVersion > 2) {
+        throw new CandidateInputError(
+          "nested_version_unsupported",
+          `modules.roguelite.profiles.${existingProfileId}.campaign.schemaVersion`,
+          `Roguelite profile "${existingProfileId}" contains a newer campaign marker and is read-only in this runtime.`
+        );
+      }
+    }
+  }
+
   const missionId = resolveMissionId(request, balance, manifest);
   if (!isRecord(balance.missions) || !Object.hasOwn(balance.missions, missionId) || !isRecord(balance.missions[missionId])) {
     throw new CandidateInputError("mission_not_found", `missions.${missionId}`, `Mission "${missionId}" was not found.`);

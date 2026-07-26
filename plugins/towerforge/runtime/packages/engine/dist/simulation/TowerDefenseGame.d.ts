@@ -6,6 +6,34 @@ import { type LineOfSightAnalysisRequestV1, type LineOfSightAnalysisV1 } from ".
 import { type GameCheckpointV1 } from "./checkpoint.js";
 import { type GameSeed } from "./rng.js";
 import type { ActionResult, CurrencyDefinition, DifficultyDefinition, EnemyState, GameEvent, GameSnapshot, HexCoord, MissionAbilityId, ResourceBag, ResourceCost, TowerTargetMode, TowerState, WaveState } from "./types.js";
+export interface CampaignBattleLoadoutV1 {
+    readonly schemaVersion: 1;
+    readonly launchId: string;
+    readonly nodeId: string;
+    readonly maxNewArtifactInstances: number;
+    readonly deck: readonly {
+        readonly instanceId: string;
+        readonly cardId: string;
+    }[];
+    readonly artifacts: readonly {
+        readonly instanceId: string;
+        readonly artifactId: string;
+    }[];
+}
+export interface CampaignBattleSettlementV1 {
+    readonly schemaVersion: 1;
+    readonly launchId: string;
+    readonly nodeId: string;
+    readonly missionId: string;
+    readonly deck: readonly {
+        readonly instanceId: string;
+        readonly cardId: string;
+    }[];
+    readonly artifacts: readonly {
+        readonly instanceId: string;
+        readonly artifactId: string;
+    }[];
+}
 export interface TowerDefenseGameOptions {
     missionId: string;
     content: GameContentRegistry;
@@ -14,6 +42,8 @@ export interface TowerDefenseGameOptions {
     metaUpgradeLevels?: Record<string, number>;
     /** Deterministic simulation seed. Omitted legacy games use the stable numeric seed 0. */
     seed?: GameSeed;
+    /** Optional, already content-validated campaign run loadout. Legacy games omit it. */
+    campaignBattle?: CampaignBattleLoadoutV1;
 }
 interface TowerDefenseGameInternalOptions {
     skipGameStarted?: boolean;
@@ -63,6 +93,8 @@ export declare class TowerDefenseGame {
     private nextDraftOfferSequence;
     private pendingDraftOffer;
     private draftSelections;
+    private campaignBattle;
+    private campaignDeck;
     private readonly navigationMandatoryPairs;
     private readonly navigationKnownPairs;
     private navigationResolver;
@@ -167,6 +199,13 @@ export declare class TowerDefenseGame {
     tick(deltaUnits: number): void;
     getSnapshot(): GameSnapshot;
     getRenderSnapshot(): GameSnapshot;
+    /** Export only the portable run-owned result; sockets and other battle state never cross missions. */
+    exportCampaignBattleSettlement(): CampaignBattleSettlementV1 | undefined;
+    getCampaignBattleBinding(): Readonly<{
+        launchId: string;
+        nodeId: string;
+        missionId: string;
+    }> | undefined;
     /** Pure, bounded diagnostics for active opt-in elevation v2 line of sight. */
     analyzeLineOfSight(request: LineOfSightAnalysisRequestV1): LineOfSightAnalysisV1 | undefined;
     /** Pure, bounded diagnostics for active opt-in dynamic-flow navigation. */

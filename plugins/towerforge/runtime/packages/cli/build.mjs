@@ -664,6 +664,7 @@ function playerTemplate() {
   importCampaignRun,
   isPlayerMissionUnlocked,
   parsePlayerProfileJson,
+  prepareCampaignBattle,
   purchasePlayerMetaUpgrade,
   recordCampaignBattleVictory,
   recordPlayerMissionClear,
@@ -671,6 +672,7 @@ function playerTemplate() {
   resolveWorldCampaign,
   selectPlayerDifficulty,
   serializePlayerProfile,
+  settleCampaignBattleVictory,
   TowerDefenseGame,
   validateCampaignRunAgainstContent
 } from "./engine/index.js";
@@ -702,6 +704,7 @@ let game = createGame();
 const activeCampaign = resolveWorldCampaign(content);
 let campaignRun = activeCampaign ? createCampaignRun("campaign") : null;
 let pendingCampaignNodeId = null;
+let pendingCampaignBattle = false;
 const renderer = createCanvasRenderer({ canvas, content, theme: content.visuals?.theme?.renderer });
 let lastFrame = performance.now();
 let message = "Choose a tower, click a buildable tile, then start the wave.";
@@ -740,7 +743,7 @@ if ("serviceWorker" in navigator) {
 $("start-wave").addEventListener("click", () => { audio.resume(); report(game.startNextWave()); });
 $("pause-run").addEventListener("click", () => setPaused(Number($("speed").value) > 0));
 $("sell-mode").addEventListener("click", () => setSellMode(!sellMode));
-$("reset-run").addEventListener("click", () => { game = createGame(); victoryRewarded = false; selectedTowerId = null; initAbilityBar(); setSellMode(false); clearNavigationOverlay(); message = "Run reset."; });
+$("reset-run").addEventListener("click", () => { game.reset(); victoryRewarded = false; selectedTowerId = null; initAbilityBar(); setSellMode(false); clearNavigationOverlay(); message = "Run reset."; });
 $("reset-progress")?.addEventListener("click", resetPlayerProgress);
 $("speed").addEventListener("input", syncSpeedUi);
 $("snd").addEventListener("change", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
@@ -985,6 +988,7 @@ function initSelectors() {
   missionSelect.addEventListener("change", () => {
     if (!isUnlocked(missionSelect.value)) { missionSelect.value = missionId; return; } // locked
     pendingCampaignNodeId = null;
+    pendingCampaignBattle = false;
     missionId = missionSelect.value;
     towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
     game = createGame();
@@ -1127,6 +1131,7 @@ function selectCampaignChoice(nodeId, choiceId) {
   if (result.ok) {
     campaignRun = result.run;
     pendingCampaignNodeId = null;
+    pendingCampaignBattle = false;
     message = "Campaign choice resolved: " + choiceId + ".";
     updateCampaignRun();
     return;
@@ -1137,21 +1142,29 @@ function selectCampaignChoice(nodeId, choiceId) {
 
 function selectCampaignNode(nodeId) {
   if (!activeCampaign || !campaignRun) return;
-  const availableNodeIds = getAvailableCampaignNodeIds(campaignRun, content);
-  if (!availableNodeIds.includes(nodeId)) {
-    message = "Campaign node is not available.";
+  const prepared = prepareCampaignBattle(campaignRun, content, nodeId);
+  if (prepared.ok) {
+    pendingCampaignBattle = true;
+    pendingCampaignNodeId = prepared.nodeId;
+    missionId = prepared.missionId;
+    game = prepared.game;
+  } else if (prepared.code === "campaign_handoff_inactive") {
+    // Campaign marker v1 retains the legacy graph reducer without battle carry.
+    const availableNodeIds = getAvailableCampaignNodeIds(campaignRun, content);
+    const node = activeCampaign.nodes.find((candidate) => candidate.id === nodeId);
+    if (!availableNodeIds.includes(nodeId) || !node || node.type === "merchant" || node.type === "event") {
+      message = "Campaign node is not available.";
+      return;
+    }
+    pendingCampaignBattle = false;
+    pendingCampaignNodeId = node.id;
+    missionId = node.missionId;
+    game = createGame();
+  } else {
+    message = "Campaign battle could not be prepared: " + prepared.code + ".";
     return;
   }
-  const node = activeCampaign.nodes.find((candidate) => candidate.id === nodeId);
-  if (!node) return;
-  if (node.type === "merchant" || node.type === "event") {
-    message = node.type + " campaign nodes are not interactive in this release.";
-    return;
-  }
-  pendingCampaignNodeId = node.id;
-  missionId = node.missionId;
   towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
-  game = createGame();
   refreshMissionOptions();
   syncKeyboardCursor(null);
   clearNavigationOverlay();
@@ -1163,7 +1176,7 @@ function selectCampaignNode(nodeId) {
   applyBattleBackground();
   selectMissionMusic();
   showStoryForMission("beforeMission");
-  message = "Campaign battle selected: " + node.id + ".";
+  message = "Campaign battle selected: " + nodeId + ".";
   updateCampaignRun();
 }
 
@@ -1184,6 +1197,11 @@ function setupCampaignRunControls() {
   });
   importButton.addEventListener("click", () => fileInput.click());
   fileInput.addEventListener("change", async () => {
+    if (pendingCampaignNodeId) {
+      fileInput.value = "";
+      message = "Campaign run import cannot replace an active battle.";
+      return;
+    }
     const file = fileInput.files?.[0];
     fileInput.value = "";
     if (!file || !activeCampaign) return;
@@ -1196,6 +1214,7 @@ function setupCampaignRunControls() {
       const validation = validateCampaignRunAgainstContent(decoded, content);
       if (!validation.ok) throw new Error("Campaign run is incompatible with this project: " + validation.code);
       pendingCampaignNodeId = null;
+      pendingCampaignBattle = false;
       campaignRun = validation.run;
       message = "Campaign run imported.";
       updateCampaignRun();
@@ -1322,7 +1341,9 @@ function updateHud(snap) {
     victoryRewarded = true;
     const earnedStars = (snap.stars || []).filter((item) => item.achieved).length;
     if (activeCampaign && campaignRun && pendingCampaignNodeId) {
-      const result = recordCampaignBattleVictory(campaignRun, progress, content, pendingCampaignNodeId, earnedStars);
+      const result = pendingCampaignBattle
+        ? settleCampaignBattleVictory(campaignRun, progress, content, pendingCampaignNodeId, earnedStars, game)
+        : recordCampaignBattleVictory(campaignRun, progress, content, pendingCampaignNodeId, earnedStars);
       if (result.ok) {
         campaignRun = result.run;
         progress = result.profile;
@@ -1333,6 +1354,7 @@ function updateHud(snap) {
         message = "Campaign battle could not be recorded: " + result.code;
       }
       pendingCampaignNodeId = null;
+      pendingCampaignBattle = false;
       updateCampaignRun();
     } else {
       recordPlayerVictory(missionId, earnedStars);
@@ -1516,6 +1538,7 @@ function phaserPlayerTemplate() {
   importCampaignRun,
   isPlayerMissionUnlocked,
   parsePlayerProfileJson,
+  prepareCampaignBattle,
   purchasePlayerMetaUpgrade,
   recordCampaignBattleVictory,
   recordPlayerMissionClear,
@@ -1523,6 +1546,7 @@ function phaserPlayerTemplate() {
   resolveWorldCampaign,
   selectPlayerDifficulty,
   serializePlayerProfile,
+  settleCampaignBattleVictory,
   TowerDefenseGame,
   validateCampaignRunAgainstContent
 } from "./engine/index.js";
@@ -1571,6 +1595,7 @@ let game = createGame();
 const activeCampaign = resolveWorldCampaign(content);
 let campaignRun = activeCampaign ? createCampaignRun("campaign") : null;
 let pendingCampaignNodeId = null;
+let pendingCampaignBattle = false;
 let message = "Choose a tower, click a buildable tile, then start the wave.";
 let armedAbility = null;
 let sellMode = false;
@@ -1605,7 +1630,7 @@ updateCampaignRun();
 $("start-wave").addEventListener("click", () => { audio.resume(); report(game.startNextWave()); });
 $("pause-run").addEventListener("click", () => setPaused(Number($("speed").value) > 0));
 $("sell-mode").addEventListener("click", () => setSellMode(!sellMode));
-$("reset-run").addEventListener("click", () => { game = createGame(); victoryRewarded = false; selectedTowerId = null; initAbilityBar(); setSellMode(false); clearNavigationOverlay(); message = "Run reset."; });
+$("reset-run").addEventListener("click", () => { game.reset(); victoryRewarded = false; selectedTowerId = null; initAbilityBar(); setSellMode(false); clearNavigationOverlay(); message = "Run reset."; });
 $("reset-progress")?.addEventListener("click", resetPlayerProgress);
 $("speed").addEventListener("input", syncSpeedUi);
 $("snd").addEventListener("change", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
@@ -2376,6 +2401,7 @@ function initSelectors() {
   missionSelect.addEventListener("change", () => {
     if (!isUnlocked(missionSelect.value)) { missionSelect.value = missionId; return; } // locked
     pendingCampaignNodeId = null;
+    pendingCampaignBattle = false;
     missionId = missionSelect.value;
     towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
     game = createGame();
@@ -2517,6 +2543,7 @@ function selectCampaignChoice(nodeId, choiceId) {
   if (result.ok) {
     campaignRun = result.run;
     pendingCampaignNodeId = null;
+    pendingCampaignBattle = false;
     message = "Campaign choice resolved: " + choiceId + ".";
     updateCampaignRun();
     return;
@@ -2527,21 +2554,29 @@ function selectCampaignChoice(nodeId, choiceId) {
 
 function selectCampaignNode(nodeId) {
   if (!activeCampaign || !campaignRun) return;
-  const availableNodeIds = getAvailableCampaignNodeIds(campaignRun, content);
-  if (!availableNodeIds.includes(nodeId)) {
-    message = "Campaign node is not available.";
+  const prepared = prepareCampaignBattle(campaignRun, content, nodeId);
+  if (prepared.ok) {
+    pendingCampaignBattle = true;
+    pendingCampaignNodeId = prepared.nodeId;
+    missionId = prepared.missionId;
+    game = prepared.game;
+  } else if (prepared.code === "campaign_handoff_inactive") {
+    // Campaign marker v1 retains the legacy graph reducer without battle carry.
+    const availableNodeIds = getAvailableCampaignNodeIds(campaignRun, content);
+    const node = activeCampaign.nodes.find((candidate) => candidate.id === nodeId);
+    if (!availableNodeIds.includes(nodeId) || !node || node.type === "merchant" || node.type === "event") {
+      message = "Campaign node is not available.";
+      return;
+    }
+    pendingCampaignBattle = false;
+    pendingCampaignNodeId = node.id;
+    missionId = node.missionId;
+    game = createGame();
+  } else {
+    message = "Campaign battle could not be prepared: " + prepared.code + ".";
     return;
   }
-  const node = activeCampaign.nodes.find((candidate) => candidate.id === nodeId);
-  if (!node) return;
-  if (node.type === "merchant" || node.type === "event") {
-    message = node.type + " campaign nodes are not interactive in this release.";
-    return;
-  }
-  pendingCampaignNodeId = node.id;
-  missionId = node.missionId;
   towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
-  game = createGame();
   refreshMissionOptions();
   syncKeyboardCursor(null);
   clearNavigationOverlay();
@@ -2553,7 +2588,7 @@ function selectCampaignNode(nodeId) {
   applyBattleBackground();
   selectMissionMusic();
   showStoryForMission("beforeMission");
-  message = "Campaign battle selected: " + node.id + ".";
+  message = "Campaign battle selected: " + nodeId + ".";
   updateCampaignRun();
 }
 
@@ -2574,6 +2609,11 @@ function setupCampaignRunControls() {
   });
   importButton.addEventListener("click", () => fileInput.click());
   fileInput.addEventListener("change", async () => {
+    if (pendingCampaignNodeId) {
+      fileInput.value = "";
+      message = "Campaign run import cannot replace an active battle.";
+      return;
+    }
     const file = fileInput.files?.[0];
     fileInput.value = "";
     if (!file || !activeCampaign) return;
@@ -2586,6 +2626,7 @@ function setupCampaignRunControls() {
       const validation = validateCampaignRunAgainstContent(decoded, content);
       if (!validation.ok) throw new Error("Campaign run is incompatible with this project: " + validation.code);
       pendingCampaignNodeId = null;
+      pendingCampaignBattle = false;
       campaignRun = validation.run;
       message = "Campaign run imported.";
       updateCampaignRun();
@@ -2677,7 +2718,9 @@ function updateHud(snap) {
     victoryRewarded = true;
     const earnedStars = (snap.stars || []).filter((item) => item.achieved).length;
     if (activeCampaign && campaignRun && pendingCampaignNodeId) {
-      const result = recordCampaignBattleVictory(campaignRun, progress, content, pendingCampaignNodeId, earnedStars);
+      const result = pendingCampaignBattle
+        ? settleCampaignBattleVictory(campaignRun, progress, content, pendingCampaignNodeId, earnedStars, game)
+        : recordCampaignBattleVictory(campaignRun, progress, content, pendingCampaignNodeId, earnedStars);
       if (result.ok) {
         campaignRun = result.run;
         progress = result.profile;
@@ -2688,6 +2731,7 @@ function updateHud(snap) {
         message = "Campaign battle could not be recorded: " + result.code;
       }
       pendingCampaignNodeId = null;
+      pendingCampaignBattle = false;
       updateCampaignRun();
     } else {
       recordPlayerVictory(missionId, earnedStars);
