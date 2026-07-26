@@ -70,7 +70,7 @@ describe("R4.4A shared campaign presentation", () => {
     expect(Object.isFrozen(first)).toBe(true);
 
     for (const input of [
-      { ...subject(), campaign: { ...subject().campaign, schemaVersion: 2 } },
+      { ...subject(), campaign: { ...subject().campaign, schemaVersion: 3 } },
       { ...subject(), run: { ...subject().run, nodeId: "missing" } },
       { ...subject(), availableNodeIds: ["missing"] },
       { ...subject(), campaign: { ...subject().campaign, nodes: subject().campaign.nodes.map((node, index) => (

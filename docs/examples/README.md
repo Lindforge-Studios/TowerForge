@@ -30,6 +30,7 @@ Reference examples show expected project and code patterns.
 | Opt-in boss artifact loot | `docs/examples/opt-in-boss-artifact-loot/` | R4.2 roguelite v2 reference with typed slots, deterministic boss drops, battle-local between-wave socketing, exact-tower modifiers, and no campaign persistence. |
 | Opt-in deterministic wave draft | `docs/examples/opt-in-wave-draft/` | R4.3 roguelite v3 reference with three seeded interwave options, scoped run modifiers, exact GameCommand v3 choice, and no mandatory artifacts or legacy pause. |
 | Opt-in campaign run | `docs/examples/opt-in-campaign-run/` | R4.4A roguelite v4 reference with a bounded typed campaign DAG, separate CampaignRun/Profile reducers, explicit run import/export, and no implicit storage or battle checkpoint coupling. |
+| Opt-in campaign structural choices | `docs/examples/opt-in-campaign-structural-choices/` | R4.4B campaign graph v2 reference with declared run resources and atomic merchant/event costs and grants; battle-local draft/artifact transfer remains disabled. |
 | Headless smoke sim | `packages/cli/sim.mjs` | CLI wrapper for engine-backed mission smoke runs. |
 | Static web build | `packages/cli/build.mjs` | Generates the playable web bundle from project data, compiled engine modules, renderer, and safe assets. |
 | Native packaging | `packages/cli/lib/packaging.mjs` | Canonical Capacitor/Tauri scaffold generation around a built web bundle. |

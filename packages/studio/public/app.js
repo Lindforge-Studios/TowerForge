@@ -3607,7 +3607,15 @@ function renderCampaignAuthoring() {
   const profileInput = $("mechanics-roguelite-campaign-profile-id");
   const jsonInput = $("mechanics-roguelite-campaign-json");
   const output = $("campaign-preview-result");
-  const supportedVersion = mechanicsProjectModuleVersion() <= 4;
+  let campaignSchemaVersion;
+  try {
+    campaignSchemaVersion = JSON.parse(jsonInput?.value || CampaignUI.source || "null")?.schemaVersion;
+  } catch {
+    campaignSchemaVersion = null;
+  }
+  const futureCampaignVersion = Number.isSafeInteger(campaignSchemaVersion) && campaignSchemaVersion > 2;
+  const supportedVersion = mechanicsProjectModuleVersion() <= 4
+    && (!Number.isSafeInteger(campaignSchemaVersion) || campaignSchemaVersion <= 2);
   if (profileInput && document.activeElement !== profileInput) profileInput.value = CampaignUI.profileId;
   if (jsonInput && document.activeElement !== jsonInput) {
     if (jsonInput.value !== CampaignUI.source) jsonInput.value = CampaignUI.source;
@@ -3616,6 +3624,8 @@ function renderCampaignAuthoring() {
     output.classList.toggle("error", Boolean(CampaignUI.error));
     output.textContent = CampaignUI.error
       ? `${CampaignUI.error.code ? `${CampaignUI.error.code}: ` : ""}${CampaignUI.error.message}`
+      : futureCampaignVersion
+        ? `WorldCampaign v${campaignSchemaVersion} is newer than this Studio supports. The source is read-only.`
       : CampaignUI.preview
         ? JSON.stringify(CampaignUI.preview, null, 2)
         : CampaignUI.loading
@@ -3639,6 +3649,7 @@ function renderCampaignAuthoring() {
     CampaignUI.source = jsonInput.value;
     CampaignUI.preview = null;
     CampaignUI.error = null;
+    renderCampaignAuthoring();
   };
   if ($("btn-campaign-preview")) $("btn-campaign-preview").onclick = () => void previewCampaign();
   if ($("btn-campaign-enable")) $("btn-campaign-enable").onclick = () => void applyCampaign(true);

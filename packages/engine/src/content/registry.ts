@@ -77,12 +77,42 @@ export interface WorldCampaignDefinitionV1 {
   readonly nodes: readonly WorldCampaignNodeV1[];
 }
 
+export interface WorldCampaignRunResourceDefinitionV2 {
+  readonly label: string;
+}
+
+export interface WorldCampaignStructuralChoiceV2 {
+  readonly id: string;
+  readonly label: string;
+  readonly costs: Readonly<Record<string, number>>;
+  readonly grants: Readonly<Record<string, number>>;
+}
+
+export interface WorldCampaignStructuralNodeV2 extends WorldCampaignNodeBaseV1 {
+  readonly type: "merchant" | "event";
+  readonly label: string;
+  readonly choices: readonly WorldCampaignStructuralChoiceV2[];
+}
+
+export type WorldCampaignNodeV2 = WorldCampaignBattleNodeV1 | WorldCampaignStructuralNodeV2;
+
+/** Version 2 adds declared run resources and atomic merchant/event choices. */
+export interface WorldCampaignDefinitionV2 {
+  readonly schemaVersion: 2;
+  readonly rogueliteProfileId: string;
+  readonly runResources: Readonly<Record<string, WorldCampaignRunResourceDefinitionV2>>;
+  readonly entryNodeIds: readonly string[];
+  readonly nodes: readonly WorldCampaignNodeV2[];
+}
+
+export type WorldCampaignDefinition = WorldCampaignDefinitionV1 | WorldCampaignDefinitionV2;
+
 export interface WorldMapCatalog {
   width: number;
   height: number;
   regions: WorldRegionDefinition[];
   missionNodes: WorldMissionNode[];
-  campaign?: WorldCampaignDefinitionV1;
+  campaign?: WorldCampaignDefinition;
 }
 
 export interface GameBalanceConstants {

@@ -2,6 +2,10 @@ const MAX_NODES = 1_024;
 const MAX_AVAILABLE_NODES = 1_024;
 const MAX_ID_BYTES = 128;
 const MAX_LABEL_BYTES = 256;
+const MAX_RUN_RESOURCES = 256;
+const MAX_CHOICES_PER_NODE = 16;
+const MAX_RESOURCE_ENTRIES = 16;
+const MAX_RESOURCE_AMOUNT = 1_000_000_000;
 
 const NODE_TYPES = new Set(["battle", "elite", "merchant", "event", "boss"]);
 const BATTLE_TYPES = new Set(["battle", "elite", "boss"]);
@@ -72,17 +76,79 @@ function finiteCoordinate(value) {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-function projectNode(value) {
+function hasExactKeys(value, expectedKeys) {
+  const keys = Object.keys(value);
+  return keys.length === expectedKeys.length && expectedKeys.every((key) => keys.includes(key));
+}
+
+function ownDictionary(value, maximum) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  let descriptors;
+  let prototype;
+  try {
+    prototype = Object.getPrototypeOf(value);
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    return null;
+  }
+  if ((prototype !== Object.prototype && prototype !== null)
+    || Object.getOwnPropertySymbols(descriptors).length > 0) return null;
+  const keys = Object.keys(descriptors);
+  if (keys.length > maximum) return null;
+  const result = Object.create(null);
+  for (const key of keys) {
+    const descriptor = descriptors[key];
+    if (!boundedText(key, MAX_ID_BYTES) || !descriptor?.enumerable || !("value" in descriptor)) return null;
+    Object.defineProperty(result, key, { value: descriptor.value, enumerable: true });
+  }
+  return result;
+}
+
+function projectResourceBag(value, resourceIds) {
+  const bag = ownDictionary(value, MAX_RESOURCE_ENTRIES);
+  if (!bag) return null;
+  const projected = [];
+  for (const resourceId of Object.keys(bag).sort()) {
+    const amount = bag[resourceId];
+    if (!resourceIds.has(resourceId) || !Number.isSafeInteger(amount)
+      || amount < 0 || amount > MAX_RESOURCE_AMOUNT) return null;
+    if (amount > 0) projected.push(Object.freeze({ resourceId, amount }));
+  }
+  return Object.freeze(projected);
+}
+
+function projectChoices(value, resourceIds) {
+  const choices = denseArray(value, MAX_CHOICES_PER_NODE);
+  if (!choices || choices.length === 0) return null;
+  const seen = new Set();
+  const projected = [];
+  for (const value of choices) {
+    const choice = ownRecord(value, ["id", "label", "costs", "grants"]);
+    if (!choice || Object.keys(choice).length !== 4) return null;
+    const id = boundedText(choice.id, MAX_ID_BYTES);
+    const label = boundedText(choice.label, MAX_LABEL_BYTES);
+    const costs = projectResourceBag(choice.costs, resourceIds);
+    const grants = projectResourceBag(choice.grants, resourceIds);
+    if (!id || !label || !costs || !grants || seen.has(id)
+      || [...costs, ...grants].every((entry) => entry.amount === 0)) return null;
+    seen.add(id);
+    projected.push(Object.freeze({ id, label, costs, grants }));
+  }
+  projected.sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
+  return Object.freeze(projected);
+}
+
+function projectNode(value, schemaVersion, resourceIds) {
   const commonFields = ["id", "type", "regionId", "x", "y", "difficulty", "nextNodeIds"];
-  const rawType = ownRecord(value, [...commonFields, "missionId", "label"]);
+  const rawType = ownRecord(value, [...commonFields, "missionId", "label", "choices"]);
   if (!rawType) return null;
   const type = rawType.type;
   if (!NODE_TYPES.has(type)) return null;
   const expectedFields = BATTLE_TYPES.has(type)
     ? [...commonFields, "missionId"]
-    : [...commonFields, "label"];
-  const node = ownRecord(value, expectedFields);
-  if (!node || Object.keys(node).length !== expectedFields.length) return null;
+    : schemaVersion === 2 ? [...commonFields, "label", "choices"] : [...commonFields, "label"];
+  if (!hasExactKeys(rawType, expectedFields)) return null;
+  const node = rawType;
   const id = boundedText(node.id, MAX_ID_BYTES);
   const regionId = boundedText(node.regionId, MAX_ID_BYTES);
   const x = finiteCoordinate(node.x);
@@ -100,6 +166,11 @@ function projectNode(value) {
   const label = BATTLE_TYPES.has(type) ? null : boundedText(node.label, MAX_LABEL_BYTES);
   const missionId = BATTLE_TYPES.has(type) ? boundedText(node.missionId, MAX_ID_BYTES) : null;
   if ((BATTLE_TYPES.has(type) && !missionId) || (!BATTLE_TYPES.has(type) && !label)) return null;
+  if (schemaVersion === 2 && !BATTLE_TYPES.has(type)) {
+    const choices = projectChoices(node.choices, resourceIds);
+    if (!choices) return null;
+    return { id, type, label, missionId, regionId, x, y, difficulty: node.difficulty, choices };
+  }
   return { id, type, label, missionId, regionId, x, y, difficulty: node.difficulty };
 }
 
@@ -113,14 +184,49 @@ export function projectCampaignPresentation(value) {
   if (!input || Object.keys(input).length !== 3) return undefined;
   if (input.campaign === null && input.run === null) return INACTIVE;
 
-  const campaign = ownRecord(input.campaign, [
-    "schemaVersion", "source", "rogueliteProfileId", "entryNodeIds", "nodes"
+  const campaignHeader = ownRecord(input.campaign, [
+    "schemaVersion", "source", "rogueliteProfileId", "runResources", "entryNodeIds", "nodes"
   ]);
+  const schemaVersion = campaignHeader?.schemaVersion;
+  if (schemaVersion !== 1 && schemaVersion !== 2) return undefined;
+  const campaignFields = schemaVersion === 2
+    ? ["schemaVersion", "source", "rogueliteProfileId", "runResources", "entryNodeIds", "nodes"]
+    : ["schemaVersion", "source", "rogueliteProfileId", "entryNodeIds", "nodes"];
+  const campaign = campaignHeader;
   const run = ownRecord(input.run, ["version", "seed", "nodeId", "deck", "artifacts", "runResources"]);
-  if (!campaign || Object.keys(campaign).length !== 5 || campaign.schemaVersion !== 1
+  if (!hasExactKeys(campaign, campaignFields)
     || campaign.source !== "authored" || !run || Object.keys(run).length !== 6 || run.version !== 1) return undefined;
   const profileId = boundedText(campaign.rogueliteProfileId, MAX_ID_BYTES);
   if (!profileId) return undefined;
+
+  const resourceIds = new Set();
+  const resourceLabels = new Map();
+  const runResources = [];
+  if (schemaVersion === 2) {
+    const definitions = ownDictionary(campaign.runResources, MAX_RUN_RESOURCES);
+    const balances = ownDictionary(run.runResources, MAX_RUN_RESOURCES);
+    if (!definitions || !balances) return undefined;
+    for (const resourceId of Object.keys(definitions).sort()) {
+      const definition = ownRecord(definitions[resourceId], ["label"]);
+      const label = definition && Object.keys(definition).length === 1
+        ? boundedText(definition.label, MAX_LABEL_BYTES)
+        : undefined;
+      if (!label) return undefined;
+      resourceIds.add(resourceId);
+      resourceLabels.set(resourceId, label);
+    }
+    for (const resourceId of Object.keys(balances)) {
+      const amount = balances[resourceId];
+      if (!resourceIds.has(resourceId) || !Number.isSafeInteger(amount) || amount < 0) return undefined;
+    }
+    for (const resourceId of [...resourceIds].sort()) {
+      runResources.push(Object.freeze({
+        id: resourceId,
+        label: resourceLabels.get(resourceId),
+        amount: balances[resourceId] ?? 0
+      }));
+    }
+  }
 
   const authoredNodes = denseArray(campaign.nodes, MAX_NODES);
   const authoredAvailability = denseArray(input.availableNodeIds, MAX_AVAILABLE_NODES);
@@ -128,7 +234,7 @@ export function projectCampaignPresentation(value) {
   const nodes = [];
   const nodeIds = new Set();
   for (const value of authoredNodes) {
-    const node = projectNode(value);
+    const node = projectNode(value, schemaVersion, resourceIds);
     if (!node || nodeIds.has(node.id)) return undefined;
     nodeIds.add(node.id);
     nodes.push(node);
@@ -148,8 +254,10 @@ export function projectCampaignPresentation(value) {
     active: true,
     profileId,
     currentNodeId,
+    ...(schemaVersion === 2 ? { runResources: Object.freeze(runResources) } : {}),
     nodes: Object.freeze(nodes.map((node) => Object.freeze({
       ...node,
+      ...(schemaVersion === 2 && !("choices" in node) ? { choices: Object.freeze([]) } : {}),
       state: node.id === currentNodeId ? "current" : available.has(node.id) ? "available" : "locked"
     })))
   });

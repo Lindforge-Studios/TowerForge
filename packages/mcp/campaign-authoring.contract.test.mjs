@@ -66,30 +66,59 @@ describe("R4.4A MCP campaign authoring contract", () => {
           projectDir: expect.any(Object),
           profileId: expect.any(Object),
           campaign: {
-            type: "object",
-            required: ["schemaVersion", "rogueliteProfileId", "entryNodeIds", "nodes"],
-            additionalProperties: false,
-            properties: {
-              schemaVersion: { const: 1 },
-              nodes: {
-                type: "array",
-                maxItems: 1_024,
-                items: {
-                  oneOf: [
-                    {
-                      required: ["id", "type", "missionId", "regionId", "x", "y", "difficulty", "nextNodeIds"],
-                      additionalProperties: false,
-                      properties: { type: { enum: ["battle", "elite", "boss"] } }
-                    },
-                    {
-                      required: ["id", "type", "label", "regionId", "x", "y", "difficulty", "nextNodeIds"],
-                      additionalProperties: false,
-                      properties: { type: { enum: ["merchant", "event"] } }
+            oneOf: [
+              {
+                type: "object",
+                required: ["schemaVersion", "rogueliteProfileId", "entryNodeIds", "nodes"],
+                additionalProperties: false,
+                properties: {
+                  schemaVersion: { const: 1 },
+                  nodes: {
+                    type: "array",
+                    maxItems: 1_024,
+                    items: {
+                      oneOf: [
+                        {
+                          required: ["id", "type", "missionId", "regionId", "x", "y", "difficulty", "nextNodeIds"],
+                          additionalProperties: false,
+                          properties: { type: { enum: ["battle", "elite", "boss"] } }
+                        },
+                        {
+                          required: ["id", "type", "label", "regionId", "x", "y", "difficulty", "nextNodeIds"],
+                          additionalProperties: false,
+                          properties: { type: { enum: ["merchant", "event"] } }
+                        }
+                      ]
                     }
-                  ]
+                  }
+                }
+              },
+              {
+                type: "object",
+                required: ["schemaVersion", "rogueliteProfileId", "runResources", "entryNodeIds", "nodes"],
+                additionalProperties: false,
+                properties: {
+                  schemaVersion: { const: 2 },
+                  runResources: { type: "object", maxProperties: 256 },
+                  nodes: {
+                    type: "array",
+                    maxItems: 1_024,
+                    items: {
+                      oneOf: [
+                        expect.objectContaining({
+                          required: ["id", "type", "missionId", "regionId", "x", "y", "difficulty", "nextNodeIds"],
+                          additionalProperties: false
+                        }),
+                        expect.objectContaining({
+                          required: ["id", "type", "label", "regionId", "x", "y", "difficulty", "nextNodeIds", "choices"],
+                          additionalProperties: false
+                        })
+                      ]
+                    }
+                  }
                 }
               }
-            }
+            ]
           },
           enabled: { type: "boolean", default: true }
         },
@@ -104,8 +133,16 @@ describe("R4.4A MCP campaign authoring contract", () => {
         properties: {
           ifRevision: expect.any(Object),
           campaign: expect.objectContaining({
-            required: ["schemaVersion", "rogueliteProfileId", "entryNodeIds", "nodes"],
-            additionalProperties: false
+            oneOf: [
+              expect.objectContaining({
+                required: ["schemaVersion", "rogueliteProfileId", "entryNodeIds", "nodes"],
+                additionalProperties: false
+              }),
+              expect.objectContaining({
+                required: ["schemaVersion", "rogueliteProfileId", "runResources", "entryNodeIds", "nodes"],
+                additionalProperties: false
+              })
+            ]
           })
         },
         required: ["profileId", "ifRevision"],
@@ -130,38 +167,31 @@ describe("R4.4A MCP campaign authoring contract", () => {
           }
         },
         campaign: {
-          schemaVersion: 1,
-          nodeTypes: ["battle", "elite", "merchant", "event", "boss"],
-          limits: { nodes: 1_024, edges: 8_192, entryNodes: 64 },
-          graph: {
-            root: {
-              requiredFields: ["schemaVersion", "rogueliteProfileId", "entryNodeIds", "nodes"],
-              optionalFields: [],
-              additionalProperties: false
-            },
-            nodeVariants: {
-              battle: {
-                types: ["battle", "elite", "boss"],
-                requiredFields: ["id", "type", "missionId", "regionId", "x", "y", "difficulty", "nextNodeIds"],
-                optionalFields: [],
-                additionalProperties: false
+          supportedSchemaVersions: [1, 2],
+          versions: {
+            1: { structuralNodes: { choices: false } },
+            2: {
+              root: {
+                requiredFields: ["schemaVersion", "rogueliteProfileId", "runResources", "entryNodeIds", "nodes"]
               },
-              structural: {
-                types: ["merchant", "event"],
-                requiredFields: ["id", "type", "label", "regionId", "x", "y", "difficulty", "nextNodeIds"],
-                optionalFields: [],
-                additionalProperties: false
+              structuralNodes: {
+                requiredFields: ["id", "type", "label", "regionId", "x", "y", "difficulty", "nextNodeIds", "choices"],
+                choice: {
+                  requiredFields: ["id", "label", "costs", "grants"],
+                  optionalFields: [],
+                  additionalProperties: false
+                }
               }
             }
           },
-          inputSchema: expect.objectContaining({
-            type: "object",
-            required: ["schemaVersion", "rogueliteProfileId", "entryNodeIds", "nodes"],
-            additionalProperties: false
-          })
+          nodeTypes: ["battle", "elite", "merchant", "event", "boss"],
+          limits: { nodes: 1_024, edges: 8_192, entryNodes: 64 }
         }
       }
     });
+    expect(roguelite.roguelite.campaign.graph).toMatchObject({ supportedSchemaVersions: [1, 2] });
+    expect(roguelite.roguelite.campaign.inputSchema.oneOf
+      .map((variant) => variant.properties.schemaVersion.const)).toEqual([1, 2]);
     for (const name of ["preview_mechanics_module", "apply_mechanics_module"]) {
       expect(TOOLS.find((tool) => tool.name === name)?.inputSchema.properties.moduleSchemaVersion.enum)
         .toContain(4);

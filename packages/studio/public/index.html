@@ -790,7 +790,7 @@
               <div class="mechanics-section-head">
                 <div>
                   <h4>Campaign Run map</h4>
-                  <p>Author an independent opt-in run graph. Supported node types: battle, elite, merchant, event, boss.</p>
+                  <p>Author an independent opt-in WorldCampaign v1/v2 run graph. V2 declares runResources and merchant/event choices. Supported node types: battle, elite, merchant, event, boss.</p>
                 </div>
                 <button id="btn-campaign-preview" class="btn btn-outline" type="button">Preview campaign</button>
               </div>
@@ -798,7 +798,7 @@
                 <input id="mechanics-roguelite-campaign-profile-id" type="text" autocomplete="off" spellcheck="false" placeholder="campaign_run">
               </label>
               <label>Campaign graph JSON
-                <textarea id="mechanics-roguelite-campaign-json" class="mono" spellcheck="false" rows="14" placeholder='{"schemaVersion":1,"rogueliteProfileId":"campaign_run","entryNodeIds":[],"nodes":[]}'></textarea>
+                <textarea id="mechanics-roguelite-campaign-json" class="mono" spellcheck="false" rows="14" placeholder='{"schemaVersion":2,"rogueliteProfileId":"campaign_run","runResources":{},"entryNodeIds":[],"nodes":[]}'></textarea>
               </label>
               <div class="mechanics-inline-actions">
                 <button id="btn-campaign-enable" class="btn btn-primary" type="button">Enable campaign</button>

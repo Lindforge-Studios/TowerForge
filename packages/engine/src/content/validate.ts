@@ -42,7 +42,7 @@ import {
   normalizeTowerTagsV1
 } from "./roguelite-mechanics.js";
 import {
-  normalizeAuthoredWorldCampaignV1,
+  normalizeAuthoredWorldCampaign,
   WorldCampaignValidationError
 } from "../run/campaign-world.js";
 
@@ -4234,7 +4234,7 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
     err("worldMap", "campaign", "campaign", "World campaign must be enumerable own data.");
   } else if (campaignDescriptor && "value" in campaignDescriptor && campaignDescriptor.value !== undefined) {
     try {
-      const campaign = normalizeAuthoredWorldCampaignV1(campaignDescriptor.value);
+      const campaign = normalizeAuthoredWorldCampaign(campaignDescriptor.value);
       let active = false;
       try {
         const modules = Object.getOwnPropertyDescriptor(content.mechanics, "modules");
@@ -4288,22 +4288,37 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
             `Campaign node "${node.id}" references unknown region "${node.regionId}"${active ? "" : " in this inactive campaign"}.`
           );
         }
-        if (!("missionId" in node)) continue;
-        const mission = content.missions[node.missionId];
-        if (!mission) {
-          semantic(
-            "worldMap",
-            "campaign",
-            `campaign.nodes.${node.id}.missionId`,
-            `Campaign node "${node.id}" references unknown mission "${node.missionId}"${active ? "" : " in this inactive campaign"}.`
-          );
-        } else if (mission.mechanics?.profiles?.roguelite !== campaign.rogueliteProfileId) {
-          semantic(
-            "worldMap",
-            "campaign",
-            `campaign.nodes.${node.id}.missionId`,
-            `Campaign mission "${node.missionId}" does not select roguelite profile "${campaign.rogueliteProfileId}"${active ? "" : " in this inactive campaign"}.`
-          );
+        if ("missionId" in node) {
+          const mission = content.missions[node.missionId];
+          if (!mission) {
+            semantic(
+              "worldMap",
+              "campaign",
+              `campaign.nodes.${node.id}.missionId`,
+              `Campaign node "${node.id}" references unknown mission "${node.missionId}"${active ? "" : " in this inactive campaign"}.`
+            );
+          } else if (mission.mechanics?.profiles?.roguelite !== campaign.rogueliteProfileId) {
+            semantic(
+              "worldMap",
+              "campaign",
+              `campaign.nodes.${node.id}.missionId`,
+              `Campaign mission "${node.missionId}" does not select roguelite profile "${campaign.rogueliteProfileId}"${active ? "" : " in this inactive campaign"}.`
+            );
+          }
+        } else if (campaign.schemaVersion === 2 && "choices" in node) {
+          for (const choice of node.choices) {
+            for (const [bagName, bag] of [["costs", choice.costs], ["grants", choice.grants]] as const) {
+              for (const resourceId of Object.keys(bag)) {
+                if (Object.prototype.hasOwnProperty.call(campaign.runResources, resourceId)) continue;
+                semantic(
+                  "worldMap",
+                  "campaign",
+                  `campaign.nodes.${node.id}.choices.${choice.id}.${bagName}.${resourceId}`,
+                  `Campaign choice "${choice.id}" references undeclared run resource "${resourceId}"${active ? "" : " in this inactive campaign"}.`
+                );
+              }
+            }
+          }
         }
       }
     } catch (error) {

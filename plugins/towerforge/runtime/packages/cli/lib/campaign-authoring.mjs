@@ -67,10 +67,56 @@ const CAMPAIGN_STRUCTURAL_NODE_SCHEMA = Object.freeze({
   additionalProperties: false
 });
 
-/** Exact closed MCP/CLI input schema for the authored WorldCampaign v1 graph. */
-export const CAMPAIGN_GRAPH_INPUT_SCHEMA = Object.freeze({
+const CAMPAIGN_RUN_RESOURCE_SCHEMA = Object.freeze({
   type: "object",
-  description: "Exact bounded WorldCampaign v1 graph; semantic references, DAG reachability, total edges and UTF-8 budgets are validated before write.",
+  properties: Object.freeze({
+    label: Object.freeze({ type: "string", minLength: 1, maxLength: 256 })
+  }),
+  required: Object.freeze(["label"]),
+  additionalProperties: false
+});
+const CAMPAIGN_RESOURCE_BAG_SCHEMA = Object.freeze({
+  type: "object",
+  maxProperties: 16,
+  propertyNames: CAMPAIGN_ID_SCHEMA,
+  additionalProperties: Object.freeze({ type: "integer", minimum: 0, maximum: 1_000_000_000 })
+});
+const CAMPAIGN_STRUCTURAL_CHOICE_SCHEMA = Object.freeze({
+  type: "object",
+  properties: Object.freeze({
+    id: CAMPAIGN_ID_SCHEMA,
+    label: Object.freeze({ type: "string", minLength: 1, maxLength: 256 }),
+    costs: CAMPAIGN_RESOURCE_BAG_SCHEMA,
+    grants: CAMPAIGN_RESOURCE_BAG_SCHEMA
+  }),
+  required: Object.freeze(["id", "label", "costs", "grants"]),
+  additionalProperties: false
+});
+const CAMPAIGN_STRUCTURAL_NODE_V2_SCHEMA = Object.freeze({
+  type: "object",
+  properties: Object.freeze({
+    ...CAMPAIGN_NODE_BASE_PROPERTIES,
+    type: Object.freeze({ type: "string", enum: Object.freeze(["merchant", "event"]) }),
+    label: Object.freeze({
+      type: "string",
+      minLength: 1,
+      maxLength: 256,
+      description: "Presentation label; the runtime additionally enforces the exact 256 UTF-8 byte budget."
+    }),
+    choices: Object.freeze({
+      type: "array",
+      minItems: 1,
+      maxItems: 16,
+      items: CAMPAIGN_STRUCTURAL_CHOICE_SCHEMA
+    })
+  }),
+  required: Object.freeze(["id", "type", "label", "regionId", "x", "y", "difficulty", "nextNodeIds", "choices"]),
+  additionalProperties: false
+});
+
+const CAMPAIGN_GRAPH_V1_INPUT_SCHEMA = Object.freeze({
+  type: "object",
+  description: "Exact bounded WorldCampaign v1 graph.",
   properties: Object.freeze({
     schemaVersion: Object.freeze({ type: "integer", const: 1 }),
     rogueliteProfileId: CAMPAIGN_ID_SCHEMA,
@@ -92,6 +138,42 @@ export const CAMPAIGN_GRAPH_INPUT_SCHEMA = Object.freeze({
   additionalProperties: false
 });
 
+const CAMPAIGN_GRAPH_V2_INPUT_SCHEMA = Object.freeze({
+  type: "object",
+  description: "Exact bounded WorldCampaign v2 graph with declared run resources and atomic structural choices.",
+  properties: Object.freeze({
+    schemaVersion: Object.freeze({ type: "integer", const: 2 }),
+    rogueliteProfileId: CAMPAIGN_ID_SCHEMA,
+    runResources: Object.freeze({
+      type: "object",
+      maxProperties: 256,
+      propertyNames: CAMPAIGN_ID_SCHEMA,
+      additionalProperties: CAMPAIGN_RUN_RESOURCE_SCHEMA
+    }),
+    entryNodeIds: Object.freeze({
+      type: "array",
+      minItems: 1,
+      maxItems: 64,
+      uniqueItems: true,
+      items: CAMPAIGN_ID_SCHEMA
+    }),
+    nodes: Object.freeze({
+      type: "array",
+      minItems: 1,
+      maxItems: 1_024,
+      items: Object.freeze({ oneOf: Object.freeze([CAMPAIGN_BATTLE_NODE_SCHEMA, CAMPAIGN_STRUCTURAL_NODE_V2_SCHEMA]) })
+    })
+  }),
+  required: Object.freeze(["schemaVersion", "rogueliteProfileId", "runResources", "entryNodeIds", "nodes"]),
+  additionalProperties: false
+});
+
+/** Exact closed MCP/CLI input schema for authored WorldCampaign v1/v2 graphs. */
+export const CAMPAIGN_GRAPH_INPUT_SCHEMA = Object.freeze({
+  description: "Exact bounded WorldCampaign v1/v2 graph; semantic references, DAG reachability, structural resources, total edges and UTF-8 budgets are validated before write.",
+  oneOf: Object.freeze([CAMPAIGN_GRAPH_V1_INPUT_SCHEMA, CAMPAIGN_GRAPH_V2_INPUT_SCHEMA])
+});
+
 export class CampaignAuthoringError extends Error {
   constructor(code, message, details = {}) {
     super(message);
@@ -110,18 +192,21 @@ export function campaignAuthoringRevision(projectDir) {
 export async function inspectCampaignAuthoring(projectDir) {
   const snapshot = readSnapshot(projectDir);
   const raw = snapshot.rawFiles;
-  const campaign = ownRecord(raw.worldMap)?.campaign;
+  const campaign = ownValue(ownRecord(raw.worldMap), "campaign");
   const campaignAuthored = campaign !== undefined;
   const profileId = campaignAuthored && typeof campaign?.rogueliteProfileId === "string"
     ? campaign.rogueliteProfileId
     : undefined;
-  const module = ownRecord(ownRecord(raw.mechanics)?.modules)?.roguelite;
-  const profile = profileId && ownRecord(module?.profiles)?.[profileId];
+  const module = ownValue(ownRecord(ownValue(ownRecord(raw.mechanics), "modules")), "roguelite");
+  const profile = profileId
+    ? ownValue(ownRecord(ownValue(ownRecord(module), "profiles")), profileId)
+    : undefined;
+  const campaignMarker = ownValue(ownRecord(profile), "campaign");
   let active = Boolean(
     campaignAuthored
     && module?.enabled === true
     && module?.schemaVersion === 4
-    && profile?.campaign?.schemaVersion === 1
+    && campaignMarker?.schemaVersion === 1
   );
   if (active) {
     try {
@@ -317,10 +402,11 @@ function createCandidate(rawFiles, request) {
     return { manifest, worldMap, balance, mechanics };
   }
   mechanics ??= { schemaVersion: 1, modules: {} };
-  if (!ownRecord(mechanics?.modules)) {
+  const modules = ownRecord(ownValue(mechanics, "modules"));
+  if (!modules) {
     throw inputError("mechanics_modules_invalid", "mechanics.modules", "Mechanics modules must be an object.");
   }
-  const existingModule = mechanics.modules.roguelite;
+  const existingModule = ownValue(modules, "roguelite");
   if (existingModule !== undefined && !ownRecord(existingModule)) {
     throw inputError("roguelite_module_invalid", "mechanics.modules.roguelite", "The roguelite module must be an object.");
   }
@@ -330,8 +416,9 @@ function createCandidate(rawFiles, request) {
   }
 
   if (request.enabled === false) {
-    if (existingModule?.schemaVersion === 4 && ownRecord(existingModule.profiles)) {
-      const profile = existingModule.profiles[request.profileId];
+    const existingProfiles = ownRecord(ownValue(ownRecord(existingModule), "profiles"));
+    if (existingModule?.schemaVersion === 4 && existingProfiles) {
+      const profile = ownValue(existingProfiles, request.profileId);
       if (ownRecord(profile)) delete profile.campaign;
     }
     return { manifest, worldMap, balance, mechanics };
@@ -344,33 +431,43 @@ function createCandidate(rawFiles, request) {
   if (request.campaign.rogueliteProfileId !== request.profileId) {
     throw inputError("campaign_profile_mismatch", "campaign.rogueliteProfileId", "campaign.rogueliteProfileId must equal profileId.");
   }
-  worldMap.campaign = cloneJson(request.campaign);
+  defineOwnData(worldMap, "campaign", cloneJson(request.campaign));
   const module = existingModule ?? { schemaVersion: 4, enabled: true, profiles: {} };
-  if (!ownRecord(module.profiles)) {
+  const profiles = ownRecord(ownValue(module, "profiles"));
+  if (!profiles) {
     throw inputError("roguelite_profiles_invalid", "mechanics.modules.roguelite.profiles", "Roguelite profiles must be an object.");
   }
   module.schemaVersion = 4;
   module.enabled = true;
-  const existingProfile = module.profiles[request.profileId];
+  const existingProfile = ownValue(profiles, request.profileId);
   if (existingProfile !== undefined && !ownRecord(existingProfile)) {
     throw inputError("roguelite_profile_invalid", `mechanics.modules.roguelite.profiles.${request.profileId}`, "The selected roguelite profile must be an object.");
   }
   const profile = existingProfile ?? { synergies: {} };
-  profile.campaign = { schemaVersion: 1 };
-  module.profiles[request.profileId] = profile;
-  mechanics.modules.roguelite = module;
+  defineOwnData(profile, "campaign", { schemaVersion: 1 });
+  defineOwnData(profiles, request.profileId, profile);
+  defineOwnData(modules, "roguelite", module);
 
-  if (!ownRecord(balance.missions)) {
+  const missions = ownRecord(ownValue(balance, "missions"));
+  if (!missions) {
     throw inputError("missions_invalid", "balance.missions", "Balance missions must be an object.");
   }
   for (const missionId of campaignMissionIds(request.campaign)) {
-    const mission = balance.missions[missionId];
+    const mission = ownValue(missions, missionId);
     if (!ownRecord(mission)) {
       throw inputError("mission_not_found", `campaign.nodes.${missionId}.missionId`, `Campaign mission "${missionId}" was not found.`);
     }
-    if (!ownRecord(mission.mechanics)) mission.mechanics = { profiles: {} };
-    if (!ownRecord(mission.mechanics.profiles)) mission.mechanics.profiles = {};
-    mission.mechanics.profiles.roguelite = request.profileId;
+    let missionMechanics = ownRecord(ownValue(mission, "mechanics"));
+    if (!missionMechanics) {
+      missionMechanics = { profiles: {} };
+      defineOwnData(mission, "mechanics", missionMechanics);
+    }
+    let missionProfiles = ownRecord(ownValue(missionMechanics, "profiles"));
+    if (!missionProfiles) {
+      missionProfiles = {};
+      defineOwnData(missionMechanics, "profiles", missionProfiles);
+    }
+    defineOwnData(missionProfiles, "roguelite", request.profileId);
   }
   return { manifest, worldMap, balance, mechanics };
 }
@@ -641,6 +738,19 @@ function cloneJson(value) {
 
 function ownRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+function ownValue(record, key) {
+  return record && Object.prototype.hasOwnProperty.call(record, key) ? record[key] : undefined;
+}
+
+function defineOwnData(record, key, value) {
+  Object.defineProperty(record, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true
+  });
 }
 
 function canonicalJson(value) {

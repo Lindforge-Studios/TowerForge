@@ -246,4 +246,50 @@ describe("R4.4A guarded CLI campaign authoring", () => {
       .toEqual(beforeOutside);
     expect(JSON.parse(fs.readFileSync(path.join(projectDir, "project.json"), "utf8")).schemaVersion).toBe(3);
   }, 20_000);
+
+  it("keeps prototype-looking profile and mission ids inert during preview", async () => {
+    const api = await campaignApi();
+    const structuralCampaign = {
+      schemaVersion: 2,
+      rogueliteProfileId: "__proto__",
+      runResources: { coins: { label: "Coins" } },
+      entryNodeIds: ["event"],
+      nodes: [{
+        id: "event",
+        type: "event",
+        label: "Event",
+        regionId: "forest",
+        x: 200,
+        y: 300,
+        difficulty: 1,
+        nextNodeIds: [],
+        choices: [{ id: "grant", label: "Grant", costs: {}, grants: { coins: 1 } }]
+      }]
+    };
+    delete Object.prototype.campaign;
+    delete Object.prototype.mechanics;
+    try {
+      const profileDir = fixture();
+      const preview = await api.previewCampaignAuthoring(profileDir, {
+        profileId: "__proto__",
+        campaign: structuralCampaign,
+        enabled: true
+      });
+      expect(preview.ok).toBe(true);
+      const profiles = preview.candidate.mechanics.modules.roguelite.profiles;
+      expect(Object.prototype.hasOwnProperty.call(profiles, "__proto__")).toBe(true);
+      expect(profiles.__proto__).toMatchObject({ synergies: {}, campaign: { schemaVersion: 1 } });
+      expect(Object.prototype).not.toHaveProperty("campaign");
+
+      const missionDir = fixture();
+      const badMission = structuredClone(campaign());
+      badMission.nodes[0].missionId = "__proto__";
+      const rejected = await api.previewCampaignAuthoring(missionDir, request({ campaign: badMission }));
+      expect(rejected).toMatchObject({ ok: false, written: false });
+      expect(Object.prototype).not.toHaveProperty("mechanics");
+    } finally {
+      delete Object.prototype.campaign;
+      delete Object.prototype.mechanics;
+    }
+  }, 20_000);
 });

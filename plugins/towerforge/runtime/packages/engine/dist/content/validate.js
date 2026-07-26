@@ -10,7 +10,7 @@ import { HIGH_GROUND_LIMITS, LINE_OF_SIGHT_LIMITS } from "./elevation-mechanics.
 import { PHYSICS_LIMITS, inspectOwnDataEffect, parseDisplacementEffectV1, resolveActivePhysicsMechanics } from "./physics-mechanics.js";
 import { TERRAFORMING_LIMITS, TerraformingProfileValidationError, normalizeTerraformingProfileV1 } from "./terraforming-mechanics.js";
 import { ROGUELITE_SYNERGY_LIMITS, ROGUELITE_DRAFT_LIMITS, RogueliteProfileValidationError, assertRogueliteV2ModifierBudget, assertRogueliteV3ModifierBudget, normalizeRogueliteProfileV1, normalizeRogueliteProfileV2, normalizeRogueliteProfileV3, normalizeRogueliteProfileV4, normalizeTowerTagsV1 } from "./roguelite-mechanics.js";
-import { normalizeAuthoredWorldCampaignV1, WorldCampaignValidationError } from "../run/campaign-world.js";
+import { normalizeAuthoredWorldCampaign, WorldCampaignValidationError } from "../run/campaign-world.js";
 /** Derives a stable code like "TOWER_ATTACK_SLOWFACTOR" from entityKind + fieldPath. See the
  *  ValidationIssue.code caveat above — this is a coarse key, not a unique one. */
 export function deriveValidationCode(entityKind, fieldPath) {
@@ -3403,7 +3403,7 @@ export function validateGameContentRegistry(content) {
     }
     else if (campaignDescriptor && "value" in campaignDescriptor && campaignDescriptor.value !== undefined) {
         try {
-            const campaign = normalizeAuthoredWorldCampaignV1(campaignDescriptor.value);
+            const campaign = normalizeAuthoredWorldCampaign(campaignDescriptor.value);
             let active = false;
             try {
                 const modules = Object.getOwnPropertyDescriptor(content.mechanics, "modules");
@@ -3451,14 +3451,25 @@ export function validateGameContentRegistry(content) {
                 if (!regionIds.has(node.regionId)) {
                     semantic("worldMap", "campaign", `campaign.nodes.${node.id}.regionId`, `Campaign node "${node.id}" references unknown region "${node.regionId}"${active ? "" : " in this inactive campaign"}.`);
                 }
-                if (!("missionId" in node))
-                    continue;
-                const mission = content.missions[node.missionId];
-                if (!mission) {
-                    semantic("worldMap", "campaign", `campaign.nodes.${node.id}.missionId`, `Campaign node "${node.id}" references unknown mission "${node.missionId}"${active ? "" : " in this inactive campaign"}.`);
+                if ("missionId" in node) {
+                    const mission = content.missions[node.missionId];
+                    if (!mission) {
+                        semantic("worldMap", "campaign", `campaign.nodes.${node.id}.missionId`, `Campaign node "${node.id}" references unknown mission "${node.missionId}"${active ? "" : " in this inactive campaign"}.`);
+                    }
+                    else if (mission.mechanics?.profiles?.roguelite !== campaign.rogueliteProfileId) {
+                        semantic("worldMap", "campaign", `campaign.nodes.${node.id}.missionId`, `Campaign mission "${node.missionId}" does not select roguelite profile "${campaign.rogueliteProfileId}"${active ? "" : " in this inactive campaign"}.`);
+                    }
                 }
-                else if (mission.mechanics?.profiles?.roguelite !== campaign.rogueliteProfileId) {
-                    semantic("worldMap", "campaign", `campaign.nodes.${node.id}.missionId`, `Campaign mission "${node.missionId}" does not select roguelite profile "${campaign.rogueliteProfileId}"${active ? "" : " in this inactive campaign"}.`);
+                else if (campaign.schemaVersion === 2 && "choices" in node) {
+                    for (const choice of node.choices) {
+                        for (const [bagName, bag] of [["costs", choice.costs], ["grants", choice.grants]]) {
+                            for (const resourceId of Object.keys(bag)) {
+                                if (Object.prototype.hasOwnProperty.call(campaign.runResources, resourceId))
+                                    continue;
+                                semantic("worldMap", "campaign", `campaign.nodes.${node.id}.choices.${choice.id}.${bagName}.${resourceId}`, `Campaign choice "${choice.id}" references undeclared run resource "${resourceId}"${active ? "" : " in this inactive campaign"}.`);
+                            }
+                        }
+                    }
                 }
             }
         }

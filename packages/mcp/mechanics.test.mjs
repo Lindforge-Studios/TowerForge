@@ -155,10 +155,11 @@ describe("R1 combat mechanics MCP contract", () => {
     const rogueliteSurface = {
       authoring: engine.ROGUELITE_MECHANICS_SCHEMA,
       campaign: {
-        schemaVersion: 1,
+        supportedSchemaVersions: engine.WORLD_CAMPAIGN_SCHEMA.supportedSchemaVersions,
+        versions: engine.WORLD_CAMPAIGN_SCHEMA.versions,
         nodeTypes: engine.WORLD_CAMPAIGN_SCHEMA.nodeTypes,
         limits: engine.WORLD_CAMPAIGN_SCHEMA.limits,
-        graph: engine.ROGUELITE_MECHANICS_SCHEMA.campaign.graph,
+        graph: engine.WORLD_CAMPAIGN_SCHEMA,
         inputSchema: campaignInputSchema
       },
       snapshot: { field: "roguelite", optional: true, supportedSchemaVersions: [1, 2, 3, 4] },

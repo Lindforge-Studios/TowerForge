@@ -351,7 +351,7 @@ export const TOOLS = [
   {
     name: "get_campaign",
     description:
-      "Read the authored WorldCampaign v1 graph, its active roguelite v4 marker, and the exact four-file revision without writing or migrating the project.",
+      "Read the authored WorldCampaign v1/v2 graph, its active roguelite v4 marker, and the exact four-file revision without writing or migrating the project.",
     inputSchema: {
       type: "object",
       properties: {
@@ -363,7 +363,7 @@ export const TOOLS = [
   {
     name: "preview_campaign",
     description:
-      "Preview an opt-in WorldCampaign v1 graph and roguelite v4 campaign marker across project, world map, balance mission selections, and mechanics without writing.",
+      "Preview an opt-in WorldCampaign v1/v2 graph and roguelite v4 campaign marker across project, world map, balance mission selections, and mechanics without writing.",
     inputSchema: {
       type: "object",
       properties: {
@@ -379,7 +379,7 @@ export const TOOLS = [
   {
     name: "apply_campaign",
     description:
-      "Guardedly apply an exact previewed campaign candidate through one validated four-file transaction with backup and rollback.",
+      "Guardedly apply an exact previewed WorldCampaign v1/v2 candidate through one validated four-file transaction with backup and rollback.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1415,10 +1415,11 @@ export async function callTool(name, args = {}, ctx = {}) {
     const roguelite = {
       authoring: engine.ROGUELITE_MECHANICS_SCHEMA,
       campaign: {
-        schemaVersion: 1,
+        supportedSchemaVersions: engine.WORLD_CAMPAIGN_SCHEMA.supportedSchemaVersions,
+        versions: engine.WORLD_CAMPAIGN_SCHEMA.versions,
         nodeTypes: engine.WORLD_CAMPAIGN_SCHEMA.nodeTypes,
         limits: engine.WORLD_CAMPAIGN_SCHEMA.limits,
-        graph: engine.ROGUELITE_MECHANICS_SCHEMA.campaign.graph,
+        graph: engine.WORLD_CAMPAIGN_SCHEMA,
         inputSchema: CAMPAIGN_GRAPH_INPUT_SCHEMA
       },
       snapshot: { field: "roguelite", optional: true, supportedSchemaVersions: [1, 2, 3, 4] },

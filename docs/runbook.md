@@ -103,13 +103,20 @@ nothing, and a post-write failure rolls back every transaction-owned file. Disab
 the marker while preserving the graph and other rogue-lite mechanics for later re-enable.
 
 A fresh run has `CampaignRunV1.nodeId = null`; after a recorded battle, elite, or boss victory the
-field identifies that completed node and its direct successors become available. Merchant/event
-nodes are visible but intentionally return `node_type_not_implemented` until R4.4B. Import and
-export run JSON explicitly in Canvas or Phaser. The player never copies it into persistent profile
-storage, a battle checkpoint, or a command journal. Without the v4 marker and matching graph the
-campaign controls remain hidden and legacy mission navigation is unchanged. Use
-`docs/examples/opt-in-campaign-run/`; see
-[ADR 0034](adr/0034-opt-in-campaign-graph-and-run-lifecycle.md).
+field identifies that completed node and its direct successors become available. Campaign graph v1
+keeps merchant/event nodes presentation-only. To author deterministic structural choices, explicitly
+upgrade only the graph to schema v2, declare its root `runResources`, and add exact
+`choices[{id,label,costs,grants}]` to every merchant/event node. The unchanged v4 marker activates
+either graph version. The engine checks all costs before grants, rejects insufficient or overflowing
+transactions, removes zero balances, and advances the run only on full success.
+
+Import and export run JSON explicitly in Canvas or Phaser. The player never copies it into
+persistent profile storage, a battle checkpoint, or a command journal, and renderer code never
+calculates resource effects. Without the v4 marker and matching graph the campaign controls remain
+hidden and legacy mission navigation is unchanged. Use `docs/examples/opt-in-campaign-run/` for v1
+and `docs/examples/opt-in-campaign-structural-choices/` for v2; see
+[ADR 0034](adr/0034-opt-in-campaign-graph-and-run-lifecycle.md) and
+[ADR 0035](adr/0035-deterministic-campaign-structural-choices.md).
 
 Combat v1 accepts only `shields`. A target definition requires positive bounded `capacity` and may add `{ ratePerUnit, delayAfterDamage }` regeneration. Tower shields require a tower with `maxHp`. At runtime shield state is keyed by entity instance ID and appears only under active `snapshot.combat`; Canvas and Phaser consume the same presentation projection. A copyable v1 reference is under `docs/examples/opt-in-basic-shields/`.
 

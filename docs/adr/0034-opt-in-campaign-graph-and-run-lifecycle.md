@@ -57,5 +57,5 @@ storage.
   versions do not change.
 - Existing synergies, artifacts, sockets, and wave draft remain available in a v4 profile.
 - Absent legacy projects do not gain campaign UI, persistence, RNG, snapshot, or checkpoint state.
-- Merchant/event effects and synchronization of battle-local loot/draft state into `CampaignRun`
-  require later, separate TDD increments.
+- Merchant/event effects are supplied by the separate graph-v2 R4.4B contract; synchronization of
+  battle-local loot/draft state into `CampaignRun` remains a later, separate TDD increment.

@@ -11,7 +11,7 @@ does not add campaign state to a battle checkpoint, replay, or persistent player
    `describe_schema(roguelite) → get_campaign → preview_campaign → apply_campaign → validate`.
 
 The first node launches `tutorial_01`. After its recorded victory the event node becomes available,
-but R4.4A deliberately returns `node_type_not_implemented` for event and merchant gameplay. Both
+but this graph-v1 fixture deliberately returns `node_type_not_implemented` for event and merchant gameplay. Both
 Canvas and Phaser expose explicit JSON import/export through the engine-owned `CampaignRunV1`
 codec; no browser storage write occurs automatically.
 

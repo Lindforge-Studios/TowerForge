@@ -18,7 +18,7 @@ const nodeActivations = ["click", "enter", "space", "tap"];
 
 test.use({ hasTouch: true });
 
-test.describe("R4.4A Studio campaign lifecycle", () => {
+test.describe("R4.4B Studio campaign lifecycle", () => {
   let root;
   let projectDir;
   let studioProcess;
@@ -108,7 +108,7 @@ test.describe("R4.4A Studio campaign lifecycle", () => {
   });
 });
 
-test.describe("R4.4A generated-player campaign run", () => {
+test.describe("R4.4B generated-player campaign run", () => {
   let root;
   let server;
   let port;
@@ -146,11 +146,15 @@ test.describe("R4.4A generated-player campaign run", () => {
     if (root) fs.rmSync(root, { recursive: true, force: true });
   });
 
-  test("selects and completes a battle and round-trips its run across Canvas/Phaser and hex/square", async ({ page }) => {
+  test("resolves structural choices and round-trips their resources across Canvas/Phaser and hex/square", async ({ page }) => {
     test.setTimeout(240_000);
     const browserErrors = captureBrowserErrors(page);
 
-    for (const [{ grid, renderer }, activation] of combinations.map((entry, index) => [entry, nodeActivations[index]])) {
+    for (const [{ grid, renderer }, activation, choiceActivation] of combinations.map((entry, index) => [
+      entry,
+      nodeActivations[index],
+      nodeActivations[(index + 1) % nodeActivations.length]
+    ])) {
       await page.goto(playerUrl(port, "active", grid, renderer));
       await waitForPlayerBoot(page);
       await expect(page.locator("#campaign-run-panel")).toBeVisible();
@@ -176,10 +180,26 @@ test.describe("R4.4A generated-player campaign run", () => {
       }).toBe("first_battle");
       await expect.poll(async () => (await inspectCampaign(page)).availableNodeIds).toEqual(["event_offer"]);
 
-      const eventNode = page.locator('#campaign-run-nodes button[data-state="available"]', { hasText: "Event Offer" });
-      await eventNode.click();
-      await expect(page.locator("#message")).toContainText("not interactive in this release");
-      expect((await inspectCampaign(page)).pendingNodeId).toBeNull();
+      const eventNode = page.locator('#campaign-run-nodes [data-state="available"]', { hasText: "Event Offer" });
+      const relicChoice = eventNode.locator('[data-campaign-choice-id="relic"]');
+      await expect(relicChoice).toBeEnabled();
+      await expect(relicChoice).toContainText("Coins:3");
+      await relicChoice.click();
+      await expect(page.locator("#message")).toContainText("insufficient_run_resources");
+      await expect.poll(() => inspectCampaign(page)).toMatchObject({
+        pendingNodeId: null,
+        availableNodeIds: ["event_offer"],
+        run: { nodeId: "first_battle", runResources: {} }
+      });
+      const cacheChoice = eventNode.locator('[data-campaign-choice-id="cache"]');
+      await expect(cacheChoice).toBeEnabled();
+      await activateNativeControl(page, cacheChoice, choiceActivation);
+      await expect.poll(() => inspectCampaign(page)).toMatchObject({
+        pendingNodeId: null,
+        availableNodeIds: [],
+        run: { nodeId: "event_offer", runResources: { coins: 5 } }
+      });
+      await expect(page.locator("#campaign-run-summary")).toContainText("Coins: 5");
 
       const downloadPromise = page.waitForEvent("download");
       await page.locator("#campaign-run-export").click();
@@ -187,13 +207,13 @@ test.describe("R4.4A generated-player campaign run", () => {
       expect(download.suggestedFilename()).toBe("towerforge-campaign-run.json");
       const downloadedPath = await download.path();
       const exported = JSON.parse(fs.readFileSync(downloadedPath, "utf8"));
-      expect(exported.nodeId).toBe("first_battle");
+      expect(exported).toMatchObject({ nodeId: "event_offer", runResources: { coins: 5 } });
 
       await importRun(page, { ...exported, nodeId: null });
       await expect.poll(async () => (await inspectCampaign(page)).run?.nodeId).toBeNull();
       await expect.poll(async () => (await inspectCampaign(page)).availableNodeIds).toEqual(["first_battle"]);
       await importRun(page, exported);
-      await expect.poll(async () => (await inspectCampaign(page)).run?.nodeId).toBe("first_battle");
+      await expect.poll(async () => (await inspectCampaign(page)).run?.nodeId).toBe("event_offer");
     }
 
     expect(browserErrors()).toEqual([]);
@@ -221,8 +241,12 @@ test.describe("R4.4A generated-player campaign run", () => {
 
 function campaignGraph({ missionId = "tutorial_01", regionId = "forest" } = {}) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     rogueliteProfileId: "browser_campaign",
+    runResources: {
+      coins: { label: "Coins" },
+      relics: { label: "Relics" }
+    },
     entryNodeIds: ["first_battle"],
     nodes: [
       {
@@ -243,7 +267,11 @@ function campaignGraph({ missionId = "tutorial_01", regionId = "forest" } = {}) 
         x: 400,
         y: 300,
         difficulty: 2,
-        nextNodeIds: []
+        nextNodeIds: [],
+        choices: [
+          { id: "relic", label: "Buy relic", costs: { coins: 3 }, grants: { relics: 1 } },
+          { id: "cache", label: "Take cache", costs: {}, grants: { coins: 5 } }
+        ]
       }
     ]
   };

@@ -252,7 +252,7 @@ describe("R4.4A campaign authoring and graph contracts", () => {
       }
     });
     expect((Engine as unknown as Record<string, any>).WORLD_CAMPAIGN_SCHEMA).toMatchObject({
-      supportedSchemaVersions: [1],
+      supportedSchemaVersions: [1, 2],
       nodeTypes: ["battle", "elite", "merchant", "event", "boss"],
       limits: {
         jsonBytes: 1_048_576,
@@ -353,7 +353,7 @@ describe("R4.4A campaign authoring and graph contracts", () => {
     const invalidCases: readonly [string, Parameters<typeof input>[0], RegExp][] = [
       ["future marker", { profileCampaign: { schemaVersion: 2 } }, /campaign.*schema|version/i],
       ["extra marker field", { profileCampaign: { schemaVersion: 1, future: true } }, /campaign.*future|unsupported|unknown/i],
-      ["future graph", { campaign: { ...authoredCampaign(), schemaVersion: 2 } }, /campaign.*schema|version/i],
+      ["future graph", { campaign: { ...authoredCampaign(), schemaVersion: 3 } }, /campaign.*schema|version/i],
       ["duplicate node", { campaign: { ...authoredCampaign(), nodes: [battleNode("same", "start", []), battleNode("same", "elite", [])], entryNodeIds: ["same"] } }, /duplicate.*node|node.*duplicate/i],
       ["unknown entry", { campaign: { ...authoredCampaign(), entryNodeIds: ["missing"] } }, /entry.*missing|unknown.*entry/i],
       ["unknown edge", { campaign: { ...authoredCampaign(), nodes: [battleNode("battle_start", "start", ["missing"])] } }, /nextNodeIds.*missing|unknown.*node/i],

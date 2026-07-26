@@ -5,9 +5,15 @@ import {
 import type {
   GameContentRegistry,
   WorldCampaignBattleNodeV1,
+  WorldCampaignDefinition,
   WorldCampaignDefinitionV1,
+  WorldCampaignDefinitionV2,
   WorldCampaignNodeV1,
+  WorldCampaignNodeV2,
+  WorldCampaignRunResourceDefinitionV2,
+  WorldCampaignStructuralChoiceV2,
   WorldCampaignStructuralNodeV1,
+  WorldCampaignStructuralNodeV2,
   WorldMapCatalog
 } from "../content/registry.js";
 import {
@@ -18,7 +24,7 @@ import {
 import { decodeCampaignRun, type CampaignRunV1 } from "./campaign-run.js";
 
 export const WORLD_CAMPAIGN_SCHEMA = Object.freeze({
-  supportedSchemaVersions: Object.freeze([1] as const),
+  supportedSchemaVersions: Object.freeze([1, 2] as const),
   nodeTypes: Object.freeze(["battle", "elite", "merchant", "event", "boss"] as const),
   limits: Object.freeze({
     jsonBytes: 1_048_576,
@@ -26,18 +32,47 @@ export const WORLD_CAMPAIGN_SCHEMA = Object.freeze({
     edges: 8_192,
     entryNodes: 64,
     idUtf8Bytes: 128,
-    labelUtf8Bytes: 256
+    labelUtf8Bytes: 256,
+    runResources: 256,
+    choicesPerNode: 16,
+    resourceEntriesPerBag: 16,
+    totalChoices: 4_096,
+    totalResourceEntries: 8_192,
+    resourceAmount: 1_000_000_000,
+    runResourceBalance: Number.MAX_SAFE_INTEGER
+  }),
+  versions: Object.freeze({
+    1: Object.freeze({ structuralNodes: Object.freeze({ choices: false }) }),
+    2: Object.freeze({
+      root: Object.freeze({
+        requiredFields: Object.freeze(["schemaVersion", "rogueliteProfileId", "runResources", "entryNodeIds", "nodes"] as const)
+      }),
+      structuralNodes: Object.freeze({
+        requiredFields: Object.freeze([
+          "id", "type", "label", "regionId", "x", "y", "difficulty", "nextNodeIds", "choices"
+        ] as const),
+        choice: Object.freeze({
+          requiredFields: Object.freeze(["id", "label", "costs", "grants"] as const),
+          optionalFields: Object.freeze([] as const),
+          additionalProperties: false
+        })
+      })
+    })
   })
 });
 
 const WORLD_CAMPAIGN_LIMITS = WORLD_CAMPAIGN_SCHEMA.limits;
-const ROOT_FIELDS = Object.freeze(["schemaVersion", "rogueliteProfileId", "entryNodeIds", "nodes"] as const);
+const ROOT_FIELDS_V1 = Object.freeze(["schemaVersion", "rogueliteProfileId", "entryNodeIds", "nodes"] as const);
+const ROOT_FIELDS_V2 = WORLD_CAMPAIGN_SCHEMA.versions[2].root.requiredFields;
 const BATTLE_NODE_FIELDS = Object.freeze([
   "id", "type", "missionId", "regionId", "x", "y", "difficulty", "nextNodeIds"
 ] as const);
 const STRUCTURAL_NODE_FIELDS = Object.freeze([
   "id", "type", "label", "regionId", "x", "y", "difficulty", "nextNodeIds"
 ] as const);
+const STRUCTURAL_NODE_FIELDS_V2 = WORLD_CAMPAIGN_SCHEMA.versions[2].structuralNodes.requiredFields;
+const CHOICE_FIELDS_V2 = WORLD_CAMPAIGN_SCHEMA.versions[2].structuralNodes.choice.requiredFields;
+const RESOURCE_DEFINITION_FIELDS_V2 = Object.freeze(["label"] as const);
 const BATTLE_NODE_TYPES = new Set<string>(["battle", "elite", "boss"]);
 const STRUCTURAL_NODE_TYPES = new Set<string>(["merchant", "event"]);
 
@@ -61,6 +96,19 @@ export interface ResolvedWorldCampaignV1 {
   readonly nodes: readonly ResolvedWorldCampaignNodeV1[];
 }
 
+export type ResolvedWorldCampaignNodeV2 = WorldCampaignNodeV2;
+
+export interface ResolvedWorldCampaignV2 {
+  readonly schemaVersion: 2;
+  readonly source: "authored";
+  readonly rogueliteProfileId: string;
+  readonly runResources: Readonly<Record<string, WorldCampaignRunResourceDefinitionV2>>;
+  readonly entryNodeIds: readonly string[];
+  readonly nodes: readonly ResolvedWorldCampaignNodeV2[];
+}
+
+export type ResolvedWorldCampaign = ResolvedWorldCampaignV1 | ResolvedWorldCampaignV2;
+
 type DescriptorMap = Record<PropertyKey, PropertyDescriptor>;
 type Fields = ReadonlyMap<string, unknown>;
 
@@ -68,7 +116,7 @@ function binaryCompare(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function isBattleNode(node: WorldCampaignNodeV1): node is WorldCampaignBattleNodeV1 {
+function isBattleNode(node: WorldCampaignNodeV1 | WorldCampaignNodeV2): node is WorldCampaignBattleNodeV1 {
   return node.type === "battle" || node.type === "elite" || node.type === "boss";
 }
 
@@ -108,7 +156,11 @@ function captureCampaignInput(value: unknown): unknown {
   const ancestors = new WeakSet<object>();
   let bytes = 0;
   let visited = 0;
-  const maximumVisited = WORLD_CAMPAIGN_LIMITS.edges * 4 + WORLD_CAMPAIGN_LIMITS.nodes * 16 + 1_024;
+  const maximumVisited = WORLD_CAMPAIGN_LIMITS.edges * 4
+    + WORLD_CAMPAIGN_LIMITS.nodes * 16
+    + WORLD_CAMPAIGN_LIMITS.totalChoices * 8
+    + WORLD_CAMPAIGN_LIMITS.totalResourceEntries * 2
+    + 1_024;
 
   const addBytes = (amount: number): void => {
     bytes += amount;
@@ -257,6 +309,82 @@ function boundedLabel(value: unknown, path: string): string {
   return value;
 }
 
+function ownFrozenRecord<T>(entries: readonly (readonly [string, T])[]): Readonly<Record<string, T>> {
+  const result: Record<string, T> = {};
+  for (const [key, value] of entries) {
+    Object.defineProperty(result, key, {
+      value,
+      enumerable: true,
+      configurable: false,
+      writable: false
+    });
+  }
+  return Object.freeze(result);
+}
+
+function resourceDefinitionsV2(value: unknown): Readonly<Record<string, WorldCampaignRunResourceDefinitionV2>> {
+  const catalog = fields(value, "worldMap.campaign.runResources", "Campaign run resource catalog");
+  if (catalog.size > WORLD_CAMPAIGN_LIMITS.runResources) {
+    throw new WorldCampaignValidationError(
+      "worldMap.campaign.runResources",
+      `Campaign run resource catalog exceeds the ${WORLD_CAMPAIGN_LIMITS.runResources} entry limit.`
+    );
+  }
+  const result: [string, WorldCampaignRunResourceDefinitionV2][] = [];
+  for (const resourceId of [...catalog.keys()].sort(binaryCompare)) {
+    boundedId(resourceId, `worldMap.campaign.runResources.${resourceId}`, "Campaign run resource id");
+    const definition = fields(
+      catalog.get(resourceId),
+      `worldMap.campaign.runResources.${resourceId}`,
+      "Campaign run resource definition"
+    );
+    exactFields(
+      definition,
+      RESOURCE_DEFINITION_FIELDS_V2,
+      `worldMap.campaign.runResources.${resourceId}`,
+      "Campaign run resource definition"
+    );
+    result.push([resourceId, Object.freeze({
+      label: boundedLabel(definition.get("label"), `worldMap.campaign.runResources.${resourceId}.label`)
+    })]);
+  }
+  return ownFrozenRecord(result);
+}
+
+function resourceBagV2(
+  value: unknown,
+  path: string,
+  counters: { resourceEntries: number }
+): Readonly<Record<string, number>> {
+  const bag = fields(value, path, "Campaign resource bag");
+  if (bag.size > WORLD_CAMPAIGN_LIMITS.resourceEntriesPerBag) {
+    throw new WorldCampaignValidationError(
+      path,
+      `Campaign resource bag exceeds the ${WORLD_CAMPAIGN_LIMITS.resourceEntriesPerBag} entry limit.`
+    );
+  }
+  counters.resourceEntries += bag.size;
+  if (counters.resourceEntries > WORLD_CAMPAIGN_LIMITS.totalResourceEntries) {
+    throw new WorldCampaignValidationError(
+      path,
+      `Campaign resource effects exceed the ${WORLD_CAMPAIGN_LIMITS.totalResourceEntries} total-entry limit.`
+    );
+  }
+  const result: [string, number][] = [];
+  for (const resourceId of [...bag.keys()].sort(binaryCompare)) {
+    boundedId(resourceId, `${path}.${resourceId}`, "Campaign run resource id");
+    const amount = bag.get(resourceId);
+    if (!Number.isSafeInteger(amount) || (amount as number) < 0 || (amount as number) > WORLD_CAMPAIGN_LIMITS.resourceAmount) {
+      throw new WorldCampaignValidationError(
+        `${path}.${resourceId}`,
+        `Campaign resource amount must be a non-negative safe integer at most ${WORLD_CAMPAIGN_LIMITS.resourceAmount}.`
+      );
+    }
+    result.push([resourceId, Object.is(amount, -0) ? 0 : amount as number]);
+  }
+  return ownFrozenRecord(result);
+}
+
 function finiteCoordinate(value: unknown, path: string): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new WorldCampaignValidationError(path, "Campaign node coordinate must be finite.");
@@ -300,7 +428,26 @@ function freezeCampaign(fieldsToFreeze: {
   });
 }
 
-function validateGraphTopology(entryNodeIds: readonly string[], nodes: readonly WorldCampaignNodeV1[]): void {
+function freezeCampaignV2(fieldsToFreeze: {
+  rogueliteProfileId: string;
+  runResources: Readonly<Record<string, WorldCampaignRunResourceDefinitionV2>>;
+  entryNodeIds: readonly string[];
+  nodes: readonly WorldCampaignNodeV2[];
+}): ResolvedWorldCampaignV2 {
+  return Object.freeze({
+    schemaVersion: 2 as const,
+    source: "authored" as const,
+    rogueliteProfileId: fieldsToFreeze.rogueliteProfileId,
+    runResources: fieldsToFreeze.runResources,
+    entryNodeIds: fieldsToFreeze.entryNodeIds,
+    nodes: fieldsToFreeze.nodes
+  });
+}
+
+function validateGraphTopology(
+  entryNodeIds: readonly string[],
+  nodes: readonly (WorldCampaignNodeV1 | WorldCampaignNodeV2)[]
+): void {
   const byId = new Map(nodes.map((node) => [node.id, node] as const));
   for (const entryNodeId of entryNodeIds) {
     if (!byId.has(entryNodeId)) {
@@ -366,14 +513,12 @@ function validateGraphTopology(entryNodeIds: readonly string[], nodes: readonly 
   }
 }
 
-/** Validate, normalize, sort, and deeply freeze an authored campaign graph. */
-export function normalizeAuthoredWorldCampaignV1(
-  value: unknown,
+function normalizeCapturedAuthoredWorldCampaignV1(
+  captured: unknown,
   content?: GameContentRegistry
 ): ResolvedWorldCampaignV1 {
-  const captured = captureCampaignInput(value);
   const root = fields(captured, "worldMap.campaign", "World campaign");
-  exactFields(root, ROOT_FIELDS, "worldMap.campaign", "World campaign");
+  exactFields(root, ROOT_FIELDS_V1, "worldMap.campaign", "World campaign");
   if (root.get("schemaVersion") !== 1) {
     throw new WorldCampaignValidationError(
       "worldMap.campaign.schemaVersion",
@@ -489,6 +634,225 @@ export function normalizeAuthoredWorldCampaignV1(
   });
 }
 
+/** Validate, normalize, sort, and deeply freeze an authored v1 campaign graph. */
+export function normalizeAuthoredWorldCampaignV1(
+  value: unknown,
+  content?: GameContentRegistry
+): ResolvedWorldCampaignV1 {
+  return normalizeCapturedAuthoredWorldCampaignV1(captureCampaignInput(value), content);
+}
+
+function validateCampaignContentReferences(
+  nodes: readonly (WorldCampaignNodeV1 | WorldCampaignNodeV2)[],
+  rogueliteProfileId: string,
+  content: GameContentRegistry
+): void {
+  const regionIds = new Set(content.worldMap.regions.map((region) => region.id));
+  for (const node of nodes) {
+    if (!regionIds.has(node.regionId)) {
+      throw new WorldCampaignValidationError(
+        `worldMap.campaign.nodes.${node.id}.regionId`,
+        `Campaign node "${node.id}" references unknown region "${node.regionId}".`
+      );
+    }
+    if (!isBattleNode(node)) continue;
+    const mission = content.missions[node.missionId];
+    if (!mission) {
+      throw new WorldCampaignValidationError(
+        `worldMap.campaign.nodes.${node.id}.missionId`,
+        `Campaign node "${node.id}" references unknown mission "${node.missionId}".`
+      );
+    }
+    if (mission.mechanics?.profiles?.roguelite !== rogueliteProfileId) {
+      throw new WorldCampaignValidationError(
+        `worldMap.campaign.nodes.${node.id}.missionId`,
+        `Campaign mission "${node.missionId}" does not select roguelite profile "${rogueliteProfileId}".`
+      );
+    }
+  }
+}
+
+function normalizeCapturedAuthoredWorldCampaignV2(
+  captured: unknown,
+  content?: GameContentRegistry
+): ResolvedWorldCampaignV2 {
+  const root = fields(captured, "worldMap.campaign", "World campaign");
+  exactFields(root, ROOT_FIELDS_V2, "worldMap.campaign", "World campaign");
+  if (root.get("schemaVersion") !== 2) {
+    throw new WorldCampaignValidationError(
+      "worldMap.campaign.schemaVersion",
+      "World campaign schema version is unsupported; expected version 2."
+    );
+  }
+  const rogueliteProfileId = boundedId(
+    root.get("rogueliteProfileId"),
+    "worldMap.campaign.rogueliteProfileId",
+    "Roguelite profile id"
+  );
+  const runResources = resourceDefinitionsV2(root.get("runResources"));
+  const entryNodeIds = idArray(
+    root.get("entryNodeIds"),
+    "worldMap.campaign.entryNodeIds",
+    WORLD_CAMPAIGN_LIMITS.entryNodes,
+    "Campaign entry nodes"
+  );
+  if (entryNodeIds.length === 0) {
+    throw new WorldCampaignValidationError("worldMap.campaign.entryNodeIds", "World campaign needs at least one entry node.");
+  }
+  const authoredNodes = denseArray(
+    root.get("nodes"),
+    "worldMap.campaign.nodes",
+    WORLD_CAMPAIGN_LIMITS.nodes,
+    "Campaign nodes"
+  );
+  if (authoredNodes.length === 0) {
+    throw new WorldCampaignValidationError("worldMap.campaign.nodes", "World campaign needs at least one node.");
+  }
+
+  const seenNodeIds = new Set<string>();
+  const counters = { choices: 0, resourceEntries: 0 };
+  let edgeCount = 0;
+  const nodes = authoredNodes.map((valueAtNode, index): WorldCampaignNodeV2 => {
+    const path = `worldMap.campaign.nodes[${index}]`;
+    const node = fields(valueAtNode, path, "Campaign node");
+    const nodeType = node.get("type");
+    const isBattle = typeof nodeType === "string" && BATTLE_NODE_TYPES.has(nodeType);
+    const isStructural = typeof nodeType === "string" && STRUCTURAL_NODE_TYPES.has(nodeType);
+    if (!isBattle && !isStructural) {
+      throw new WorldCampaignValidationError(`${path}.type`, `Campaign node type "${String(nodeType)}" is unsupported.`);
+    }
+    exactFields(node, isBattle ? BATTLE_NODE_FIELDS : STRUCTURAL_NODE_FIELDS_V2, path, "Campaign node");
+    const id = boundedId(node.get("id"), `${path}.id`, "Campaign node id");
+    if (seenNodeIds.has(id)) {
+      throw new WorldCampaignValidationError(`${path}.id`, `Campaign contains duplicate node id "${id}".`);
+    }
+    seenNodeIds.add(id);
+    const nextNodeIds = idArray(
+      node.get("nextNodeIds"),
+      `${path}.nextNodeIds`,
+      WORLD_CAMPAIGN_LIMITS.edges,
+      "Campaign nextNodeIds"
+    );
+    edgeCount += nextNodeIds.length;
+    if (edgeCount > WORLD_CAMPAIGN_LIMITS.edges) {
+      throw new WorldCampaignValidationError(
+        `${path}.nextNodeIds`,
+        `World campaign edge count exceeds the ${WORLD_CAMPAIGN_LIMITS.edges} edge limit.`
+      );
+    }
+    const common = {
+      id,
+      regionId: boundedId(node.get("regionId"), `${path}.regionId`, "Campaign region id"),
+      x: finiteCoordinate(node.get("x"), `${path}.x`),
+      y: finiteCoordinate(node.get("y"), `${path}.y`),
+      difficulty: difficulty(node.get("difficulty"), `${path}.difficulty`),
+      nextNodeIds
+    };
+    if (isBattle) {
+      return Object.freeze({
+        ...common,
+        type: nodeType as WorldCampaignBattleNodeV1["type"],
+        missionId: boundedId(node.get("missionId"), `${path}.missionId`, "Campaign mission id")
+      });
+    }
+
+    const authoredChoices = denseArray(
+      node.get("choices"),
+      `${path}.choices`,
+      WORLD_CAMPAIGN_LIMITS.choicesPerNode,
+      "Campaign structural choices"
+    );
+    if (authoredChoices.length === 0) {
+      throw new WorldCampaignValidationError(`${path}.choices`, "Campaign structural node needs at least one choice.");
+    }
+    counters.choices += authoredChoices.length;
+    if (counters.choices > WORLD_CAMPAIGN_LIMITS.totalChoices) {
+      throw new WorldCampaignValidationError(
+        `${path}.choices`,
+        `Campaign choices exceed the ${WORLD_CAMPAIGN_LIMITS.totalChoices} total-choice limit.`
+      );
+    }
+    const seenChoiceIds = new Set<string>();
+    const choices = authoredChoices.map((authoredChoice, choiceIndex): WorldCampaignStructuralChoiceV2 => {
+      const choicePath = `${path}.choices[${choiceIndex}]`;
+      const choice = fields(authoredChoice, choicePath, "Campaign structural choice");
+      exactFields(choice, CHOICE_FIELDS_V2, choicePath, "Campaign structural choice");
+      const choiceId = boundedId(choice.get("id"), `${choicePath}.id`, "Campaign structural choice id");
+      if (seenChoiceIds.has(choiceId)) {
+        throw new WorldCampaignValidationError(`${choicePath}.id`, `Campaign structural node contains duplicate choice "${choiceId}".`);
+      }
+      seenChoiceIds.add(choiceId);
+      const costs = resourceBagV2(choice.get("costs"), `${choicePath}.costs`, counters);
+      const grants = resourceBagV2(choice.get("grants"), `${choicePath}.grants`, counters);
+      if ([...Object.values(costs), ...Object.values(grants)].every((amount) => amount === 0)) {
+        throw new WorldCampaignValidationError(choicePath, "Campaign structural choice must have a non-zero cost or grant.");
+      }
+      return Object.freeze({
+        id: choiceId,
+        label: boundedLabel(choice.get("label"), `${choicePath}.label`),
+        costs,
+        grants
+      });
+    }).sort((left, right) => binaryCompare(left.id, right.id));
+    return Object.freeze({
+      ...common,
+      type: nodeType as WorldCampaignStructuralNodeV2["type"],
+      label: boundedLabel(node.get("label"), `${path}.label`),
+      choices: Object.freeze(choices)
+    });
+  }).sort((left, right) => binaryCompare(left.id, right.id));
+
+  validateGraphTopology(entryNodeIds, nodes);
+  if (content) {
+    validateCampaignContentReferences(nodes, rogueliteProfileId, content);
+    for (const node of nodes) {
+      if (isBattleNode(node)) continue;
+      for (const choice of node.choices) {
+        for (const bag of [choice.costs, choice.grants]) {
+          for (const resourceId of Object.keys(bag)) {
+            if (!Object.prototype.hasOwnProperty.call(runResources, resourceId)) {
+              throw new WorldCampaignValidationError(
+                `worldMap.campaign.nodes.${node.id}.choices.${choice.id}`,
+                `Campaign choice "${choice.id}" references undeclared run resource "${resourceId}".`
+              );
+            }
+          }
+        }
+      }
+    }
+  }
+  return freezeCampaignV2({
+    rogueliteProfileId,
+    runResources,
+    entryNodeIds,
+    nodes: Object.freeze(nodes)
+  });
+}
+
+/** Validate, normalize, sort, and deeply freeze an authored v2 campaign graph. */
+export function normalizeAuthoredWorldCampaignV2(
+  value: unknown,
+  content?: GameContentRegistry
+): ResolvedWorldCampaignV2 {
+  return normalizeCapturedAuthoredWorldCampaignV2(captureCampaignInput(value), content);
+}
+
+/** Dispatch an authored graph without mutating or migrating either version. */
+export function normalizeAuthoredWorldCampaign(
+  value: unknown,
+  content?: GameContentRegistry
+): ResolvedWorldCampaignV1 | ResolvedWorldCampaignV2 {
+  const captured = captureCampaignInput(value);
+  const root = fields(captured, "worldMap.campaign", "World campaign");
+  const schemaVersion = root.get("schemaVersion");
+  if (schemaVersion === 1) return normalizeCapturedAuthoredWorldCampaignV1(captured, content);
+  if (schemaVersion === 2) return normalizeCapturedAuthoredWorldCampaignV2(captured, content);
+  throw new WorldCampaignValidationError(
+    "worldMap.campaign.schemaVersion",
+    `World campaign schema version "${String(schemaVersion)}" is unsupported; only versions 1 and 2 are supported.`
+  );
+}
+
 /** Read-only compatibility projection of legacy mission unlock requirements into forward edges. */
 export function normalizeLegacyWorldCampaignV1(worldMap: WorldMapCatalog): ResolvedWorldCampaignV1 {
   let descriptors: DescriptorMap;
@@ -579,11 +943,11 @@ function activeCampaignProfile(
 }
 
 /** Resolve only a genuinely active authored v4 campaign; legacy content remains capability-inert. */
-export function resolveWorldCampaign(content: GameContentRegistry): ResolvedWorldCampaignV1 | undefined {
+export function resolveWorldCampaign(content: GameContentRegistry): ResolvedWorldCampaign | undefined {
   try {
     const descriptor = Object.getOwnPropertyDescriptor(content.worldMap, "campaign");
     if (!descriptor?.enumerable || !("value" in descriptor) || descriptor.value === undefined) return undefined;
-    const normalized = normalizeAuthoredWorldCampaignV1(descriptor.value, content);
+    const normalized = normalizeAuthoredWorldCampaign(descriptor.value, content);
     return normalized.rogueliteProfileId !== null && activeCampaignProfile(content, normalized.rogueliteProfileId)
       ? normalized
       : undefined;
@@ -593,8 +957,13 @@ export function resolveWorldCampaign(content: GameContentRegistry): ResolvedWorl
 }
 
 export type CampaignRunContentValidationResult = Readonly<
-  | { ok: true; code: "valid"; run: CampaignRunV1; campaign: ResolvedWorldCampaignV1 }
-  | { ok: false; code: "campaign_inactive" | "invalid_run" | "unknown_node" | "unknown_card" | "unknown_artifact"; run: CampaignRunV1 }
+  | { ok: true; code: "valid"; run: CampaignRunV1; campaign: ResolvedWorldCampaign }
+  | {
+      ok: false;
+      code: "campaign_inactive" | "invalid_run" | "unknown_node" | "unknown_card" | "unknown_artifact"
+        | "unknown_run_resource" | "invalid_run_resource";
+      run: CampaignRunV1;
+    }
 >;
 
 function validateCapturedCampaignRunAgainstContent(
@@ -614,12 +983,23 @@ function validateCapturedCampaignRunAgainstContent(
   if (run.artifacts.some((entry) => !profile.artifacts?.definitions[entry.artifactId])) {
     return Object.freeze({ ok: false, code: "unknown_artifact" as const, run });
   }
+  if (campaign.schemaVersion === 2) {
+    for (const resourceId of Object.keys(run.runResources).sort(binaryCompare)) {
+      if (!Object.prototype.hasOwnProperty.call(campaign.runResources, resourceId)) {
+        return Object.freeze({ ok: false, code: "unknown_run_resource" as const, run });
+      }
+      const amount = run.runResources[resourceId] ?? Number.NaN;
+      if (!Number.isSafeInteger(amount) || amount < 0 || amount > WORLD_CAMPAIGN_LIMITS.runResourceBalance) {
+        return Object.freeze({ ok: false, code: "invalid_run_resource" as const, run });
+      }
+    }
+  }
   return Object.freeze({ ok: true, code: "valid" as const, run, campaign });
 }
 
 function availableCampaignNodeIds(
   run: CampaignRunV1,
-  campaign: ResolvedWorldCampaignV1
+  campaign: ResolvedWorldCampaign
 ): readonly string[] {
   if (run.nodeId === null) return Object.freeze([...campaign.entryNodeIds]);
   const current = campaign.nodes.find((node) => node.id === run.nodeId);
@@ -673,6 +1053,8 @@ export type CampaignBattleVictoryFailureCode =
   | "unknown_node"
   | "unknown_card"
   | "unknown_artifact"
+  | "unknown_run_resource"
+  | "invalid_run_resource"
   | "node_not_available"
   | "node_type_not_implemented"
   | "invalid_profile"
@@ -745,5 +1127,121 @@ export function recordCampaignBattleVictory(
   });
 }
 
+export type CampaignStructuralChoiceFailureCode =
+  | "campaign_inactive"
+  | "invalid_run"
+  | "unknown_node"
+  | "unknown_card"
+  | "unknown_artifact"
+  | "unknown_run_resource"
+  | "invalid_run_resource"
+  | "node_not_available"
+  | "node_type_not_implemented"
+  | "unknown_choice"
+  | "insufficient_run_resources"
+  | "resource_overflow";
+
+export type CampaignStructuralChoiceResult = Readonly<
+  | {
+      ok: false;
+      code: CampaignStructuralChoiceFailureCode;
+      run: CampaignRunV1;
+    }
+  | {
+      ok: true;
+      code: "campaign_structural_choice_resolved";
+      nodeId: string;
+      choiceId: string;
+      run: CampaignRunV1;
+      newlyAvailableNodeIds: readonly string[];
+    }
+>;
+
+function applyStructuralChoiceResources(
+  run: CampaignRunV1,
+  choice: WorldCampaignStructuralChoiceV2
+): CampaignRunV1 | "insufficient_run_resources" | "resource_overflow" {
+  const balances = new Map<string, number>();
+  for (const resourceId of Object.keys(run.runResources).sort(binaryCompare)) {
+    balances.set(resourceId, run.runResources[resourceId]!);
+  }
+  for (const resourceId of Object.keys(choice.costs).sort(binaryCompare)) {
+    if ((balances.get(resourceId) ?? 0) < choice.costs[resourceId]!) return "insufficient_run_resources";
+  }
+  for (const resourceId of Object.keys(choice.costs).sort(binaryCompare)) {
+    balances.set(resourceId, (balances.get(resourceId) ?? 0) - choice.costs[resourceId]!);
+  }
+  for (const resourceId of Object.keys(choice.grants).sort(binaryCompare)) {
+    const next = (balances.get(resourceId) ?? 0) + choice.grants[resourceId]!;
+    if (!Number.isSafeInteger(next) || next > WORLD_CAMPAIGN_LIMITS.runResourceBalance) return "resource_overflow";
+    balances.set(resourceId, next);
+  }
+
+  const runResources: Record<string, number> = {};
+  for (const [resourceId, amount] of [...balances.entries()].sort(([left], [right]) => binaryCompare(left, right))) {
+    if (amount === 0) continue;
+    Object.defineProperty(runResources, resourceId, {
+      value: amount,
+      enumerable: true,
+      configurable: true,
+      writable: true
+    });
+  }
+  try {
+    return decodeCampaignRun({
+      version: run.version,
+      seed: run.seed,
+      nodeId: run.nodeId,
+      deck: run.deck,
+      artifacts: run.artifacts,
+      runResources
+    }).run;
+  } catch {
+    return "resource_overflow";
+  }
+}
+
+/** Atomically pay and grant one authored v2 merchant/event choice, then advance the run. */
+export function resolveCampaignStructuralChoice(
+  run: CampaignRunV1,
+  content: GameContentRegistry,
+  nodeId: string,
+  choiceId: string
+): CampaignStructuralChoiceResult {
+  let captured: CampaignRunV1;
+  try {
+    captured = decodeCampaignRun(run).run;
+  } catch {
+    return Object.freeze({ ok: false as const, code: "invalid_run" as const, run });
+  }
+  const fail = (code: CampaignStructuralChoiceFailureCode): CampaignStructuralChoiceResult => Object.freeze({
+    ok: false as const,
+    code,
+    run: captured
+  });
+  const validation = validateCapturedCampaignRunAgainstContent(captured, content);
+  if (!validation.ok) return fail(validation.code);
+  if (!availableCampaignNodeIds(captured, validation.campaign).includes(nodeId)) return fail("node_not_available");
+  if (validation.campaign.schemaVersion !== 2) return fail("node_type_not_implemented");
+  const node = validation.campaign.nodes.find((candidate) => candidate.id === nodeId);
+  if (!node || isBattleNode(node)) return fail("node_type_not_implemented");
+  const choice = node.choices.find((candidate) => candidate.id === choiceId);
+  if (!choice) return fail("unknown_choice");
+
+  const resourceResult = applyStructuralChoiceResources(captured, choice);
+  if (typeof resourceResult === "string") return fail(resourceResult);
+  const nextRun = advanceCapturedCampaignRun(resourceResult, nodeId);
+  return Object.freeze({
+    ok: true as const,
+    code: "campaign_structural_choice_resolved" as const,
+    nodeId,
+    choiceId,
+    run: nextRun,
+    newlyAvailableNodeIds: availableCampaignNodeIds(nextRun, validation.campaign)
+  });
+}
+
 /** Author-facing input alias retained separately from the normalized runtime shape. */
 export type AuthoredWorldCampaignV1 = WorldCampaignDefinitionV1;
+export type AuthoredWorldCampaignV2 = WorldCampaignDefinitionV2;
+export type AuthoredWorldCampaign = WorldCampaignDefinition;

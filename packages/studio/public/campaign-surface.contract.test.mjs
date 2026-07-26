@@ -46,6 +46,21 @@ describe("R4.4A Studio campaign surface contract", () => {
     expect(roguelite).toMatch(/battle[\s\S]*elite[\s\S]*merchant[\s\S]*event[\s\S]*boss/i);
   });
 
+  it("documents v2 structural choices and keeps future v3 campaign source read-only", () => {
+    const campaignStart = html.indexOf('id="mechanics-roguelite-campaign-editor"');
+    const campaignEnd = html.indexOf('<div class="mechanics-actions">', campaignStart);
+    const campaign = html.slice(campaignStart, campaignEnd);
+    expect(campaign).toMatch(/WorldCampaign v1\/v2/i);
+    expect(campaign).toMatch(/runResources[\s\S]*choices/i);
+    expect(campaign).toMatch(/placeholder='\{"schemaVersion":2/);
+
+    const render = functionSource(app, "renderCampaignAuthoring");
+    expect(render).toMatch(/campaignSchemaVersion[\s\S]*<=\s*2/);
+    expect(render).toMatch(/futureCampaignVersion[\s\S]*disabled\s*=\s*busy\s*\|\|\s*!supportedVersion/);
+    expect(render).toMatch(/jsonInput\.oninput[\s\S]*renderCampaignAuthoring\s*\(\s*\)/);
+    expect(render).not.toMatch(/campaignSchemaVersion\s*=\s*1/);
+  });
+
   it("uses dedicated guarded campaign endpoints and never routes campaign writes through generic mechanics", () => {
     const request = functionSource(app, "campaignRequest");
     const load = functionSource(app, "loadCampaignAuthoring");

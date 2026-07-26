@@ -455,6 +455,24 @@ operations detach an untrusted `CampaignRunV1` exactly once and use that frozen 
 validation, availability, and victory reduction. R4.4A acceptance is 1,938/1,938 Vitest and 44/44
 Playwright tests, all required build/plugin gates, and independent code plus constructor sign-off.
 
+R4.4B independently advances only `worldMap.campaign` to schema v2. The graph adds a bounded
+`runResources` definition catalog and exact structural choices `{id,label,costs,grants}` on
+`merchant` and `event` nodes. `resolveCampaignStructuralChoice` is a pure coordinator above battle
+simulation: it captures the run once, checks availability and every cost against the pre-effect
+balance, rejects underflow/overflow, publishes a detached canonical resource bag, and advances the
+node only after the whole transaction succeeds. Player profile, `TowerDefenseGame`, snapshot,
+checkpoint, command, journal/replay, and RNG contracts remain unchanged. Studio/MCP retain the
+dedicated guarded campaign transaction; the shared renderer projection is presentation-only and
+Canvas/Phaser call the engine reducer. Graph v1 remains accepted with presentation-only structural
+nodes. See [ADR 0035](adr/0035-deterministic-campaign-structural-choices.md) and
+`docs/examples/opt-in-campaign-structural-choices/`.
+
+R4.4B acceptance is 1,960/1,960 full Vitest plus 112/112 focused campaign contracts and 3/3
+campaign browser scenarios. Independent code verification closed aggregate-budget overflow,
+choice-list complexity, and prototype-key authoring regressions; constructor integration covered
+the guarded Studio/AI lifecycle, both renderers and grids, pointer/keyboard/touch controls,
+packaging, legacy/future paths, and plugin parity. Both sign-offs are PASS with no open P0–P2.
+
 ## Done Criteria For Constructor Changes
 
 - Engine changes pass `npm run typecheck`.
