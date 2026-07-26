@@ -24,7 +24,8 @@ effect until supply returns.
 Do not calculate components, links, coverage, or brownout in Studio or a renderer. Read only
 `snapshot.logistics` v1. Removing the mission selection, disabling the module, or authoring
 `"power": null` restores the literal infinite-supply legacy path with no Logistics snapshot or UI.
-Future Logistics v2+ modules remain opaque, lossless, and read-only.
+Logistics v2 may add an independently nullable ammunition section through an explicit guarded
+promotion; future Logistics v3+ modules remain opaque, lossless, and read-only in R5.8A.
 
 The active graph is bounded to 4,096 live participants, 1,024 generator/relay nodes, and 65,536
 undirected node links. Placement, movement, and checkpoint restore reject an over-budget candidate

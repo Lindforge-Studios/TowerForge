@@ -78,7 +78,7 @@ const MECHANICS_MODULES = [
   { id: "multiplayer", title: "Multiplayer", description: "Deterministic matches, replay, and local transport." }
 ];
 const HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4, 5, 6, 7]);
-const LOGISTICS_SUPPORTED_MODULE_SCHEMA_VERSIONS = Object.freeze([1]);
+const LOGISTICS_SUPPORTED_MODULE_SCHEMA_VERSIONS = Object.freeze([1, 2]);
 const REACTION_RECIPE_IDS = new Set(["elemental_shatter", "wet_chain_shock", "poison_combustion"]);
 const ELEVATION_RECIPE_IDS = new Set([
   "basic_authored_elevation",
@@ -1067,6 +1067,15 @@ function mechanicsEffectiveModuleSchemaVersion() {
       ? Math.max(authoredVersion, 2)
       : authoredVersion;
   }
+  if (MechanicsUI.selectedModuleId === "logistics") {
+    const authoredVersion = Math.max(
+      mechanicsProjectModuleVersion(),
+      Number.isInteger(MechanicsUI.moduleSchemaVersion) ? MechanicsUI.moduleSchemaVersion : 1
+    );
+    return Object.hasOwn(MechanicsUI.draft ?? {}, "ammunition")
+      ? Math.max(authoredVersion, 2)
+      : authoredVersion;
+  }
   if (MechanicsUI.selectedModuleId === "terraforming") return 1;
   if (MechanicsUI.selectedModuleId === "elevation") {
     const authoredVersion = Math.max(
@@ -1224,8 +1233,8 @@ async function newMechanicsProfile() {
     if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 6) {
       throw new Error("Future heroes schemaVersion 7+ modules are read-only in this Studio version.");
     }
-    if (MechanicsUI.selectedModuleId === "logistics" && mechanicsProjectModuleVersion() > 1) {
-      throw new Error("Future Logistics schemaVersion 2+ modules are preserved losslessly and read-only.");
+    if (MechanicsUI.selectedModuleId === "logistics" && mechanicsProjectModuleVersion() > 2) {
+      throw new Error("Future Logistics schemaVersion 3+ modules are preserved losslessly and read-only.");
     }
     await loadMechanicsRecipe();
     const selectedRecipeId = $("mechanics-recipe-select")?.value || MechanicsUI.recipeId;
@@ -1266,26 +1275,42 @@ async function newMechanicsProfile() {
 }
 
 async function materializeLogisticsRecipeDraft(recipe) {
-  if (mechanicsProjectModuleVersion() > 1) {
-    throw new Error("Future Logistics schemaVersion 2+ modules are preserved losslessly and read-only.");
+  if (mechanicsProjectModuleVersion() > 2) {
+    throw new Error("Future Logistics schemaVersion 3+ modules are preserved losslessly and read-only.");
   }
-  if (recipe?.id !== "basic_power_grid") throw new Error("The basic power-grid recipe is unavailable.");
+  if (!["basic_power_grid", "basic_local_ammunition"].includes(recipe?.id)) {
+    throw new Error("The selected Logistics recipe is unavailable.");
+  }
   const generatorTowerTypeId = $("mechanics-logistics-recipe-generator")?.value ?? "";
   const relayTowerTypeId = $("mechanics-logistics-recipe-relay")?.value ?? "";
   const consumerTowerTypeId = $("mechanics-logistics-recipe-consumer")?.value ?? "";
   const materialized = await apiPost("/api/mechanics/recipe", {
     recipeId: recipe.id,
-    parameters: { generatorTowerTypeId, relayTowerTypeId, consumerTowerTypeId }
+    parameters: recipe.id === "basic_local_ammunition"
+      ? {
+          consumerTowerTypeId,
+          ammoTypeId: $("mechanics-logistics-recipe-ammo-type-id")?.value ?? "",
+          ammoLabel: $("mechanics-logistics-recipe-ammo-label")?.value ?? "",
+          capacity: Number($("mechanics-logistics-recipe-capacity")?.value),
+          startingAmount: Number($("mechanics-logistics-recipe-starting-amount")?.value),
+          consumptionPerActivation: Number($("mechanics-logistics-recipe-consumption")?.value)
+        }
+      : { generatorTowerTypeId, relayTowerTypeId, consumerTowerTypeId }
   });
   const candidate = materialized?.recipe ?? materialized;
-  if (candidate?.entity?.moduleId !== "logistics" || candidate.entity.moduleSchemaVersion !== 1
+  if (candidate?.entity?.moduleId !== "logistics"
+    || !LOGISTICS_SUPPORTED_MODULE_SCHEMA_VERSIONS.includes(candidate.entity.moduleSchemaVersion)
     || !candidate.entity.profile) throw new Error("The shared Logistics recipe returned an invalid candidate.");
+  const targetVersion = Math.max(mechanicsProjectModuleVersion(), candidate.entity.moduleSchemaVersion);
+  const profile = targetVersion === 2 && candidate.entity.moduleSchemaVersion === 1
+    ? { power: deep(candidate.entity.profile.power), ammunition: null }
+    : candidate.entity.profile;
   MechanicsUI.recipe = candidate;
   MechanicsUI.recipeId = candidate.id;
-  MechanicsUI.profileId = nextMechanicsProfileId(candidate.entity.profileId || "basic_power_grid");
+  MechanicsUI.profileId = nextMechanicsProfileId(candidate.entity.profileId || candidate.id);
   MechanicsUI.loadedProfileId = null;
-  MechanicsUI.draft = normalizeLogisticsMechanicsDraft(candidate.entity.profile);
-  MechanicsUI.moduleSchemaVersion = 1;
+  MechanicsUI.draft = normalizeLogisticsMechanicsDraft(profile);
+  MechanicsUI.moduleSchemaVersion = targetVersion;
   MechanicsUI.preview = null;
   MechanicsUI.error = null;
   renderMechanicsHub();
@@ -2835,11 +2860,11 @@ function mechanicsHeroBlockingNavigationState(movementProfileIds) {
 
 function renderLogisticsMechanicsEditor() {
   if (MechanicsUI.selectedModuleId !== "logistics" || !MechanicsUI.draft) return;
-  const readOnly = mechanicsProjectModuleVersion() > 1;
+  const readOnly = mechanicsProjectModuleVersion() > 2;
   const futureNotice = $("mechanics-logistics-read-only");
   futureNotice?.classList.toggle("hidden", !readOnly);
   if (futureNotice) futureNotice.textContent = readOnly
-    ? "Future Logistics schemaVersion 2+ is preserved losslessly and is read-only in this Studio."
+    ? "Future Logistics schemaVersion 3+ is preserved losslessly and is read-only in this Studio."
     : "";
   const powerEnabled = $("mechanics-logistics-power-enabled");
   const power = MechanicsUI.draft.power === null ? null : MechanicsUI.draft.power;
@@ -2962,6 +2987,211 @@ function renderLogisticsMechanicsEditor() {
     "btn-mechanics-add-logistics-generator", "btn-mechanics-add-logistics-relay", "btn-mechanics-add-logistics-consumer"
   ]) $(id).disabled = readOnly || power === null;
 
+  const ammunitionMaximum = 1000000000;
+  const ammunitionTypeMaximum = 256;
+  const towerInventoryMaximum = 4096;
+  const addAmmunition = $("btn-mechanics-add-ammunition");
+  const ammunitionEnabled = $("mechanics-logistics-ammunition-enabled");
+  const ammunition = Object.hasOwn(MechanicsUI.draft, "ammunition")
+    ? MechanicsUI.draft.ammunition
+    : undefined;
+  const ammunitionDisabled = ammunition === null;
+  if (addAmmunition) {
+    addAmmunition.hidden = MechanicsUI.moduleSchemaVersion >= 2 || ammunition !== undefined;
+    addAmmunition.disabled = readOnly || ammunition !== undefined;
+    addAmmunition.onclick = () => {
+      if (readOnly || ammunition !== undefined) return;
+      // The guarded CLI transaction promotes every authored v1 profile to exact v2; this draft
+      // supplies the selected profile's explicit opt-in ammunition section.
+      MechanicsUI.draft = {
+        power: Object.hasOwn(MechanicsUI.draft, "power") ? deep(MechanicsUI.draft.power) : null,
+        ammunition: { types: {}, towerInventories: {} }
+      };
+      MechanicsUI.moduleSchemaVersion = 2;
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    };
+  }
+  if (ammunitionEnabled) {
+    ammunitionEnabled.checked = ammunition !== undefined && !ammunitionDisabled;
+    ammunitionEnabled.disabled = readOnly || ammunition === undefined;
+    ammunitionEnabled.onchange = () => {
+      if (readOnly || ammunition === undefined) return;
+      if (ammunitionEnabled.checked) {
+        MechanicsUI.draft.ammunition = { types: {}, towerInventories: {} };
+      } else {
+        MechanicsUI.draft.ammunition = null;
+      }
+      MechanicsUI.moduleSchemaVersion = 2;
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    };
+  }
+
+  const ammunitionTypes = ammunition?.types ?? {};
+  const typeRows = $("mechanics-logistics-ammunition-type-rows");
+  typeRows?.replaceChildren();
+  for (const [ammoTypeId, definition] of Object.entries(ammunitionTypes).slice(0, ammunitionTypeMaximum)) {
+    let currentAmmoTypeId = ammoTypeId;
+    const row = document.createElement("div");
+    row.className = "mechanics-definition-row";
+    const idLabel = document.createElement("label");
+    idLabel.textContent = "Ammunition type ID";
+    const idInput = document.createElement("input");
+    idInput.value = ammoTypeId;
+    idInput.disabled = readOnly;
+    idInput.setAttribute("data-logistics-ammo-type-id", "");
+    idInput.oninput = (event) => {
+      const nextId = event.target.value.trim();
+      if (!nextId || nextId === currentAmmoTypeId || ownDataValue(ammunitionTypes, nextId)) return;
+      const value = ammunitionTypes[currentAmmoTypeId];
+      delete ammunitionTypes[currentAmmoTypeId];
+      defineOwnDataValue(ammunitionTypes, nextId, value);
+      for (const inventory of Object.values(ammunition?.towerInventories ?? {})) {
+        if (inventory?.ammoTypeId === currentAmmoTypeId) inventory.ammoTypeId = nextId;
+      }
+      currentAmmoTypeId = nextId;
+      MechanicsUI.preview = null;
+      renderMechanicsPreviewResult();
+    };
+    idLabel.append(idInput);
+    row.append(idLabel);
+    const label = document.createElement("label");
+    label.textContent = "Label";
+    const labelInput = document.createElement("input");
+    labelInput.value = definition?.label ?? "";
+    labelInput.disabled = readOnly;
+    labelInput.setAttribute("data-logistics-ammo-label", "");
+    labelInput.oninput = (event) => {
+      definition.label = event.target.value;
+      MechanicsUI.preview = null;
+      renderMechanicsPreviewResult();
+    };
+    label.append(labelInput);
+    row.append(label);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "btn btn-danger";
+    remove.textContent = "Remove";
+    remove.disabled = readOnly;
+    remove.setAttribute("data-remove-logistics-ammo-type", "");
+    remove.onclick = () => {
+      delete ammunitionTypes[currentAmmoTypeId];
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    };
+    row.append(remove);
+    typeRows?.append(row);
+  }
+
+  const towerInventories = ammunition?.towerInventories ?? {};
+  const inventoryRows = $("mechanics-logistics-tower-inventory-rows");
+  inventoryRows?.replaceChildren();
+  for (const [towerTypeId, definition] of Object.entries(towerInventories).slice(0, towerInventoryMaximum)) {
+    let currentTowerTypeId = towerTypeId;
+    const row = document.createElement("div");
+    row.className = "mechanics-definition-row";
+    const textFields = [
+      ["towerTypeId", "Tower type ID", towerTypeId, "data-logistics-inventory-tower-type-id"],
+      ["ammoTypeId", "Ammunition type ID", definition?.ammoTypeId ?? "", "data-logistics-inventory-ammo-type-id"]
+    ];
+    for (const [field, fieldLabelText, value, attribute] of textFields) {
+      const fieldLabel = document.createElement("label");
+      fieldLabel.textContent = fieldLabelText;
+      const input = document.createElement("input");
+      input.value = value;
+      input.disabled = readOnly;
+      input.setAttribute(attribute, "");
+      input.oninput = (event) => {
+        const nextValue = event.target.value.trim();
+        if (!nextValue) return;
+        if (field === "towerTypeId") {
+          if (nextValue === currentTowerTypeId || ownDataValue(towerInventories, nextValue)) return;
+          const inventory = towerInventories[currentTowerTypeId];
+          delete towerInventories[currentTowerTypeId];
+          defineOwnDataValue(towerInventories, nextValue, inventory);
+          currentTowerTypeId = nextValue;
+          renderMechanicsPreviewResult();
+        } else {
+          definition.ammoTypeId = nextValue;
+          renderMechanicsPreviewResult();
+        }
+        MechanicsUI.preview = null;
+      };
+      fieldLabel.append(input);
+      row.append(fieldLabel);
+    }
+    for (const [field, fieldLabelText, attribute] of [
+      ["capacity", "Capacity", "data-logistics-inventory-capacity"],
+      ["startingAmount", "Starting amount", "data-logistics-inventory-starting-amount"],
+      ["consumptionPerActivation", "Consumption per activation", "data-logistics-inventory-consumption"]
+    ]) {
+      const fieldLabel = document.createElement("label");
+      fieldLabel.textContent = fieldLabelText;
+      const input = document.createElement("input");
+      input.type = "number";
+      input.min = field === "startingAmount" ? "0" : "1";
+      input.max = String(ammunitionMaximum);
+      input.step = "1";
+      input.value = String(definition?.[field] ?? "");
+      input.disabled = readOnly;
+      input.setAttribute(attribute, "");
+      input.oninput = (event) => {
+        definition[field] = Number(event.target.value);
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      };
+      fieldLabel.append(input);
+      row.append(fieldLabel);
+    }
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "btn btn-danger";
+    remove.textContent = "Remove";
+    remove.disabled = readOnly;
+    remove.setAttribute("data-remove-logistics-tower-inventory", "");
+    remove.onclick = () => {
+      delete towerInventories[currentTowerTypeId];
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    };
+    row.append(remove);
+    inventoryRows?.append(row);
+  }
+
+  const addType = $("btn-mechanics-add-ammunition-type");
+  if (addType) {
+    addType.disabled = readOnly || !ammunition || Object.keys(ammunitionTypes).length >= ammunitionTypeMaximum;
+    addType.onclick = () => {
+      if (!ammunition || Object.keys(ammunitionTypes).length >= ammunitionTypeMaximum) return;
+      let suffix = Object.keys(ammunitionTypes).length + 1;
+      let ammoTypeId = `ammo_${suffix}`;
+      while (ownDataValue(ammunitionTypes, ammoTypeId)) ammoTypeId = `ammo_${++suffix}`;
+      defineOwnDataValue(ammunitionTypes, ammoTypeId, { label: `Ammunition ${suffix}` });
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    };
+  }
+  const addInventory = $("btn-mechanics-add-tower-inventory");
+  if (addInventory) {
+    addInventory.disabled = readOnly || !ammunition
+      || Object.keys(towerInventories).length >= towerInventoryMaximum;
+    addInventory.onclick = () => {
+      if (!ammunition || Object.keys(towerInventories).length >= towerInventoryMaximum) return;
+      let suffix = Object.keys(towerInventories).length + 1;
+      let towerTypeId = `tower_${suffix}`;
+      while (ownDataValue(towerInventories, towerTypeId)) towerTypeId = `tower_${++suffix}`;
+      defineOwnDataValue(towerInventories, towerTypeId, {
+        ammoTypeId: Object.keys(ammunitionTypes).sort()[0] ?? "ammo_1",
+        capacity: 30,
+        startingAmount: 12,
+        consumptionPerActivation: 1
+      });
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    };
+  }
+
   const towerIds = Object.keys(S.project?.towers ?? {}).sort();
   const fireCapable = towerIds.filter((towerId) => [
     "single", "pulse", "sniper", "antiair", "splash", "pipeline"
@@ -2977,6 +3207,11 @@ function renderLogisticsMechanicsEditor() {
     if (choices.includes(selected)) select.value = selected;
     select.disabled = readOnly || choices.length === 0;
   }
+  for (const id of [
+    "mechanics-logistics-recipe-ammo-type-id", "mechanics-logistics-recipe-ammo-label",
+    "mechanics-logistics-recipe-capacity", "mechanics-logistics-recipe-starting-amount",
+    "mechanics-logistics-recipe-consumption"
+  ]) if ($(id)) $(id).disabled = readOnly;
 }
 
 function renderHeroesMechanicsEditor() {
@@ -4641,8 +4876,8 @@ function mechanicsRequest(enabled) {
   if (MechanicsUI.selectedModuleId === "terraforming" && mechanicsProjectModuleVersion() !== 1) {
     throw new Error("Future terraforming module versions are read-only in this Studio version.");
   }
-  if (MechanicsUI.selectedModuleId === "logistics" && mechanicsProjectModuleVersion() > 1) {
-    throw new Error("Future Logistics schemaVersion 2+ modules are preserved losslessly and read-only.");
+  if (MechanicsUI.selectedModuleId === "logistics" && mechanicsProjectModuleVersion() > 2) {
+    throw new Error("Future Logistics schemaVersion 3+ modules are preserved losslessly and read-only.");
   }
   const moduleSchemaVersion = mechanicsEffectiveModuleSchemaVersion();
   const request = {
@@ -4906,12 +5141,12 @@ function renderMechanicsHub() {
     && !hasUnsupportedRogueliteCampaignMarker(MechanicsUI.draft)
   );
   const supportedHeroesVersion = MechanicsUI.selectedModuleId !== "heroes" || mechanicsProjectModuleVersion() <= 7;
-  const supportedLogisticsVersion = MechanicsUI.selectedModuleId !== "logistics" || mechanicsProjectModuleVersion() <= 1;
+  const supportedLogisticsVersion = MechanicsUI.selectedModuleId !== "logistics" || mechanicsProjectModuleVersion() <= 2;
   const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion
     && supportedRogueliteVersion && supportedHeroesVersion && supportedLogisticsVersion && !busy;
   const dirtyWriteGuard = Boolean(S.dirty);
   if ($("btn-mechanics-preview")) $("btn-mechanics-preview").disabled = !writable;
-  if (MechanicsUI.selectedModuleId === "logistics" && mechanicsProjectModuleVersion() > 1) {
+  if (MechanicsUI.selectedModuleId === "logistics" && mechanicsProjectModuleVersion() > 2) {
     $("btn-mechanics-preview").disabled = true;
   }
   $("btn-mechanics-enable").disabled = dirtyWriteGuard || !writable || Boolean(capability?.active);
@@ -10268,34 +10503,50 @@ function renderPlaytestLogistics(snapshot) {
   if (!presentation.active) return;
   const title = document.createElement("div");
   title.className = "form-section-title pt-debug-title";
-  title.textContent = "Power grid";
+  title.textContent = "Logistics";
   panel.append(title);
-  for (const component of presentation.power.components) {
-    const row = document.createElement("div");
-    row.textContent = `${component.id}: ${component.allocated}/${component.output} allocated`;
-    panel.append(row);
-  }
-  const brownout = presentation.power.consumers.filter((consumer) => !consumer.powered);
-  panel.dataset.powered = String(presentation.power.consumers.length - brownout.length);
-  if (brownout.length) {
-    const row = document.createElement("div");
-    row.className = "text-muted";
-    row.textContent = `Brownout: ${brownout.map((consumer) => consumer.towerId).join(", ")}`;
-    panel.append(row);
-  }
-  for (const node of presentation.power.nodes) {
-    for (const linkedTowerId of node.linkTowerIds) {
-      if (node.towerId >= linkedTowerId) continue;
+  if (presentation.power) {
+    for (const component of presentation.power.components) {
       const row = document.createElement("div");
-      row.className = "pt-logistics-link-cue text-muted";
-      row.textContent = `Grid link: ${node.towerId} ↔ ${linkedTowerId}`;
+      row.textContent = `${component.id}: ${component.allocated}/${component.output} allocated`;
       panel.append(row);
     }
-    for (const consumerTowerId of node.coveredConsumerIds) {
+    const brownout = presentation.power.consumers.filter((consumer) => !consumer.powered);
+    panel.dataset.powered = String(presentation.power.consumers.length - brownout.length);
+    if (brownout.length) {
       const row = document.createElement("div");
-      row.className = "pt-logistics-coverage-cue text-muted";
-      row.textContent = `Power coverage: ${node.towerId} → ${consumerTowerId}`;
+      row.className = "text-muted";
+      row.textContent = `Brownout: ${brownout.map((consumer) => consumer.towerId).join(", ")}`;
       panel.append(row);
+    }
+    for (const node of presentation.power.nodes) {
+      for (const linkedTowerId of node.linkTowerIds) {
+        if (node.towerId >= linkedTowerId) continue;
+        const row = document.createElement("div");
+        row.className = "pt-logistics-link-cue text-muted";
+        row.textContent = `Grid link: ${node.towerId} ↔ ${linkedTowerId}`;
+        panel.append(row);
+      }
+      for (const consumerTowerId of node.coveredConsumerIds) {
+        const row = document.createElement("div");
+        row.className = "pt-logistics-coverage-cue text-muted";
+        row.textContent = `Power coverage: ${node.towerId} → ${consumerTowerId}`;
+        panel.append(row);
+      }
+    }
+  }
+  if (presentation.ammunition) {
+    for (const inventory of presentation.ammunition.inventories) {
+      const row = document.createElement("div");
+      row.className = "pt-logistics-ammunition-cue";
+      row.textContent = `${inventory.towerId}: ${inventory.amount}/${inventory.capacity} ${inventory.ammoTypeId}`;
+      panel.append(row);
+      if (!inventory.hasRequiredAmmo) {
+        const depleted = document.createElement("div");
+        depleted.className = "pt-logistics-depleted-cue text-muted";
+        depleted.textContent = `Depleted: ${inventory.towerId}`;
+        panel.append(depleted);
+      }
     }
   }
 }

@@ -85,6 +85,9 @@ test.describe.serial("R5.7A Studio Logistics power lifecycle", () => {
     expect(authoringBytes(projectDir)).toEqual(beforePreview);
 
     await page.locator("#btn-mechanics-enable").click();
+    await expect.poll(() => fs.existsSync(
+      path.join(projectDir, "content", "mechanics.json")
+    )).toBe(true);
     await expect.poll(() => readLogisticsState(projectDir)).toMatchObject({
       projectSchemaVersion: 3,
       moduleSchemaVersion: 1,
@@ -124,7 +127,7 @@ test.describe.serial("R5.7A Studio Logistics power lifecycle", () => {
     expect(browserErrors()).toEqual([]);
   });
 
-  test("keeps future Logistics v2 visible, byte-identical, and read-only", async ({ page }) => {
+  test("keeps future Logistics v3 visible, byte-identical, and read-only", async ({ page }) => {
     writeFutureLogistics(projectDir);
     const before = authoringBytes(projectDir);
     const browserErrors = captureBrowserErrors(page);
@@ -132,7 +135,7 @@ test.describe.serial("R5.7A Studio Logistics power lifecycle", () => {
     await openLogisticsMechanics(page);
 
     await expect(page.locator("#mechanics-logistics-read-only")).toBeVisible();
-    await expect(page.locator("#mechanics-logistics-read-only")).toContainText(/future|schemaVersion 2|read-only/i);
+    await expect(page.locator("#mechanics-logistics-read-only")).toContainText(/future|schemaVersion 3|read-only/i);
     await expect(page.locator("#mechanics-profile-id")).toHaveValue("future_power");
     await expect(generatorOutput(page)).toHaveValue("13");
     expect(await page.locator(
@@ -346,7 +349,7 @@ function writeFutureLogistics(projectDir) {
     schemaVersion: 1,
     modules: {
       logistics: {
-        schemaVersion: 2,
+        schemaVersion: 3,
         enabled: true,
         profiles: {
           future_power: {
@@ -355,10 +358,10 @@ function writeFutureLogistics(projectDir) {
               relays: { power_pylon: { linkRadius: 4, coverageRadius: 4 } },
               consumers: { arc_priority: { demand: 8, priority: 1 } }
             },
-            futureStorage: { retain: true }
+            ammunition: null,
+            factories: ["opaque"]
           }
-        },
-        futureModuleRule: ["retain", 2]
+        }
       }
     }
   });

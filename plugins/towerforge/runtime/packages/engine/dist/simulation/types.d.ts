@@ -1134,6 +1134,23 @@ export interface LogisticsSnapshotV1 {
         readonly consumers: readonly LogisticsPowerConsumerSnapshotV1[];
     };
 }
+export interface LogisticsAmmunitionInventorySnapshotV2 {
+    readonly towerId: string;
+    readonly towerTypeId: string;
+    readonly ammoTypeId: string;
+    readonly amount: number;
+    readonly capacity: number;
+    readonly consumptionPerActivation: number;
+    readonly hasRequiredAmmo: boolean;
+}
+export interface LogisticsSnapshotV2 {
+    readonly schemaVersion: 2;
+    readonly power: LogisticsSnapshotV1["power"] | null;
+    readonly ammunition: {
+        readonly inventories: readonly LogisticsAmmunitionInventorySnapshotV2[];
+    } | null;
+}
+export type LogisticsSnapshot = LogisticsSnapshotV1 | LogisticsSnapshotV2;
 export interface GameSnapshot {
     /** Canonical authored map identity for presentation and renderer adapters. */
     mapId: string;
@@ -1180,7 +1197,7 @@ export interface GameSnapshot {
     terraforming?: TerraformingSnapshotV1;
     roguelite?: RogueliteSnapshot;
     heroes?: HeroesSnapshot;
-    logistics?: LogisticsSnapshotV1;
+    logistics?: LogisticsSnapshot;
     scriptState: import("../scripting/types.js").TowerScriptStateSnapshot;
     lastEvents: GameEvent[];
 }

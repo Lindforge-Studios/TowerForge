@@ -675,6 +675,36 @@ v3, CampaignRun v1, and TowerScript v6 do not change. See
 [ADR 0044](adr/0044-opt-in-logistics-power-grid.md) and
 `docs/examples/opt-in-logistics-power/`.
 
+### R5.8A Local ammunition
+
+R5.8A advances only the opt-in `logistics` module to v2. Its profile is the exact closed
+`{power,ammunition}` pair with both fields required and nullable. V1 is read without migration;
+adding ammunition is an explicit revision-guarded promotion that preserves the current power
+section. Missing, disabled, unselected, `ammunition:null`, and all-null profiles allocate no
+magazine, checkpoint section, snapshot, or UI and retain infinite legacy ammunition.
+
+The ammunition catalog owns at most 256 exact `{label}` definitions and 4,096 tower-type bindings.
+Each binding is exact `{ammoTypeId,capacity,startingAmount,consumptionPerActivation}` and may target
+only an existing fire-capable attack kind. IDs and labels are limited to 128 UTF-8 bytes; amounts
+are safe integers bounded by capacity and 1,000,000,000. Active reference faults are errors,
+inactive faults are warnings, and structural or budget faults always fail closed.
+
+The firing order is fixed as `disabled → power → ammunition → cooldown → target → consume →
+effects`. Consumption is atomic once per successful single, pulse, sniper, antiair, splash, or
+pipeline activation; target fan-out and secondary effects do not spend additional rounds. No
+target spends nothing. Depletion freezes the precise cooldown and suppresses targeting, firing
+events, damage, status, displacement, resources, and pulse refresh. Move and upgrade preserve the
+live amount; sell, destruction, and reset remove it. There is no refill path in this slice.
+
+Mutable amounts use nested Logistics checkpoint v1 without changing the outer checkpoint, engine,
+command, journal, RNG, TowerScript, profile, or campaign versions. Snapshot v2 exposes independent
+nullable power and ammunition sections; inventory rows are complete, detached, binary-sorted, and
+include authoritative `hasRequiredAmmo`. The shared renderer projector validates that shape and
+Canvas, Phaser, and Studio Playtest show only amount/capacity and depletion cues. MCP and Mechanics
+Hub use the inert `basic_local_ammunition` recipe plus the existing preview/revision/validation/
+backup/rollback workflow. See [ADR 0045](adr/0045-opt-in-local-ammunition.md) and
+`docs/examples/opt-in-local-ammunition/`.
+
 ## Done Criteria For Constructor Changes
 
 - Engine changes pass `npm run typecheck`.

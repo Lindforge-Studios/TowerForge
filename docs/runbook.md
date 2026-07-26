@@ -238,7 +238,7 @@ recipe with exact `generatorTowerTypeId`, `relayTowerTypeId`, and fire-capable
 The recipe does not create tower types, enable Logistics, select a mission, or add ammo/factory
 content. Follow `describe -> capabilities -> recipe -> preview -> guarded apply -> validate`, then
 merge the mission selection only after preview is valid. A stale revision, duplicate role, broken
-reference, passive consumer, future v2 module, or malformed candidate must remain a no-write result.
+reference, passive consumer, future v3 module, or malformed candidate must remain a no-write result.
 
 At runtime, consume only `snapshot.logistics` v1 for components, links, coverage, and powered state.
 Do not solve the network in Studio or a renderer. Test Canvas and Phaser on the mission grid and
@@ -248,6 +248,26 @@ disabling Logistics, or saving `power:null` must remove the snapshot and power U
 literal infinite-supply legacy path. This slice adds no input, command, event, checkpoint field,
 profile/run state, TowerScript surface, ammo, inventory, production, or transfer graph. See
 [ADR 0044](adr/0044-opt-in-logistics-power-grid.md).
+
+For R5.8A, select an existing fire-capable tower and stage `basic_local_ammunition` with explicit
+ammo ID/label, capacity, starting amount, and cost per activation. Reading Logistics v1 does not
+migrate it: use Mechanics Hub **Add ammunition** or the MCP preview/apply transaction to promote
+the complete module to v2 while preserving `power`. Always inspect the dry-run, apply with its
+revision, then run `npm run validate` and reload before playtesting.
+
+At runtime, treat `snapshot.logistics` v2 as the only source of magazine amount/capacity and
+depleted state. Do not subtract shots, combine brownout with ammo, or infer refill in Studio or a
+renderer. Verify Canvas and Phaser on the mission's square/hex grid: amount decreases once per
+successful activation, multi-target effects cost once, no-target costs nothing, and zero ammo
+freezes cooldown and removes active pulse cues. This slice cannot refill a live tower; move/upgrade
+must preserve its amount, while sell/destruction/reset remove it.
+
+To roll back gameplay, disable Logistics, remove the mission selection, or save
+`ammunition:null` through the same guarded authoring path. Confirm that the inventory checkpoint,
+snapshot, panel, and cues disappear and that legacy infinite ammunition returns. A stale revision,
+malformed or over-budget amount, bad reference, passive tower binding, or future Logistics v3 must
+be a no-write result. See [ADR 0045](adr/0045-opt-in-local-ammunition.md) and the copyable fixture at
+`docs/examples/opt-in-local-ammunition/`.
 
 Combat v1 accepts only `shields`. A target definition requires positive bounded `capacity` and may add `{ ratePerUnit, delayAfterDamage }` regeneration. Tower shields require a tower with `maxHp`. At runtime shield state is keyed by entity instance ID and appears only under active `snapshot.combat`; Canvas and Phaser consume the same presentation projection. A copyable v1 reference is under `docs/examples/opt-in-basic-shields/`.
 

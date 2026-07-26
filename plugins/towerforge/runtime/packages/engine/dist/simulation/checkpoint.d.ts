@@ -178,6 +178,15 @@ export interface HeroesCheckpointStateV4 {
         readonly unlockedSkillIds: readonly string[];
     };
 }
+export interface LogisticsCheckpointStateV1 {
+    readonly schemaVersion: 1;
+    readonly ammunition: {
+        readonly inventories: readonly {
+            readonly towerId: string;
+            readonly amount: number;
+        }[];
+    };
+}
 /** Authoritative mutable simulation state. Map occupancy and water cues are rebuilt derivatives. */
 export interface GameCheckpointStateV1 {
     readonly coreHp: number;
@@ -217,6 +226,7 @@ export interface GameCheckpointStateV1 {
     readonly draft?: DraftCheckpointState;
     readonly campaignBattle?: CampaignBattleCheckpointStateV1;
     readonly heroes?: HeroesCheckpointStateV1 | HeroesCheckpointStateV2 | HeroesCheckpointStateV3 | HeroesCheckpointStateV4;
+    readonly logistics?: LogisticsCheckpointStateV1;
 }
 export interface GameCheckpointV1 {
     readonly schemaVersion: typeof GAME_CHECKPOINT_SCHEMA_VERSION;

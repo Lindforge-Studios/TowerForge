@@ -38,6 +38,8 @@
 | R5.5A — passive hero damage aura | Завершён; code + constructor sign-off; ADR Accepted | Heroes v6 nullable aura, authoritative topology membership и tower-only `spatial` modifiers без нового command/event/checkpoint state |
 | R5.6A — dynamic hero blocking | Завершён; code + constructor sign-off; ADR Accepted | Heroes v7 nullable blocking, explicit dynamic movement-profile eligibility и bounded engine-owned holds без hero occupancy/path rebuild |
 | R5.7A — logistics power grid | Завершён; code + constructor sign-off; ADR Accepted | Logistics v1 nullable power, bounded deterministic generators/relays/components, priority brownout и authoritative visible overlay без ammo/factory |
+| R5.8A — local ammunition | Завершён; code + constructor sign-off; ADR Accepted | Logistics v2 nullable ammunition, local tower magazines, activation расход и nested checkpoint без refill/factory/transfer |
+| R5.8B — ammunition supply | Спроектирован; RED после отдельного R5.8A sign-off; ADR Proposed | Logistics v3 factories, storage, bounded deterministic transfer и same-instance refill |
 | R5–R8 | Запланированы | Каждый срез закрывает engine, Studio, AI/MCP, renderers/player, docs и два независимых sign-off |
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Поставленные версии `combat`, `reactions`, `navigation` и `elevation` уже прошли полные вертикальные срезы. Остальные модули Mechanics Hub остаются planned, а preview/apply отклоняют их включение без записи.
@@ -363,6 +365,31 @@ package/template matrix и plugin parity. Typecheck, engine build, validation, t
 balance, map compile, web build и plugin build/validate/smoke прошли. Оба независимых verifier выдали
 PASS без открытых P0–P3. Accepted contract: [ADR 0044](adr/0044-opt-in-logistics-power-grid.md);
 fixture: `docs/examples/opt-in-logistics-power/`.
+
+R5.8A спроектирован отдельным от power grid и factory/transfer инкрементом. Logistics v2 сохраняет
+required nullable `power` и добавляет required nullable `ammunition`: author-defined ammo types и
+один локальный магазин для выбранного fire-capable tower type. Engine расходует authored amount
+ровно один раз на успешную attack activation; secondary targets/effects бесплатны, no-target не
+расходует ammo, а depleted gate замораживает точный cooldown до конца жизни экземпляра. Mutable
+amount получает отдельный nested Logistics checkpoint state и authoritative snapshot v2.
+
+R5.8A намеренно не вводит refill API/command, factories, production, storage или transfer graph.
+Same-instance refill/resume вместе с supply ordering будет отдельным R5.8B, не меняющим установленный
+gate order и activation cost. Независимые RED-волны зафиксировали content/runtime/surface контракты;
+Code Verifier дополнительно нашёл и через отдельные RED→GREEN циклы закрыл повторный target lookup
+после exhaustion, legacy helper overhead и prototype-sensitive IDs. Финальные Vitest 2 651/2 651 и
+Playwright 117/117 прошли; оба независимых verifier выдали PASS без P0–P3. Accepted contract:
+[ADR 0045](adr/0045-opt-in-local-ammunition.md); fixture:
+`docs/examples/opt-in-local-ammunition/`.
+
+R5.8B спроектирован отдельным финальным Logistics-срезом. Logistics v3 добавляет required nullable
+`supply`: production recipes, producer/storage compartments и bounded directed transfer graph с
+фиксированным topology-aware ordering. Production и outgoing transfer учитывают authoritative power
+и disruption; план transfer атомарен, incoming stock не пересылается в том же tick, а refill может
+возобновить ready tower без изменения cooldown. Mutable stock/progress получает nested Logistics
+checkpoint v2 и authoritative snapshot v3. Ручных refill/transfer commands, TowerScript действий,
+сырья, conveyor routing и renderer-owned симуляции нет. Proposed contract:
+[ADR 0046](adr/0046-opt-in-ammunition-supply.md).
 
 ### R6 — TowerScript DX 2.0
 

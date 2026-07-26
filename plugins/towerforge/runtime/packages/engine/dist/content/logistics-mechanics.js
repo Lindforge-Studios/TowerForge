@@ -11,14 +11,35 @@ export const LOGISTICS_POWER_LIMITS = Object.freeze({
     liveNodes: 1_024,
     undirectedEdges: 65_536
 });
+/** Closed structural and runtime budgets for opt-in Logistics v2 local ammunition. */
+export const LOGISTICS_AMMUNITION_LIMITS = Object.freeze({
+    types: 256,
+    towerInventories: 4_096,
+    liveInventories: 4_096,
+    idUtf8Bytes: 128,
+    labelUtf8Bytes: 128,
+    capacity: 1_000_000_000
+});
 export const LOGISTICS_MECHANICS_SCHEMA = Object.freeze({
-    schemaVersion: 1,
+    schemaVersion: 2,
     moduleId: "logistics",
-    supportedModuleSchemaVersions: Object.freeze([1]),
+    supportedModuleSchemaVersions: Object.freeze([1, 2]),
     profile: Object.freeze({
-        requiredFields: Object.freeze(["power"]),
+        requiredFields: Object.freeze(["power", "ammunition"]),
         optionalFields: Object.freeze([]),
         additionalProperties: false
+    }),
+    profileVersions: Object.freeze({
+        1: Object.freeze({
+            requiredFields: Object.freeze(["power"]),
+            optionalFields: Object.freeze([]),
+            additionalProperties: false
+        }),
+        2: Object.freeze({
+            requiredFields: Object.freeze(["power", "ammunition"]),
+            optionalFields: Object.freeze([]),
+            additionalProperties: false
+        })
     }),
     power: Object.freeze({
         nullable: true,
@@ -41,11 +62,37 @@ export const LOGISTICS_MECHANICS_SCHEMA = Object.freeze({
             additionalProperties: false
         })
     }),
-    limits: LOGISTICS_POWER_LIMITS,
+    ammunition: Object.freeze({
+        nullable: true,
+        requiredFields: Object.freeze(["types", "towerInventories"]),
+        optionalFields: Object.freeze([]),
+        additionalProperties: false,
+        type: Object.freeze({
+            requiredFields: Object.freeze(["label"]),
+            optionalFields: Object.freeze([]),
+            additionalProperties: false
+        }),
+        towerInventory: Object.freeze({
+            requiredFields: Object.freeze([
+                "ammoTypeId", "capacity", "startingAmount", "consumptionPerActivation"
+            ]),
+            optionalFields: Object.freeze([]),
+            additionalProperties: false
+        }),
+        fireCapableAttackKinds: Object.freeze([
+            "single", "pulse", "sniper", "antiair", "splash", "pipeline"
+        ]),
+        limits: LOGISTICS_AMMUNITION_LIMITS
+    }),
+    limits: Object.freeze({
+        power: LOGISTICS_POWER_LIMITS,
+        ammunition: LOGISTICS_AMMUNITION_LIMITS
+    }),
     runtimeSnapshot: Object.freeze({
-        schemaVersion: 1,
-        fields: Object.freeze(["schemaVersion", "power"]),
-        powerFields: Object.freeze(["components", "nodes", "consumers"])
+        schemaVersion: 2,
+        fields: Object.freeze(["schemaVersion", "power", "ammunition"]),
+        powerFields: Object.freeze(["components", "nodes", "consumers"]),
+        ammunitionFields: Object.freeze(["inventories"])
     })
 });
 export class LogisticsProfileValidationError extends Error {
@@ -123,6 +170,19 @@ function boundedPriority(value, fieldPath) {
     if (typeof value !== "number" || !Number.isFinite(value) || !Number.isSafeInteger(value)
         || value < 0 || value > LOGISTICS_POWER_LIMITS.priority) {
         throw new LogisticsProfileValidationError(fieldPath, `${fieldPath} priority must be a finite safe integer in 0..${LOGISTICS_POWER_LIMITS.priority}.`);
+    }
+    return value;
+}
+function boundedUtf8String(value, maximum, fieldPath, label) {
+    if (typeof value !== "string" || value.length === 0 || utf8ByteLength(value) > maximum) {
+        throw new LogisticsProfileValidationError(fieldPath, `${label} must contain 1..${maximum} UTF-8 bytes.`);
+    }
+    return value;
+}
+function boundedSafeInteger(value, minimum, maximum, fieldPath) {
+    if (typeof value !== "number" || !Number.isFinite(value) || !Number.isSafeInteger(value)
+        || value < minimum || value > maximum) {
+        throw new LogisticsProfileValidationError(fieldPath, `${fieldPath} must be a finite safe integer in ${minimum}..${maximum}.`);
     }
     return value;
 }
@@ -218,6 +278,76 @@ export function normalizeLogisticsProfileV1(value) {
         })
     });
 }
+function inspectAmmunitionRecord(value, fieldPath, label, limit) {
+    let prototype;
+    let descriptors;
+    try {
+        prototype = value !== null && typeof value === "object" ? Object.getPrototypeOf(value) : null;
+        descriptors = value !== null && typeof value === "object"
+            ? Object.getOwnPropertyDescriptors(value)
+            : {};
+    }
+    catch {
+        throw new LogisticsProfileValidationError(fieldPath, `${label} could not be inspected safely.`);
+    }
+    if (value === null || typeof value !== "object" || Array.isArray(value)
+        || (prototype !== Object.prototype && prototype !== null)) {
+        throw new LogisticsProfileValidationError(fieldPath, `${label} must be a plain object with own data fields.`);
+    }
+    if (Object.getOwnPropertySymbols(descriptors).length > 0) {
+        throw new LogisticsProfileValidationError(fieldPath, `${label} must not contain symbol fields.`);
+    }
+    const ids = Object.keys(descriptors);
+    if (ids.length > limit) {
+        throw new LogisticsProfileValidationError(fieldPath, `${label} exceeds the ${limit} entry budget.`);
+    }
+    const record = Object.create(null);
+    for (const id of ids) {
+        boundedUtf8String(id, LOGISTICS_AMMUNITION_LIMITS.idUtf8Bytes, `${fieldPath}.${id}`, `${label} id`);
+        const descriptor = descriptors[id];
+        if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+            throw new LogisticsProfileValidationError(`${fieldPath}.${id}`, `${label} field "${id}" must be an enumerable own data field; accessors are not allowed.`);
+        }
+        record[id] = descriptor.value;
+    }
+    return record;
+}
+function normalizeAmmunition(value) {
+    const root = "profile.ammunition";
+    const ammunition = inspectOwnDataRecord(value, root, "Logistics ammunition definition");
+    exactFields(ammunition, ["types", "towerInventories"], root, "Logistics ammunition definition");
+    const typeRecord = inspectAmmunitionRecord(ammunition.types, `${root}.types`, "Logistics ammunition types", LOGISTICS_AMMUNITION_LIMITS.types);
+    const inventoryRecord = inspectAmmunitionRecord(ammunition.towerInventories, `${root}.towerInventories`, "Logistics ammunition tower inventories", LOGISTICS_AMMUNITION_LIMITS.towerInventories);
+    const types = Object.freeze(Object.fromEntries(Object.keys(typeRecord).sort().map((id) => {
+        const path = `${root}.types.${id}`;
+        const definition = inspectOwnDataRecord(typeRecord[id], path, "Logistics ammunition type");
+        exactFields(definition, ["label"], path, "Logistics ammunition type");
+        return [id, Object.freeze({
+                label: boundedUtf8String(definition.label, LOGISTICS_AMMUNITION_LIMITS.labelUtf8Bytes, `${path}.label`, "Logistics ammunition type label")
+            })];
+    })));
+    const towerInventories = Object.freeze(Object.fromEntries(Object.keys(inventoryRecord).sort().map((towerTypeId) => {
+        const path = `${root}.towerInventories.${towerTypeId}`;
+        const definition = inspectOwnDataRecord(inventoryRecord[towerTypeId], path, "Logistics tower inventory");
+        exactFields(definition, ["ammoTypeId", "capacity", "startingAmount", "consumptionPerActivation"], path, "Logistics tower inventory");
+        const capacity = boundedSafeInteger(definition.capacity, 1, LOGISTICS_AMMUNITION_LIMITS.capacity, `${path}.capacity`);
+        return [towerTypeId, Object.freeze({
+                ammoTypeId: boundedUtf8String(definition.ammoTypeId, LOGISTICS_AMMUNITION_LIMITS.idUtf8Bytes, `${path}.ammoTypeId`, "Logistics ammunition type reference"),
+                capacity,
+                startingAmount: boundedSafeInteger(definition.startingAmount, 0, capacity, `${path}.startingAmount`),
+                consumptionPerActivation: boundedSafeInteger(definition.consumptionPerActivation, 1, capacity, `${path}.consumptionPerActivation`)
+            })];
+    })));
+    return Object.freeze({ types, towerInventories });
+}
+/** Normalize one supported v2 profile without executing accessors or retaining authored references. */
+export function normalizeLogisticsProfileV2(value) {
+    const profile = inspectOwnDataRecord(value, "profile", "Logistics profile");
+    exactFields(profile, ["power", "ammunition"], "profile", "Logistics profile");
+    const power = normalizeLogisticsProfileV1({ power: profile.power }).power;
+    const ammunition = profile.ammunition === null ? null : normalizeAmmunition(profile.ammunition);
+    return Object.freeze({ power, ammunition });
+}
 /** Resolve only a selected, enabled, supported Logistics v1 profile. */
 export function resolveActiveLogisticsMechanics(content, missionId) {
     const mission = content.missions[missionId];
@@ -225,15 +355,24 @@ export function resolveActiveLogisticsMechanics(content, missionId) {
     if (!mission || !capability?.active || capability.profileId === undefined)
         return undefined;
     const module = content.mechanics.modules.logistics;
-    if (!module || module.schemaVersion !== 1)
+    if (!module || (module.schemaVersion !== 1 && module.schemaVersion !== 2))
         return undefined;
     const authored = module.profiles[capability.profileId];
     try {
-        const normalized = normalizeLogisticsProfileV1(authored);
+        if (module.schemaVersion === 1) {
+            const normalized = normalizeLogisticsProfileV1(authored);
+            return Object.freeze({
+                schemaVersion: 1,
+                profileId: capability.profileId,
+                power: normalized.power
+            });
+        }
+        const normalized = normalizeLogisticsProfileV2(authored);
         return Object.freeze({
-            schemaVersion: 1,
+            schemaVersion: 2,
             profileId: capability.profileId,
-            power: normalized.power
+            power: normalized.power,
+            ammunition: normalized.ammunition
         });
     }
     catch {

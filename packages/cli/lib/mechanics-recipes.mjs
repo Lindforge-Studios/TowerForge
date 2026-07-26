@@ -23,6 +23,7 @@ const BASIC_HERO_SKILL_TREE_ID = "basic_hero_skill_tree";
 const BASIC_PASSIVE_HERO_AURA_ID = "basic_passive_hero_aura";
 const BASIC_DYNAMIC_HERO_BLOCKING_ID = "basic_dynamic_hero_blocking";
 const BASIC_POWER_GRID_ID = "basic_power_grid";
+const BASIC_LOCAL_AMMUNITION_ID = "basic_local_ammunition";
 const TERRAFORMING_RECIPE_IDS = Object.freeze([
   TAGGED_FLOOD_ID,
   TAGGED_MOAT_ID,
@@ -74,6 +75,22 @@ const LOGISTICS_POWER_PARAMETER_SCHEMA = Object.freeze({
     generatorTowerTypeId: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 }),
     relayTowerTypeId: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 }),
     consumerTowerTypeId: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 })
+  })
+});
+const LOGISTICS_AMMUNITION_PARAMETER_SCHEMA = Object.freeze({
+  type: "object",
+  required: Object.freeze([
+    "consumerTowerTypeId", "ammoTypeId", "ammoLabel", "capacity",
+    "startingAmount", "consumptionPerActivation"
+  ]),
+  additionalProperties: false,
+  properties: Object.freeze({
+    consumerTowerTypeId: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 }),
+    ammoTypeId: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 }),
+    ammoLabel: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 }),
+    capacity: Object.freeze({ type: "integer", minimum: 1, maximum: 1_000_000_000 }),
+    startingAmount: Object.freeze({ type: "integer", minimum: 0, maximum: 1_000_000_000 }),
+    consumptionPerActivation: Object.freeze({ type: "integer", minimum: 1, maximum: 1_000_000_000 })
   })
 });
 export class MechanicsRecipeParameterError extends Error {
@@ -287,6 +304,15 @@ const RECIPES = Object.freeze([
     suggestedId: BASIC_POWER_GRID_ID,
     moduleSchemaVersion: 1,
     parameterSchema: LOGISTICS_POWER_PARAMETER_SCHEMA
+  }),
+  Object.freeze({
+    id: BASIC_LOCAL_AMMUNITION_ID,
+    moduleId: "logistics",
+    label: "Basic Local Ammunition",
+    description: "Inert logistics v2 profile with one finite local magazine for a fire-capable tower.",
+    suggestedId: BASIC_LOCAL_AMMUNITION_ID,
+    moduleSchemaVersion: 2,
+    parameterSchema: LOGISTICS_AMMUNITION_PARAMETER_SCHEMA
   })
 ]);
 
@@ -350,6 +376,17 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
       throw invalidLogisticsRecipeParameter("Logistics recipe parameters must be enumerable own data.");
     }
     return materializePowerGridRecipe(recipe, context, parameterField.value);
+  }
+  if (recipeId === BASIC_LOCAL_AMMUNITION_ID) {
+    if (parameterField.kind === "absent") {
+      throw invalidLogisticsRecipeParameter(
+        "Local ammunition recipe parameters are required and must define one finite magazine."
+      );
+    }
+    if (parameterField.kind === "invalid") {
+      throw invalidLogisticsRecipeParameter("Local ammunition recipe parameters must be enumerable own data.");
+    }
+    return materializeLocalAmmunitionRecipe(recipe, context, parameterField.value);
   }
   if (parameterField.kind !== "absent") {
     throw new MechanicsRecipeParameterError(
@@ -771,6 +808,48 @@ function materializePowerGridRecipe(recipe, context, parameterValue) {
   };
 }
 
+function materializeLocalAmmunitionRecipe(recipe, context, parameterValue) {
+  const parameters = inspectLocalAmmunitionRecipeParameters(parameterValue);
+  const consumerTowerTypeId = boundedLogisticsRecipeId(parameters.consumerTowerTypeId, "consumerTowerTypeId");
+  const ammoTypeId = boundedLogisticsRecipeId(parameters.ammoTypeId, "ammoTypeId");
+  const ammoLabel = boundedLogisticsRecipeId(parameters.ammoLabel, "ammoLabel");
+  const towerIds = new Set(sortedSafeIds(ownDataValue(context, "towerIds")));
+  if (!towerIds.has(consumerTowerTypeId)) {
+    throw invalidLogisticsRecipeParameter(
+      `Local ammunition recipe references unknown authored tower "${consumerTowerTypeId}".`
+    );
+  }
+  const attackKind = ownDataValue(ownDataValue(context, "towerAttackKindsByTowerId"), consumerTowerTypeId);
+  if (!["single", "pulse", "sniper", "antiair", "splash", "pipeline"].includes(attackKind)) {
+    throw invalidLogisticsRecipeParameter(
+      `Local ammunition consumer "${consumerTowerTypeId}" must use a fire-capable attack kind.`
+    );
+  }
+  const capacity = boundedLogisticsRecipeInteger(parameters.capacity, "capacity", 1, 1_000_000_000);
+  const consumptionPerActivation = boundedLogisticsRecipeInteger(
+    parameters.consumptionPerActivation, "consumptionPerActivation", 1, capacity
+  );
+  const startingAmount = boundedLogisticsRecipeInteger(
+    parameters.startingAmount, "startingAmount", 0, capacity
+  );
+  const types = safeRecord();
+  const towerInventories = safeRecord();
+  defineOwn(types, ammoTypeId, { label: ammoLabel });
+  defineOwn(towerInventories, consumerTowerTypeId, {
+    ammoTypeId, capacity, startingAmount, consumptionPerActivation
+  });
+  return {
+    ...recipe,
+    entity: {
+      moduleId: "logistics",
+      moduleSchemaVersion: 2,
+      missionId: chooseId(context.defaultMissionId, context.missionIds) ?? "",
+      profileId: recipe.suggestedId,
+      profile: { power: null, ammunition: { types, towerInventories } }
+    }
+  };
+}
+
 function inspectLogisticsRecipeParameters(value) {
   if (!isPlainRecord(value)) {
     throw invalidLogisticsRecipeParameter("Logistics recipe parameters must be a closed ordinary object.");
@@ -794,6 +873,43 @@ function inspectLogisticsRecipeParameters(value) {
     defineOwn(result, key, descriptor.value);
   }
   return result;
+}
+
+function inspectLocalAmmunitionRecipeParameters(value) {
+  if (!isPlainRecord(value)) {
+    throw invalidLogisticsRecipeParameter("Local ammunition recipe parameters must be a closed ordinary object.");
+  }
+  let descriptors;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    throw invalidLogisticsRecipeParameter("Local ammunition recipe parameters could not be inspected safely.");
+  }
+  const allowed = [
+    "consumerTowerTypeId", "ammoTypeId", "ammoLabel", "capacity",
+    "startingAmount", "consumptionPerActivation"
+  ];
+  if (Reflect.ownKeys(descriptors).some((key) => typeof key !== "string" || !allowed.includes(key))) {
+    throw invalidLogisticsRecipeParameter("Local ammunition recipe parameters are closed to six explicit fields.");
+  }
+  const result = safeRecord();
+  for (const key of allowed) {
+    const descriptor = descriptors[key];
+    if (!descriptor?.enumerable || !("value" in descriptor)) {
+      throw invalidLogisticsRecipeParameter(`Local ammunition recipe parameter ${key} is required as enumerable own data.`);
+    }
+    defineOwn(result, key, descriptor.value);
+  }
+  return result;
+}
+
+function boundedLogisticsRecipeInteger(value, name, minimum, maximum) {
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw invalidLogisticsRecipeParameter(
+      `Local ammunition recipe parameter ${name} must be a safe integer from ${minimum} through ${maximum}.`
+    );
+  }
+  return value;
 }
 
 function boundedLogisticsRecipeId(value, name) {

@@ -7,6 +7,8 @@ const MAX_ENTRY_AMOUNT = 1_000_000_000_000;
 const MAX_COMPONENT_OUTPUT = MAX_NODES * MAX_ENTRY_AMOUNT;
 const MAX_COMPONENT_DEMAND = MAX_PARTICIPANTS * MAX_ENTRY_AMOUNT;
 const MAX_PRIORITY = 1_000_000;
+const MAX_AMMUNITION_INVENTORIES = 4_096;
+const MAX_AMMUNITION_AMOUNT = 1_000_000_000;
 
 const INACTIVE = Object.freeze({ active: false, power: null });
 
@@ -247,6 +249,48 @@ function projectPower(value) {
   return Object.freeze({ components, nodes, consumers });
 }
 
+function projectAmmunitionInventory(value) {
+  const row = ownRecord(value, [
+    "towerId", "towerTypeId", "ammoTypeId", "amount", "capacity",
+    "consumptionPerActivation", "hasRequiredAmmo"
+  ]);
+  if (!row || Object.keys(row).length !== 7) return null;
+  const towerId = id(row.towerId);
+  const towerTypeId = id(row.towerTypeId);
+  const ammoTypeId = id(row.ammoTypeId);
+  const validAmount = Number.isSafeInteger(row.amount)
+    && row.amount >= 0 && row.amount <= MAX_AMMUNITION_AMOUNT;
+  const validCapacity = Number.isSafeInteger(row.capacity)
+    && row.capacity >= 1 && row.capacity <= MAX_AMMUNITION_AMOUNT;
+  const validConsumption = Number.isSafeInteger(row.consumptionPerActivation)
+    && row.consumptionPerActivation >= 1
+    && row.consumptionPerActivation <= row.capacity;
+  if (!towerId || !towerTypeId || !ammoTypeId || !validAmount || !validCapacity
+    || !validConsumption || row.amount > row.capacity || typeof row.hasRequiredAmmo !== "boolean"
+    || row.hasRequiredAmmo !== (row.amount >= row.consumptionPerActivation)) return null;
+  return Object.freeze({
+    towerId,
+    towerTypeId,
+    ammoTypeId,
+    amount: row.amount,
+    capacity: row.capacity,
+    consumptionPerActivation: row.consumptionPerActivation,
+    hasRequiredAmmo: row.hasRequiredAmmo
+  });
+}
+
+function projectAmmunition(value) {
+  const ammunition = ownRecord(value, ["inventories"]);
+  if (!ammunition || Object.keys(ammunition).length !== 1) return null;
+  const inventories = projectSortedRows(
+    ammunition.inventories,
+    projectAmmunitionInventory,
+    "towerId",
+    MAX_AMMUNITION_INVENTORIES
+  );
+  return inventories ? Object.freeze({ inventories }) : null;
+}
+
 /**
  * Detach the authoritative engine snapshot for presentation. Invalid, absent, and future
  * projections fail closed to one immutable inactive value; this module never derives topology.
@@ -254,11 +298,25 @@ function projectPower(value) {
 export function projectLogisticsPresentation(snapshot) {
   const source = ownValue(snapshot, "logistics");
   if (source === undefined) return INACTIVE;
-  const logistics = ownRecord(source, ["schemaVersion", "power"]);
-  if (!logistics || Object.keys(logistics).length !== 2 || logistics.schemaVersion !== 1) return INACTIVE;
   try {
-    const power = projectPower(logistics.power);
-    return power ? Object.freeze({ active: true, power }) : INACTIVE;
+    const schemaVersion = ownValue(source, "schemaVersion");
+    if (schemaVersion === 1) {
+      const logistics = ownRecord(source, ["schemaVersion", "power"]);
+      if (!logistics || Object.keys(logistics).length !== 2) return INACTIVE;
+      const power = projectPower(logistics.power);
+      return power ? Object.freeze({ active: true, power }) : INACTIVE;
+    }
+    if (schemaVersion === 2) {
+      const logistics = ownRecord(source, ["schemaVersion", "power", "ammunition"]);
+      if (!logistics || Object.keys(logistics).length !== 3) return INACTIVE;
+      const power = logistics.power === null ? null : projectPower(logistics.power);
+      const ammunition = logistics.ammunition === null ? null : projectAmmunition(logistics.ammunition);
+      if ((logistics.power !== null && power === null)
+        || (logistics.ammunition !== null && ammunition === null)
+        || (power === null && ammunition === null)) return INACTIVE;
+      return Object.freeze({ active: true, power, ammunition });
+    }
+    return INACTIVE;
   } catch {
     return INACTIVE;
   }

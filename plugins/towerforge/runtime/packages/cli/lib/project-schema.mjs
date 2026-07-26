@@ -7,6 +7,7 @@ const COMBAT_MODULE_SCHEMA_VERSIONS = new Set([1, 2, 3]);
 const ELEVATION_MODULE_SCHEMA_VERSIONS = new Set([1, 2, 3]);
 const ROGUELITE_MODULE_SCHEMA_VERSIONS = new Set([1, 2, 3, 4]);
 const HEROES_MODULE_SCHEMA_VERSIONS = new Set([1, 2, 3, 4, 5, 6, 7]);
+const LOGISTICS_MODULE_SCHEMA_VERSIONS = new Set([1, 2]);
 const BASE_MODULE_SCHEMA_VERSIONS = new Set([MECHANICS_SCHEMA_VERSION]);
 const MECHANICS_MODULE_IDS = new Set([
   "combat",
@@ -204,6 +205,8 @@ function validateMechanics(files, err, warn) {
                 ? ROGUELITE_MODULE_SCHEMA_VERSIONS
                 : moduleId === "heroes"
                   ? HEROES_MODULE_SCHEMA_VERSIONS
+                : moduleId === "logistics"
+                  ? LOGISTICS_MODULE_SCHEMA_VERSIONS
                 : BASE_MODULE_SCHEMA_VERSIONS;
           if (!supportedVersions.has(module.schemaVersion)) {
             const supported = [...supportedVersions].join(" or ");

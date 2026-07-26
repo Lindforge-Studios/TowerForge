@@ -1556,17 +1556,51 @@ export async function callTool(name, args = {}, ctx = {}) {
       }
     };
     const logisticsLimits = engine.LOGISTICS_MECHANICS_SCHEMA.limits;
+    const logisticsPowerLimits = logisticsLimits.power ?? logisticsLimits;
+    const logisticsAmmunitionLimits = logisticsLimits.ammunition ?? {};
+    const logisticsVersions = engine.LOGISTICS_MECHANICS_SCHEMA.profileVersions ?? {
+      1: engine.LOGISTICS_MECHANICS_SCHEMA.profile
+    };
     const logistics = {
       authoring: {
         ...engine.LOGISTICS_MECHANICS_SCHEMA,
+        versions: {
+          1: {
+            ...logisticsVersions[1],
+            power: engine.LOGISTICS_MECHANICS_SCHEMA.power
+          },
+          ...(logisticsVersions[2] ? {
+            2: {
+              ...logisticsVersions[2],
+              power: engine.LOGISTICS_MECHANICS_SCHEMA.power,
+              ammunition: engine.LOGISTICS_MECHANICS_SCHEMA.ammunition
+            }
+          } : {})
+        },
         limits: {
           ...logisticsLimits,
-          definitionsPerRole: logisticsLimits.entriesPerRole,
-          definitionsAcrossRoles: logisticsLimits.entriesTotal,
-          amount: Math.max(logisticsLimits.output, logisticsLimits.demand)
+          idUtf8Bytes: logisticsAmmunitionLimits.idUtf8Bytes ?? logisticsPowerLimits.idUtf8Bytes,
+          labelUtf8Bytes: logisticsAmmunitionLimits.labelUtf8Bytes,
+          definitionsPerRole: logisticsPowerLimits.entriesPerRole,
+          definitionsAcrossRoles: logisticsPowerLimits.entriesTotal,
+          amount: Math.max(logisticsPowerLimits.output, logisticsPowerLimits.demand),
+          radius: logisticsPowerLimits.radius,
+          priority: logisticsPowerLimits.priority,
+          liveParticipants: logisticsPowerLimits.liveParticipants,
+          ammunitionTypes: logisticsAmmunitionLimits.types,
+          authoredTowerInventories: logisticsAmmunitionLimits.towerInventories,
+          liveAmmunitionInventories: logisticsAmmunitionLimits.liveInventories,
+          ammunitionAmount: logisticsAmmunitionLimits.capacity
         }
       },
-      snapshot: { field: "logistics", optional: true, supportedSchemaVersions: [1] },
+      checkpoint: {
+        field: "state.logistics.ammunition",
+        optional: true,
+        schemaVersion: 1,
+        note: "Required only while an active Logistics v2 ammunition section is non-null."
+      },
+      snapshot: { field: "logistics", optional: true, supportedSchemaVersions: [1, 2] },
+      commands: [],
       events: []
     };
     return {
@@ -1852,6 +1886,9 @@ export async function callTool(name, args = {}, ctx = {}) {
       }
       {
         const result = await applyMechanicsModule(projectDir, mechanicsAuthoringRequest(args));
+        if (args.moduleId === "logistics" && args.moduleSchemaVersion === 2 && result?.conflict) {
+          return scrubMechanicsResult(result);
+        }
         const unwrapped = unwrapMechanicsAuthoringResult(result);
         if (args.moduleId !== "logistics" || !result?.backup?.directory) return unwrapped;
         return {

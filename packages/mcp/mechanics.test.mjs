@@ -281,21 +281,6 @@ describe("R1 combat mechanics MCP contract", () => {
         }
       }
     };
-    const logisticsLimits = engine.LOGISTICS_MECHANICS_SCHEMA.limits;
-    const logisticsSurface = {
-      authoring: {
-        ...engine.LOGISTICS_MECHANICS_SCHEMA,
-        limits: {
-          ...logisticsLimits,
-          definitionsPerRole: logisticsLimits.entriesPerRole,
-          definitionsAcrossRoles: logisticsLimits.entriesTotal,
-          amount: Math.max(logisticsLimits.output, logisticsLimits.demand)
-        }
-      },
-      snapshot: { field: "logistics", optional: true, supportedSchemaVersions: [1] },
-      events: []
-    };
-
     expect(engine.COMBAT_MECHANICS_SCHEMA).toMatchObject({
       schemaVersion: 3,
       supportedModuleSchemaVersions: [1, 2, 3],
@@ -313,7 +298,7 @@ describe("R1 combat mechanics MCP contract", () => {
     expect(mechanics.availableDomains).toContain("mechanics");
     expect(mechanics.availableDomains).toContain("reactions");
     expect(mechanics.availableDomains).toContain("navigation");
-    expect(mechanics.mechanics).toEqual({
+    expect(mechanics.mechanics).toMatchObject({
       schemaVersion: 1,
       moduleIds: [...engine.MECHANICS_MODULE_IDS],
       implementedModuleIds: IMPLEMENTED_MODULE_IDS,
@@ -325,9 +310,69 @@ describe("R1 combat mechanics MCP contract", () => {
         physics: physicsSurface,
         terraforming: terraformingSurface,
         roguelite: rogueliteSurface,
-        heroes: heroesSurface,
-        logistics: logisticsSurface
+        heroes: heroesSurface
       }
+    });
+    const logisticsSurface = mechanics.mechanics.modules.logistics;
+    expect(logisticsSurface.authoring).toMatchObject({
+      schemaVersion: 2,
+      moduleId: "logistics",
+      supportedModuleSchemaVersions: [1, 2],
+      profile: {
+        requiredFields: ["power", "ammunition"],
+        optionalFields: [],
+        additionalProperties: false
+      },
+      profileVersions: {
+        1: { requiredFields: ["power"], optionalFields: [], additionalProperties: false },
+        2: {
+          requiredFields: ["power", "ammunition"],
+          optionalFields: [],
+          additionalProperties: false
+        }
+      },
+      power: engine.LOGISTICS_MECHANICS_SCHEMA.power,
+      ammunition: engine.LOGISTICS_MECHANICS_SCHEMA.ammunition,
+      runtimeSnapshot: {
+        schemaVersion: 2,
+        fields: ["schemaVersion", "power", "ammunition"],
+        powerFields: ["components", "nodes", "consumers"],
+        ammunitionFields: ["inventories"]
+      },
+      versions: {
+        1: {
+          requiredFields: ["power"],
+          optionalFields: [],
+          additionalProperties: false,
+          power: engine.LOGISTICS_MECHANICS_SCHEMA.power
+        },
+        2: {
+          requiredFields: ["power", "ammunition"],
+          optionalFields: [],
+          additionalProperties: false,
+          power: engine.LOGISTICS_MECHANICS_SCHEMA.power,
+          ammunition: engine.LOGISTICS_MECHANICS_SCHEMA.ammunition
+        }
+      }
+    });
+    expect(logisticsSurface.authoring.limits).toMatchObject({
+      power: engine.LOGISTICS_MECHANICS_SCHEMA.limits.power,
+      ammunition: engine.LOGISTICS_MECHANICS_SCHEMA.limits.ammunition,
+      definitionsPerRole: engine.LOGISTICS_MECHANICS_SCHEMA.limits.power.entriesPerRole,
+      definitionsAcrossRoles: engine.LOGISTICS_MECHANICS_SCHEMA.limits.power.entriesTotal,
+      ammunitionTypes: engine.LOGISTICS_MECHANICS_SCHEMA.limits.ammunition.types,
+      authoredTowerInventories: engine.LOGISTICS_MECHANICS_SCHEMA.limits.ammunition.towerInventories,
+      liveAmmunitionInventories: engine.LOGISTICS_MECHANICS_SCHEMA.limits.ammunition.liveInventories
+    });
+    expect(logisticsSurface).toMatchObject({
+      checkpoint: {
+        field: "state.logistics.ammunition",
+        optional: true,
+        schemaVersion: 1
+      },
+      snapshot: { field: "logistics", optional: true, supportedSchemaVersions: [1, 2] },
+      commands: [],
+      events: []
     });
     expect(mechanics.mechanics.moduleIds).toHaveLength(12);
     expect(mechanics.towerScript.actions.restoreEnemyShield.required).toEqual({

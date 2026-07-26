@@ -862,11 +862,42 @@
               <div id="mechanics-logistics-consumer-rows" class="mechanics-definition-rows"></div>
             </div>
             <div class="mechanics-shield-section mechanics-logistics-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Local ammunition (v2 opt-in)</h4>
+                  <p>Finite magazines are authored only for explicitly selected fire-capable towers. Refill and supply infrastructure are not part of this slice.</p>
+                </div>
+                <button id="btn-mechanics-add-ammunition" class="btn btn-outline" type="button">Add ammunition</button>
+                <label class="mechanics-navigation-overlay-toggle">
+                  <input id="mechanics-logistics-ammunition-enabled" type="checkbox">
+                  <span>Include ammunition in this profile</span>
+                </label>
+              </div>
+              <div class="mechanics-section-head">
+                <h4>Ammunition types</h4>
+                <button id="btn-mechanics-add-ammunition-type" class="btn btn-outline" type="button">+ Add ammunition type</button>
+              </div>
+              <div id="mechanics-logistics-ammunition-type-rows" class="mechanics-definition-rows"></div>
+              <div class="mechanics-section-head">
+                <h4>Tower inventories</h4>
+                <button id="btn-mechanics-add-tower-inventory" class="btn btn-outline" type="button">+ Add tower inventory</button>
+              </div>
+              <div id="mechanics-logistics-tower-inventory-rows" class="mechanics-definition-rows"></div>
+            </div>
+            <div class="mechanics-shield-section mechanics-logistics-section">
               <div class="mechanics-section-head"><div><h4>Basic power-grid recipe</h4><p>Choose three distinct existing tower types. The recipe remains inert until preview/apply.</p></div></div>
               <div class="mechanics-logistics-recipe-fields">
                 <label>Generator tower<select id="mechanics-logistics-recipe-generator"></select></label>
                 <label>Relay tower<select id="mechanics-logistics-recipe-relay"></select></label>
                 <label>Consumer tower<select id="mechanics-logistics-recipe-consumer"></select></label>
+              </div>
+              <div class="mechanics-section-head"><div><h4>Basic local-ammunition recipe</h4><p>Creates one inert finite magazine profile with power disabled.</p></div></div>
+              <div class="mechanics-logistics-recipe-fields">
+                <label>Ammunition type ID<input id="mechanics-logistics-recipe-ammo-type-id" value="shell"></label>
+                <label>Ammunition label<input id="mechanics-logistics-recipe-ammo-label" value="Shell"></label>
+                <label>Capacity<input id="mechanics-logistics-recipe-capacity" type="number" value="30"></label>
+                <label>Starting amount<input id="mechanics-logistics-recipe-starting-amount" type="number" value="12"></label>
+                <label>Consumption per activation<input id="mechanics-logistics-recipe-consumption" type="number" value="1"></label>
               </div>
             </div>
           </div>

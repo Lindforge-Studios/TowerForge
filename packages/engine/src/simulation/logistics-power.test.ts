@@ -22,15 +22,15 @@ type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B 
   ? true
   : false;
 type Assert<T extends true> = T;
-type CheckpointHasNoLogisticsState = Assert<
-  Equal<Extract<keyof GameCheckpointV1["state"], "logistics">, never>
+type CheckpointHasOptionalLogisticsState = Assert<
+  Equal<{} extends Pick<GameCheckpointV1["state"], "logistics"> ? true : false, true>
 >;
 type GameEventsHaveNoPowerEvent = Assert<
   Equal<Extract<GameEvent["type"], `power${string}` | `logistics${string}`>, never>
 >;
-const checkpointHasNoLogisticsState: CheckpointHasNoLogisticsState = true;
+const checkpointHasOptionalLogisticsState: CheckpointHasOptionalLogisticsState = true;
 const gameEventsHaveNoPowerEvent: GameEventsHaveNoPowerEvent = true;
-void checkpointHasNoLogisticsState;
+void checkpointHasOptionalLogisticsState;
 void gameEventsHaveNoPowerEvent;
 
 type AttackKind = "single" | "sniper" | "antiair" | "splash" | "pulse" | "pipeline";

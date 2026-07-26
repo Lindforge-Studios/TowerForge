@@ -12,6 +12,15 @@ export declare const LOGISTICS_POWER_LIMITS: Readonly<{
     liveNodes: 1024;
     undirectedEdges: 65536;
 }>;
+/** Closed structural and runtime budgets for opt-in Logistics v2 local ammunition. */
+export declare const LOGISTICS_AMMUNITION_LIMITS: Readonly<{
+    types: 256;
+    towerInventories: 4096;
+    liveInventories: 4096;
+    idUtf8Bytes: 128;
+    labelUtf8Bytes: 128;
+    capacity: 1000000000;
+}>;
 export interface LogisticsGeneratorDefinitionV1 {
     readonly output: number;
     readonly linkRadius: number;
@@ -33,18 +42,52 @@ export interface LogisticsPowerDefinitionV1 {
 export interface LogisticsProfileV1 {
     readonly power: LogisticsPowerDefinitionV1 | null;
 }
+export interface LogisticsAmmunitionTypeDefinitionV2 {
+    readonly label: string;
+}
+export interface LogisticsTowerInventoryDefinitionV2 {
+    readonly ammoTypeId: string;
+    readonly capacity: number;
+    readonly startingAmount: number;
+    readonly consumptionPerActivation: number;
+}
+export interface LogisticsAmmunitionDefinitionV2 {
+    readonly types: Readonly<Record<string, LogisticsAmmunitionTypeDefinitionV2>>;
+    readonly towerInventories: Readonly<Record<string, LogisticsTowerInventoryDefinitionV2>>;
+}
+export interface LogisticsProfileV2 {
+    readonly power: LogisticsPowerDefinitionV1 | null;
+    readonly ammunition: LogisticsAmmunitionDefinitionV2 | null;
+}
 export interface ActiveLogisticsMechanicsV1 extends LogisticsProfileV1 {
     readonly schemaVersion: 1;
     readonly profileId: string;
 }
+export interface ActiveLogisticsMechanicsV2 extends LogisticsProfileV2 {
+    readonly schemaVersion: 2;
+    readonly profileId: string;
+}
+export type ActiveLogisticsMechanics = ActiveLogisticsMechanicsV1 | ActiveLogisticsMechanicsV2;
 export declare const LOGISTICS_MECHANICS_SCHEMA: Readonly<{
-    schemaVersion: 1;
+    schemaVersion: 2;
     moduleId: "logistics";
-    supportedModuleSchemaVersions: readonly [1];
+    supportedModuleSchemaVersions: readonly [1, 2];
     profile: Readonly<{
-        requiredFields: readonly ["power"];
+        requiredFields: readonly ["power", "ammunition"];
         optionalFields: readonly [];
         additionalProperties: false;
+    }>;
+    profileVersions: Readonly<{
+        1: Readonly<{
+            requiredFields: readonly ["power"];
+            optionalFields: readonly [];
+            additionalProperties: false;
+        }>;
+        2: Readonly<{
+            requiredFields: readonly ["power", "ammunition"];
+            optionalFields: readonly [];
+            additionalProperties: false;
+        }>;
     }>;
     power: Readonly<{
         nullable: true;
@@ -67,22 +110,58 @@ export declare const LOGISTICS_MECHANICS_SCHEMA: Readonly<{
             additionalProperties: false;
         }>;
     }>;
+    ammunition: Readonly<{
+        nullable: true;
+        requiredFields: readonly ["types", "towerInventories"];
+        optionalFields: readonly [];
+        additionalProperties: false;
+        type: Readonly<{
+            requiredFields: readonly ["label"];
+            optionalFields: readonly [];
+            additionalProperties: false;
+        }>;
+        towerInventory: Readonly<{
+            requiredFields: readonly ["ammoTypeId", "capacity", "startingAmount", "consumptionPerActivation"];
+            optionalFields: readonly [];
+            additionalProperties: false;
+        }>;
+        fireCapableAttackKinds: readonly ["single", "pulse", "sniper", "antiair", "splash", "pipeline"];
+        limits: Readonly<{
+            types: 256;
+            towerInventories: 4096;
+            liveInventories: 4096;
+            idUtf8Bytes: 128;
+            labelUtf8Bytes: 128;
+            capacity: 1000000000;
+        }>;
+    }>;
     limits: Readonly<{
-        entriesPerRole: 4096;
-        entriesTotal: 4096;
-        idUtf8Bytes: 128;
-        output: 1000000000000;
-        demand: 1000000000000;
-        radius: 64;
-        priority: 1000000;
-        liveParticipants: 4096;
-        liveNodes: 1024;
-        undirectedEdges: 65536;
+        power: Readonly<{
+            entriesPerRole: 4096;
+            entriesTotal: 4096;
+            idUtf8Bytes: 128;
+            output: 1000000000000;
+            demand: 1000000000000;
+            radius: 64;
+            priority: 1000000;
+            liveParticipants: 4096;
+            liveNodes: 1024;
+            undirectedEdges: 65536;
+        }>;
+        ammunition: Readonly<{
+            types: 256;
+            towerInventories: 4096;
+            liveInventories: 4096;
+            idUtf8Bytes: 128;
+            labelUtf8Bytes: 128;
+            capacity: 1000000000;
+        }>;
     }>;
     runtimeSnapshot: Readonly<{
-        schemaVersion: 1;
-        fields: readonly ["schemaVersion", "power"];
+        schemaVersion: 2;
+        fields: readonly ["schemaVersion", "power", "ammunition"];
         powerFields: readonly ["components", "nodes", "consumers"];
+        ammunitionFields: readonly ["inventories"];
     }>;
 }>;
 export declare class LogisticsProfileValidationError extends Error {
@@ -91,5 +170,7 @@ export declare class LogisticsProfileValidationError extends Error {
 }
 /** Normalize one supported v1 profile without executing accessors or retaining authored references. */
 export declare function normalizeLogisticsProfileV1(value: unknown): LogisticsProfileV1;
+/** Normalize one supported v2 profile without executing accessors or retaining authored references. */
+export declare function normalizeLogisticsProfileV2(value: unknown): LogisticsProfileV2;
 /** Resolve only a selected, enabled, supported Logistics v1 profile. */
-export declare function resolveActiveLogisticsMechanics(content: GameContentRegistry, missionId: string): ActiveLogisticsMechanicsV1 | undefined;
+export declare function resolveActiveLogisticsMechanics(content: GameContentRegistry, missionId: string): ActiveLogisticsMechanics | undefined;

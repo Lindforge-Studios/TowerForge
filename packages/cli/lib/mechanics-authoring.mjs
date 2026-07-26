@@ -35,7 +35,7 @@ const MECHANICS_MODULE_SCHEMA_VERSIONS = Object.freeze({
   terraforming: Object.freeze([1]),
   roguelite: Object.freeze([1, 2, 3, 4]),
   heroes: Object.freeze([1, 2, 3, 4, 5, 6, 7]),
-  logistics: Object.freeze([1])
+  logistics: Object.freeze([1, 2])
 });
 const SOURCE_BYTE_LIMITS = Object.freeze({
   project: 256 * 1024,
@@ -539,6 +539,9 @@ function createCandidate(rawFiles, request) {
     throw new CandidateInputError("profile_required", `modules.${request.moduleId}.profiles.${profileId}`, "The selected mechanics profile does not exist and no profile payload was provided.");
   }
   defineOwn(module.profiles, profileId, profile);
+  if (request.moduleId === "logistics" && existingVersion === 1 && targetVersion === 2) {
+    promoteLogisticsProfilesToV2(module.profiles);
+  }
   if (request.moduleId === "heroes" && existingVersion === 5 && targetVersion === 6) {
     promoteHeroesProfilesToV6(module.profiles);
   }
@@ -570,6 +573,15 @@ function promoteHeroesProfilesToV6(profiles) {
       if (isRecord(definition) && !Object.hasOwn(definition, "passiveAura")) {
         defineOwn(definition, "passiveAura", null);
       }
+    }
+  }
+}
+
+function promoteLogisticsProfilesToV2(profiles) {
+  for (const profileId of Object.keys(profiles).sort(compareBinary)) {
+    const profile = ownValue(profiles, profileId);
+    if (isRecord(profile) && Object.hasOwn(profile, "power") && !Object.hasOwn(profile, "ammunition")) {
+      defineOwn(profile, "ammunition", null);
     }
   }
 }

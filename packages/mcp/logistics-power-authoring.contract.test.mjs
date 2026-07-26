@@ -73,12 +73,16 @@ describe("R5.7A MCP/AI Logistics power authoring RED", () => {
       logistics: {
         authoring: {
           moduleId: "logistics",
-          schemaVersion: 1,
-          supportedModuleSchemaVersions: [1],
-          profile: expect.objectContaining({
-            requiredFields: ["power"], additionalProperties: false
-          }),
-          limits: {
+          schemaVersion: 2,
+          supportedModuleSchemaVersions: [1, 2],
+          versions: {
+            1: expect.objectContaining({
+              requiredFields: ["power"], additionalProperties: false,
+              power: expect.objectContaining({ nullable: true, additionalProperties: false })
+            }),
+            2: expect.any(Object)
+          },
+          limits: expect.objectContaining({
             idUtf8Bytes: 128,
             definitionsPerRole: 4_096,
             definitionsAcrossRoles: 4_096,
@@ -86,9 +90,9 @@ describe("R5.7A MCP/AI Logistics power authoring RED", () => {
             radius: 64,
             priority: 1_000_000,
             liveParticipants: 4_096
-          }
+          })
         },
-        snapshot: { field: "logistics", optional: true, supportedSchemaVersions: [1] },
+        snapshot: { field: "logistics", optional: true, supportedSchemaVersions: [1, 2] },
         events: []
       }
     });
@@ -218,7 +222,9 @@ describe("R5.7A MCP/AI Logistics power authoring RED", () => {
       /basic_power_grid[\s\S]*(?:never|does not)[\s\S]*(?:enable|select|create|tower)/i
     );
     expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/snapshot[\s\S]*(?:never recompute|authoritative)/i);
-    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/no analyze_logistics|analyze_logistics[^.]*not added/i);
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(
+      /(?:no|or)\s+analyze_logistics|analyze_logistics[^.]*not added/i
+    );
     expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/ammo|inventory|factory|production/i);
 
     const skill = fs.readFileSync(PLUGIN_SKILL, "utf8");

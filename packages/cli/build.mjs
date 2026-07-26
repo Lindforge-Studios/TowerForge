@@ -1741,34 +1741,51 @@ function updateLogisticsStatus(snapshot) {
   panel.hidden = !presentation.active;
   if (!presentation.active) return;
   const heading = document.createElement("strong");
-  heading.textContent = "Power grid";
+  heading.textContent = "Logistics";
   panel.append(heading);
-  for (const component of presentation.power.components) {
-    const row = document.createElement("span");
-    row.textContent = component.id + ": " + component.allocated + "/" + component.output
-      + " allocated · " + component.consumerIds.length + " consumers";
-    panel.append(row);
-  }
-  const brownout = presentation.power.consumers.filter((consumer) => !consumer.powered);
-  if (brownout.length) {
-    const row = document.createElement("span");
-    row.dataset.logisticsBrownout = "true";
-    row.textContent = "Brownout: " + brownout.map((consumer) => consumer.towerId).join(", ");
-    panel.append(row);
-  }
-  for (const node of presentation.power.nodes) {
-    for (const linkedTowerId of node.linkTowerIds) {
-      if (node.towerId >= linkedTowerId) continue;
+  if (presentation.power) {
+    for (const component of presentation.power.components) {
       const row = document.createElement("span");
-      row.className = "logistics-link-cue";
-      row.textContent = "Grid link: " + node.towerId + " ↔ " + linkedTowerId;
+      row.textContent = component.id + ": " + component.allocated + "/" + component.output
+        + " allocated · " + component.consumerIds.length + " consumers";
       panel.append(row);
     }
-    for (const consumerTowerId of node.coveredConsumerIds) {
+    const brownout = presentation.power.consumers.filter((consumer) => !consumer.powered);
+    if (brownout.length) {
       const row = document.createElement("span");
-      row.className = "logistics-coverage-cue";
-      row.textContent = "Power coverage: " + node.towerId + " → " + consumerTowerId;
+      row.dataset.logisticsBrownout = "true";
+      row.textContent = "Brownout: " + brownout.map((consumer) => consumer.towerId).join(", ");
       panel.append(row);
+    }
+    for (const node of presentation.power.nodes) {
+      for (const linkedTowerId of node.linkTowerIds) {
+        if (node.towerId >= linkedTowerId) continue;
+        const row = document.createElement("span");
+        row.className = "logistics-link-cue";
+        row.textContent = "Grid link: " + node.towerId + " ↔ " + linkedTowerId;
+        panel.append(row);
+      }
+      for (const consumerTowerId of node.coveredConsumerIds) {
+        const row = document.createElement("span");
+        row.className = "logistics-coverage-cue";
+        row.textContent = "Power coverage: " + node.towerId + " → " + consumerTowerId;
+        panel.append(row);
+      }
+    }
+  }
+  if (presentation.ammunition) {
+    for (const inventory of presentation.ammunition.inventories) {
+      const row = document.createElement("span");
+      row.className = "logistics-ammunition-cue";
+      row.textContent = inventory.towerId + ": " + inventory.amount + "/" + inventory.capacity
+        + " " + inventory.ammoTypeId;
+      panel.append(row);
+      if (!inventory.hasRequiredAmmo) {
+        const depleted = document.createElement("span");
+        depleted.className = "logistics-depleted-cue";
+        depleted.textContent = "Depleted: " + inventory.towerId;
+        panel.append(depleted);
+      }
     }
   }
 }
@@ -3508,34 +3525,51 @@ function updateLogisticsStatus(snapshot) {
   panel.hidden = !presentation.active;
   if (!presentation.active) return;
   const heading = document.createElement("strong");
-  heading.textContent = "Power grid";
+  heading.textContent = "Logistics";
   panel.append(heading);
-  for (const component of presentation.power.components) {
-    const row = document.createElement("span");
-    row.textContent = component.id + ": " + component.allocated + "/" + component.output
-      + " allocated · " + component.consumerIds.length + " consumers";
-    panel.append(row);
-  }
-  const brownout = presentation.power.consumers.filter((consumer) => !consumer.powered);
-  if (brownout.length) {
-    const row = document.createElement("span");
-    row.dataset.logisticsBrownout = "true";
-    row.textContent = "Brownout: " + brownout.map((consumer) => consumer.towerId).join(", ");
-    panel.append(row);
-  }
-  for (const node of presentation.power.nodes) {
-    for (const linkedTowerId of node.linkTowerIds) {
-      if (node.towerId >= linkedTowerId) continue;
+  if (presentation.power) {
+    for (const component of presentation.power.components) {
       const row = document.createElement("span");
-      row.className = "logistics-link-cue";
-      row.textContent = "Grid link: " + node.towerId + " ↔ " + linkedTowerId;
+      row.textContent = component.id + ": " + component.allocated + "/" + component.output
+        + " allocated · " + component.consumerIds.length + " consumers";
       panel.append(row);
     }
-    for (const consumerTowerId of node.coveredConsumerIds) {
+    const brownout = presentation.power.consumers.filter((consumer) => !consumer.powered);
+    if (brownout.length) {
       const row = document.createElement("span");
-      row.className = "logistics-coverage-cue";
-      row.textContent = "Power coverage: " + node.towerId + " → " + consumerTowerId;
+      row.dataset.logisticsBrownout = "true";
+      row.textContent = "Brownout: " + brownout.map((consumer) => consumer.towerId).join(", ");
       panel.append(row);
+    }
+    for (const node of presentation.power.nodes) {
+      for (const linkedTowerId of node.linkTowerIds) {
+        if (node.towerId >= linkedTowerId) continue;
+        const row = document.createElement("span");
+        row.className = "logistics-link-cue";
+        row.textContent = "Grid link: " + node.towerId + " ↔ " + linkedTowerId;
+        panel.append(row);
+      }
+      for (const consumerTowerId of node.coveredConsumerIds) {
+        const row = document.createElement("span");
+        row.className = "logistics-coverage-cue";
+        row.textContent = "Power coverage: " + node.towerId + " → " + consumerTowerId;
+        panel.append(row);
+      }
+    }
+  }
+  if (presentation.ammunition) {
+    for (const inventory of presentation.ammunition.inventories) {
+      const row = document.createElement("span");
+      row.className = "logistics-ammunition-cue";
+      row.textContent = inventory.towerId + ": " + inventory.amount + "/" + inventory.capacity
+        + " " + inventory.ammoTypeId;
+      panel.append(row);
+      if (!inventory.hasRequiredAmmo) {
+        const depleted = document.createElement("span");
+        depleted.className = "logistics-depleted-cue";
+        depleted.textContent = "Depleted: " + inventory.towerId;
+        panel.append(depleted);
+      }
     }
   }
 }

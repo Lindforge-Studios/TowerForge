@@ -11,7 +11,7 @@ import { PHYSICS_LIMITS, inspectOwnDataEffect, parseDisplacementEffectV1, resolv
 import { TERRAFORMING_LIMITS, TerraformingProfileValidationError, normalizeTerraformingProfileV1 } from "./terraforming-mechanics.js";
 import { ROGUELITE_SYNERGY_LIMITS, ROGUELITE_DRAFT_LIMITS, RogueliteProfileValidationError, assertRogueliteV2ModifierBudget, assertRogueliteV3ModifierBudget, normalizeRogueliteProfileV1, normalizeRogueliteProfileV2, normalizeRogueliteProfileV3, normalizeRogueliteProfileV4, normalizeTowerTagsV1 } from "./roguelite-mechanics.js";
 import { HeroesProfileValidationError, normalizeHeroesProfileV1, normalizeHeroesProfileV2, normalizeHeroesProfileV3, normalizeHeroesProfileV4, normalizeHeroesProfileV5, normalizeHeroesProfileV6, normalizeHeroesProfileV7, validateHeroSkillTreeSemanticsV5 } from "./heroes-mechanics.js";
-import { LogisticsProfileValidationError, normalizeLogisticsProfileV1 } from "./logistics-mechanics.js";
+import { LogisticsProfileValidationError, normalizeLogisticsProfileV1, normalizeLogisticsProfileV2 } from "./logistics-mechanics.js";
 import { normalizeAuthoredWorldCampaign, WorldCampaignValidationError } from "../run/campaign-world.js";
 import { campaignBattleRogueliteWorstCaseModifierCount, preflightHeroAuraDamageFinite } from "../run/campaign-battle-policy.js";
 import { MAX_MODIFIERS_PER_RESOLUTION } from "../simulation/modifiers.js";
@@ -2198,9 +2198,9 @@ export function validateGameContentRegistry(content) {
                 err("mechanics", "logistics", `modules.logistics.${key}`, `Logistics module is closed; unknown field "${key}".`);
             }
         }
-        const supported = module.schemaVersion === 1;
+        const supported = module.schemaVersion === 1 || module.schemaVersion === 2;
         if (!supported) {
-            err("mechanics", "logistics", "modules.logistics.schemaVersion", "Logistics future or unsupported schemaVersion; only version 1 is supported.");
+            err("mechanics", "logistics", "modules.logistics.schemaVersion", "Logistics future or unsupported schemaVersion; only versions 1 and 2 are supported.");
         }
         if (typeof module.enabled !== "boolean") {
             err("mechanics", "logistics", "modules.logistics.enabled", "Logistics mechanics enabled must be boolean.");
@@ -2219,7 +2219,9 @@ export function validateGameContentRegistry(content) {
             const root = `modules.logistics.profiles.${profileId}`;
             let profile;
             try {
-                profile = normalizeLogisticsProfileV1(profiles[profileId]);
+                profile = module.schemaVersion === 1
+                    ? normalizeLogisticsProfileV1(profiles[profileId])
+                    : normalizeLogisticsProfileV2(profiles[profileId]);
             }
             catch (error) {
                 const relative = error instanceof LogisticsProfileValidationError
@@ -2228,27 +2230,52 @@ export function validateGameContentRegistry(content) {
                 err("mechanics", profileId, `${root}${relative}`, error instanceof Error ? error.message : "Logistics profile could not be inspected safely.");
                 continue;
             }
-            if (profile.power === null)
-                continue;
             const active = module.enabled === true && (selectedByProfile.get(profileId)?.length ?? 0) > 0;
             const semantic = active ? err : warn;
-            const roles = [
-                ["generators", profile.power.generators],
-                ["relays", profile.power.relays],
-                ["consumers", profile.power.consumers]
-            ];
-            for (const [role, definitions] of roles) {
-                for (const towerTypeId of Object.keys(definitions)) {
-                    const tower = content.towers[towerTypeId];
-                    if (!tower) {
-                        semantic("mechanics", profileId, `${root}.power.${role}.${towerTypeId}`, `Logistics ${role.slice(0, -1)} references unknown tower type "${towerTypeId}"`
-                            + `${active ? "." : " in this inactive or unselected profile."}`);
-                        continue;
+            if (profile.power !== null) {
+                const roles = [
+                    ["generators", profile.power.generators],
+                    ["relays", profile.power.relays],
+                    ["consumers", profile.power.consumers]
+                ];
+                for (const [role, definitions] of roles) {
+                    for (const towerTypeId of Object.keys(definitions)) {
+                        const tower = Object.prototype.hasOwnProperty.call(content.towers, towerTypeId)
+                            ? content.towers[towerTypeId]
+                            : undefined;
+                        if (!tower) {
+                            semantic("mechanics", profileId, `${root}.power.${role}.${towerTypeId}`, `Logistics ${role.slice(0, -1)} references unknown tower type "${towerTypeId}"`
+                                + `${active ? "." : " in this inactive or unselected profile."}`);
+                            continue;
+                        }
+                        if (role === "consumers" && ![
+                            "single", "pulse", "sniper", "antiair", "splash", "pipeline"
+                        ].includes(tower.attack.kind)) {
+                            semantic("mechanics", profileId, `${root}.power.consumers.${towerTypeId}`, `Logistics consumer tower "${towerTypeId}" must use a fire-capable attack; `
+                                + `passive ${tower.attack.kind} is unsupported${active ? "." : " in this inactive profile."}`);
+                        }
                     }
-                    if (role === "consumers" && ![
-                        "single", "pulse", "sniper", "antiair", "splash", "pipeline"
-                    ].includes(tower.attack.kind)) {
-                        semantic("mechanics", profileId, `${root}.power.consumers.${towerTypeId}`, `Logistics consumer tower "${towerTypeId}" must use a fire-capable attack; `
+                }
+            }
+            const profileAmmunition = "ammunition" in profile
+                ? profile.ammunition
+                : undefined;
+            if (profileAmmunition) {
+                for (const [towerTypeId, inventory] of Object.entries(profileAmmunition.towerInventories)) {
+                    const path = `${root}.ammunition.towerInventories.${towerTypeId}`;
+                    if (!Object.prototype.hasOwnProperty.call(profileAmmunition.types, inventory.ammoTypeId)) {
+                        semantic("mechanics", profileId, `${path}.ammoTypeId`, `Logistics ammunition inventory references unknown ammunition type "${inventory.ammoTypeId}"`
+                            + `${active ? "." : " in this inactive or unselected profile."}`);
+                    }
+                    const tower = Object.prototype.hasOwnProperty.call(content.towers, towerTypeId)
+                        ? content.towers[towerTypeId]
+                        : undefined;
+                    if (!tower) {
+                        semantic("mechanics", profileId, path, `Logistics ammunition inventory references unknown tower type "${towerTypeId}"`
+                            + `${active ? "." : " in this inactive or unselected profile."}`);
+                    }
+                    else if (!["single", "pulse", "sniper", "antiair", "splash", "pipeline"].includes(tower.attack.kind)) {
+                        semantic("mechanics", profileId, path, `Logistics ammunition tower "${towerTypeId}" must use a fire-capable attack; `
                             + `passive ${tower.attack.kind} is unsupported${active ? "." : " in this inactive profile."}`);
                     }
                 }

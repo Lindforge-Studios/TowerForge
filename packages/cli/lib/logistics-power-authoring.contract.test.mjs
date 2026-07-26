@@ -280,17 +280,21 @@ describe("R5.7A Logistics v1 CLI/project/recipe authoring RED", () => {
     expect(transactionBytes(rollbackDir)).toEqual(beforeRollback);
   }, 20_000);
 
-  it("preserves future v2 losslessly read-only and refuses guarded writes", async () => {
+  it("preserves future v3 losslessly read-only and refuses guarded writes", async () => {
     const projectDir = fixture();
     const manifestPath = path.join(projectDir, "project.json");
     const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
     manifest.schemaVersion = 3;
     writeJson(manifestPath, manifest);
-    const futureProfile = { power: null, quantumLinks: { mode: "future", coefficients: [1, 2, 3] } };
+    const futureProfile = {
+      power: null,
+      ammunition: null,
+      quantumLinks: { mode: "future", coefficients: [1, 2, 3] }
+    };
     writeJson(path.join(projectDir, "content", "mechanics.json"), {
       schemaVersion: 1,
       modules: {
-        logistics: { schemaVersion: 2, enabled: true, profiles: { future_grid: futureProfile } }
+        logistics: { schemaVersion: 3, enabled: true, profiles: { future_grid: futureProfile } }
       }
     });
     const balancePath = path.join(projectDir, "content", "balance.json");
@@ -301,11 +305,11 @@ describe("R5.7A Logistics v1 CLI/project/recipe authoring RED", () => {
 
     const view = await inspectMechanicsAuthoring(projectDir, { missionId: "tutorial_01" });
     expect(view.logistics).toMatchObject({
-      enabled: true, moduleSchemaVersion: 2, selectedProfileId: "future_grid",
+      enabled: true, moduleSchemaVersion: 3, selectedProfileId: "future_grid",
       selectedProfile: futureProfile
     });
     expect(view.capabilities.logistics).toMatchObject({
-      available: true, active: false, reason: "module_version_unsupported", moduleSchemaVersion: 2
+      available: true, active: false, reason: "module_version_unsupported", moduleSchemaVersion: 3
     });
     const attempted = await previewMechanicsModule(projectDir, request());
     expect(attempted).toMatchObject({ ok: false, written: false });

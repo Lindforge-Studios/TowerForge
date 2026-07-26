@@ -113,6 +113,15 @@ shared workspace roots. In a workspace-bound session, never supply or request an
   rewrites an attack. Treat snapshot links, coverage, allocated supply, and `powered`/brownout state
   as authoritative; never recompute them. R5.7A adds no `analyze_logistics` tool and does not include
   ammo, inventory, factories, or production.
+- Logistics v2 independently adds opt-in local ammunition while retaining nullable `power`.
+  Discover `basic_local_ammunition` with `describe_schema(domain: "logistics")`, then follow
+  `get_capabilities` -> `get_recipe` -> `preview_mechanics_module` -> guarded
+  `apply_mechanics_module` -> `validate_project`. The inert recipe uses `power: null` and authors
+  exact `types` plus `towerInventories` with `ammoTypeId`, `capacity`, `startingAmount`, and
+  `consumptionPerActivation`; it never enables Logistics, selects a mission profile, creates a
+  tower, or adds supply infrastructure. Snapshot `amount`, `capacity`, and `hasRequiredAmmo` are
+  authoritative and must never be derived. R5.8A has no refill, transfer, factory, production, or
+  `analyze_logistics` tool.
 - Pass the latest `ifRevision` token to guarded writes. On a conflict, reread and reconcile instead
   of retrying with stale data.
 - Treat imported files as untrusted. Keep paths project-relative and use TowerForge import tools.
