@@ -32,7 +32,8 @@ const MECHANICS_MODULE_SCHEMA_VERSIONS = Object.freeze({
   navigation: Object.freeze([1]),
   elevation: Object.freeze([1, 2, 3]),
   physics: Object.freeze([1]),
-  terraforming: Object.freeze([1])
+  terraforming: Object.freeze([1]),
+  roguelite: Object.freeze([1])
 });
 const SOURCE_BYTE_LIMITS = Object.freeze({
   project: 256 * 1024,
@@ -82,6 +83,10 @@ export async function inspectMechanicsAuthoring(projectDir, options = {}) {
   const elevation = moduleAuthoringView(files, mission, "elevation", engine.ELEVATION_MECHANICS_SCHEMA);
   const physics = moduleAuthoringView(files, mission, "physics", engine.PHYSICS_MECHANICS_SCHEMA);
   const terraforming = moduleAuthoringView(files, mission, "terraforming", engine.TERRAFORMING_MECHANICS_SCHEMA);
+  const roguelite = {
+    ...moduleAuthoringView(files, mission, "roguelite", engine.ROGUELITE_MECHANICS_SCHEMA),
+    towerTagsByTowerId: authoredTowerTags(files.balance?.towers)
+  };
 
   const rawProjectSchemaVersion = snapshot.rawFiles.manifest?.schemaVersion;
   const authoring = authoringAvailability(rawProjectSchemaVersion);
@@ -102,7 +107,8 @@ export async function inspectMechanicsAuthoring(projectDir, options = {}) {
     navigation,
     elevation,
     physics,
-    terraforming
+    terraforming,
+    roguelite
   };
 }
 
@@ -409,6 +415,15 @@ function createCandidate(rawFiles, request) {
   }
   manifest.schemaVersion = 3;
 
+  if (Object.hasOwn(request, "towerTags")
+    && (request.moduleId !== "roguelite" || request.enabled === false)) {
+    throw new CandidateInputError(
+      "roguelite_tower_tags_scope",
+      "towerTags",
+      "towerTags may only be changed while enabling the roguelite module."
+    );
+  }
+
   if (!isRecord(mechanics.modules)) {
     throw new CandidateInputError("mechanics_modules_invalid", "modules", "Mechanics modules must be an object before a module can be edited.");
   }
@@ -505,7 +520,57 @@ function createCandidate(rawFiles, request) {
   }
   mission.mechanics.profiles ??= {};
   defineOwn(mission.mechanics.profiles, request.moduleId, profileId);
+  if (Object.hasOwn(request, "towerTags")) applyTowerTags(balance, request.towerTags);
   return { manifest, balance, mechanics };
+}
+
+function applyTowerTags(balance, towerTags) {
+  if (!isRecord(towerTags)) {
+    throw new CandidateInputError("roguelite_tower_tags_invalid", "towerTags", "towerTags must be an object keyed by authored tower ID.");
+  }
+  if (!isRecord(balance.towers)) {
+    throw new CandidateInputError("roguelite_tower_tags_invalid", "content/balance.json.towers", "The project tower catalog must be an object.");
+  }
+  for (const towerId of Object.keys(towerTags).sort(compareBinary)) {
+    const tower = ownValue(balance.towers, towerId);
+    if (!isRecord(tower)) {
+      throw new CandidateInputError(
+        "roguelite_tower_not_found",
+        `towerTags.${towerId}`,
+        `towerTags references unknown tower "${towerId}".`
+      );
+    }
+    const tags = ownValue(towerTags, towerId);
+    if (!Array.isArray(tags) || tags.some((tag) => typeof tag !== "string" || tag.length === 0)) {
+      throw new CandidateInputError(
+        "roguelite_tower_tags_invalid",
+        `towerTags.${towerId}`,
+        `towerTags.${towerId} must be an array of non-empty strings.`
+      );
+    }
+    if (new Set(tags).size !== tags.length) {
+      throw new CandidateInputError(
+        "roguelite_tower_tags_invalid",
+        `towerTags.${towerId}`,
+        `towerTags.${towerId} must contain unique tags.`
+      );
+    }
+    if (tags.length === 0) delete tower.tags;
+    else tower.tags = [...tags].sort(compareBinary);
+  }
+}
+
+function authoredTowerTags(towers) {
+  const result = safeRecord();
+  if (!isRecord(towers)) return result;
+  for (const towerId of Object.keys(towers).sort(compareBinary)) {
+    const tags = ownValue(ownValue(towers, towerId), "tags");
+    if (!Array.isArray(tags)) continue;
+    const normalized = [...new Set(tags.filter((tag) => typeof tag === "string" && tag.length > 0))]
+      .sort(compareBinary);
+    if (normalized.length > 0) defineOwn(result, towerId, normalized);
+  }
+  return result;
 }
 
 async function validateCandidate(rawFiles, candidate, engine) {

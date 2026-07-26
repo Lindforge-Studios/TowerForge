@@ -152,7 +152,8 @@ export function contentRecipeContext(files) {
   return {
     mapIds: Object.keys(files.maps ?? {}),
     waveSetIds: Object.keys(balance.waveSets ?? files.waveSets ?? {}),
-    towerIds: towerEntries.map(([id]) => id),
+    towerIds: towerEntries.map(([id]) => id).sort(compareBinary),
+    towerTagsByTowerId: authoredTowerTags(towerEntries),
     abilityIds: Object.keys(balance.abilities ?? files.abilities ?? {}),
     defaultMissionId,
     missionIds,
@@ -168,6 +169,24 @@ export function contentRecipeContext(files) {
       .filter(([, tower]) => Number.isFinite(tower?.maxHp) && tower.maxHp > 0)
       .map(([id]) => id)
   };
+}
+
+function authoredTowerTags(towerEntries) {
+  const result = Object.create(null);
+  for (const [towerId, tower] of [...towerEntries].sort(([left], [right]) => compareBinary(left, right))) {
+    const tags = ownDataValue(tower, "tags");
+    if (!Array.isArray(tags)) continue;
+    const normalized = [...new Set(tags.filter((tag) => typeof tag === "string" && tag.length > 0))]
+      .sort(compareBinary);
+    if (normalized.length === 0) continue;
+    Object.defineProperty(result, towerId, {
+      value: normalized,
+      enumerable: true,
+      configurable: true,
+      writable: true
+    });
+  }
+  return result;
 }
 
 function authoredTerrainTags(terrainTypes) {

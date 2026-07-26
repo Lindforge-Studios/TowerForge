@@ -386,6 +386,7 @@ function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "
         <label class="speed">SFX <input id="sfx-volume" type="range" min="0" max="1" step="0.05" value="0.5"><span id="sfx-volume-label">50%</span></label>
         <label class="speed">Music <input id="music-volume" type="range" min="0" max="1" step="0.05" value="0.35"><span id="music-volume-label">35%</span></label>
         <div id="ability-bar" class="ability-bar"></div>
+        <section id="roguelite-status" class="roguelite-status" aria-label="Tower synergies" hidden></section>
         <section id="meta-panel" class="meta-panel" aria-label="Permanent upgrades" hidden>
           <div class="meta-title">Forge upgrades <span id="meta-resources"></span></div>
           <div id="meta-upgrades" class="meta-upgrades"></div>
@@ -463,7 +464,7 @@ function cssTemplate(target) {
 body{overflow:hidden;overscroll-behavior:none;touch-action:manipulation;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
 .hud{padding-top:calc(12px + env(safe-area-inset-top))}
 .panel{padding-bottom:calc(14px + env(safe-area-inset-bottom))}
-button,select,input{font:inherit}button,select{border:1px solid var(--border);border-radius:6px;background:#111611;color:var(--text);padding:8px 10px}button{cursor:pointer}button:hover{border-color:var(--accent)}button:focus-visible,select:focus-visible,input:focus-visible,#playfield:focus-visible{outline:2px solid var(--accent);outline-offset:2px}button[aria-pressed="true"]{border-color:var(--danger);color:var(--danger)}#app{height:100%;display:flex;flex-direction:column}.hud{display:flex;gap:18px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface)}h1{font-size:18px;line-height:1.1;margin:0;color:var(--accent);letter-spacing:0}p{margin:4px 0 0;color:var(--muted)}.controls{margin-left:auto;display:flex;gap:10px;align-items:end;flex-wrap:wrap}.controls label{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:12px}.play-shell{min-height:0;flex:1;display:grid;grid-template-columns:minmax(0,1fr) 280px}#playfield{width:100%;height:100%;display:block;background:#101410;overflow:hidden;background-position:center;background-size:cover;background-repeat:no-repeat;touch-action:none}#playfield canvas{display:block}.panel{border-left:1px solid var(--border);background:var(--panel);padding:14px;display:flex;flex-direction:column;gap:10px;overflow:auto}.stat{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)}.stat span{color:var(--muted)}.stat strong{font-variant-numeric:tabular-nums}.targeting{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:center;color:var(--muted);font-size:13px}.targeting select{min-width:0}.speed{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;color:var(--muted);margin-top:8px}#message{min-height:42px;padding:10px;border:1px solid var(--border);border-radius:6px;background:#161a16;color:var(--text)}.ability-bar{display:flex;flex-wrap:wrap;gap:6px}.ability-bar:empty{display:none}.ability-bar button{padding:6px 9px;font-size:12px}.ability-bar button.armed{border-color:var(--accent);color:var(--accent)}.ability-bar button:disabled{opacity:.45;cursor:default}.meta-panel{border-top:1px solid var(--border);padding-top:10px}.meta-title{display:flex;justify-content:space-between;gap:8px;color:var(--muted);font-size:12px;text-transform:uppercase}.meta-upgrades{display:grid;gap:6px;margin-top:8px}.meta-upgrade{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center;padding:7px;border:1px solid var(--border);border-radius:6px;background:#161a16}.meta-upgrade span{min-width:0;font-size:12px}.meta-upgrade button{padding:5px 7px;font-size:11px}.boot-error,.story-overlay{position:fixed;inset:0;z-index:20;display:grid;place-items:center;padding:24px;background:#0b0e0bdd}.boot-error[hidden],.story-overlay[hidden]{display:none}.boot-error-panel{width:min(460px,100%);padding:22px;border:1px solid var(--danger);border-radius:6px;background:var(--surface);box-shadow:0 20px 60px #0009}.boot-error-panel h2{margin:0 0 8px;font-size:20px}.boot-error-actions,.story-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}.story-panel{width:min(820px,100%);max-height:min(680px,90vh);display:grid;grid-template-columns:minmax(0,1.2fr) minmax(280px,.8fr);overflow:hidden;border:1px solid var(--border);border-radius:6px;background:var(--surface);box-shadow:0 20px 60px #0009}.story-art{min-height:360px;background-position:center;background-size:cover;background-repeat:no-repeat;background-color:#101410}.story-copy{padding:24px;align-self:end}.story-copy h2{margin:0 0 18px;font-size:24px}.story-speaker{min-height:18px;color:var(--accent);font-weight:700}.story-text{color:var(--text);font-size:16px;line-height:1.55;white-space:pre-wrap}@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}}@media(max-width:820px){body{overflow:auto}.hud{align-items:flex-start;flex-direction:column}.controls{margin-left:0}.play-shell{grid-template-columns:1fr;grid-template-rows:65vh auto}.panel{border-left:0;border-top:1px solid var(--border)}.story-panel{grid-template-columns:1fr}.story-art{min-height:220px}.story-copy{padding:18px}}`;
+button,select,input{font:inherit}button,select{border:1px solid var(--border);border-radius:6px;background:#111611;color:var(--text);padding:8px 10px}button{cursor:pointer}button:hover{border-color:var(--accent)}button:focus-visible,select:focus-visible,input:focus-visible,#playfield:focus-visible{outline:2px solid var(--accent);outline-offset:2px}button[aria-pressed="true"]{border-color:var(--danger);color:var(--danger)}#app{height:100%;display:flex;flex-direction:column}.hud{display:flex;gap:18px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface)}h1{font-size:18px;line-height:1.1;margin:0;color:var(--accent);letter-spacing:0}p{margin:4px 0 0;color:var(--muted)}.controls{margin-left:auto;display:flex;gap:10px;align-items:end;flex-wrap:wrap}.controls label{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:12px}.play-shell{min-height:0;flex:1;display:grid;grid-template-columns:minmax(0,1fr) 280px}#playfield{width:100%;height:100%;display:block;background:#101410;overflow:hidden;background-position:center;background-size:cover;background-repeat:no-repeat;touch-action:none}#playfield canvas{display:block}.panel{border-left:1px solid var(--border);background:var(--panel);padding:14px;display:flex;flex-direction:column;gap:10px;overflow:auto}.stat{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)}.stat span{color:var(--muted)}.stat strong{font-variant-numeric:tabular-nums}.targeting{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:center;color:var(--muted);font-size:13px}.targeting select{min-width:0}.speed{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;color:var(--muted);margin-top:8px}#message{min-height:42px;padding:10px;border:1px solid var(--border);border-radius:6px;background:#161a16;color:var(--text)}.ability-bar{display:flex;flex-wrap:wrap;gap:6px}.ability-bar:empty{display:none}.ability-bar button{padding:6px 9px;font-size:12px}.ability-bar button.armed{border-color:var(--accent);color:var(--accent)}.ability-bar button:disabled{opacity:.45;cursor:default}.roguelite-status{display:grid;gap:5px;border-top:1px solid var(--border);padding-top:10px}.roguelite-status[hidden]{display:none}.roguelite-status strong{font-size:12px;color:var(--accent)}.roguelite-status span{font-size:12px;color:var(--muted)}.meta-panel{border-top:1px solid var(--border);padding-top:10px}.meta-title{display:flex;justify-content:space-between;gap:8px;color:var(--muted);font-size:12px;text-transform:uppercase}.meta-upgrades{display:grid;gap:6px;margin-top:8px}.meta-upgrade{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center;padding:7px;border:1px solid var(--border);border-radius:6px;background:#161a16}.meta-upgrade span{min-width:0;font-size:12px}.meta-upgrade button{padding:5px 7px;font-size:11px}.boot-error,.story-overlay{position:fixed;inset:0;z-index:20;display:grid;place-items:center;padding:24px;background:#0b0e0bdd}.boot-error[hidden],.story-overlay[hidden]{display:none}.boot-error-panel{width:min(460px,100%);padding:22px;border:1px solid var(--danger);border-radius:6px;background:var(--surface);box-shadow:0 20px 60px #0009}.boot-error-panel h2{margin:0 0 8px;font-size:20px}.boot-error-actions,.story-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}.story-panel{width:min(820px,100%);max-height:min(680px,90vh);display:grid;grid-template-columns:minmax(0,1.2fr) minmax(280px,.8fr);overflow:hidden;border:1px solid var(--border);border-radius:6px;background:var(--surface);box-shadow:0 20px 60px #0009}.story-art{min-height:360px;background-position:center;background-size:cover;background-repeat:no-repeat;background-color:#101410}.story-copy{padding:24px;align-self:end}.story-copy h2{margin:0 0 18px;font-size:24px}.story-speaker{min-height:18px;color:var(--accent);font-weight:700}.story-text{color:var(--text);font-size:16px;line-height:1.55;white-space:pre-wrap}@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}}@media(max-width:820px){body{overflow:auto}.hud{align-items:flex-start;flex-direction:column}.controls{margin-left:0}.play-shell{grid-template-columns:1fr;grid-template-rows:65vh auto}.panel{border-left:0;border-top:1px solid var(--border)}.story-panel{grid-template-columns:1fr}.story-art{min-height:220px}.story-copy{padding:18px}}`;
 }
 
 function playerProfileRuntimeTemplate() {
@@ -652,7 +653,7 @@ function playerTemplate() {
   TowerDefenseGame
 } from "./engine/index.js";
 import { createPlayerProfileStore, derivePlayerProfileStorageKey } from "./player-runtime/index.mjs";
-import { createCanvasRenderer, projectElevationCues, projectNavigationPlacementCues, projectPhysicsPresentationCues } from "./renderer/index.mjs";
+import { createCanvasRenderer, projectElevationCues, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectRoguelitePresentation } from "./renderer/index.mjs";
 import { createAudioPlayer } from "./renderer/audio.mjs";
 import project from "./project-data.js";
 
@@ -1138,6 +1139,7 @@ function draw(snap, events) {
 function updateHud(snap) {
   updateAbilityBar(snap);
   updateTargetMode(snap);
+  updateRogueliteStatus(snap);
   if (snap.outcome === "victory" && !victoryRewarded) {
     victoryRewarded = true;
     recordPlayerVictory(missionId, (snap.stars || []).filter((item) => item.achieved).length);
@@ -1156,6 +1158,24 @@ function updateHud(snap) {
   $("stat-objectives").textContent = objectives.filter((item) => item.complete).length + "/" + objectives.length
     + (stars.length ? " | " + stars.filter((item) => item.achieved).length + "/" + stars.length + " stars" : "");
   $("message").textContent = playerProfileStatusText(message);
+}
+
+function updateRogueliteStatus(snap) {
+  const panel = $("roguelite-status");
+  if (!panel) return;
+  const presentation = projectRoguelitePresentation(snap);
+  if (!presentation) { panel.hidden = true; panel.replaceChildren(); return; }
+  panel.hidden = !presentation.active;
+  panel.replaceChildren();
+  if (!presentation.active) return;
+  for (const synergy of presentation.synergies) {
+    const row = document.createElement("span");
+    const active = synergy.activeTierRequiredCounts.length
+      ? "active " + synergy.activeTierRequiredCounts.join("/")
+      : "inactive";
+    row.textContent = synergy.label + ": " + synergy.towerCount + " towers (" + active + ")";
+    panel.append(row);
+  }
 }
 
 function updateTargetMode(snap) {
@@ -1218,6 +1238,7 @@ import {
   projectMarkPresentationCues,
   projectNavigationPlacementCues,
   projectPhysicsPresentationCues,
+  projectRoguelitePresentation,
   projectReactionPresentationCues,
   projectSnapshotSpawnCoord,
   projectShieldPresentationCues,
@@ -2196,6 +2217,7 @@ function finishStory() {
 function updateHud(snap) {
   updateAbilityBar(snap);
   updateTargetMode(snap);
+  updateRogueliteStatus(snap);
   if (snap.outcome === "victory" && !victoryRewarded) {
     victoryRewarded = true;
     recordPlayerVictory(missionId, (snap.stars || []).filter((item) => item.achieved).length);
@@ -2214,6 +2236,24 @@ function updateHud(snap) {
   $("stat-objectives").textContent = objectives.filter((item) => item.complete).length + "/" + objectives.length
     + (stars.length ? " | " + stars.filter((item) => item.achieved).length + "/" + stars.length + " stars" : "");
   $("message").textContent = playerProfileStatusText(message);
+}
+
+function updateRogueliteStatus(snap) {
+  const panel = $("roguelite-status");
+  if (!panel) return;
+  const presentation = projectRoguelitePresentation(snap);
+  if (!presentation) { panel.hidden = true; panel.replaceChildren(); return; }
+  panel.hidden = !presentation.active;
+  panel.replaceChildren();
+  if (!presentation.active) return;
+  for (const synergy of presentation.synergies) {
+    const row = document.createElement("span");
+    const active = synergy.activeTierRequiredCounts.length
+      ? "active " + synergy.activeTierRequiredCounts.join("/")
+      : "inactive";
+    row.textContent = synergy.label + ": " + synergy.towerCount + " towers (" + active + ")";
+    panel.append(row);
+  }
 }
 
 function updateTargetMode(snap) {

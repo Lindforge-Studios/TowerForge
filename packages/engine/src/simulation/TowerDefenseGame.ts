@@ -29,6 +29,11 @@ import {
   resolveActiveTerraformingMechanics,
   type ActiveTerraformingMechanicsV1
 } from "../content/terraforming-mechanics.js";
+import {
+  deriveRogueliteSynergyStateV1,
+  resolveActiveRogueliteMechanics,
+  type ActiveRogueliteMechanicsV1
+} from "../content/roguelite-mechanics.js";
 import { evaluateTowerScriptExpression } from "../scripting/expression.js";
 import {
   TOWER_SCRIPT_EVENTS,
@@ -606,6 +611,9 @@ export class TowerDefenseGame {
   private readonly activeHighGroundProfile: ActiveHighGroundMechanics | undefined;
   private readonly activePhysicsMechanics: ActivePhysicsMechanicsV1 | undefined;
   private readonly activeTerraformingMechanics: ActiveTerraformingMechanicsV1 | undefined;
+  private readonly activeRogueliteMechanics: ActiveRogueliteMechanicsV1 | undefined;
+  private rogueliteSnapshot: GameSnapshot["roguelite"];
+  private rogueliteDamageModifiers: readonly ModifierSpec[] = Object.freeze([]);
   private readonly navigationMandatoryPairs: readonly NavigationMandatoryPair[];
   private readonly navigationKnownPairs: readonly NavigationMandatoryPair[];
   private navigationResolver: NavigationResolver | undefined;
@@ -694,6 +702,8 @@ export class TowerDefenseGame {
     this.activeHighGroundProfile = resolveActiveHighGroundMechanics(this.content, missionId);
     this.activePhysicsMechanics = resolveActivePhysicsMechanics(this.content, missionId);
     this.activeTerraformingMechanics = resolveActiveTerraformingMechanics(this.content, missionId);
+    this.activeRogueliteMechanics = resolveActiveRogueliteMechanics(this.content, missionId);
+    this.rebuildRogueliteSynergies();
     this.terraformingCheckpointForm = this.activeTerraformingMechanics ? 2 : 0;
     this.map.useRuntimeElevationOverrides(this.runtimeElevationOverrides);
     const selectedNavigation = resolveActiveNavigationMechanics(this.content, missionId);
@@ -798,6 +808,7 @@ export class TowerDefenseGame {
     this.enemies = [];
     this.navigationEnemyFields?.clear();
     this.towers = [];
+    this.rebuildRogueliteSynergies();
     this.enemyShields = {};
     this.towerShields = {};
     this.enemyMarks = {};
@@ -939,6 +950,7 @@ export class TowerDefenseGame {
 
     this.spendResources(type.cost);
     this.towers.push(tower);
+    this.rebuildRogueliteSynergies();
     this.initializeTowerShield(tower);
     this.map.setOccupied(tower.footprint, towerId);
     this.syncNavigationOccupancy();
@@ -4300,6 +4312,7 @@ export class TowerDefenseGame {
     }));
     this.navigationEnemyFields?.clear();
     this.towers = [...state.towers] as TowerState[];
+    this.rebuildRogueliteSynergies();
     this.lastEvents = [...state.lastEvents] as GameEvent[];
     this.enemyCounter = state.enemyCounter;
     this.towerCounter = state.towerCounter;
@@ -4470,6 +4483,7 @@ export class TowerDefenseGame {
       ...(navigation === undefined ? {} : { navigation }),
       ...(elevation === undefined ? {} : { elevation }),
       ...(terraforming === undefined ? {} : { terraforming }),
+      ...(this.rogueliteSnapshot === undefined ? {} : { roguelite: this.rogueliteSnapshot }),
       scriptState: {
         values: this.cloneScriptValues(),
         diagnostics: this.scriptDiagnostics.map((diagnostic) => ({ ...diagnostic }))
@@ -7171,8 +7185,20 @@ export class TowerDefenseGame {
     if (index < 0) return;
     this.map.clearOccupied(towerId); // free the footprint tiles for rebuilding
     this.towers.splice(index, 1);
+    this.rebuildRogueliteSynergies();
     delete this.towerShields[towerId];
     this.syncNavigationOccupancy();
+  }
+
+  private rebuildRogueliteSynergies(): void {
+    if (!this.activeRogueliteMechanics) {
+      this.rogueliteSnapshot = undefined;
+      this.rogueliteDamageModifiers = Object.freeze([]);
+      return;
+    }
+    const derived = deriveRogueliteSynergyStateV1(this.activeRogueliteMechanics, this.towers);
+    this.rogueliteSnapshot = derived.snapshot;
+    this.rogueliteDamageModifiers = derived.damageModifiers;
   }
 
   private updateTowers(delta: number): void {
@@ -8134,6 +8160,7 @@ export class TowerDefenseGame {
         value: this.towerDamageMultiplier
       });
     }
+    modifiers.push(...this.rogueliteDamageModifiers);
     const sourceTower = towerId === undefined || options.overTime === true
       ? undefined
       : this.towers.find((tower) => tower.id === towerId

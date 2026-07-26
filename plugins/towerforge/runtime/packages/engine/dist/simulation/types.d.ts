@@ -279,6 +279,8 @@ export interface EffectPipelineAttackModel {
 export interface TowerType {
     id: string;
     label: string;
+    /** Optional author-defined synergy tags. They are inert unless a roguelite profile is active. */
+    tags?: readonly string[];
     cost: ResourceCost;
     footprintRadius: number;
     range: number;
@@ -818,6 +820,18 @@ export interface TerraformingSnapshotV1 {
         }[];
     }[];
 }
+export interface RogueliteSynergySnapshotV1 {
+    readonly synergyId: string;
+    readonly label: string;
+    readonly tag: string;
+    readonly towerCount: number;
+    readonly tierMode: "highest" | "cumulative";
+    readonly activeTierRequiredCounts: readonly number[];
+}
+export interface RogueliteSnapshotV1 {
+    readonly schemaVersion: 1;
+    readonly synergies: readonly RogueliteSynergySnapshotV1[];
+}
 export interface GameSnapshot {
     mapId: string;
     grid: GridDefinition;
@@ -860,6 +874,7 @@ export interface GameSnapshot {
     navigation?: NavigationSnapshotV1;
     elevation?: ElevationSnapshotV1;
     terraforming?: TerraformingSnapshotV1;
+    roguelite?: RogueliteSnapshotV1;
     scriptState: import("../scripting/types.js").TowerScriptStateSnapshot;
     lastEvents: GameEvent[];
 }

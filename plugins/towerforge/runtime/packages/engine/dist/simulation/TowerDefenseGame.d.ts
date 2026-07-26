@@ -48,6 +48,9 @@ export declare class TowerDefenseGame {
     private readonly activeHighGroundProfile;
     private readonly activePhysicsMechanics;
     private readonly activeTerraformingMechanics;
+    private readonly activeRogueliteMechanics;
+    private rogueliteSnapshot;
+    private rogueliteDamageModifiers;
     private readonly navigationMandatoryPairs;
     private readonly navigationKnownPairs;
     private navigationResolver;
@@ -263,6 +266,7 @@ export declare class TowerDefenseGame {
     /** Boss pattern: enemies with `towerAttack` periodically damage the nearest tower with hp; destroy it at 0. */
     private updateEnemyTowerAttacks;
     private destroyTower;
+    private rebuildRogueliteSynergies;
     private updateTowers;
     private updateSingleTower;
     /**

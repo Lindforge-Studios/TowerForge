@@ -11,6 +11,7 @@ import { ARMOR_MATRIX_LIMITS, MARK_LIMITS, REACTION_LIMITS, SHIELD_LIMITS } from
 export { NAVIGATION_MECHANICS_SCHEMA } from "./navigation-mechanics.js";
 export { ELEVATION_MECHANICS_SCHEMA } from "./elevation-mechanics.js";
 export { TERRAFORMING_MECHANICS_SCHEMA } from "./terraforming-mechanics.js";
+export { ROGUELITE_MECHANICS_SCHEMA } from "./roguelite-mechanics.js";
 
 /**
  * A machine-readable description of the content schema's closed sets and per-shape field

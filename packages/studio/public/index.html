@@ -738,6 +738,28 @@
               </label>
             </div>
           </div>
+          <div id="mechanics-roguelite-editor" class="hidden">
+            <div class="mechanics-shield-section mechanics-roguelite-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Tower synergy tags</h4>
+                  <p>Tags are authored here as part of the guarded mechanics transaction. Ordinary tower forms stay unchanged.</p>
+                </div>
+              </div>
+              <div id="mechanics-roguelite-tower-tag-rows" class="mechanics-definition-rows"></div>
+            </div>
+            <div class="mechanics-shield-section mechanics-roguelite-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Global damage synergies</h4>
+                  <p>Count live placed towers by tag. Highest mode applies one tier; cumulative mode applies every reached tier.</p>
+                </div>
+                <button id="btn-mechanics-add-synergy" class="btn btn-outline" type="button">+ Add synergy</button>
+              </div>
+              <div id="mechanics-roguelite-synergy-rows" class="mechanics-definition-rows"></div>
+              <p class="text-muted">Tier lines use: <code>requiredCount operation value</code>, for example <code>2 additive_ratio 0.1</code>. Repeat a count to add another modifier to that tier.</p>
+            </div>
+          </div>
           <div class="mechanics-actions">
             <button id="btn-mechanics-preview" class="btn btn-outline" type="button">Preview</button>
             <button id="btn-mechanics-enable" class="btn btn-primary" type="button">Enable for mission</button>

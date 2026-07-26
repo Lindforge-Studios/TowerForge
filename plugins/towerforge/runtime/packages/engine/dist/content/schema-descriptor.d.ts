@@ -2,6 +2,7 @@ import { type TowerAttackKind } from "../simulation/types.js";
 export { NAVIGATION_MECHANICS_SCHEMA } from "./navigation-mechanics.js";
 export { ELEVATION_MECHANICS_SCHEMA } from "./elevation-mechanics.js";
 export { TERRAFORMING_MECHANICS_SCHEMA } from "./terraforming-mechanics.js";
+export { ROGUELITE_MECHANICS_SCHEMA } from "./roguelite-mechanics.js";
 /**
  * A machine-readable description of the content schema's closed sets and per-shape field
  * constraints — the single source of truth for what `validateGameContentRegistry` (validate.ts)

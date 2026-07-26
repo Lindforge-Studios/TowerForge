@@ -1,0 +1,150 @@
+import { describe, expect, it } from "vitest";
+import * as renderer from "./index.mjs";
+
+function projector() {
+  expect(renderer.projectRoguelitePresentation).toBeTypeOf("function");
+  return renderer.projectRoguelitePresentation;
+}
+
+function expectDeeplyFrozen(value, seen = new Set()) {
+  if (value === null || typeof value !== "object" || seen.has(value)) return;
+  seen.add(value);
+  expect(Object.isFrozen(value)).toBe(true);
+  for (const child of Object.values(value)) expectDeeplyFrozen(child, seen);
+}
+
+describe("R4.1A shared rogue-lite synergy presentation", () => {
+  it("projects the authoritative active snapshot into detached sorted status rows", () => {
+    const snapshot = {
+      roguelite: {
+        schemaVersion: 1,
+        synergies: [
+          {
+            synergyId: "tech_grid",
+            label: "Tech Grid",
+            tag: "tech",
+            towerCount: 4,
+            tierMode: "cumulative",
+            activeTierRequiredCounts: [2, 4]
+          },
+          {
+            synergyId: "elemental_convergence",
+            label: "Elemental Convergence",
+            tag: "elemental",
+            towerCount: 3,
+            tierMode: "highest",
+            activeTierRequiredCounts: [2]
+          }
+        ]
+      }
+    };
+
+    const projected = projector()(snapshot);
+
+    expect(projected).toEqual({
+      active: true,
+      synergies: [
+        {
+          synergyId: "elemental_convergence",
+          label: "Elemental Convergence",
+          tag: "elemental",
+          towerCount: 3,
+          tierMode: "highest",
+          activeTierRequiredCounts: [2]
+        },
+        {
+          synergyId: "tech_grid",
+          label: "Tech Grid",
+          tag: "tech",
+          towerCount: 4,
+          tierMode: "cumulative",
+          activeTierRequiredCounts: [2, 4]
+        }
+      ]
+    });
+    expectDeeplyFrozen(projected);
+    snapshot.roguelite.synergies[0].activeTierRequiredCounts[0] = 99;
+    expect(projected.synergies[1].activeTierRequiredCounts).toEqual([2, 4]);
+  });
+
+  it("returns one inactive value without reading unrelated snapshot fields", () => {
+    let reads = 0;
+    const snapshot = {};
+    Object.defineProperty(snapshot, "lastEvents", {
+      enumerable: true,
+      get() { reads += 1; throw new Error("inactive projection must stay narrow"); }
+    });
+
+    const first = projector()(snapshot);
+    const second = projector()(undefined);
+
+    expect(first).toEqual({ active: false, synergies: [] });
+    expect(second).toBe(first);
+    expect(reads).toBe(0);
+    expectDeeplyFrozen(first);
+  });
+
+  it("fails closed on future, malformed, sparse, accessor, duplicate, and over-budget sections", () => {
+    const row = {
+      synergyId: "elemental",
+      label: "Elemental",
+      tag: "elemental",
+      towerCount: 2,
+      tierMode: "highest",
+      activeTierRequiredCounts: [2]
+    };
+    const sparse = new Array(1);
+    const invalid = [
+      { schemaVersion: 2, synergies: [] },
+      { schemaVersion: 1 },
+      { schemaVersion: 1, synergies: [], extra: true },
+      { schemaVersion: 1, synergies: sparse },
+      { schemaVersion: 1, synergies: [{ ...row, extra: true }] },
+      { schemaVersion: 1, synergies: [{ ...row, towerCount: -1 }] },
+      { schemaVersion: 1, synergies: [{ ...row, activeTierRequiredCounts: [4, 2] }] },
+      { schemaVersion: 1, synergies: [row, { ...row }] },
+      {
+        schemaVersion: 1,
+        synergies: Array.from({ length: 33 }, (_, index) => ({
+          ...row,
+          synergyId: `synergy_${index}`,
+          activeTierRequiredCounts: []
+        }))
+      }
+    ];
+    for (const roguelite of invalid) {
+      expect(projector()({ roguelite })).toBeUndefined();
+    }
+
+    let reads = 0;
+    const section = { schemaVersion: 1 };
+    Object.defineProperty(section, "synergies", {
+      enumerable: true,
+      get() { reads += 1; throw new Error("must not invoke accessors"); }
+    });
+    expect(() => projector()({ roguelite: section })).not.toThrow();
+    expect(projector()({ roguelite: section })).toBeUndefined();
+    expect(reads).toBe(0);
+  });
+
+  it("does not confuse the authored tier threshold limit with a live tower count", () => {
+    const projected = projector()({
+      roguelite: {
+        schemaVersion: 1,
+        synergies: [{
+          synergyId: "large_live_board",
+          label: "Large Live Board",
+          tag: "tech",
+          towerCount: 65_537,
+          tierMode: "highest",
+          activeTierRequiredCounts: [65_536]
+        }]
+      }
+    });
+
+    expect(projected).toMatchObject({
+      active: true,
+      synergies: [{ towerCount: 65_537, activeTierRequiredCounts: [65_536] }]
+    });
+  });
+});

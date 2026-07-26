@@ -85,6 +85,7 @@ const ELEVATION_RECIPE_IDS = new Set([
 ]);
 const PHYSICS_RECIPE_IDS = new Set(["basic_displacement_physics", "tagged_fall_hazards"]);
 const TERRAFORMING_RECIPE_IDS = new Set(["tagged_flood", "tagged_moat", "tagged_destructible_bridge"]);
+const ROGUELITE_RECIPE_IDS = new Set(["basic_elemental_synergy"]);
 const MAX_ELEVATION_CANVAS_TILES = 4_096;
 const MAX_ELEVATION_EDITOR_ROWS = 256;
 
@@ -106,6 +107,7 @@ const MechanicsUI = {
   loading: false,
   applying: false,
   error: null,
+  towerTags: {},
   terraformingSnippet: null,
   terraformingRecipeLoading: false
 };
@@ -668,6 +670,7 @@ function mechanicsSelectedProfile() {
 }
 
 function normalizeMechanicsDraft(profile) {
+  if (MechanicsUI.selectedModuleId === "roguelite") return normalizeRogueliteMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "terraforming") {
     const moduleSchemaVersion = mechanicsProjectModuleVersion();
     return moduleSchemaVersion === 1
@@ -717,6 +720,34 @@ function normalizeMechanicsDraft(profile) {
       : {};
   }
   return draft;
+}
+
+function normalizeRogueliteMechanicsDraft(profile) {
+  const source = deep(profile ?? { synergies: {} });
+  const authored = source?.synergies && typeof source.synergies === "object" && !Array.isArray(source.synergies)
+    ? source.synergies
+    : {};
+  const synergies = {};
+  for (const [synergyId, definition] of Object.entries(authored)) {
+    if (!definition || typeof definition !== "object" || Array.isArray(definition)) continue;
+    defineOwnDataValue(synergies, synergyId, {
+      label: typeof definition.label === "string" ? definition.label : synergyId,
+      tag: typeof definition.tag === "string" ? definition.tag : "",
+      ...(definition.tierMode === "cumulative" ? { tierMode: "cumulative" } : {}),
+      tiers: Array.isArray(definition.tiers) ? deep(definition.tiers) : []
+    });
+  }
+  return { synergies };
+}
+
+function initializeRogueliteTowerTags() {
+  const described = MechanicsUI.capabilities?.roguelite?.towerTagsByTowerId;
+  const result = {};
+  for (const towerId of Object.keys(S.project?.towers ?? {}).sort()) {
+    const authored = ownDataValue(described, towerId) ?? ownDataValue(S.project?.towers?.[towerId], "tags") ?? [];
+    defineOwnDataValue(result, towerId, Array.isArray(authored) ? [...new Set(authored.filter((tag) => typeof tag === "string" && tag))].sort() : []);
+  }
+  MechanicsUI.towerTags = result;
 }
 
 function normalizeTerraformingMechanicsDraft(profile) {
@@ -885,6 +916,11 @@ function mechanicsTerraformingLimits() {
   return source && typeof source === "object" && !Array.isArray(source) ? source : {};
 }
 
+function mechanicsRogueliteLimits() {
+  const source = MechanicsUI.capabilities?.roguelite?.authoring?.limits;
+  return source && typeof source === "object" && !Array.isArray(source) ? source : {};
+}
+
 function mechanicsBoundedEntries(record, limit) {
   const entries = Object.entries(record ?? {});
   return Number.isInteger(limit) && limit >= 0 ? entries.slice(0, limit) : entries;
@@ -903,6 +939,7 @@ function mechanicsAuthoredMatrixEntryCount() {
 }
 
 function mechanicsEffectiveModuleSchemaVersion() {
+  if (MechanicsUI.selectedModuleId === "roguelite") return 1;
   if (MechanicsUI.selectedModuleId === "terraforming") return 1;
   if (MechanicsUI.selectedModuleId === "elevation") {
     const authoredVersion = Math.max(
@@ -957,8 +994,11 @@ function initializeMechanicsDraft() {
           ? "basic_authored_elevation"
           : MechanicsUI.selectedModuleId === "physics"
             ? "basic_displacement_physics"
-            : MechanicsUI.selectedModuleId === "terraforming" ? "tagged_flood" : "basic_regenerating_shields");
+            : MechanicsUI.selectedModuleId === "terraforming"
+              ? "tagged_flood"
+              : MechanicsUI.selectedModuleId === "roguelite" ? "basic_elemental_synergy" : "basic_regenerating_shields");
   MechanicsUI.draft = normalizeMechanicsDraft(selectedProfile ?? mechanicsRecipeProfile());
+  if (MechanicsUI.selectedModuleId === "roguelite") initializeRogueliteTowerTags();
   MechanicsUI.preview = null;
   MechanicsUI.terraformingSnippet = null;
   invalidateElevationLineOfSightAnalysis();
@@ -1027,6 +1067,7 @@ function loadMechanicsProfile() {
   MechanicsUI.draft = MechanicsUI.selectedModuleId === "navigation"
     ? normalizeNavigationMechanicsDraft(profile)
     : normalizeMechanicsDraft(profile);
+  if (MechanicsUI.selectedModuleId === "roguelite") initializeRogueliteTowerTags();
   MechanicsUI.preview = null;
   MechanicsUI.terraformingSnippet = null;
   MechanicsUI.error = null;
@@ -1052,6 +1093,10 @@ async function newMechanicsProfile() {
       await materializeTerraformingRecipeDraft(recipe);
       return;
     }
+    if (MechanicsUI.selectedModuleId === "roguelite") {
+      await materializeRogueliteRecipeDraft(recipe);
+      return;
+    }
     if (!recipe?.entity?.profile) throw new Error("The selected mechanics recipe is unavailable.");
     MechanicsUI.recipe = recipe;
     MechanicsUI.recipeId = recipe.id;
@@ -1073,6 +1118,45 @@ async function newMechanicsProfile() {
     MechanicsUI.error = error;
     renderMechanicsPreviewResult();
   }
+}
+
+async function materializeRogueliteRecipeDraft(recipe) {
+  if (mechanicsProjectModuleVersion() !== 1) {
+    throw new Error("Future roguelite module versions are preserved read-only and cannot be materialized as v1.");
+  }
+  if (!recipe || !ROGUELITE_RECIPE_IDS.has(recipe.id)) {
+    throw new Error("The selected roguelite recipe is unavailable.");
+  }
+  const mission = ownDataValue(S.project?.missions, mechanicsMissionId());
+  const towerTypeIds = Array.isArray(mission?.buildTowerIds)
+    ? mission.buildTowerIds.filter((towerId) => ownDataValue(S.project?.towers, towerId)).slice(0, 16)
+    : [];
+  if (towerTypeIds.length === 0) throw new Error("The selected mission has no buildable towers for this recipe.");
+  const materialized = await apiPost("/api/mechanics/recipe", {
+    recipeId: recipe.id,
+    parameters: { towerTypeIds }
+  });
+  const candidate = materialized?.recipe ?? materialized;
+  const entity = candidate?.entity;
+  if (entity?.moduleId !== "roguelite" || !entity.profile || !entity.towerTags) {
+    throw new Error("The shared roguelite recipe returned an invalid detached candidate.");
+  }
+  MechanicsUI.recipe = recipe;
+  MechanicsUI.recipeId = recipe.id;
+  MechanicsUI.profileId = nextMechanicsProfileId(entity.profileId || recipe.suggestedId || recipe.id);
+  MechanicsUI.loadedProfileId = null;
+  MechanicsUI.draft = normalizeRogueliteMechanicsDraft(entity.profile);
+  initializeRogueliteTowerTags();
+  for (const [towerId, tags] of Object.entries(entity.towerTags)) {
+    if (ownDataValue(MechanicsUI.towerTags, towerId) !== undefined) {
+      defineOwnDataValue(MechanicsUI.towerTags, towerId, deep(tags));
+    }
+  }
+  MechanicsUI.moduleSchemaVersion = 1;
+  MechanicsUI.preview = null;
+  MechanicsUI.error = null;
+  renderMechanicsHub();
+  $("mechanics-profile-id")?.focus();
 }
 
 async function materializeTerraformingRecipeDraft(recipe) {
@@ -1147,6 +1231,7 @@ async function reloadMechanicsHub() {
   MechanicsUI.recipes = [];
   MechanicsUI.recipe = null;
   MechanicsUI.draft = null;
+  MechanicsUI.towerTags = {};
   MechanicsUI.loadedProfileId = null;
   MechanicsUI.preview = null;
   MechanicsUI.error = null;
@@ -2554,6 +2639,180 @@ function renderPhysicsMechanicsEditor() {
   }
 }
 
+function rogueliteTierLines(definition) {
+  return (definition?.tiers ?? []).flatMap((tier) => (tier?.modifiers ?? []).map((modifier) => (
+    `${tier.requiredCount} ${modifier.operation} ${modifier.value}`
+  ))).join("\n");
+}
+
+function parseRogueliteTierLines(value) {
+  const grouped = new Map();
+  for (const rawLine of String(value ?? "").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const [countText, operation, valueText, ...extra] = line.split(/\s+/);
+    const requiredCount = Number(countText);
+    const modifierValue = Number(valueText);
+    if (extra.length || !Number.isSafeInteger(requiredCount) || requiredCount < 1
+      || !["flat", "additive_ratio", "multiplier"].includes(operation)
+      || !Number.isFinite(modifierValue)) return null;
+    const modifiers = grouped.get(requiredCount) ?? [];
+    if (modifiers.length >= 4) return null;
+    modifiers.push({ target: "damage", operation, value: modifierValue });
+    grouped.set(requiredCount, modifiers);
+  }
+  if (grouped.size === 0 || grouped.size > 8) return null;
+  return [...grouped.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([requiredCount, modifiers]) => ({ requiredCount, modifiers }));
+}
+
+function rogueliteKnownTags() {
+  const synergies = MechanicsUI.draft?.synergies ?? {};
+  return [...new Set([
+    ...Object.values(MechanicsUI.towerTags ?? {}).flat(),
+    ...Object.values(synergies).map((definition) => definition?.tag).filter(Boolean)
+  ])].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+}
+
+function refreshRogueliteKnownTagControls() {
+  const knownTags = rogueliteKnownTags();
+  const supportedVersion = mechanicsProjectModuleVersion() === 1;
+  const synergies = MechanicsUI.draft?.synergies ?? {};
+  $("mechanics-roguelite-synergy-rows")?.querySelectorAll("[data-synergy-id]").forEach((row) => {
+    const definition = ownDataValue(synergies, row.dataset.synergyId);
+    const select = row.querySelector('[data-role="tag"]');
+    if (!definition || !select) return;
+    select.innerHTML = knownTags.map((tag) => `<option value="${esc(tag)}">${esc(tag)}</option>`).join("");
+    select.value = definition.tag ?? "";
+  });
+  const add = $("btn-mechanics-add-synergy");
+  if (add) {
+    const limit = mechanicsRogueliteLimits().synergyDefinitions ?? 32;
+    add.disabled = !supportedVersion || !knownTags.length || Object.keys(synergies).length >= limit;
+  }
+}
+
+function renderRogueliteMechanicsEditor() {
+  if (MechanicsUI.selectedModuleId !== "roguelite" || !MechanicsUI.draft) return;
+  MechanicsUI.draft = normalizeRogueliteMechanicsDraft(MechanicsUI.draft);
+  const limits = mechanicsRogueliteLimits();
+  const supportedVersion = mechanicsProjectModuleVersion() === 1;
+  const towerRows = $("mechanics-roguelite-tower-tag-rows");
+  if (towerRows) {
+    towerRows.innerHTML = Object.entries(S.project?.towers ?? {})
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([towerId, tower]) => `<div class="mechanics-roguelite-tower-tag-row" data-roguelite-tower="${esc(towerId)}">
+        <strong>${esc(tower?.label ?? towerId)} <code>${esc(towerId)}</code></strong>
+        <label>Tags<input data-role="tower-tags" type="text" autocomplete="off" spellcheck="false" value="${esc((MechanicsUI.towerTags?.[towerId] ?? []).join(", "))}" placeholder="elemental, tech"></label>
+      </div>`).join("");
+    towerRows.querySelectorAll("[data-roguelite-tower]").forEach((row) => {
+      const towerId = row.dataset.rogueliteTower;
+      const input = row.querySelector('[data-role="tower-tags"]');
+      if (!input) return;
+      input.disabled = !supportedVersion;
+      input.oninput = () => {
+        defineOwnDataValue(MechanicsUI.towerTags, towerId, physicsListFromEditor(input.value, limits.tagsPerTower ?? 16).sort());
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+        refreshRogueliteKnownTagControls();
+      };
+    });
+  }
+
+  const synergies = MechanicsUI.draft.synergies;
+  const knownTags = rogueliteKnownTags();
+  const synergyRows = $("mechanics-roguelite-synergy-rows");
+  if (synergyRows) {
+    synergyRows.innerHTML = mechanicsBoundedEntries(synergies, limits.synergyDefinitions ?? 32).map(([synergyId, definition]) => (
+      `<div class="mechanics-roguelite-synergy-row" data-synergy-id="${esc(synergyId)}">
+        <label>Synergy ID<input data-role="synergy-id" type="text" value="${esc(synergyId)}" autocomplete="off" spellcheck="false"></label>
+        <label>Label<input data-role="label" type="text" value="${esc(definition.label ?? synergyId)}"></label>
+        <label>Tag<select data-role="tag">${knownTags.map((tag) => `<option value="${esc(tag)}" ${tag === definition.tag ? "selected" : ""}>${esc(tag)}</option>`).join("")}</select></label>
+        <label>Tier mode<select data-role="tier-mode"><option value="highest" ${(definition.tierMode ?? "highest") === "highest" ? "selected" : ""}>Highest</option><option value="cumulative" ${definition.tierMode === "cumulative" ? "selected" : ""}>Cumulative</option></select></label>
+        <button data-role="remove" class="btn btn-danger" type="button">Remove</button>
+        <label class="mechanics-roguelite-tier-lines">Tier modifiers<textarea data-role="tiers" class="mono" spellcheck="false">${esc(rogueliteTierLines(definition))}</textarea></label>
+      </div>`
+    )).join("") || `<div class="workbench-empty">No synergy definitions in this profile.</div>`;
+    synergyRows.querySelectorAll("[data-synergy-id]").forEach((row) => {
+      const synergyId = row.dataset.synergyId;
+      const definition = ownDataValue(MechanicsUI.draft.synergies, synergyId);
+      if (!definition) return;
+      const idInput = row.querySelector('[data-role="synergy-id"]');
+      idInput.onchange = () => {
+        const nextId = idInput.value.trim();
+        if (!nextId || (nextId !== synergyId && ownDataValue(MechanicsUI.draft.synergies, nextId))) {
+          idInput.setCustomValidity("Use a unique non-empty synergy ID.");
+          idInput.reportValidity();
+          return;
+        }
+        idInput.setCustomValidity("");
+        if (nextId === synergyId) return;
+        const next = { ...MechanicsUI.draft.synergies };
+        const retained = deep(next[synergyId]);
+        delete next[synergyId];
+        defineOwnDataValue(next, nextId, retained);
+        MechanicsUI.draft.synergies = next;
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      };
+      row.querySelector('[data-role="label"]').oninput = (event) => {
+        definition.label = event.currentTarget.value;
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      };
+      row.querySelector('[data-role="tag"]').onchange = (event) => {
+        definition.tag = event.currentTarget.value;
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      };
+      row.querySelector('[data-role="tier-mode"]').onchange = (event) => {
+        if (event.currentTarget.value === "cumulative") definition.tierMode = "cumulative";
+        else delete definition.tierMode;
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      };
+      const tiersInput = row.querySelector('[data-role="tiers"]');
+      tiersInput.onchange = () => {
+        const tiers = parseRogueliteTierLines(tiersInput.value);
+        tiersInput.setCustomValidity(tiers ? "" : "Use: requiredCount operation value; 1-8 tiers and up to 4 modifiers per tier.");
+        if (!tiers) {
+          tiersInput.reportValidity();
+          return;
+        }
+        definition.tiers = tiers;
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      };
+      row.querySelector('[data-role="remove"]').onclick = () => {
+        delete MechanicsUI.draft.synergies[synergyId];
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      };
+      for (const control of row.querySelectorAll("input, select, textarea, button")) control.disabled = !supportedVersion;
+    });
+  }
+  const add = $("btn-mechanics-add-synergy");
+  if (add) {
+    add.disabled = !supportedVersion || !knownTags.length
+      || Object.keys(synergies).length >= (limits.synergyDefinitions ?? 32);
+    add.onclick = () => {
+      const currentKnownTags = rogueliteKnownTags();
+      if (!currentKnownTags.length) return;
+      let suffix = Object.keys(MechanicsUI.draft.synergies).length + 1;
+      let synergyId = `synergy_${suffix}`;
+      while (ownDataValue(MechanicsUI.draft.synergies, synergyId)) synergyId = `synergy_${++suffix}`;
+      defineOwnDataValue(MechanicsUI.draft.synergies, synergyId, {
+        label: `Synergy ${suffix}`,
+        tag: currentKnownTags[0],
+        tiers: [{ requiredCount: 2, modifiers: [{ target: "damage", operation: "additive_ratio", value: 0.1 }] }]
+      });
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    };
+  }
+}
+
 function renderTerraformingMechanicsEditor() {
   if (MechanicsUI.selectedModuleId !== "terraforming" || !MechanicsUI.draft) return;
   const limits = mechanicsTerraformingLimits();
@@ -3082,6 +3341,9 @@ function renderMechanicsPreviewResult() {
 }
 
 function mechanicsRequest(enabled) {
+  if (MechanicsUI.selectedModuleId === "roguelite" && mechanicsProjectModuleVersion() !== 1) {
+    throw new Error("Future roguelite module versions are read-only in this Studio version.");
+  }
   if (MechanicsUI.selectedModuleId === "terraforming" && mechanicsProjectModuleVersion() !== 1) {
     throw new Error("Future terraforming module versions are read-only in this Studio version.");
   }
@@ -3105,7 +3367,8 @@ function mechanicsRequest(enabled) {
   return {
     ...request,
     profileId: MechanicsUI.profileId.trim(),
-    profile
+    profile,
+    ...(MechanicsUI.selectedModuleId === "roguelite" ? { towerTags: deep(MechanicsUI.towerTags) } : {})
   };
 }
 
@@ -3150,6 +3413,7 @@ async function applyMechanics(enabled) {
     MechanicsUI.recipes = [];
     MechanicsUI.recipe = null;
     MechanicsUI.draft = null;
+    MechanicsUI.towerTags = {};
     MechanicsUI.preview = null;
     MechanicsUI.error = null;
     MechanicsUI.terraformingSnippet = null;
@@ -3182,13 +3446,16 @@ function renderMechanicsHub() {
           ? "Author a closed physics v1 profile for bounded push/pull immunity and explicit fall hazards."
           : MechanicsUI.selectedModuleId === "terraforming"
             ? "Author detached terrain transitions and optional bounded elevation mutation, then explicitly enable the profile for this mission."
-            : "Author a reusable combat profile, then explicitly select it for this mission.";
+            : MechanicsUI.selectedModuleId === "roguelite"
+              ? "Author tower tags and global damage synergies as one opt-in profile transaction."
+              : "Author a reusable combat profile, then explicitly select it for this mission.";
   missionSelect.innerHTML = Object.entries(S.project.missions ?? {}).map(([id, mission]) =>
     `<option value="${esc(id)}" ${id === MechanicsUI.missionId ? "selected" : ""}>${esc(mission.label ?? id)}</option>`).join("");
   missionSelect.onchange = () => {
     MechanicsUI.missionId = missionSelect.value;
     MechanicsUI.capabilities = null;
     MechanicsUI.draft = null;
+    MechanicsUI.towerTags = {};
     MechanicsUI.preview = null;
     MechanicsUI.error = null;
     MechanicsUI.terraformingSnippet = null;
@@ -3227,7 +3494,8 @@ function renderMechanicsHub() {
         && (selectedModuleId !== "reactions" || REACTION_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "elevation" || ELEVATION_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "physics" || PHYSICS_RECIPE_IDS.has(recipe.id))
-        && (selectedModuleId !== "terraforming" || TERRAFORMING_RECIPE_IDS.has(recipe.id)));
+        && (selectedModuleId !== "terraforming" || TERRAFORMING_RECIPE_IDS.has(recipe.id))
+        && (selectedModuleId !== "roguelite" || ROGUELITE_RECIPE_IDS.has(recipe.id)));
       MechanicsUI.recipe = availableRecipes[0] ?? null;
       MechanicsUI.recipeId = MechanicsUI.recipe?.id ?? "";
       MechanicsUI.terraformingSnippet = null;
@@ -3257,6 +3525,7 @@ function renderMechanicsHub() {
   $("mechanics-elevation-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "elevation");
   $("mechanics-physics-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "physics");
   $("mechanics-terraforming-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "terraforming");
+  $("mechanics-roguelite-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "roguelite");
   const state = $("mechanics-hub-state");
   if (state) state.textContent = MechanicsUI.loading ? "Loading capabilities…"
     : MechanicsUI.error ? "Mechanics unavailable"
@@ -3314,6 +3583,8 @@ function renderMechanicsHub() {
       renderPhysicsMechanicsEditor();
     } else if (MechanicsUI.selectedModuleId === "terraforming") {
       renderTerraformingMechanicsEditor();
+    } else if (MechanicsUI.selectedModuleId === "roguelite") {
+      renderRogueliteMechanicsEditor();
     }
     // Recipe prerequisites are shared authoring metadata. Keep them visible for every module,
     // including elevation recipes, instead of hiding them inside the reactions-only editor.
@@ -3321,14 +3592,16 @@ function renderMechanicsHub() {
   }
   const busy = MechanicsUI.loading || MechanicsUI.applying || MechanicsUI.terraformingRecipeLoading;
   const supportedTerraformingVersion = MechanicsUI.selectedModuleId !== "terraforming" || mechanicsProjectModuleVersion() === 1;
-  const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion && !busy;
+  const supportedRogueliteVersion = MechanicsUI.selectedModuleId !== "roguelite" || mechanicsProjectModuleVersion() === 1;
+  const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion && supportedRogueliteVersion && !busy;
   const dirtyWriteGuard = Boolean(S.dirty);
   if ($("btn-mechanics-preview")) $("btn-mechanics-preview").disabled = !writable;
   $("btn-mechanics-enable").disabled = dirtyWriteGuard || !writable || Boolean(capability?.active);
   $("btn-mechanics-save").disabled = dirtyWriteGuard || !writable || !capability?.moduleEnabled;
   $("btn-mechanics-disable").disabled = dirtyWriteGuard || !writable || !capability?.moduleEnabled;
   $("btn-mechanics-load-profile").disabled = busy || mechanicsProfileIds().length === 0;
-  $("btn-mechanics-new-profile").disabled = busy || !MechanicsUI.recipe || (MechanicsUI.selectedModuleId === "terraforming" && !writable);
+  $("btn-mechanics-new-profile").disabled = busy || !MechanicsUI.recipe
+    || ((MechanicsUI.selectedModuleId === "terraforming" || MechanicsUI.selectedModuleId === "roguelite") && !writable);
   if ($("mechanics-recipe-select")) $("mechanics-recipe-select").disabled = busy || MechanicsUI.recipes.length === 0;
   if ($("btn-mechanics-add-damage-type")) $("btn-mechanics-add-damage-type").disabled = !writable;
   if ($("btn-mechanics-add-armor-type")) $("btn-mechanics-add-armor-type").disabled = !writable;
@@ -3338,6 +3611,7 @@ function renderMechanicsHub() {
   if ($("btn-mechanics-add-reaction")) $("btn-mechanics-add-reaction").disabled = !writable;
   if ($("btn-mechanics-add-movement-profile")) $("btn-mechanics-add-movement-profile").disabled = !writable || MechanicsUI.draft?.mode !== "dynamic_flow";
   if ($("btn-mechanics-add-terraforming-transition")) $("btn-mechanics-add-terraforming-transition").disabled ||= !writable;
+  if ($("btn-mechanics-add-synergy")) $("btn-mechanics-add-synergy").disabled ||= !writable;
   $("btn-mechanics-reload").disabled = dirtyWriteGuard || busy;
   if ($("mechanics-profile-id")) $("mechanics-profile-id").disabled = !writable;
   $("btn-mechanics-load-profile").onclick = loadMechanicsProfile;

@@ -13,6 +13,7 @@ const TAGGED_FALL_HAZARDS_ID = "tagged_fall_hazards";
 const TAGGED_FLOOD_ID = "tagged_flood";
 const TAGGED_MOAT_ID = "tagged_moat";
 const TAGGED_DESTRUCTIBLE_BRIDGE_ID = "tagged_destructible_bridge";
+const BASIC_ELEMENTAL_SYNERGY_ID = "basic_elemental_synergy";
 const TERRAFORMING_RECIPE_IDS = Object.freeze([
   TAGGED_FLOOD_ID,
   TAGGED_MOAT_ID,
@@ -31,6 +32,20 @@ const TERRAFORMING_PARAMETER_SCHEMA = Object.freeze({
     sourceTerrainTag: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 }),
     destinationTerrainId: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 }),
     transitionId: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 })
+  })
+});
+const ROGUELITE_TOWER_TAG_PARAMETER_SCHEMA = Object.freeze({
+  type: "object",
+  required: Object.freeze(["towerTypeIds"]),
+  additionalProperties: false,
+  properties: Object.freeze({
+    towerTypeIds: Object.freeze({
+      type: "array",
+      minItems: 1,
+      maxItems: 16,
+      uniqueItems: true,
+      items: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 })
+    })
   })
 });
 export class MechanicsRecipeParameterError extends Error {
@@ -161,6 +176,15 @@ const RECIPES = Object.freeze([
     suggestedId: TAGGED_DESTRUCTIBLE_BRIDGE_ID,
     moduleSchemaVersion: 1,
     parameterSchema: TERRAFORMING_PARAMETER_SCHEMA
+  }),
+  Object.freeze({
+    id: BASIC_ELEMENTAL_SYNERGY_ID,
+    moduleId: "roguelite",
+    label: "Basic Elemental Synergy",
+    description: "Inert roguelite v1 profile with highest-tier 2/4/6 elemental tower damage bonuses.",
+    suggestedId: BASIC_ELEMENTAL_SYNERGY_ID,
+    moduleSchemaVersion: 1,
+    parameterSchema: ROGUELITE_TOWER_TAG_PARAMETER_SCHEMA
   })
 ]);
 
@@ -178,6 +202,18 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
   if (!recipe) throw new Error(`Unknown mechanics recipe "${recipeId}".`);
 
   const parameterField = inspectParameterField(context);
+  if (recipeId === BASIC_ELEMENTAL_SYNERGY_ID) {
+    if (parameterField.kind === "absent") {
+      throw new MechanicsRecipeParameterError(
+        "roguelite_recipe_parameters_required",
+        "Roguelite recipe parameters are required and must contain towerTypeIds."
+      );
+    }
+    if (parameterField.kind === "invalid") {
+      throw invalidRogueliteRecipeParameter("Roguelite recipe parameters must be an enumerable own data field.");
+    }
+    return materializeElementalSynergyRecipe(recipe, context, parameterField.value);
+  }
   if (TERRAFORMING_RECIPE_IDS.includes(recipeId)) {
     if (parameterField.kind === "absent") {
       throw new MechanicsRecipeParameterError(
@@ -292,6 +328,104 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
       profile: { shields: { enemies, towers } }
     }
   };
+}
+
+function materializeElementalSynergyRecipe(recipe, context, parameterValue) {
+  const parameters = inspectRogueliteParameters(parameterValue);
+  const towerTypeIds = inspectTowerTypeIds(parameters.towerTypeIds);
+  const authoredTowerIds = new Set(sortedSafeIds(ownDataValue(context, "towerIds")));
+  for (const towerTypeId of towerTypeIds) {
+    if (!authoredTowerIds.has(towerTypeId)) {
+      throw new MechanicsRecipeParameterError(
+        "roguelite_recipe_tower_missing",
+        `Recipe parameter towerTypeIds references unknown authored tower "${towerTypeId}".`
+      );
+    }
+  }
+
+  const currentTags = ownDataValue(context, "towerTagsByTowerId");
+  const towerTags = safeRecord();
+  for (const towerTypeId of towerTypeIds.sort(compareBinary)) {
+    const existing = sortedSafeIds(ownDataValue(currentTags, towerTypeId));
+    defineOwn(towerTags, towerTypeId, [...new Set([...existing, "elemental"])].sort(compareBinary));
+  }
+  const synergies = safeRecord();
+  defineOwn(synergies, "elemental_convergence", {
+    label: "Elemental Convergence",
+    tag: "elemental",
+    tiers: [
+      { requiredCount: 2, modifiers: [{ target: "damage", operation: "additive_ratio", value: 0.10 }] },
+      { requiredCount: 4, modifiers: [{ target: "damage", operation: "additive_ratio", value: 0.20 }] },
+      { requiredCount: 6, modifiers: [{ target: "damage", operation: "additive_ratio", value: 0.30 }] }
+    ]
+  });
+  return {
+    ...recipe,
+    entity: {
+      moduleId: "roguelite",
+      moduleSchemaVersion: 1,
+      profileId: recipe.suggestedId,
+      profile: { synergies },
+      towerTags
+    }
+  };
+}
+
+function inspectRogueliteParameters(value) {
+  if (!isPlainRecord(value)) {
+    throw invalidRogueliteRecipeParameter("Roguelite recipe parameters must be a closed ordinary object.");
+  }
+  let descriptors;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    throw invalidRogueliteRecipeParameter("Roguelite recipe parameters could not be inspected safely.");
+  }
+  if (Reflect.ownKeys(descriptors).some((key) => key !== "towerTypeIds")) {
+    throw invalidRogueliteRecipeParameter("Roguelite recipe parameters are closed; only towerTypeIds is allowed.");
+  }
+  const descriptor = descriptors.towerTypeIds;
+  if (!descriptor?.enumerable || !("value" in descriptor)) {
+    throw invalidRogueliteRecipeParameter("Roguelite recipe parameter towerTypeIds is required as an enumerable own data field.");
+  }
+  return { towerTypeIds: descriptor.value };
+}
+
+function inspectTowerTypeIds(value) {
+  let descriptors;
+  try {
+    if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new Error();
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    throw invalidRogueliteRecipeParameter("Roguelite recipe parameter towerTypeIds must be an ordinary array.");
+  }
+  const length = descriptors.length && "value" in descriptors.length ? descriptors.length.value : undefined;
+  if (!Number.isSafeInteger(length) || length < 1 || length > 16) {
+    throw invalidRogueliteRecipeParameter("Roguelite recipe parameter towerTypeIds must contain 1..16 tower IDs.");
+  }
+  if (Reflect.ownKeys(descriptors).some((key) => {
+    if (key === "length") return false;
+    return typeof key !== "string" || !/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= length;
+  })) {
+    throw invalidRogueliteRecipeParameter("Roguelite recipe parameter towerTypeIds must be a dense closed array.");
+  }
+  const result = [];
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = descriptors[String(index)];
+    if (!descriptor?.enumerable || !("value" in descriptor) || typeof descriptor.value !== "string"
+      || descriptor.value.length === 0 || utf8ByteLength(descriptor.value) > 128) {
+      throw invalidRogueliteRecipeParameter(`Roguelite recipe parameter towerTypeIds[${index}] must contain 1..128 UTF-8 bytes.`);
+    }
+    result.push(descriptor.value);
+  }
+  if (new Set(result).size !== result.length) {
+    throw invalidRogueliteRecipeParameter("Roguelite recipe parameter towerTypeIds must contain unique tower IDs.");
+  }
+  return result;
+}
+
+function invalidRogueliteRecipeParameter(message) {
+  return new MechanicsRecipeParameterError("roguelite_recipe_parameter_invalid", message);
 }
 
 function materializeTerraformingRecipe(recipe, context, parameterValue) {

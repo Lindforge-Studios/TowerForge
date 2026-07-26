@@ -29,6 +29,12 @@ import {
   TerraformingProfileValidationError,
   normalizeTerraformingProfileV1
 } from "./terraforming-mechanics.js";
+import {
+  ROGUELITE_SYNERGY_LIMITS,
+  RogueliteProfileValidationError,
+  normalizeRogueliteProfileV1,
+  normalizeTowerTagsV1
+} from "./roguelite-mechanics.js";
 
 /**
  * `code` is a STABLE, machine-branchable identifier — derived automatically from
@@ -2653,6 +2659,181 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
   };
 
   validateTerraformingMechanics();
+
+  const validateRogueliteMechanics = () => {
+    const own = (value: unknown, key: string): unknown => {
+      if (value === null || typeof value !== "object") return undefined;
+      try {
+        const descriptor = Object.getOwnPropertyDescriptor(value, key);
+        return descriptor?.enumerable === true && "value" in descriptor ? descriptor.value : undefined;
+      } catch {
+        return undefined;
+      }
+    };
+    const record = (
+      value: unknown,
+      entityId: string,
+      fieldPath: string,
+      label: string
+    ): Record<string, unknown> | undefined => {
+      let prototype: object | null;
+      let descriptors: Record<PropertyKey, PropertyDescriptor>;
+      try {
+        prototype = value !== null && typeof value === "object" ? Object.getPrototypeOf(value) : null;
+        descriptors = value !== null && typeof value === "object"
+          ? Object.getOwnPropertyDescriptors(value) as Record<PropertyKey, PropertyDescriptor>
+          : {};
+      } catch {
+        err("mechanics", entityId, fieldPath, `${label} could not be inspected safely.`);
+        return undefined;
+      }
+      if (value === null || typeof value !== "object" || Array.isArray(value)
+        || (prototype !== Object.prototype && prototype !== null)) {
+        err("mechanics", entityId, fieldPath, `${label} must be a plain own-data object.`);
+        return undefined;
+      }
+      if (Object.getOwnPropertySymbols(descriptors).length > 0) {
+        err("mechanics", entityId, fieldPath, `${label} must not contain symbol fields.`);
+      }
+      const detached = Object.create(null) as Record<string, unknown>;
+      for (const key of Object.keys(descriptors)) {
+        const descriptor = descriptors[key];
+        if (!descriptor?.enumerable || !("value" in descriptor)) {
+          err("mechanics", entityId, `${fieldPath}.${key}`, `${label} fields must be enumerable own data.`);
+          continue;
+        }
+        Object.defineProperty(detached, key, { value: descriptor.value, enumerable: true });
+      }
+      return detached;
+    };
+
+    const towerTags = new Map<string, readonly string[]>();
+    const allTags = new Set<string>();
+    let taggedTowerTypes = 0;
+    let totalTowerTagRefs = 0;
+    for (const towerId of Object.keys(content.towers).sort()) {
+      const tower = content.towers[towerId]!;
+      let descriptor: PropertyDescriptor | undefined;
+      try {
+        descriptor = Object.getOwnPropertyDescriptor(tower, "tags");
+      } catch {
+        err("tower", towerId, `towers.${towerId}.tags`, `Tower "${towerId}" tags could not be inspected safely.`);
+        continue;
+      }
+      if (descriptor && (!descriptor.enumerable || !("value" in descriptor))) {
+        err("tower", towerId, `towers.${towerId}.tags`, `Tower "${towerId}" tags must be enumerable own data.`);
+        continue;
+      }
+      try {
+        const tags = normalizeTowerTagsV1(descriptor && "value" in descriptor ? descriptor.value : undefined, `towers.${towerId}.tags`);
+        towerTags.set(towerId, tags);
+        if (tags.length > 0) taggedTowerTypes += 1;
+        totalTowerTagRefs += tags.length;
+        tags.forEach((tag) => allTags.add(tag));
+      } catch (error) {
+        const fieldPath = error instanceof RogueliteProfileValidationError
+          ? error.fieldPath
+          : `towers.${towerId}.tags`;
+        err("tower", towerId, fieldPath, error instanceof Error ? error.message : "Tower tags are invalid.");
+      }
+    }
+    if (taggedTowerTypes > ROGUELITE_SYNERGY_LIMITS.towerTypesWithTags) {
+      err("mechanics", "roguelite", "towers.tags", "Too many tower types define synergy tags.");
+    }
+    if (totalTowerTagRefs > ROGUELITE_SYNERGY_LIMITS.totalTowerTagRefs) {
+      err("mechanics", "roguelite", "towers.tags", "Tower synergy tag references exceed the aggregate budget.");
+    }
+
+    const selections = new Map<string, string>();
+    for (const [missionId, mission] of Object.entries(content.missions)) {
+      const selected = mission.mechanics?.profiles?.roguelite;
+      if (typeof selected === "string") selections.set(missionId, selected);
+    }
+    const modules = record(own(content.mechanics, "modules"), "roguelite", "mechanics.modules", "Mechanics modules");
+    if (!modules) return;
+    const moduleValue = own(modules, "roguelite");
+    if (moduleValue === undefined) {
+      for (const [missionId, profileId] of selections) {
+        warn(
+          "mission",
+          missionId,
+          "mechanics.profiles.roguelite",
+          `Mission selects roguelite profile "${profileId}" from a missing inactive module.`
+        );
+      }
+      return;
+    }
+    const module = record(moduleValue, "roguelite", "modules.roguelite", "Roguelite mechanics module");
+    if (!module) return;
+    for (const key of Object.keys(module)) {
+      if (!["schemaVersion", "enabled", "profiles"].includes(key)) {
+        err("mechanics", "roguelite", `modules.roguelite.${key}`, `Roguelite module is closed; unknown field "${key}".`);
+      }
+    }
+    if (module.schemaVersion !== 1) {
+      err("mechanics", "roguelite", "modules.roguelite.schemaVersion", "Roguelite future or unsupported schemaVersion; only version 1 is supported.");
+    }
+    if (typeof module.enabled !== "boolean") {
+      err("mechanics", "roguelite", "modules.roguelite.enabled", "Roguelite mechanics enabled must be boolean.");
+    }
+    const profiles = record(module.profiles, "roguelite", "modules.roguelite.profiles", "Roguelite mechanics profiles");
+    if (!profiles) return;
+    for (const [missionId, profileId] of selections) {
+      if (Object.prototype.hasOwnProperty.call(profiles, profileId)) continue;
+      const active = module.enabled === true && module.schemaVersion === 1;
+      (active ? err : warn)(
+        "mission",
+        missionId,
+        "mechanics.profiles.roguelite",
+        `Mission selects missing roguelite profile "${profileId}"${active ? "" : " from an inactive module"}.`
+      );
+    }
+    for (const profileId of Object.keys(profiles).sort()) {
+      const root = `modules.roguelite.profiles.${profileId}`;
+      let profile;
+      try {
+        profile = normalizeRogueliteProfileV1(profiles[profileId]);
+      } catch (error) {
+        const relativePath = error instanceof RogueliteProfileValidationError
+          ? error.fieldPath.replace(/^profile(?=\.|$)/, "")
+          : "";
+        err("mechanics", profileId, `${root}${relativePath}`, error instanceof Error ? error.message : "Roguelite profile is invalid.");
+        continue;
+      }
+      const selectedMissionIds = [...selections.entries()]
+        .filter(([, selectedProfileId]) => selectedProfileId === profileId)
+        .map(([missionId]) => missionId);
+      const activeMissionIds = selectedMissionIds.filter((missionId) => (
+        content.missions[missionId]?.capabilities.roguelite.active === true
+      ));
+      for (const [synergyId, synergy] of Object.entries(profile.synergies)) {
+        if (!allTags.has(synergy.tag)) {
+          (activeMissionIds.length > 0 ? err : warn)(
+            "mechanics",
+            profileId,
+            `${root}.synergies.${synergyId}.tag`,
+            `Synergy "${synergyId}" references unknown tower tag "${synergy.tag}"${activeMissionIds.length > 0 ? "" : " in this inactive profile"}.`
+          );
+          continue;
+        }
+        for (const missionId of activeMissionIds) {
+          const reachable = content.missions[missionId]!.buildTowerIds.some((towerId) => (
+            towerTags.get(towerId)?.includes(synergy.tag)
+          ));
+          if (!reachable) {
+            warn(
+              "mechanics",
+              profileId,
+              `${root}.synergies.${synergyId}.tag`,
+              `Synergy tag "${synergy.tag}" exists but no tagged tower is buildable in mission "${missionId}".`
+            );
+          }
+        }
+      }
+    }
+  };
+
+  validateRogueliteMechanics();
 
   // Source cardinality limits are relevant only to gameplay surfaces that can actually be
   // reached from a mission with a genuinely active physics capability. Structural inspection

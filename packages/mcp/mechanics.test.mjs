@@ -21,7 +21,7 @@ const R0A_MODULE_IDS = [
   "scriptingDx",
   "multiplayer"
 ];
-const IMPLEMENTED_MODULE_IDS = ["combat", "reactions", "navigation", "elevation", "physics", "terraforming"];
+const IMPLEMENTED_MODULE_IDS = ["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite"];
 const UNAVAILABLE_MODULE_IDS = R0A_MODULE_IDS.filter(
   (moduleId) => !IMPLEMENTED_MODULE_IDS.includes(moduleId)
 );
@@ -149,6 +149,11 @@ describe("R1 combat mechanics MCP contract", () => {
       snapshot: { field: "terraforming", optional: true, supportedSchemaVersions: [1] },
       events: ["terrainChanged", "elevationChanged"]
     };
+    const rogueliteSurface = {
+      authoring: engine.ROGUELITE_MECHANICS_SCHEMA,
+      snapshot: { field: "roguelite", optional: true, supportedSchemaVersions: [1] },
+      events: []
+    };
 
     expect(engine.COMBAT_MECHANICS_SCHEMA).toMatchObject({
       schemaVersion: 3,
@@ -177,7 +182,8 @@ describe("R1 combat mechanics MCP contract", () => {
         navigation: navigationSurface,
         elevation: elevationSurface,
         physics: physicsSurface,
-        terraforming: terraformingSurface
+        terraforming: terraformingSurface,
+        roguelite: rogueliteSurface
       }
     });
     expect(mechanics.mechanics.moduleIds).toHaveLength(12);
@@ -275,6 +281,19 @@ describe("R1 combat mechanics MCP contract", () => {
         profileUses: {}
       });
       expect(result.physics).not.toHaveProperty("selectedProfileId");
+      expect(result.capabilities.roguelite).toMatchObject({
+        available: true,
+        moduleEnabled: false,
+        active: false,
+        reason: "module_missing"
+      });
+      expect(result.roguelite).toMatchObject({
+        authoring: engine.ROGUELITE_MECHANICS_SCHEMA,
+        enabled: false,
+        profileIds: [],
+        profileUses: {},
+        towerTagsByTowerId: {}
+      });
       expect(UNAVAILABLE_MODULE_IDS.every((moduleId) => (
         result.capabilities[moduleId].available === false
         && result.capabilities[moduleId].active === false
