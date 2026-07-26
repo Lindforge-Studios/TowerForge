@@ -1,4 +1,8 @@
-import { listMechanicsRecipes, materializeMechanicsRecipe } from "./mechanics-recipes.mjs";
+import {
+  MechanicsRecipeParameterError,
+  listMechanicsRecipes,
+  materializeMechanicsRecipe
+} from "./mechanics-recipes.mjs";
 
 const RECIPES = Object.freeze({
   enemies: [
@@ -102,6 +106,12 @@ export function materializeContentRecipe(collection, recipeId, context = {}) {
   if (collection === "mechanics") return materializeMechanicsRecipe(recipeId, context);
   const source = RECIPES[collection].find((item) => item.id === recipeId);
   if (!source) throw new Error(`Unknown ${collection} recipe "${recipeId}".`);
+  if (ownDataFieldPresent(context, "parameters")) {
+    throw new MechanicsRecipeParameterError(
+      "terraform_recipe_parameter_invalid",
+      `Content recipe "${collection}/${recipeId}" does not accept parameters.`
+    );
+  }
   const result = clone(source);
   result.entity.id = result.suggestedId;
 
@@ -115,6 +125,15 @@ export function materializeContentRecipe(collection, recipeId, context = {}) {
     result.entity.abilityIds = [...(context.abilityIds ?? [])];
   }
   return result;
+}
+
+function ownDataFieldPresent(value, key) {
+  if (value === null || (typeof value !== "object" && typeof value !== "function")) return false;
+  try {
+    return Object.getOwnPropertyDescriptor(value, key) !== undefined;
+  } catch {
+    return true;
+  }
 }
 
 export function contentRecipeContext(files) {
@@ -143,6 +162,7 @@ export function contentRecipeContext(files) {
       ? ownDataValue(combatModule, "schemaVersion")
       : undefined,
     activeCombatDamageTypeIds: isRecord(damageTypes) ? Object.keys(damageTypes).sort(compareBinary) : [],
+    terrainIds: isRecord(balance.terrainTypes) ? Object.keys(balance.terrainTypes).sort(compareBinary) : [],
     terrainTags: authoredTerrainTags(balance.terrainTypes),
     destructibleTowerIds: towerEntries
       .filter(([, tower]) => Number.isFinite(tower?.maxHp) && tower.maxHp > 0)

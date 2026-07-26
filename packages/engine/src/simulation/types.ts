@@ -670,6 +670,7 @@ export type GameEvent =
   | { type: "abilityUsed"; abilityId: MissionAbilityId; center: HexCoord; enemyIds: string[]; effects: AbilityEffect[] }
   | { type: "enemyEnteredTile"; enemyId: string; enemyTypeId: string; coord: GridCoord; terrain: Terrain; terrainMetadata: TerrainTypeDefinition; routeId?: string; pathOrder: number }
   | { type: "terrainChanged"; coord: GridCoord; fromTerrain: Terrain; toTerrain: Terrain; terrainMetadata: TerrainTypeDefinition; source: "script" | "ability" | "restore" }
+  | { type: "elevationChanged"; coord: GridCoord; fromElevation: number; toElevation: number; source: "script" | "restore" }
   | { type: "scriptSignal"; scriptId: string; signal: string; payload: import("../scripting/types.js").TowerScriptJson }
   | { type: "scriptDiagnostic"; diagnostic: import("../scripting/types.js").TowerScriptDiagnostic }
   | { type: "victory" }
@@ -704,6 +705,19 @@ export interface ElevationSnapshotV1 {
   readonly schemaVersion: 1;
   readonly defaultElevation: 0;
   readonly overrides: readonly import("./map.js").GridMapElevationOverride[];
+}
+
+export interface TerraformingSnapshotV1 {
+  readonly schemaVersion: 1;
+  readonly pendingExpiryGroups: readonly {
+    readonly sequence: number;
+    readonly remaining: number;
+    readonly targets: readonly {
+      readonly layer: "terrain" | "elevation";
+      readonly q: number;
+      readonly r: number;
+    }[];
+  }[];
 }
 
 export interface GameSnapshot {
@@ -747,6 +761,7 @@ export interface GameSnapshot {
   reactions?: ReactionStateV1;
   navigation?: NavigationSnapshotV1;
   elevation?: ElevationSnapshotV1;
+  terraforming?: TerraformingSnapshotV1;
   scriptState: import("../scripting/types.js").TowerScriptStateSnapshot;
   lastEvents: GameEvent[];
 }

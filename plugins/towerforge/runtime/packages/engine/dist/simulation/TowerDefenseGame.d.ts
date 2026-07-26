@@ -72,6 +72,11 @@ export declare class TowerDefenseGame {
     private abilityCooldowns;
     private temporaryWaterTiles;
     private runtimeTerrainOverrides;
+    private runtimeElevationOverrides;
+    private pendingTerraformExpiryGroups;
+    private nextTerraformExpirySequence;
+    /** Preserve the nested checkpoint source form until native timed state is first committed. */
+    private terraformingCheckpointForm;
     private readonly sunlightPathKeys;
     private readonly sunlightTilesSnapshot;
     private readonly directFlightLine;
@@ -113,6 +118,7 @@ export declare class TowerDefenseGame {
     sellTower(towerId: string): ActionResult;
     setTowerTargetMode(towerId: string, mode: TowerTargetMode): ActionResult;
     usePathWaterAbility(center: HexCoord): ActionResult;
+    private useActivePathWaterAbility;
     /**
      * The `strike`/`freeze` engine presets, expressed as the same composable effects a custom
      * ability declares via `MissionAbilityDefinition.effects`. Returns undefined for any other id
@@ -191,14 +197,18 @@ export declare class TowerDefenseGame {
     private scriptStateFor;
     private scriptExpressionContext;
     private applyScriptAction;
+    private applyActiveLegacyTerrainAction;
     private resolveScriptTileTarget;
     private applyTerraformTilesAction;
+    private applyResolvedPersistentOperations;
+    private isNativeTerraformTargetOwned;
     private inspectTerraformOperationArray;
     private inspectTerraformOperation;
     private resolveTerraformTarget;
     private planPersistentTerrainCandidate;
+    private planPersistentElevationCandidate;
     private planDynamicPersistentTerrainNavigation;
-    private publishPersistentTerrainCandidate;
+    private publishPersistentTerraformCandidate;
     private applyTerrainOverride;
     private restoreTerrainOverride;
     private restoreTerrainOverrideByKey;
@@ -234,6 +244,7 @@ export declare class TowerDefenseGame {
     private consumeResolvedMarks;
     private applySourceMarkBindings;
     private updateShieldRegeneration;
+    private advanceNativeTerraformingExpiry;
     private updateAbilities;
     private updateEnemyStatuses;
     private buildAbilitySnapshot;

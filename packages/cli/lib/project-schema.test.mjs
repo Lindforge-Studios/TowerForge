@@ -208,6 +208,46 @@ describe("project schema", () => {
     }));
   });
 
+  it("accepts only terraforming v1 in project v3 and leaves legacy projects absent", () => {
+    const profile = {
+      terrainTransitions: {
+        flood: { fromTerrainTags: ["path"], toTerrainId: "water" }
+      }
+    };
+    const valid = mechanicsSchemaFiles(3, {
+      schemaVersion: 1,
+      modules: {
+        terraforming: { schemaVersion: 1, enabled: true, profiles: { mutable: profile } }
+      }
+    });
+    valid.balance.terrainTypes = {
+      path: { label: "Path", buildable: false, walkable: true, groundSpeedMultiplier: 1, tags: ["path"] },
+      water: { label: "Water", buildable: false, walkable: true, groundSpeedMultiplier: 0.5, tags: ["water"] }
+    };
+    valid.balance.missions.mission = {
+      id: "mission",
+      mechanics: { profiles: { terraforming: "mutable" } }
+    };
+
+    expect(validateProjectSchemas(valid).issues.filter((issue) => (
+      issue.entityKind === "mechanics" || issue.fieldPath?.includes("terraforming")
+    ))).toEqual([]);
+
+    const future = structuredClone(valid);
+    future.mechanics.modules.terraforming.schemaVersion = 2;
+    expect(validateProjectSchemas(future).issues).toContainEqual(expect.objectContaining({
+      severity: "error",
+      entityKind: "mechanics",
+      fieldPath: "modules.terraforming.schemaVersion",
+      message: expect.stringMatching(/newer|supported|must be.*1/i)
+    }));
+
+    for (const schemaVersion of [1, 2]) {
+      const legacy = validateProjectSchemas(mechanicsSchemaFiles(schemaVersion, undefined));
+      expect(legacy.issues.some((issue) => issue.fieldPath?.includes("terraforming"))).toBe(false);
+    }
+  });
+
   it("rejects a future mechanics schema instead of silently ignoring it", () => {
     const result = validateProjectSchemas(mechanicsSchemaFiles(3, {
       schemaVersion: 2,

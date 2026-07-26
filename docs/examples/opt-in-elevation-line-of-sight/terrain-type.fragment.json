@@ -1,0 +1,11 @@
+{
+  "cliff": {
+    "label": "Cliff",
+    "buildable": false,
+    "walkable": false,
+    "groundSpeedMultiplier": 1,
+    "tags": [
+      "opaque"
+    ]
+  }
+}

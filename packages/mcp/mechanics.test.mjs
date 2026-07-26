@@ -144,6 +144,11 @@ describe("R1 combat mechanics MCP contract", () => {
       snapshot: { field: null, optional: true, supportedSchemaVersions: [] },
       events: ["enemyDisplacementResolved", "enemyFell"]
     };
+    const terraformingSurface = {
+      authoring: engine.TERRAFORMING_MECHANICS_SCHEMA,
+      snapshot: { field: "terraforming", optional: true, supportedSchemaVersions: [1] },
+      events: ["terrainChanged", "elevationChanged"]
+    };
 
     expect(engine.COMBAT_MECHANICS_SCHEMA).toMatchObject({
       schemaVersion: 3,
@@ -171,7 +176,8 @@ describe("R1 combat mechanics MCP contract", () => {
         reactions: reactionsSurface,
         navigation: navigationSurface,
         elevation: elevationSurface,
-        physics: physicsSurface
+        physics: physicsSurface,
+        terraforming: terraformingSurface
       }
     });
     expect(mechanics.mechanics.moduleIds).toHaveLength(12);

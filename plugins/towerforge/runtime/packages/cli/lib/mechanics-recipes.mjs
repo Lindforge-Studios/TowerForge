@@ -10,6 +10,36 @@ const BASIC_ELEVATION_LINE_OF_SIGHT_ID = "basic_elevation_line_of_sight";
 const BASIC_ELEVATION_HIGH_GROUND_ID = "basic_elevation_high_ground";
 const BASIC_DISPLACEMENT_PHYSICS_ID = "basic_displacement_physics";
 const TAGGED_FALL_HAZARDS_ID = "tagged_fall_hazards";
+const TAGGED_FLOOD_ID = "tagged_flood";
+const TAGGED_MOAT_ID = "tagged_moat";
+const TAGGED_DESTRUCTIBLE_BRIDGE_ID = "tagged_destructible_bridge";
+const TERRAFORMING_RECIPE_IDS = Object.freeze([
+  TAGGED_FLOOD_ID,
+  TAGGED_MOAT_ID,
+  TAGGED_DESTRUCTIBLE_BRIDGE_ID
+]);
+const TERRAFORMING_DEFAULT_TRANSITION_IDS = Object.freeze({
+  [TAGGED_FLOOD_ID]: "flood",
+  [TAGGED_MOAT_ID]: "moat",
+  [TAGGED_DESTRUCTIBLE_BRIDGE_ID]: "destroy_bridge"
+});
+const TERRAFORMING_PARAMETER_SCHEMA = Object.freeze({
+  type: "object",
+  required: Object.freeze(["sourceTerrainTag", "destinationTerrainId"]),
+  additionalProperties: false,
+  properties: Object.freeze({
+    sourceTerrainTag: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 }),
+    destinationTerrainId: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 }),
+    transitionId: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 })
+  })
+});
+export class MechanicsRecipeParameterError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = "MechanicsRecipeParameterError";
+    this.code = code;
+  }
+}
 const BASIC_SHIELD = Object.freeze({
   capacity: 25,
   regeneration: Object.freeze({ ratePerUnit: 1, delayAfterDamage: 3 })
@@ -104,6 +134,33 @@ const RECIPES = Object.freeze([
     description: "Opt-in physics v1 profile that treats the authored fall_hazard terrain tag as a terminal chasm.",
     suggestedId: TAGGED_FALL_HAZARDS_ID,
     moduleSchemaVersion: 1
+  }),
+  Object.freeze({
+    id: TAGGED_FLOOD_ID,
+    moduleId: "terraforming",
+    label: "Tagged Flood",
+    description: "Inert opt-in terrain transition from one authored source tag to one authored destination terrain.",
+    suggestedId: TAGGED_FLOOD_ID,
+    moduleSchemaVersion: 1,
+    parameterSchema: TERRAFORMING_PARAMETER_SCHEMA
+  }),
+  Object.freeze({
+    id: TAGGED_MOAT_ID,
+    moduleId: "terraforming",
+    label: "Tagged Moat",
+    description: "Inert opt-in moat transition bound only to author-selected terrain content.",
+    suggestedId: TAGGED_MOAT_ID,
+    moduleSchemaVersion: 1,
+    parameterSchema: TERRAFORMING_PARAMETER_SCHEMA
+  }),
+  Object.freeze({
+    id: TAGGED_DESTRUCTIBLE_BRIDGE_ID,
+    moduleId: "terraforming",
+    label: "Tagged Destructible Bridge",
+    description: "Inert opt-in bridge destruction transition bound only to author-selected terrain content.",
+    suggestedId: TAGGED_DESTRUCTIBLE_BRIDGE_ID,
+    moduleSchemaVersion: 1,
+    parameterSchema: TERRAFORMING_PARAMETER_SCHEMA
   })
 ]);
 
@@ -119,6 +176,26 @@ export function listMechanicsRecipes() {
 export function materializeMechanicsRecipe(recipeId, context = {}) {
   const recipe = RECIPES.find((candidate) => candidate.id === recipeId);
   if (!recipe) throw new Error(`Unknown mechanics recipe "${recipeId}".`);
+
+  const parameterField = inspectParameterField(context);
+  if (TERRAFORMING_RECIPE_IDS.includes(recipeId)) {
+    if (parameterField.kind === "absent") {
+      throw new MechanicsRecipeParameterError(
+        "terraform_recipe_parameters_required",
+        "Terraforming recipe parameters are required and must be a closed object."
+      );
+    }
+    if (parameterField.kind === "invalid") {
+      throw invalidTerraformingRecipeParameter("Terraforming recipe parameters must be an enumerable own data field.");
+    }
+    return materializeTerraformingRecipe(recipe, context, parameterField.value);
+  }
+  if (parameterField.kind !== "absent") {
+    throw new MechanicsRecipeParameterError(
+      "terraform_recipe_parameter_invalid",
+      `Mechanics recipe "${recipeId}" does not accept parameters.`
+    );
+  }
 
   const missionId = chooseId(context.defaultMissionId, context.missionIds);
   if ([ELEMENTAL_SHATTER_ID, WET_CHAIN_SHOCK_ID, POISON_COMBUSTION_ID].includes(recipeId)) {
@@ -215,6 +292,156 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
       profile: { shields: { enemies, towers } }
     }
   };
+}
+
+function materializeTerraformingRecipe(recipe, context, parameterValue) {
+  const parameters = inspectTerraformingParameters(parameterValue);
+  const sourceTerrainTag = boundedRecipeParameter(parameters.sourceTerrainTag, "sourceTerrainTag");
+  const destinationTerrainId = boundedRecipeParameter(parameters.destinationTerrainId, "destinationTerrainId");
+  const transitionId = parameters.transitionId === undefined
+    ? TERRAFORMING_DEFAULT_TRANSITION_IDS[recipe.id]
+    : boundedRecipeParameter(parameters.transitionId, "transitionId");
+  const terrainTags = new Set(inspectStringCatalog(ownDataValue(context, "terrainTags"), "terrainTags"));
+  const terrainIds = new Set(inspectStringCatalog(ownDataValue(context, "terrainIds"), "terrainIds"));
+  if (!terrainTags.has(sourceTerrainTag)) {
+    throw new MechanicsRecipeParameterError(
+      "terraform_recipe_source_tag_missing",
+      `Recipe parameter sourceTerrainTag "${sourceTerrainTag}" is not an authored terrain tag.`
+    );
+  }
+  if (!terrainIds.has(destinationTerrainId)) {
+    throw new MechanicsRecipeParameterError(
+      "terraform_recipe_destination_missing",
+      `Recipe parameter destinationTerrainId "${destinationTerrainId}" is not an authored terrain ID.`
+    );
+  }
+
+  const terrainTransitions = safeRecord();
+  defineOwn(terrainTransitions, transitionId, {
+    fromTerrainTags: [sourceTerrainTag],
+    toTerrainId: destinationTerrainId
+  });
+  return {
+    ...recipe,
+    entity: {
+      moduleId: "terraforming",
+      moduleSchemaVersion: 1,
+      profileId: recipe.suggestedId,
+      profile: { terrainTransitions }
+    },
+    towerScriptSnippet: {
+      minimumSchemaVersion: 6,
+      action: {
+        action: "terraformTiles",
+        operations: [{ kind: "set_terrain", target: "eventTile", transitionId }]
+      }
+    }
+  };
+}
+
+function inspectTerraformingParameters(value) {
+  if (!isPlainRecord(value)) {
+    throw invalidTerraformingRecipeParameter("Terraforming recipe parameters must be a closed ordinary object.");
+  }
+  let descriptors;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    throw invalidTerraformingRecipeParameter("Terraforming recipe parameters could not be inspected safely.");
+  }
+  if (Object.getOwnPropertySymbols(descriptors).length > 0) {
+    throw invalidTerraformingRecipeParameter("Terraforming recipe parameters are closed; symbol fields are not allowed.");
+  }
+  const result = safeRecord();
+  for (const key of Object.keys(descriptors).sort(compareBinary)) {
+    const descriptor = descriptors[key];
+    if (!descriptor?.enumerable || !("value" in descriptor)) {
+      throw invalidTerraformingRecipeParameter(`Terraforming recipe parameter "${key}" must be an enumerable own data field.`);
+    }
+    if (!["sourceTerrainTag", "destinationTerrainId", "transitionId"].includes(key)) {
+      throw invalidTerraformingRecipeParameter(`Terraforming recipe parameters are closed; unknown parameter "${key}" is not allowed.`);
+    }
+    defineOwn(result, key, descriptor.value);
+  }
+  for (const required of ["sourceTerrainTag", "destinationTerrainId"]) {
+    if (!Object.hasOwn(result, required)) {
+      throw invalidTerraformingRecipeParameter(`Terraforming recipe parameter "${required}" is required.`);
+    }
+  }
+  return result;
+}
+
+function inspectParameterField(context) {
+  if (!isPlainRecord(context)) return { kind: "invalid" };
+  let descriptor;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(context, "parameters");
+  } catch {
+    return { kind: "invalid" };
+  }
+  if (descriptor === undefined) return { kind: "absent" };
+  if (!descriptor.enumerable || !("value" in descriptor)) return { kind: "invalid" };
+  return { kind: "value", value: descriptor.value };
+}
+
+function boundedRecipeParameter(value, name) {
+  if (typeof value !== "string") {
+    throw invalidTerraformingRecipeParameter(`Terraforming recipe parameter "${name}" must be a string.`);
+  }
+  if (value.length === 0 || utf8ByteLength(value) > 128) {
+    throw invalidTerraformingRecipeParameter(`Terraforming recipe parameter "${name}" must contain 1..128 UTF-8 bytes.`);
+  }
+  return value;
+}
+
+function inspectStringCatalog(value, name) {
+  let array;
+  let prototype;
+  let descriptors;
+  try {
+    array = Array.isArray(value);
+    prototype = array ? Object.getPrototypeOf(value) : undefined;
+    descriptors = array ? Object.getOwnPropertyDescriptors(value) : undefined;
+  } catch {
+    throw invalidTerraformingRecipeParameter(`Terraforming recipe context ${name} could not be inspected safely.`);
+  }
+  if (!array || prototype !== Array.prototype) {
+    throw invalidTerraformingRecipeParameter(`Terraforming recipe context ${name} must be an ordinary array.`);
+  }
+  const length = descriptors.length && "value" in descriptors.length ? descriptors.length.value : undefined;
+  if (!Number.isSafeInteger(length) || Reflect.ownKeys(descriptors).some((key) => {
+    if (key === "length") return false;
+    return typeof key !== "string" || !/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= length;
+  })) {
+    throw invalidTerraformingRecipeParameter(`Terraforming recipe context ${name} must be a dense own-data array.`);
+  }
+  const result = [];
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = descriptors[String(index)];
+    if (!descriptor?.enumerable || !("value" in descriptor) || typeof descriptor.value !== "string") {
+      throw invalidTerraformingRecipeParameter(`Terraforming recipe context ${name}[${index}] must be an own string value.`);
+    }
+    result.push(descriptor.value);
+  }
+  return result.sort(compareBinary);
+}
+
+function isPlainRecord(value) {
+  try {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+  } catch {
+    return false;
+  }
+}
+
+function utf8ByteLength(value) {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+function invalidTerraformingRecipeParameter(message) {
+  return new MechanicsRecipeParameterError("terraform_recipe_parameter_invalid", message);
 }
 
 function materializeDynamicNavigationRecipe(recipe, missionId) {
@@ -525,8 +752,8 @@ function safeRecord() {
 }
 
 function ownDataValue(value, key) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
   try {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
     const prototype = Object.getPrototypeOf(value);
     if (prototype !== Object.prototype && prototype !== null) return undefined;
     const descriptor = Object.getOwnPropertyDescriptor(value, key);

@@ -692,6 +692,52 @@
               <p class="text-muted">One ID or tag per line. Physics v1 supports tile-discrete ground displacement with a maximum distance of 8.</p>
             </div>
           </div>
+          <div id="mechanics-terraforming-editor" class="hidden">
+            <div class="mechanics-shield-section mechanics-terraforming-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Terrain transitions</h4>
+                  <p>Map an existing terrain tag to an existing destination terrain. These definitions remain inert until the v1 profile is explicitly enabled for the mission.</p>
+                </div>
+                <button id="btn-mechanics-add-terraforming-transition" class="btn btn-outline" type="button">+ Add transition</button>
+              </div>
+              <div id="mechanics-terraforming-transition-rows" class="mechanics-definition-rows"></div>
+            </div>
+            <div class="mechanics-shield-section mechanics-terraforming-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Elevation mutation policy</h4>
+                  <p>Optional bounded elevation edits require a separately active elevation profile for this mission.</p>
+                </div>
+                <label class="mechanics-navigation-overlay-toggle">
+                  <input id="mechanics-terraforming-elevation-enabled" type="checkbox">
+                  <span>Allow elevation operations</span>
+                </label>
+              </div>
+              <div class="mechanics-terraforming-elevation-fields">
+                <label>Minimum elevation<input id="mechanics-terraforming-elevation-minimum" type="number" step="1"></label>
+                <label>Maximum elevation<input id="mechanics-terraforming-elevation-maximum" type="number" step="1"></label>
+                <label>Maximum delta per operation<input id="mechanics-terraforming-elevation-max-delta" type="number" min="1" step="1"></label>
+              </div>
+              <p id="mechanics-terraforming-elevation-dependency" class="mechanics-notice" role="status">Elevation mutation is not included in this profile.</p>
+            </div>
+            <div class="mechanics-shield-section mechanics-terraforming-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Detached recipe materialization</h4>
+                  <p>Choose authored terrain values, then use “New from recipe”. This fills only the local profile draft and a read-only TowerScript snippet.</p>
+                </div>
+              </div>
+              <div class="mechanics-terraforming-recipe-fields">
+                <label>Source terrain tag<select id="mechanics-terraforming-recipe-source-tag"></select></label>
+                <label>Destination terrain<select id="mechanics-terraforming-recipe-destination"></select></label>
+                <label>Transition ID (optional)<input id="mechanics-terraforming-recipe-transition-id" type="text" autocomplete="off" spellcheck="false" placeholder="recipe default"></label>
+              </div>
+              <label class="mechanics-terraforming-snippet-label">Read-only TowerScript v6 snippet
+                <pre id="mechanics-terraforming-recipe-snippet" class="mechanics-preview-result" aria-live="polite">Materialize a recipe to inspect its read-only TowerScript v6 snippet.</pre>
+              </label>
+            </div>
+          </div>
           <div class="mechanics-actions">
             <button id="btn-mechanics-preview" class="btn btn-outline" type="button">Preview</button>
             <button id="btn-mechanics-enable" class="btn btn-primary" type="button">Enable for mission</button>

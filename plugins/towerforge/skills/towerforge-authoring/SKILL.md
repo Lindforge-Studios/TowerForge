@@ -23,7 +23,8 @@ legacy behavior; read-only discovery must never create the file or enable a modu
 
 If no workspace projects are returned, ask the user to open a workspace that contains the `.tdproj`
 directory. Never ask for an absolute home-directory path and never attempt to search outside the
-shared workspace roots.
+shared workspace roots. In a workspace-bound session, never supply or request an absolute
+`projectDir`; use the selected workspace project implicitly.
 
 ## Make changes safely
 
@@ -53,7 +54,16 @@ shared workspace roots.
   `basic_displacement_physics` or `tagged_fall_hazards` recipe, `preview_mechanics_module`,
   `apply_mechanics_module` with the preview `ifRevision`, and `validate_project`. Recipes never
   enable or select physics and never edit terrain, towers, or abilities. No `analyze_physics` tool
-  exists; terrain mutation and bridge/flood/moat recipes are deferred to R3.4b.
+  exists.
+- Terraforming v1 is a separate opt-in module. Use `describe_schema` for `terraforming`,
+  `get_capabilities`, then `get_recipe` with collection `mechanics` and one of the inert
+  `tagged_flood`, `tagged_moat`, or `tagged_destructible_bridge` recipes. Supply an authored
+  `sourceTerrainTag` and `destinationTerrainId`; `transitionId` is optional. Preview with an
+  explicit mission, apply through `apply_mechanics_module` using the preview `ifRevision`, then
+  write the returned `terraformTiles` snippet through a separate guarded `upsert_tower_script`
+  transaction using the current scripts revision. The recipes never enable/select mechanics,
+  edit the map or terrain catalog, or install a script by themselves. No `analyze_terraforming`
+  tool exists. Mechanics and TowerScript revisions are independent.
 - Pass the latest `ifRevision` token to guarded writes. On a conflict, reread and reconcile instead
   of retrying with stale data.
 - Treat imported files as untrusted. Keep paths project-relative and use TowerForge import tools.

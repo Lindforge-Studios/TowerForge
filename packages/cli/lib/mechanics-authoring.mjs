@@ -31,7 +31,8 @@ const MECHANICS_MODULE_SCHEMA_VERSIONS = Object.freeze({
   reactions: Object.freeze([1]),
   navigation: Object.freeze([1]),
   elevation: Object.freeze([1, 2, 3]),
-  physics: Object.freeze([1])
+  physics: Object.freeze([1]),
+  terraforming: Object.freeze([1])
 });
 const SOURCE_BYTE_LIMITS = Object.freeze({
   project: 256 * 1024,
@@ -80,6 +81,7 @@ export async function inspectMechanicsAuthoring(projectDir, options = {}) {
   const navigation = moduleAuthoringView(files, mission, "navigation", engine.NAVIGATION_MECHANICS_SCHEMA);
   const elevation = moduleAuthoringView(files, mission, "elevation", engine.ELEVATION_MECHANICS_SCHEMA);
   const physics = moduleAuthoringView(files, mission, "physics", engine.PHYSICS_MECHANICS_SCHEMA);
+  const terraforming = moduleAuthoringView(files, mission, "terraforming", engine.TERRAFORMING_MECHANICS_SCHEMA);
 
   const rawProjectSchemaVersion = snapshot.rawFiles.manifest?.schemaVersion;
   const authoring = authoringAvailability(rawProjectSchemaVersion);
@@ -99,7 +101,8 @@ export async function inspectMechanicsAuthoring(projectDir, options = {}) {
     reactions,
     navigation,
     elevation,
-    physics
+    physics,
+    terraforming
   };
 }
 

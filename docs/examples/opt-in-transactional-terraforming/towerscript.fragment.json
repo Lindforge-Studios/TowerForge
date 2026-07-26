@@ -1,0 +1,14 @@
+{
+  "minimumSchemaVersion": 6,
+  "snippet": {
+    "action": "terraformTiles",
+    "operations": [
+      {
+        "kind": "set_terrain",
+        "target": "eventTile",
+        "transitionId": "flood"
+      }
+    ],
+    "duration": 3
+  }
+}

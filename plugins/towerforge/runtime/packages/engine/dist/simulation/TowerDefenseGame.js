@@ -13,6 +13,10 @@ import { computeHighGroundPairModifiers } from "./high-ground.js";
 import { NavigationResolver } from "./navigation-runtime.js";
 import { NavigationFieldLookupCache } from "./navigation-movement.js";
 import { planDynamicTerraformingNavigation } from "./terraforming-navigation.js";
+import { collectDynamicTerraformingSpawnProvenance } from "./navigation-reachability.js";
+import { DynamicTerraformingSafetyBudgetError } from "./terraforming-navigation-budget.js";
+import { prepareDynamicTerraformingSafetySet } from "./terraforming-navigation-safety.js";
+import { advanceTerraformExpiryGroups, buildTerraformingSnapshot, countTerraformExpiryOwnership, terraformExpiryTargetKey } from "./terraforming-expiry.js";
 import { normalizeNavigationAnalysisRequestV1 } from "./navigation-analysis.js";
 import { analyzeLineOfSightTargets, normalizeLineOfSightAnalysisRequestV1, traceLineOfSight } from "./line-of-sight.js";
 import { DamageResolver } from "./damage.js";
@@ -180,7 +184,7 @@ const SCRIPT_GAME_EVENT_NAMES = new Set([
     "towerFired", "towerResourcesGranted", "towerShieldChanged", "enemyHit", "enemyShieldChanged", "enemyMarkChanged", "enemyKilled", "enemyLeaked", "enemySpawnedOnDeath",
     "enemyExposureChanged", "enemyReactionTriggered",
     "enemyPhaseSpawned", "waveStarted", "waveCleared", "resourcesGranted", "abilityUsed", "objectiveCompleted",
-    "enemyEnteredTile", "terrainChanged", "objectiveFailed", "starEarned", "victory", "defeat"
+    "enemyEnteredTile", "terrainChanged", "elevationChanged", "objectiveFailed", "starEarned", "victory", "defeat"
 ]);
 export class TowerDefenseGame {
     content;
@@ -236,6 +240,11 @@ export class TowerDefenseGame {
     abilityCooldowns = {};
     temporaryWaterTiles = [];
     runtimeTerrainOverrides = new Map();
+    runtimeElevationOverrides = new Map();
+    pendingTerraformExpiryGroups = [];
+    nextTerraformExpirySequence = 1;
+    /** Preserve the nested checkpoint source form until native timed state is first committed. */
+    terraformingCheckpointForm = 0;
     sunlightPathKeys;
     sunlightTilesSnapshot;
     directFlightLine;
@@ -295,6 +304,8 @@ export class TowerDefenseGame {
         this.activeHighGroundProfile = resolveActiveHighGroundMechanics(this.content, missionId);
         this.activePhysicsMechanics = resolveActivePhysicsMechanics(this.content, missionId);
         this.activeTerraformingMechanics = resolveActiveTerraformingMechanics(this.content, missionId);
+        this.terraformingCheckpointForm = this.activeTerraformingMechanics ? 2 : 0;
+        this.map.useRuntimeElevationOverrides(this.runtimeElevationOverrides);
         const selectedNavigation = resolveActiveNavigationMechanics(this.content, missionId);
         if (selectedNavigation?.mode === "dynamic_flow") {
             this.activeNavigationProfileId = selectedNavigation.profileId;
@@ -407,6 +418,10 @@ export class TowerDefenseGame {
         this.abilityCooldowns = {};
         this.temporaryWaterTiles = [];
         this.runtimeTerrainOverrides.clear();
+        this.runtimeElevationOverrides.clear();
+        this.pendingTerraformExpiryGroups = [];
+        this.nextTerraformExpirySequence = 1;
+        this.map.useRuntimeElevationOverrides(this.runtimeElevationOverrides);
         this.map.restoreAllTerrain();
         this.initializeScripts();
         this.beginScriptTransaction();
@@ -708,12 +723,61 @@ export class TowerDefenseGame {
         if (effectCoords.length === 0) {
             return this.fail("Water can only be poured onto the path.", "reason.abilityPathOnly");
         }
+        if (this.activeTerraformingMechanics) {
+            return this.useActivePathWaterAbility(ability, center, effectCoords);
+        }
         for (const coord of effectCoords) {
             const result = this.applyTerrainOverride(coord, "water", ability.duration, "ability");
             if (!result.ok)
                 return result;
         }
         this.syncTemporaryWaterTiles();
+        this.abilityCooldowns.path_water = ability.cooldown;
+        this.lastEvents.push({
+            type: "waterAbilityUsed",
+            abilityId: ability.id,
+            center: { ...center },
+            coords: effectCoords.map((coord) => ({ ...coord })),
+            duration: ability.duration
+        });
+        this.finishScriptedAction();
+        return { ok: true };
+    }
+    useActivePathWaterAbility(ability, center, effectCoords) {
+        if (effectCoords.length > TERRAFORMING_LIMITS.operationsPerBatch) {
+            return this.fail(`Water spill exceeds the ${TERRAFORMING_LIMITS.operationsPerBatch} tile operation budget.`, "terraform.operation_budget_exceeded");
+        }
+        if (this.pendingTerraformExpiryGroups.length >= TERRAFORMING_LIMITS.pendingExpiryGroups) {
+            return this.fail(`Terraform expiry groups exceed the ${TERRAFORMING_LIMITS.pendingExpiryGroups} group limit.`, "terraform.expiry_group_budget_exceeded");
+        }
+        if (!Number.isFinite(ability.duration)
+            || ability.duration <= 0
+            || ability.duration > TERRAFORMING_LIMITS.duration) {
+            return this.fail(`Terraform duration must be finite and inside (0, ${TERRAFORMING_LIMITS.duration}].`, "terraform.duration_out_of_range");
+        }
+        if (!this.content.terrainTypes.water) {
+            return this.fail('Terraform destination terrain "water" is unknown.', "terraform.invalid_operation");
+        }
+        for (const coord of effectCoords) {
+            const existing = this.runtimeTerrainOverrides.get(coordKey(coord));
+            if (this.isNativeTerraformTargetOwned("terrain", coord) || typeof existing?.expiresIn === "number") {
+                return this.fail(`Terraform terrain target ${coordKey(coord)} is owned by a timed override.`, "terraform.target_owned");
+            }
+        }
+        try {
+            this.applyResolvedPersistentOperations(effectCoords.map((coord, order) => ({
+                kind: "set_terrain",
+                coord,
+                directTerrainId: "water",
+                terrainSource: "ability",
+                order
+            })), ability.duration);
+        }
+        catch (error) {
+            if (!(error instanceof TowerScriptTerraformingError))
+                throw error;
+            return this.fail(error.message, error.reasonKey);
+        }
         this.abilityCooldowns.path_water = ability.cooldown;
         this.lastEvents.push({
             type: "waterAbilityUsed",
@@ -910,6 +974,7 @@ export class TowerDefenseGame {
         }
         const delta = Math.max(0, Math.min(deltaUnits, 0.2));
         this.updateAbilities(delta);
+        this.advanceNativeTerraformingExpiry(delta);
         if (this.startedWaveCount > 0) {
             this.missionElapsed += delta;
             this.applyPassiveIncome(delta);
@@ -1414,6 +1479,7 @@ export class TowerDefenseGame {
         if (baseTerrain !== baseline.baseTerrainRef)
             fail("map base terrain identity changed.");
         const runtimeOverrides = field(gameDescriptors, "runtimeTerrainOverrides", "game");
+        const runtimeElevationOverrides = field(gameDescriptors, "runtimeElevationOverrides", "game");
         if (nativeMapSize(liveTiles, "map tiles") !== baseline.baseTiles.length) {
             fail("map tiles native size changed.");
         }
@@ -1422,6 +1488,9 @@ export class TowerDefenseGame {
         }
         if (nativeMapSize(runtimeOverrides, "runtime terrain overrides") > TOWER_SCRIPT_LIMITS.activeTerrainOverrides) {
             fail("runtime terrain overrides exceed the native size budget.");
+        }
+        if (nativeMapSize(runtimeElevationOverrides, "runtime elevation overrides") > TERRAFORMING_LIMITS.activeElevationOverrides) {
+            fail("runtime elevation overrides exceed the native size budget.");
         }
         assertNativeMapIntrinsics();
         const liveGrid = field(mapDescriptors, "grid", "map");
@@ -1501,6 +1570,180 @@ export class TowerDefenseGame {
                 }
             }
             nativeMapGet(expectedTiles, key).terrain = terrain;
+        }
+        const elevationEntries = mapEntries(runtimeElevationOverrides, "runtime elevation overrides", undefined, TERRAFORMING_LIMITS.activeElevationOverrides);
+        if (elevationEntries.length + overrideEntries.length > TERRAFORMING_LIMITS.activeOverridesCombined) {
+            fail("runtime terraforming overrides exceed the combined native size budget.");
+        }
+        const expectedElevation = new Map(this.map.getElevationOverrides().map((entry) => [coordKey(entry), { ...entry }]));
+        const elevationPolicy = this.activeTerraformingMechanics?.elevation;
+        for (let index = 0; index < elevationEntries.length; index += 1) {
+            const [key, value] = elevationEntries[index];
+            if (typeof key !== "string")
+                return fail(`runtime elevation override ${index} has a non-string key.`);
+            const descriptors = ownData(value, Object.prototype, `runtime elevation override ${index}`);
+            exactKeys(descriptors, ["q", "r", "elevation"], `runtime elevation override ${index}`);
+            const overrideCoord = coord({
+                q: field(descriptors, "q", `runtime elevation override ${index}`),
+                r: field(descriptors, "r", `runtime elevation override ${index}`)
+            }, `runtime elevation override ${index} coordinate`);
+            if (coordKey(overrideCoord) !== key || !this.map.isInside(overrideCoord)) {
+                fail(`runtime elevation override ${index} has an invalid coordinate key.`);
+            }
+            const elevation = field(descriptors, "elevation", `runtime elevation override ${index}`);
+            const baseElevation = this.map.getBaseElevation(overrideCoord);
+            if (!elevationPolicy
+                || !Number.isSafeInteger(elevation)
+                || elevation < elevationPolicy.minimum
+                || elevation > elevationPolicy.maximum
+                || elevation === baseElevation) {
+                fail(`runtime elevation override ${index} is invalid.`);
+            }
+            nativeMapSet(expectedElevation, key, {
+                q: overrideCoord.q,
+                r: overrideCoord.r,
+                elevation: elevation
+            });
+        }
+        const effectiveElevation = this.map.getEffectiveElevationOverrides();
+        const expectedEffectiveElevation = [...expectedElevation.values()]
+            .filter((entry) => entry.elevation !== 0)
+            .sort((left, right) => left.r - right.r || left.q - right.q);
+        if (canonicalStringify(effectiveElevation) !== canonicalStringify(expectedEffectiveElevation)) {
+            fail("map effective elevation is not backed by runtime elevation overrides.");
+        }
+        const checkpointForm = field(gameDescriptors, "terraformingCheckpointForm", "game");
+        const pendingExpiryGroups = arrayItems(field(gameDescriptors, "pendingTerraformExpiryGroups", "game"), "pending terraforming expiry groups");
+        const nextExpirySequence = field(gameDescriptors, "nextTerraformExpirySequence", "game");
+        if ((checkpointForm !== 0 && checkpointForm !== 1 && checkpointForm !== 2)
+            || (!this.activeTerraformingMechanics && checkpointForm !== 0)
+            || (checkpointForm === 1 && !elevationPolicy)
+            || (pendingExpiryGroups.length > 0 && checkpointForm !== 2)
+            || !Number.isSafeInteger(nextExpirySequence)
+            || nextExpirySequence < 1
+            || pendingExpiryGroups.length > TERRAFORMING_LIMITS.pendingExpiryGroups) {
+            fail("native terraforming checkpoint inventory is invalid.");
+        }
+        const ownedExpiryTargets = new Set();
+        let ownedExpiryTerrain = 0;
+        let ownedExpiryElevation = 0;
+        let previousExpirySequence = 0;
+        for (let groupIndex = 0; groupIndex < pendingExpiryGroups.length; groupIndex += 1) {
+            const group = ownData(pendingExpiryGroups[groupIndex], Object.prototype, `pending terraforming expiry group ${groupIndex}`);
+            exactKeys(group, ["sequence", "remaining", "targets"], `pending terraforming expiry group ${groupIndex}`);
+            const sequence = field(group, "sequence", `pending terraforming expiry group ${groupIndex}`);
+            const remaining = field(group, "remaining", `pending terraforming expiry group ${groupIndex}`);
+            if (!Number.isSafeInteger(sequence)
+                || sequence <= previousExpirySequence
+                || sequence >= nextExpirySequence
+                || typeof remaining !== "number"
+                || !Number.isFinite(remaining)
+                || remaining < 0
+                || remaining > TERRAFORMING_LIMITS.duration) {
+                fail(`pending terraforming expiry group ${groupIndex} sequence or remaining is invalid.`);
+            }
+            previousExpirySequence = sequence;
+            const targets = arrayItems(field(group, "targets", `pending terraforming expiry group ${groupIndex}`), `pending terraforming expiry group ${groupIndex} targets`);
+            if (targets.length < 1 || targets.length > TERRAFORMING_LIMITS.operationsPerBatch) {
+                fail(`pending terraforming expiry group ${groupIndex} target budget is invalid.`);
+            }
+            let previousOrder = -1;
+            for (let targetIndex = 0; targetIndex < targets.length; targetIndex += 1) {
+                const target = ownData(targets[targetIndex], Object.prototype, `pending terraforming expiry target ${groupIndex}:${targetIndex}`);
+                const layer = field(target, "layer", `pending terraforming expiry target ${groupIndex}:${targetIndex}`);
+                exactKeys(target, layer === "terrain"
+                    ? ["layer", "q", "r", "order", "appliedTerrain", "previousOverride"]
+                    : layer === "elevation"
+                        ? ["layer", "q", "r", "order", "appliedElevation", "previousElevationOverride"]
+                        : ["layer"], `pending terraforming expiry target ${groupIndex}:${targetIndex}`);
+                if (layer !== "terrain" && layer !== "elevation") {
+                    fail(`pending terraforming expiry target ${groupIndex}:${targetIndex} layer is invalid.`);
+                }
+                const order = field(target, "order", `pending terraforming expiry target ${groupIndex}:${targetIndex}`);
+                const targetCoord = coord({
+                    q: field(target, "q", `pending terraforming expiry target ${groupIndex}:${targetIndex}`),
+                    r: field(target, "r", `pending terraforming expiry target ${groupIndex}:${targetIndex}`)
+                }, `pending terraforming expiry target ${groupIndex}:${targetIndex} coordinate`);
+                if (!Number.isSafeInteger(order)
+                    || order < 0
+                    || order > 63
+                    || order <= previousOrder
+                    || !this.map.isInside(targetCoord)) {
+                    fail(`pending terraforming expiry target ${groupIndex}:${targetIndex} order or coordinate is invalid.`);
+                }
+                previousOrder = order;
+                const key = coordKey(targetCoord);
+                const ownershipKey = `${layer}:${key}`;
+                if (ownedExpiryTargets.has(ownershipKey)) {
+                    fail(`pending terraforming expiry target ${groupIndex}:${targetIndex} ownership is duplicated.`);
+                }
+                ownedExpiryTargets.add(ownershipKey);
+                if (ownedExpiryTargets.size > TERRAFORMING_LIMITS.activeOverridesCombined) {
+                    fail("pending terraforming expiry ownership exceeds the combined budget.");
+                }
+                if (layer === "terrain") {
+                    ownedExpiryTerrain += 1;
+                    const appliedTerrain = field(target, "appliedTerrain", `pending terraforming expiry terrain target ${groupIndex}:${targetIndex}`);
+                    const projected = nativeMapGet(runtimeOverrides, key);
+                    const previousValue = field(target, "previousOverride", `pending terraforming expiry terrain target ${groupIndex}:${targetIndex}`);
+                    const authoredTerrain = nativeMapGet(baseTerrain, key);
+                    const effectiveTerrain = projected?.terrain ?? authoredTerrain;
+                    const validRuntimeSource = projected?.source === "script" || (projected?.source === "ability"
+                        && this.activeTerraformingMechanics !== undefined
+                        && this.mission.abilities?.some((ability) => ability.id === "path_water")
+                        && appliedTerrain === "water"
+                        && authoredTerrain === "path");
+                    if (ownedExpiryTerrain > TERRAFORMING_LIMITS.activeTerrainOverrides
+                        || typeof appliedTerrain !== "string"
+                        || !Object.prototype.hasOwnProperty.call(this.content.terrainTypes, appliedTerrain)
+                        || effectiveTerrain !== appliedTerrain
+                        || (appliedTerrain === authoredTerrain && projected !== undefined)
+                        || (appliedTerrain !== authoredTerrain && (!projected
+                            || !validRuntimeSource
+                            || projected.expiresIn !== undefined))) {
+                        fail(`pending terraforming expiry terrain target ${groupIndex}:${targetIndex} projection is invalid.`);
+                    }
+                    if (previousValue === null) {
+                        if (authoredTerrain === appliedTerrain) {
+                            fail(`pending terraforming expiry terrain target ${groupIndex}:${targetIndex} before-image is invalid.`);
+                        }
+                    }
+                    else {
+                        const previousOverride = ownData(previousValue, Object.prototype, `pending terraforming expiry terrain before-image ${groupIndex}:${targetIndex}`);
+                        exactKeys(previousOverride, ["terrain", "source"], `pending terraforming expiry terrain before-image ${groupIndex}:${targetIndex}`);
+                        const previousTerrain = field(previousOverride, "terrain", "pending terraforming expiry terrain before-image");
+                        const previousSource = field(previousOverride, "source", "pending terraforming expiry terrain before-image");
+                        if (typeof previousTerrain !== "string"
+                            || !Object.prototype.hasOwnProperty.call(this.content.terrainTypes, previousTerrain)
+                            || (previousSource !== "script" && previousSource !== "ability")
+                            || previousTerrain === appliedTerrain) {
+                            fail(`pending terraforming expiry terrain target ${groupIndex}:${targetIndex} before-image is invalid.`);
+                        }
+                    }
+                }
+                else {
+                    ownedExpiryElevation += 1;
+                    const appliedElevation = field(target, "appliedElevation", `pending terraforming expiry elevation target ${groupIndex}:${targetIndex}`);
+                    const previousElevation = field(target, "previousElevationOverride", `pending terraforming expiry elevation target ${groupIndex}:${targetIndex}`);
+                    const projected = nativeMapGet(runtimeElevationOverrides, key);
+                    const baseElevation = this.map.getBaseElevation(targetCoord);
+                    const effectiveElevationValue = projected?.elevation ?? baseElevation;
+                    if (ownedExpiryElevation > TERRAFORMING_LIMITS.activeElevationOverrides
+                        || !elevationPolicy
+                        || !Number.isSafeInteger(appliedElevation)
+                        || effectiveElevationValue !== appliedElevation
+                        || (appliedElevation === baseElevation && projected !== undefined)
+                        || (appliedElevation !== baseElevation && !projected)
+                        || (previousElevation === null && baseElevation === appliedElevation)
+                        || (previousElevation !== null && (!Number.isSafeInteger(previousElevation)
+                            || previousElevation < elevationPolicy.minimum
+                            || previousElevation > elevationPolicy.maximum
+                            || previousElevation === appliedElevation
+                            || previousElevation === baseElevation))) {
+                        fail(`pending terraforming expiry elevation target ${groupIndex}:${targetIndex} projection is invalid.`);
+                    }
+                }
+            }
         }
         const expectedOccupancy = new Map();
         const towerValues = arrayItems(field(gameDescriptors, "towers", "game"), "game towers");
@@ -1705,7 +1948,8 @@ export class TowerDefenseGame {
     buildNavigationSnapshot() {
         if (!this.activeNavigationProfile || !this.navigationResolver || !this.navigationFieldLookupCache)
             return undefined;
-        const fields = this.buildNavigationFieldDiagnostics(this.groupNavigationDiagnosticPairs(this.navigationDiagnosticPairs()), (movementProfileId, routeId) => this.navigationField(movementProfileId, routeId), this.navigationFieldLookupCache);
+        const fields = this.buildNavigationFieldDiagnostics(this.groupNavigationDiagnosticPairs(this.navigationDiagnosticPairs()), (movementProfileId, routeId) => (this.navigationResolver.peekField(movementProfileId, routeId)
+            ?? this.navigationField(movementProfileId, routeId)), this.navigationFieldLookupCache);
         const stalledEnemyIds = this.enemies
             .filter((enemy) => enemy.hp > 0 && enemy.navigation && !enemy.navigation.nextCoord && !this.dynamicEnemyAtGoal(enemy))
             .map((enemy) => enemy.id)
@@ -1715,12 +1959,12 @@ export class TowerDefenseGame {
     buildElevationSnapshot(copyStaticState) {
         if (!this.activeElevation)
             return undefined;
-        if (!copyStaticState)
+        if (!copyStaticState && this.runtimeElevationOverrides.size === 0)
             return this.staticElevationSnapshot;
         return {
             schemaVersion: 1,
             defaultElevation: 0,
-            overrides: this.staticElevationSnapshot.overrides.map((entry) => ({ ...entry }))
+            overrides: this.map.getEffectiveElevationOverrides()
         };
     }
     buildCheckpointState() {
@@ -1771,6 +2015,47 @@ export class TowerDefenseGame {
         }));
         const combat = this.buildCombatState();
         const reactions = this.buildReactionState();
+        const runtimeElevationOverrides = [...this.runtimeElevationOverrides.values()]
+            .sort((left, right) => left.r - right.r || left.q - right.q)
+            .map((entry) => ({ q: entry.q, r: entry.r, elevation: entry.elevation }));
+        const terraforming = this.terraformingCheckpointForm === 0
+            ? undefined
+            : this.terraformingCheckpointForm === 1
+                ? {
+                    schemaVersion: 1,
+                    runtimeElevationOverrides
+                }
+                : {
+                    schemaVersion: 2,
+                    runtimeElevationOverrides,
+                    nextExpiryGroupSequence: this.nextTerraformExpirySequence,
+                    pendingExpiryGroups: this.pendingTerraformExpiryGroups.map((group) => ({
+                        sequence: group.sequence,
+                        remaining: group.remaining,
+                        entries: group.targets.map((target) => target.layer === "terrain"
+                            ? {
+                                layer: "terrain",
+                                order: target.order,
+                                q: target.q,
+                                r: target.r,
+                                appliedTerrain: target.appliedTerrain,
+                                previousOverride: target.previousOverride === null
+                                    ? null
+                                    : {
+                                        terrain: target.previousOverride.terrain,
+                                        source: target.previousOverride.source
+                                    }
+                            }
+                            : {
+                                layer: "elevation",
+                                order: target.order,
+                                q: target.q,
+                                r: target.r,
+                                appliedElevation: target.appliedElevation,
+                                previousElevationOverride: target.previousElevationOverride
+                            })
+                    }))
+                };
         const state = {
             coreHp: this.coreHp,
             resources: { ...this.resources },
@@ -1805,6 +2090,7 @@ export class TowerDefenseGame {
                 source: entry.source,
                 ...(entry.expiresIn === undefined ? {} : { expiresIn: entry.expiresIn })
             })),
+            ...(terraforming === undefined ? {} : { terraforming }),
             scriptValues: this.scriptValues,
             scriptDiagnostics: this.scriptDiagnostics.map((diagnostic) => ({
                 scriptId: diagnostic.scriptId,
@@ -1862,8 +2148,22 @@ export class TowerDefenseGame {
         ];
         for (const key of required)
             checkpointDataField(descriptors, key, "Game checkpoint state");
+        const checkpointTerraforming = resolveActiveTerraformingMechanics(content, identity.missionId);
+        const requiresElevationTerraformingCheckpoint = (resolveActiveElevationMechanics(content, identity.missionId) !== undefined
+            && checkpointTerraforming?.elevation !== undefined);
+        const hasTerraformingCheckpoint = Object.prototype.hasOwnProperty.call(descriptors, "terraforming");
+        if (requiresElevationTerraformingCheckpoint && !hasTerraformingCheckpoint) {
+            throw new Error("Game checkpoint terraforming state is missing.");
+        }
+        if (!checkpointTerraforming && hasTerraformingCheckpoint) {
+            throw new Error("Game checkpoint terraforming state is unsupported for an inactive capability.");
+        }
+        if (hasTerraformingCheckpoint) {
+            checkpointDataField(descriptors, "terraforming", "Game checkpoint state");
+        }
         requireExactCheckpointKeys(descriptors, [
             ...required,
+            ...(hasTerraformingCheckpoint ? ["terraforming"] : []),
             ...(Object.prototype.hasOwnProperty.call(descriptors, "combat") ? ["combat"] : []),
             ...(Object.prototype.hasOwnProperty.call(descriptors, "reactions") ? ["reactions"] : [])
         ], "Game checkpoint state");
@@ -1950,6 +2250,9 @@ export class TowerDefenseGame {
         const mapDefinition = content.maps[mission.mapId];
         if (!mapDefinition)
             throw new Error("Game checkpoint identity mission has no source map.");
+        const admitsNativePathWater = checkpointTerraforming !== undefined
+            && (mission.abilities ?? []).some((ability) => ability.id === "path_water")
+            && content.terrainTypes.water !== undefined;
         const validCoord = (value, label) => {
             const coord = closed(value, label, ["q", "r"]);
             const q = checkpointDataField(coord, "q", label);
@@ -2511,6 +2814,7 @@ export class TowerDefenseGame {
             abilityUsed: { required: ["type", "abilityId", "center", "enemyIds", "effects"] },
             enemyEnteredTile: { required: ["type", "enemyId", "enemyTypeId", "coord", "terrain", "terrainMetadata", "pathOrder"], optional: ["routeId"] },
             terrainChanged: { required: ["type", "coord", "fromTerrain", "toTerrain", "terrainMetadata", "source"] },
+            elevationChanged: { required: ["type", "coord", "fromElevation", "toElevation", "source"] },
             scriptSignal: { required: ["type", "scriptId", "signal", "payload"] },
             scriptDiagnostic: { required: ["type", "diagnostic"] },
             victory: { required: ["type"] },
@@ -2520,7 +2824,7 @@ export class TowerDefenseGame {
             "level", "stacks", "duration", "damage", "coins", "waveIndex", "rawDamage", "amount", "hpRatio", "pathOrder",
             "previous", "current", "capacity", "overflowDamage", "previousStacks", "currentStacks",
             "previousRemaining", "remaining",
-            "depth", "limit", "dropped", "requestedDistance", "movedDistance"
+            "depth", "limit", "dropped", "requestedDistance", "movedDistance", "fromElevation", "toElevation"
         ]);
         const stringEventFields = new Set([
             "towerId", "towerTypeId", "enemyId", "enemyTypeId", "parentEnemyId", "parentEnemyTypeId", "healerEnemyId",
@@ -2544,7 +2848,7 @@ export class TowerDefenseGame {
                     continue;
                 const field = checkpointDataField(event, key, `last event ${type}`);
                 if (numericEventFields.has(key))
-                    finite(field, `last event ${type}.${key}`);
+                    finite(field, `last event ${type}.${key}`, key === "fromElevation" || key === "toElevation" ? -Infinity : 0);
                 else if (stringEventFields.has(key))
                     stringValue(field, `last event ${type}.${key}`);
                 else if (coordEventFields.has(key))
@@ -2643,6 +2947,24 @@ export class TowerDefenseGame {
                 const sourceKind = checkpointDataField(event, "sourceKind", type);
                 if (sourceKind !== "tower" && sourceKind !== "ability") {
                     throw new Error("Game checkpoint physics event sourceKind is invalid.");
+                }
+            }
+            if (type === "elevationChanged") {
+                if (!requiresElevationTerraformingCheckpoint) {
+                    throw new Error("Game checkpoint elevationChanged event requires active terraforming elevation.");
+                }
+                const source = checkpointDataField(event, "source", type);
+                const fromElevation = checkpointDataField(event, "fromElevation", type);
+                const toElevation = checkpointDataField(event, "toElevation", type);
+                if (source !== "script" && source !== "restore") {
+                    throw new Error("Game checkpoint elevationChanged event source is invalid.");
+                }
+                if (!Number.isSafeInteger(fromElevation) || !Number.isSafeInteger(toElevation)
+                    || fromElevation < TERRAFORMING_LIMITS.elevationMinimum
+                    || fromElevation > TERRAFORMING_LIMITS.elevationMaximum
+                    || toElevation < TERRAFORMING_LIMITS.elevationMinimum
+                    || toElevation > TERRAFORMING_LIMITS.elevationMaximum) {
+                    throw new Error("Game checkpoint elevationChanged event elevation is invalid.");
                 }
             }
             if (type === "enemyDisplacementResolved") {
@@ -2770,6 +3092,199 @@ export class TowerDefenseGame {
             throw new Error("Game checkpoint has duplicate terrain override coordinates.");
         if (overrideKeys.length > TOWER_SCRIPT_LIMITS.activeTerrainOverrides)
             throw new Error("Game checkpoint terrain override budget is exceeded.");
+        const authoredTerrain = new Map(mapDefinition.terrainOverrides.map((override) => [coordKey(override), override.terrain]));
+        const authoredTerrainAt = (coord) => {
+            const key = coordKey(coord);
+            if (key === coordKey(mapDefinition.spawnCoord))
+                return "spawn";
+            if (key === coordKey(mapDefinition.coreCoord))
+                return "core";
+            return authoredTerrain.get(key) ?? mapDefinition.defaultTerrain;
+        };
+        if (hasTerraformingCheckpoint) {
+            const schemaProbe = checkpointObjectDescriptors(state.terraforming, "Game checkpoint state terraforming");
+            const terraformingSchemaVersion = checkpointDataField(schemaProbe, "schemaVersion", "terraforming");
+            if (terraformingSchemaVersion !== 1 && terraformingSchemaVersion !== 2) {
+                throw new Error("Game checkpoint terraforming schema version is unsupported.");
+            }
+            if (terraformingSchemaVersion === 1 && !requiresElevationTerraformingCheckpoint) {
+                throw new Error("Game checkpoint terraforming v1 requires active terraforming elevation.");
+            }
+            const terraforming = closed(state.terraforming, "terraforming", terraformingSchemaVersion === 1
+                ? ["schemaVersion", "runtimeElevationOverrides"]
+                : ["schemaVersion", "runtimeElevationOverrides", "nextExpiryGroupSequence", "pendingExpiryGroups"]);
+            const values = array(checkpointDataField(terraforming, "runtimeElevationOverrides", "terraforming"), "terraforming.runtimeElevationOverrides");
+            if (values.length > TERRAFORMING_LIMITS.activeElevationOverrides) {
+                throw new Error("Game checkpoint elevation override budget is exceeded.");
+            }
+            if (values.length > 0 && !requiresElevationTerraformingCheckpoint) {
+                throw new Error("Game checkpoint terraforming elevation overrides require active terraforming elevation.");
+            }
+            if (values.length + overrideKeys.length > TERRAFORMING_LIMITS.activeOverridesCombined) {
+                throw new Error("Game checkpoint combined terraforming override budget is exceeded.");
+            }
+            const authoredElevation = new Map((mapDefinition.elevationOverrides ?? []).map((entry) => [coordKey(entry), entry.elevation]));
+            const runtimeElevationProjection = new Map();
+            let previous;
+            for (let index = 0; index < values.length; index += 1) {
+                const value = closed(values[index], `terraforming elevation override ${index}`, ["q", "r", "elevation"]);
+                const overrideCoord = validCoord({
+                    q: checkpointDataField(value, "q", "terraforming elevation override"),
+                    r: checkpointDataField(value, "r", "terraforming elevation override")
+                }, `terraforming elevation override ${index}`);
+                if (previous
+                    && (overrideCoord.r < previous.r || (overrideCoord.r === previous.r && overrideCoord.q <= previous.q))) {
+                    throw new Error("Game checkpoint terraforming elevation overrides are not canonical or contain duplicates.");
+                }
+                previous = overrideCoord;
+                const elevation = checkpointDataField(value, "elevation", "terraforming elevation override");
+                const policy = checkpointTerraforming.elevation;
+                if (!Number.isSafeInteger(elevation)
+                    || elevation < TERRAFORMING_LIMITS.elevationMinimum
+                    || elevation > TERRAFORMING_LIMITS.elevationMaximum
+                    || elevation < policy.minimum
+                    || elevation > policy.maximum) {
+                    throw new Error("Game checkpoint terraforming elevation override is outside the active policy.");
+                }
+                const baseElevation = authoredElevation.get(coordKey(overrideCoord)) ?? 0;
+                if (elevation === baseElevation) {
+                    throw new Error("Game checkpoint terraforming elevation override must differ from authored elevation.");
+                }
+                runtimeElevationProjection.set(coordKey(overrideCoord), elevation);
+            }
+            if (terraformingSchemaVersion === 2) {
+                const nextSequence = integer(checkpointDataField(terraforming, "nextExpiryGroupSequence", "terraforming"), "terraforming.nextExpiryGroupSequence", 1);
+                const groups = array(checkpointDataField(terraforming, "pendingExpiryGroups", "terraforming"), "terraforming.pendingExpiryGroups");
+                if (groups.length > TERRAFORMING_LIMITS.pendingExpiryGroups) {
+                    throw new Error("Game checkpoint pending terraforming expiry group budget is exceeded.");
+                }
+                const runtimeTerrainProjection = new Map(state.runtimeTerrainOverrides.map((override) => [coordKey(override), override]));
+                const ownedTargets = new Set();
+                let ownedTerrain = 0;
+                let ownedElevation = 0;
+                let previousSequence = 0;
+                for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
+                    const group = closed(groups[groupIndex], `terraforming expiry group ${groupIndex}`, ["sequence", "remaining", "entries"]);
+                    const sequence = integer(checkpointDataField(group, "sequence", "terraforming expiry group"), `terraforming expiry group ${groupIndex} sequence`, 1);
+                    if (sequence <= previousSequence || sequence >= nextSequence) {
+                        throw new Error("Game checkpoint terraforming expiry group sequence is not canonical.");
+                    }
+                    previousSequence = sequence;
+                    finite(checkpointDataField(group, "remaining", "terraforming expiry group"), `terraforming expiry group ${groupIndex} remaining`, 0, TERRAFORMING_LIMITS.duration);
+                    const entries = array(checkpointDataField(group, "entries", "terraforming expiry group"), `terraforming expiry group ${groupIndex} entries`);
+                    if (entries.length < 1 || entries.length > TERRAFORMING_LIMITS.operationsPerBatch) {
+                        throw new Error("Game checkpoint terraforming expiry group entry budget is exceeded.");
+                    }
+                    let previousOrder = -1;
+                    for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
+                        const entryProbe = checkpointObjectDescriptors(entries[entryIndex], `Game checkpoint state terraforming expiry entry ${groupIndex}:${entryIndex}`);
+                        const layer = checkpointDataField(entryProbe, "layer", "terraforming expiry entry");
+                        const entry = closed(entries[entryIndex], `terraforming expiry entry ${groupIndex}:${entryIndex}`, layer === "terrain"
+                            ? ["layer", "order", "q", "r", "appliedTerrain", "previousOverride"]
+                            : layer === "elevation"
+                                ? ["layer", "order", "q", "r", "appliedElevation", "previousElevationOverride"]
+                                : ["layer"]);
+                        if (layer !== "terrain" && layer !== "elevation") {
+                            throw new Error("Game checkpoint terraforming expiry entry layer is unsupported.");
+                        }
+                        const order = integer(checkpointDataField(entry, "order", "terraforming expiry entry"), `terraforming expiry entry ${groupIndex}:${entryIndex} order`);
+                        if (order > 63 || order <= previousOrder) {
+                            throw new Error("Game checkpoint terraforming expiry entry order is not canonical.");
+                        }
+                        previousOrder = order;
+                        const targetCoord = validCoord({
+                            q: checkpointDataField(entry, "q", "terraforming expiry entry"),
+                            r: checkpointDataField(entry, "r", "terraforming expiry entry")
+                        }, `terraforming expiry entry ${groupIndex}:${entryIndex}`);
+                        const coordValue = coordKey(targetCoord);
+                        const ownershipKey = `${layer}:${coordValue}`;
+                        if (ownedTargets.has(ownershipKey)) {
+                            throw new Error("Game checkpoint terraforming expiry target ownership is duplicated.");
+                        }
+                        ownedTargets.add(ownershipKey);
+                        if (ownedTargets.size > TERRAFORMING_LIMITS.activeOverridesCombined) {
+                            throw new Error("Game checkpoint terraforming expiry ownership budget is exceeded.");
+                        }
+                        if (layer === "terrain") {
+                            ownedTerrain += 1;
+                            if (ownedTerrain > TERRAFORMING_LIMITS.activeTerrainOverrides) {
+                                throw new Error("Game checkpoint terrain expiry ownership budget is exceeded.");
+                            }
+                            const appliedTerrain = checkpointDataField(entry, "appliedTerrain", "terraforming terrain expiry entry");
+                            if (typeof appliedTerrain !== "string" || !own(content.terrainTypes, appliedTerrain)) {
+                                throw new Error("Game checkpoint terraforming expiry applied terrain is unknown.");
+                            }
+                            const current = runtimeTerrainProjection.get(coordValue);
+                            const baseTerrain = authoredTerrainAt(targetCoord);
+                            const effectiveTerrain = current?.terrain ?? baseTerrain;
+                            const validRuntimeSource = current?.source === "script" || (current?.source === "ability"
+                                && admitsNativePathWater
+                                && appliedTerrain === "water"
+                                && baseTerrain === "path");
+                            if (effectiveTerrain !== appliedTerrain
+                                || (appliedTerrain === baseTerrain && current !== undefined)
+                                || (appliedTerrain !== baseTerrain && (!current || !validRuntimeSource || current.expiresIn !== undefined))) {
+                                throw new Error("Game checkpoint terraforming terrain expiry projection does not match runtime state.");
+                            }
+                            const previousValue = checkpointDataField(entry, "previousOverride", "terraforming terrain expiry entry");
+                            if (previousValue === null) {
+                                if (baseTerrain === appliedTerrain) {
+                                    throw new Error("Game checkpoint terraforming terrain expiry before-image is invalid.");
+                                }
+                            }
+                            else {
+                                const previousOverride = closed(previousValue, "terraforming terrain expiry previous override", ["terrain", "source"]);
+                                const previousTerrain = checkpointDataField(previousOverride, "terrain", "terraforming terrain expiry previous override");
+                                const previousSource = checkpointDataField(previousOverride, "source", "terraforming terrain expiry previous override");
+                                if (typeof previousTerrain !== "string"
+                                    || !own(content.terrainTypes, previousTerrain)
+                                    || (previousSource !== "script" && previousSource !== "ability")
+                                    || previousTerrain === appliedTerrain) {
+                                    throw new Error("Game checkpoint terraforming terrain expiry previous override is invalid.");
+                                }
+                            }
+                        }
+                        else {
+                            ownedElevation += 1;
+                            if (!requiresElevationTerraformingCheckpoint) {
+                                throw new Error("Game checkpoint elevation expiry requires active terraforming elevation.");
+                            }
+                            if (ownedElevation > TERRAFORMING_LIMITS.activeElevationOverrides) {
+                                throw new Error("Game checkpoint elevation expiry ownership budget is exceeded.");
+                            }
+                            const appliedElevation = checkpointDataField(entry, "appliedElevation", "terraforming elevation expiry entry");
+                            const policy = checkpointTerraforming.elevation;
+                            const baseElevation = authoredElevation.get(coordValue) ?? 0;
+                            const currentElevation = runtimeElevationProjection.get(coordValue);
+                            const effectiveElevation = currentElevation ?? baseElevation;
+                            if (!Number.isSafeInteger(appliedElevation)
+                                || appliedElevation < TERRAFORMING_LIMITS.elevationMinimum
+                                || appliedElevation > TERRAFORMING_LIMITS.elevationMaximum
+                                || appliedElevation < policy.minimum
+                                || appliedElevation > policy.maximum
+                                || effectiveElevation !== appliedElevation
+                                || (appliedElevation === baseElevation && currentElevation !== undefined)
+                                || (appliedElevation !== baseElevation && currentElevation === undefined)) {
+                                throw new Error("Game checkpoint terraforming elevation expiry projection is invalid.");
+                            }
+                            const previousElevation = checkpointDataField(entry, "previousElevationOverride", "terraforming elevation expiry entry");
+                            if (previousElevation === null) {
+                                if (baseElevation === appliedElevation) {
+                                    throw new Error("Game checkpoint terraforming elevation expiry before-image is invalid.");
+                                }
+                            }
+                            else if (!Number.isSafeInteger(previousElevation)
+                                || previousElevation < policy.minimum
+                                || previousElevation > policy.maximum
+                                || previousElevation === baseElevation
+                                || previousElevation === appliedElevation) {
+                                throw new Error("Game checkpoint terraforming elevation expiry previous override is invalid.");
+                            }
+                        }
+                    }
+                }
+            }
+        }
         if (activeNavigationProfile) {
             const authoredTerrain = new Map(mapDefinition.terrainOverrides.map((override) => [coordKey(override), override.terrain]));
             const runtimeTerrain = new Map(state.runtimeTerrainOverrides.map((override) => [coordKey(override), override.terrain]));
@@ -2908,6 +3423,39 @@ export class TowerDefenseGame {
             this.runtimeTerrainOverrides.set(coordKey(restored), restored);
             this.map.setTerrain(restored, restored.terrain);
         }
+        this.runtimeElevationOverrides = new Map();
+        for (const override of state.terraforming?.runtimeElevationOverrides ?? []) {
+            const restored = { ...override };
+            this.runtimeElevationOverrides.set(coordKey(restored), restored);
+        }
+        this.terraformingCheckpointForm = state.terraforming?.schemaVersion ?? 0;
+        this.pendingTerraformExpiryGroups = state.terraforming?.schemaVersion === 2
+            ? state.terraforming.pendingExpiryGroups.map((group) => ({
+                sequence: group.sequence,
+                remaining: group.remaining,
+                targets: group.entries.map((entry) => entry.layer === "terrain"
+                    ? {
+                        layer: "terrain",
+                        order: entry.order,
+                        q: entry.q,
+                        r: entry.r,
+                        appliedTerrain: entry.appliedTerrain,
+                        previousOverride: entry.previousOverride === null ? null : { ...entry.previousOverride }
+                    }
+                    : {
+                        layer: "elevation",
+                        order: entry.order,
+                        q: entry.q,
+                        r: entry.r,
+                        appliedElevation: entry.appliedElevation,
+                        previousElevationOverride: entry.previousElevationOverride
+                    })
+            }))
+            : [];
+        this.nextTerraformExpirySequence = state.terraforming?.schemaVersion === 2
+            ? state.terraforming.nextExpiryGroupSequence
+            : 1;
+        this.map.useRuntimeElevationOverrides(this.runtimeElevationOverrides);
         for (const tower of this.towers)
             this.map.setOccupied(tower.footprint, tower.id);
         this.syncTemporaryWaterTiles();
@@ -2925,6 +3473,9 @@ export class TowerDefenseGame {
         const reactions = this.buildReactionState();
         const navigation = this.buildNavigationSnapshot();
         const elevation = this.buildElevationSnapshot(copyStaticState);
+        const terraforming = this.activeTerraformingMechanics
+            ? buildTerraformingSnapshot(this.pendingTerraformExpiryGroups)
+            : undefined;
         return {
             mapId: this.map.id,
             grid: { ...this.map.grid },
@@ -2999,6 +3550,7 @@ export class TowerDefenseGame {
             ...(reactions === undefined ? {} : { reactions }),
             ...(navigation === undefined ? {} : { navigation }),
             ...(elevation === undefined ? {} : { elevation }),
+            ...(terraforming === undefined ? {} : { terraforming }),
             scriptState: {
                 values: this.cloneScriptValues(),
                 diagnostics: this.scriptDiagnostics.map((diagnostic) => ({ ...diagnostic }))
@@ -3461,6 +4013,10 @@ export class TowerDefenseGame {
             return;
         }
         if (action.action === "setTileTerrain" || action.action === "restoreTileTerrain") {
+            if (this.activeTerraformingMechanics) {
+                this.applyActiveLegacyTerrainAction(action, context, evaluate);
+                return;
+            }
             if (this.scriptTerrainChangesRemaining <= 0) {
                 this.scriptTerrainChangesRemaining = 0;
                 throw new Error("TowerScript terrain change budget exceeded.");
@@ -3529,6 +4085,46 @@ export class TowerDefenseGame {
             this.scriptSignalDepth -= 1;
         }
     }
+    applyActiveLegacyTerrainAction(action, context, evaluate) {
+        if (this.scriptTerrainChangesRemaining <= 0) {
+            this.scriptTerrainChangesRemaining = 0;
+            throw new TowerScriptTerraformingError("budget_exceeded", "terraform.operation_budget_exceeded", "TowerScript terraforming operation budget exceeded.");
+        }
+        this.scriptTerrainChangesRemaining -= 1;
+        const timed = action.action === "setTileTerrain"
+            && Object.prototype.hasOwnProperty.call(action, "duration");
+        if (timed && this.pendingTerraformExpiryGroups.length >= TERRAFORMING_LIMITS.pendingExpiryGroups) {
+            throw new TowerScriptTerraformingError("budget_exceeded", "terraform.expiry_group_budget_exceeded", `Terraform expiry groups exceed the ${TERRAFORMING_LIMITS.pendingExpiryGroups} group limit.`);
+        }
+        let duration;
+        if (timed) {
+            const resolvedDuration = evaluate(action.duration);
+            if (typeof resolvedDuration !== "number" || !Number.isFinite(resolvedDuration)
+                || resolvedDuration <= 0 || resolvedDuration > TERRAFORMING_LIMITS.duration) {
+                throw new TowerScriptTerraformingError("invalid_action", "terraform.duration_out_of_range", `Terraform duration must be finite and inside (0, ${TERRAFORMING_LIMITS.duration}].`);
+            }
+            duration = resolvedDuration;
+        }
+        const coord = this.resolveTerraformTarget(action.target, context, evaluate);
+        if (!coord) {
+            throw new TowerScriptTerraformingError("invalid_action", "terraform.invalid_operation", "Terraform tile target did not resolve to safe integer coordinates.");
+        }
+        if (!this.map.isInside(coord)) {
+            throw new TowerScriptTerraformingError("invalid_action", "terraform.target_outside_map", `Terraform target ${coord.q},${coord.r} is outside the map.`);
+        }
+        if (action.action === "setTileTerrain" && !this.content.terrainTypes[action.terrainId]) {
+            throw new TowerScriptTerraformingError("invalid_action", "terraform.invalid_operation", `Terraform destination terrain "${action.terrainId}" is unknown.`);
+        }
+        const key = coordKey(coord);
+        const existing = this.runtimeTerrainOverrides.get(key);
+        if (this.isNativeTerraformTargetOwned("terrain", coord) || typeof existing?.expiresIn === "number") {
+            throw new TowerScriptTerraformingError("invalid_action", "terraform.target_owned", `Terraform terrain target ${key} is owned by a timed override.`);
+        }
+        const operation = action.action === "setTileTerrain"
+            ? { kind: "set_terrain", coord, directTerrainId: action.terrainId, order: 0 }
+            : { kind: "restore_terrain", coord, order: 0 };
+        this.applyResolvedPersistentOperations([operation], duration);
+    }
     resolveScriptTileTarget(target, context, evaluate) {
         if (target === "eventTile") {
             const value = context.event.coord ?? context.event.center ?? context.event.to;
@@ -3588,20 +4184,49 @@ export class TowerDefenseGame {
         }
         this.scriptTerrainChangesRemaining -= operationCount;
         const operations = operationValues.map((value) => this.inspectTerraformOperation(value));
-        if (Object.prototype.hasOwnProperty.call(actionDescriptors, "duration")) {
-            throw new TowerScriptTerraformingError("invalid_action", "terraform.invalid_operation", "Timed terraforming batches are not supported by the C1 runtime.");
+        const timed = Object.prototype.hasOwnProperty.call(actionDescriptors, "duration");
+        if (timed && operations.some((operation) => (operation.kind === "restore_terrain" || operation.kind === "restore_elevation"))) {
+            throw new TowerScriptTerraformingError("invalid_action", "terraform.invalid_operation", "Timed terraforming batches support set operations only.");
         }
-        if (operations.some((operation) => (operation.kind === "set_elevation" || operation.kind === "restore_elevation"))) {
-            throw new TowerScriptTerraformingError("invalid_action", "terraform.invalid_operation", "Elevation terraforming operations are not supported by the C1 runtime.");
+        if (timed && this.pendingTerraformExpiryGroups.length >= TERRAFORMING_LIMITS.pendingExpiryGroups) {
+            throw new TowerScriptTerraformingError("budget_exceeded", "terraform.expiry_group_budget_exceeded", `Terraform expiry groups exceed the ${TERRAFORMING_LIMITS.pendingExpiryGroups} group limit.`);
         }
-        const resolvedOperations = operations.map((operation) => {
+        let duration;
+        if (timed) {
+            const durationDescriptor = actionDescriptors.duration;
+            const resolvedDuration = evaluate(durationDescriptor.value);
+            if (typeof resolvedDuration !== "number" || !Number.isFinite(resolvedDuration)
+                || resolvedDuration <= 0 || resolvedDuration > TERRAFORMING_LIMITS.duration) {
+                throw new TowerScriptTerraformingError("invalid_action", "terraform.duration_out_of_range", `Terraform duration must be finite and inside (0, ${TERRAFORMING_LIMITS.duration}].`);
+            }
+            duration = resolvedDuration;
+        }
+        const hasElevationOperations = operations.some((operation) => (operation.kind === "set_elevation" || operation.kind === "restore_elevation"));
+        if (hasElevationOperations && !this.activeElevation) {
+            throw new TowerScriptTerraformingError("invalid_action", "terraform.elevation_dependency_missing", "Elevation terraforming requires an active elevation capability.");
+        }
+        if (hasElevationOperations && !this.activeTerraformingMechanics.elevation) {
+            throw new TowerScriptTerraformingError("invalid_action", "terraform.elevation_policy_missing", "Elevation terraforming requires an active terraforming elevation policy.");
+        }
+        const resolvedOperations = operations.map((operation, order) => {
             const coord = this.resolveTerraformTarget(operation.target, context, evaluate);
             if (!coord) {
                 throw new TowerScriptTerraformingError("invalid_action", "terraform.invalid_operation", "Terraform tile target did not resolve to safe integer coordinates.");
             }
-            return operation.kind === "set_terrain"
-                ? { kind: "set_terrain", coord, transitionId: operation.transitionId }
-                : { kind: "restore_terrain", coord };
+            if (operation.kind === "set_terrain") {
+                return { kind: "set_terrain", coord, transitionId: operation.transitionId, order };
+            }
+            if (operation.kind === "restore_terrain")
+                return { kind: "restore_terrain", coord, order };
+            if (operation.kind === "restore_elevation")
+                return { kind: "restore_elevation", coord, order };
+            const elevation = (typeof operation.elevation === "number" && !Number.isFinite(operation.elevation)) ? Number.NaN : evaluate(operation.elevation);
+            return {
+                kind: "set_elevation",
+                coord,
+                elevation: typeof elevation === "number" ? elevation : Number.NaN,
+                order
+            };
         });
         const outside = resolvedOperations.find((operation) => !this.map.isInside(operation.coord));
         if (outside) {
@@ -3609,17 +4234,104 @@ export class TowerDefenseGame {
         }
         const targetKeys = new Set();
         for (const operation of resolvedOperations) {
-            const key = coordKey(operation.coord);
+            const layer = operation.kind === "set_terrain" || operation.kind === "restore_terrain"
+                ? "terrain"
+                : "elevation";
+            const coordValue = coordKey(operation.coord);
+            const key = `${layer}:${coordValue}`;
             if (targetKeys.has(key)) {
-                throw new TowerScriptTerraformingError("invalid_action", "terraform.duplicate_target", `Terraform terrain target ${key} is duplicated in the batch.`);
+                throw new TowerScriptTerraformingError("invalid_action", "terraform.duplicate_target", `Terraform ${layer} target ${coordValue} is duplicated in the batch.`);
             }
             targetKeys.add(key);
+            if (this.isNativeTerraformTargetOwned(layer, operation.coord)) {
+                throw new TowerScriptTerraformingError("invalid_action", "terraform.target_owned", `Terraform ${layer} target ${coordValue} is owned by a timed batch.`);
+            }
         }
-        const candidate = this.planPersistentTerrainCandidate(resolvedOperations);
-        const navigation = this.activeNavigationProfile
-            ? this.planDynamicPersistentTerrainNavigation(candidate)
+        this.applyResolvedPersistentOperations(resolvedOperations, duration);
+    }
+    applyResolvedPersistentOperations(resolvedOperations, duration) {
+        const terrainOperations = resolvedOperations.filter((operation) => (operation.kind === "set_terrain" || operation.kind === "restore_terrain"));
+        const elevationOperations = resolvedOperations.filter((operation) => (operation.kind === "set_elevation" || operation.kind === "restore_elevation"));
+        const terrainCandidate = terrainOperations.length > 0
+            ? this.planPersistentTerrainCandidate(terrainOperations)
             : undefined;
-        this.publishPersistentTerrainCandidate(candidate, navigation);
+        const elevationCandidate = elevationOperations.length > 0
+            ? this.planPersistentElevationCandidate(elevationOperations)
+            : undefined;
+        const terrainOverrideCount = terrainCandidate?.overrides.size ?? this.runtimeTerrainOverrides.size;
+        const elevationOverrideCount = elevationCandidate?.overrides.size ?? this.runtimeElevationOverrides.size;
+        if (terrainOverrideCount + elevationOverrideCount > TERRAFORMING_LIMITS.activeOverridesCombined) {
+            throw new TowerScriptTerraformingError("invalid_action", "terraform.override_budget_exceeded", `Terraform runtime overrides exceed the ${TERRAFORMING_LIMITS.activeOverridesCombined} combined limit.`);
+        }
+        if ((terrainCandidate?.events.length ?? 0) === 0
+            && (elevationCandidate?.events.length ?? 0) === 0) {
+            return;
+        }
+        const navigation = terrainCandidate && this.activeNavigationProfile
+            ? this.planDynamicPersistentTerrainNavigation(terrainCandidate)
+            : undefined;
+        let expiryGroup;
+        if (duration !== undefined) {
+            const changedTerrainEvents = new Map((terrainCandidate?.events ?? []).map((event) => [event.order, event.event]));
+            const changedElevationEvents = new Map((elevationCandidate?.events ?? []).map((event) => [event.order, event.event]));
+            const targets = [];
+            for (const operation of resolvedOperations) {
+                const terrainEvent = changedTerrainEvents.get(operation.order);
+                const elevationEvent = changedElevationEvents.get(operation.order);
+                if (operation.kind === "set_terrain" && terrainEvent?.type === "terrainChanged") {
+                    const previous = this.runtimeTerrainOverrides.get(coordKey(operation.coord));
+                    targets.push({
+                        layer: "terrain",
+                        q: operation.coord.q,
+                        r: operation.coord.r,
+                        order: operation.order,
+                        appliedTerrain: terrainEvent.toTerrain,
+                        previousOverride: previous ? {
+                            terrain: previous.terrain,
+                            source: previous.source
+                        } : null
+                    });
+                }
+                else if (operation.kind === "set_elevation" && elevationEvent?.type === "elevationChanged") {
+                    const previous = this.runtimeElevationOverrides.get(coordKey(operation.coord));
+                    targets.push({
+                        layer: "elevation",
+                        q: operation.coord.q,
+                        r: operation.coord.r,
+                        order: operation.order,
+                        appliedElevation: elevationEvent.toElevation,
+                        previousElevationOverride: previous?.elevation ?? null
+                    });
+                }
+            }
+            if (targets.length > 0) {
+                expiryGroup = {
+                    sequence: this.nextTerraformExpirySequence,
+                    remaining: duration,
+                    targets
+                };
+            }
+        }
+        if (expiryGroup) {
+            const owned = countTerraformExpiryOwnership(this.pendingTerraformExpiryGroups);
+            const added = countTerraformExpiryOwnership([expiryGroup]);
+            if (owned.terrain + added.terrain > TERRAFORMING_LIMITS.activeTerrainOverrides
+                || owned.elevation + added.elevation > TERRAFORMING_LIMITS.activeElevationOverrides
+                || owned.combined + added.combined > TERRAFORMING_LIMITS.activeOverridesCombined) {
+                throw new TowerScriptTerraformingError("invalid_action", "terraform.override_budget_exceeded", "Terraform timed ownership exceeds the active per-layer or combined override limit.");
+            }
+        }
+        this.publishPersistentTerraformCandidate(terrainCandidate, elevationCandidate, navigation);
+        if (expiryGroup) {
+            this.terraformingCheckpointForm = 2;
+            this.pendingTerraformExpiryGroups.push(expiryGroup);
+            this.nextTerraformExpirySequence += 1;
+            this.syncTemporaryWaterTiles();
+        }
+    }
+    isNativeTerraformTargetOwned(layer, coord) {
+        const key = `${layer}:${coordKey(coord)}`;
+        return this.pendingTerraformExpiryGroups.some((group) => (group.targets.some((target) => terraformExpiryTargetKey(target) === key)));
     }
     inspectTerraformOperationArray(value) {
         let prototype;
@@ -3765,57 +4477,82 @@ export class TowerDefenseGame {
             }
             const existing = overrides.get(key);
             if (typeof existing?.expiresIn === "number") {
-                throw new TowerScriptTerraformingError("invalid_action", "terraform.invalid_operation", `Terraform target ${key} is owned by a legacy timed override.`);
+                throw new TowerScriptTerraformingError("invalid_action", "terraform.target_owned", `Terraform target ${key} is owned by a legacy timed override.`);
             }
             let nextTerrain;
             let eventSource;
-            if (operation.kind === "set_terrain") {
-                const transition = this.activeTerraformingMechanics.terrainTransitions[operation.transitionId];
-                if (!transition) {
-                    throw new TowerScriptTerraformingError("invalid_action", "terraform.transition_missing", `Terraform transition "${operation.transitionId}" is not active.`);
+            if (operation.previousTerrainOverride !== undefined) {
+                nextTerrain = operation.previousTerrainOverride?.terrain ?? baseTerrain;
+                eventSource = "restore";
+                if (operation.previousTerrainOverride) {
+                    overrides.set(key, { ...operation.previousTerrainOverride });
                 }
-                const destination = this.content.terrainTypes[transition.toTerrainId];
-                if (!destination) {
-                    throw new TowerScriptTerraformingError("invalid_action", "terraform.invalid_operation", `Terraform transition destination "${transition.toTerrainId}" is unknown.`);
-                }
-                const sourceTags = this.terrainMetadata(currentTerrain).tags;
-                if (!transition.fromTerrainTags.some((tag) => sourceTags.includes(tag))) {
-                    throw new TowerScriptTerraformingError("invalid_action", "terraform.transition_source_tag_mismatch", `Terraform transition "${operation.transitionId}" does not admit terrain "${currentTerrain}".`);
-                }
-                nextTerrain = destination.id;
-                eventSource = "script";
-                if (nextTerrain === baseTerrain)
+                else {
                     overrides.delete(key);
-                else
-                    overrides.set(key, {
-                        q: operation.coord.q,
-                        r: operation.coord.r,
-                        terrain: nextTerrain,
-                        source: "script"
-                    });
+                }
+            }
+            else if (operation.kind === "set_terrain") {
+                if (operation.directTerrainId !== undefined) {
+                    const destination = this.content.terrainTypes[operation.directTerrainId];
+                    if (!destination) {
+                        throw new TowerScriptTerraformingError("invalid_action", "terraform.invalid_operation", `Terraform destination terrain "${operation.directTerrainId}" is unknown.`);
+                    }
+                    nextTerrain = destination.id;
+                }
+                else {
+                    const transition = this.activeTerraformingMechanics.terrainTransitions[operation.transitionId];
+                    if (!transition) {
+                        throw new TowerScriptTerraformingError("invalid_action", "terraform.transition_missing", `Terraform transition "${operation.transitionId}" is not active.`);
+                    }
+                    const destination = this.content.terrainTypes[transition.toTerrainId];
+                    if (!destination) {
+                        throw new TowerScriptTerraformingError("invalid_action", "terraform.invalid_operation", `Terraform transition destination "${transition.toTerrainId}" is unknown.`);
+                    }
+                    const sourceTags = this.terrainMetadata(currentTerrain).tags;
+                    if (!transition.fromTerrainTags.some((tag) => sourceTags.includes(tag))) {
+                        throw new TowerScriptTerraformingError("invalid_action", "terraform.transition_source_tag_mismatch", `Terraform transition "${operation.transitionId}" does not admit terrain "${currentTerrain}".`);
+                    }
+                    nextTerrain = destination.id;
+                }
+                eventSource = operation.terrainSource ?? "script";
+                if (currentTerrain !== nextTerrain) {
+                    if (nextTerrain === baseTerrain)
+                        overrides.delete(key);
+                    else
+                        overrides.set(key, {
+                            q: operation.coord.q,
+                            r: operation.coord.r,
+                            terrain: nextTerrain,
+                            source: operation.terrainSource ?? "script"
+                        });
+                }
             }
             else {
                 nextTerrain = baseTerrain;
                 eventSource = "restore";
-                overrides.delete(key);
+                if (currentTerrain !== nextTerrain)
+                    overrides.delete(key);
             }
             if (currentTerrain !== nextTerrain) {
                 const coord = { q: operation.coord.q, r: operation.coord.r };
                 writes.push({ coord, terrain: nextTerrain });
                 events.push({
-                    type: "terrainChanged",
-                    coord: { ...coord },
-                    fromTerrain: currentTerrain,
-                    toTerrain: nextTerrain,
-                    terrainMetadata: this.terrainMetadata(nextTerrain),
-                    source: eventSource
+                    order: operation.order,
+                    event: {
+                        type: "terrainChanged",
+                        coord: { ...coord },
+                        fromTerrain: currentTerrain,
+                        toTerrain: nextTerrain,
+                        terrainMetadata: this.terrainMetadata(nextTerrain),
+                        source: eventSource
+                    }
                 });
             }
         }
         if (overrides.size > TERRAFORMING_LIMITS.activeTerrainOverrides) {
             throw new TowerScriptTerraformingError("invalid_action", "terraform.override_budget_exceeded", `Terraform terrain overrides exceed the ${TERRAFORMING_LIMITS.activeTerrainOverrides} entry limit.`);
         }
-        if (!this.activeNavigationProfile) {
+        if (events.length > 0 && !this.activeNavigationProfile) {
             const routes = [...this.map.pathRoutes].sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
             const baselineAvailable = routes.every((route) => route.pathCenterline.every((coord) => {
                 const terrain = this.map.getTile(coord)?.terrain;
@@ -3833,15 +4570,137 @@ export class TowerDefenseGame {
         }
         return { overrides, writes, events };
     }
+    planPersistentElevationCandidate(operations) {
+        const policy = this.activeTerraformingMechanics?.elevation;
+        if (!policy) {
+            throw new TowerScriptTerraformingError("invalid_action", "terraform.elevation_policy_missing", "Elevation terraforming requires an active policy.");
+        }
+        const overrides = new Map();
+        for (const [key, override] of this.runtimeElevationOverrides)
+            overrides.set(key, { ...override });
+        const writes = [];
+        const events = [];
+        for (const operation of operations) {
+            const key = coordKey(operation.coord);
+            const currentElevation = overrides.get(key)?.elevation ?? this.map.getBaseElevation(operation.coord);
+            const baseElevation = this.map.getBaseElevation(operation.coord);
+            if (currentElevation === undefined || baseElevation === undefined) {
+                throw new TowerScriptTerraformingError("invalid_action", "terraform.target_outside_map", `Terraform target ${key} is outside the map.`);
+            }
+            let nextElevation;
+            let source;
+            if (operation.previousElevationOverride !== undefined) {
+                nextElevation = operation.previousElevationOverride?.elevation ?? baseElevation;
+                source = "restore";
+                if (operation.previousElevationOverride) {
+                    overrides.set(key, { ...operation.previousElevationOverride });
+                }
+                else {
+                    overrides.delete(key);
+                }
+            }
+            else if (operation.kind === "set_elevation") {
+                nextElevation = operation.elevation;
+                if (!Number.isSafeInteger(nextElevation)
+                    || nextElevation < TERRAFORMING_LIMITS.elevationMinimum
+                    || nextElevation > TERRAFORMING_LIMITS.elevationMaximum
+                    || nextElevation < policy.minimum
+                    || nextElevation > policy.maximum) {
+                    throw new TowerScriptTerraformingError("invalid_action", "terraform.elevation_out_of_range", "Terraform elevation must be a safe integer inside the active elevation policy.");
+                }
+                if (Math.abs(nextElevation - currentElevation) > policy.maximumDeltaPerOperation) {
+                    throw new TowerScriptTerraformingError("invalid_action", "terraform.elevation_delta_exceeded", "Terraform elevation change exceeds the active per-operation delta.");
+                }
+                source = "script";
+                if (nextElevation === baseElevation)
+                    overrides.delete(key);
+                else
+                    overrides.set(key, {
+                        q: operation.coord.q,
+                        r: operation.coord.r,
+                        elevation: nextElevation
+                    });
+            }
+            else {
+                nextElevation = baseElevation;
+                source = "restore";
+                overrides.delete(key);
+            }
+            if (currentElevation !== nextElevation) {
+                const coord = { q: operation.coord.q, r: operation.coord.r };
+                writes.push({ coord, elevation: nextElevation });
+                events.push({
+                    order: operation.order,
+                    event: {
+                        type: "elevationChanged",
+                        coord: { ...coord },
+                        fromElevation: currentElevation,
+                        toElevation: nextElevation,
+                        source
+                    }
+                });
+            }
+        }
+        if (overrides.size > TERRAFORMING_LIMITS.activeElevationOverrides) {
+            throw new TowerScriptTerraformingError("invalid_action", "terraform.override_budget_exceeded", `Terraform elevation overrides exceed the ${TERRAFORMING_LIMITS.activeElevationOverrides} entry limit.`);
+        }
+        return { overrides, writes, events };
+    }
     planDynamicPersistentTerrainNavigation(candidate) {
         const profile = this.activeNavigationProfile;
         if (!profile)
             throw new Error("Dynamic terraforming navigation requires an active profile.");
+        const routes = this.map.pathRoutes;
+        const reachableTerrainIds = new Set([...this.map.tiles.values()].map((tile) => tile.terrain));
+        if (this.mission.abilities?.some((ability) => ability.id === "path_water")
+            && this.content.terrainTypes.water
+            && this.map.allPathCoords().some((coord) => this.map.getBaseTerrain(coord) === "path"))
+            reachableTerrainIds.add("water");
+        const transitionTerrainById = Object.fromEntries(Object.keys(this.activeTerraformingMechanics.terrainTransitions)
+            .sort(compareBinary)
+            .map((transitionId) => [
+            transitionId,
+            this.activeTerraformingMechanics.terrainTransitions[transitionId].toTerrainId
+        ]));
+        let safetySet;
+        try {
+            const spawnGraph = collectDynamicTerraformingSpawnProvenance({
+                profile,
+                routes,
+                waves: this.mission.waves,
+                enemyTypes: this.content.enemies,
+                scripts: this.content.scripts,
+                mission: {
+                    id: this.mission.id,
+                    mapId: this.mission.mapId,
+                    waveSetId: this.mission.waveSetId,
+                    buildTowerIds: this.mission.buildTowerIds ?? Object.keys(this.content.towers),
+                    abilityIds: this.mission.abilityIds ?? Object.keys(this.content.abilities)
+                },
+                initialReachableTerrainIds: [...reachableTerrainIds].sort(compareBinary),
+                terraformTransitionTerrainById: transitionTerrainById
+            });
+            safetySet = prepareDynamicTerraformingSafetySet({
+                profile,
+                routes,
+                spawnProvenance: spawnGraph.spawnProvenance,
+                spawnObligations: spawnGraph.spawnObligations,
+                enemies: this.enemies,
+                mapCellCount: this.map.width * this.map.height
+            });
+        }
+        catch (error) {
+            if (error instanceof DynamicTerraformingSafetyBudgetError) {
+                throw new TowerScriptTerraformingError("budget_exceeded", "terraform.solver_budget_exceeded", error.message);
+            }
+            throw error;
+        }
         const occupiedCoords = this.navigationOccupiedCoords();
         const navigation = planDynamicTerraformingNavigation({
             profile,
-            routes: this.map.pathRoutes,
+            routes,
             enemies: this.enemies,
+            safetySet,
             baselineResolver: this.createNavigationResolver(occupiedCoords),
             candidateResolver: this.createNavigationResolver(occupiedCoords, this.navigationTerrainByCoordForOverrides(candidate.overrides))
         });
@@ -3854,10 +4713,16 @@ export class TowerDefenseGame {
         }
         return navigation;
     }
-    publishPersistentTerrainCandidate(candidate, navigation) {
-        for (const write of candidate.writes)
-            this.map.setTerrain(write.coord, write.terrain);
-        this.runtimeTerrainOverrides = candidate.overrides;
+    publishPersistentTerraformCandidate(terrainCandidate, elevationCandidate, navigation) {
+        if (terrainCandidate) {
+            for (const write of terrainCandidate.writes)
+                this.map.setTerrain(write.coord, write.terrain);
+            this.runtimeTerrainOverrides = terrainCandidate.overrides;
+        }
+        if (elevationCandidate) {
+            this.runtimeElevationOverrides = elevationCandidate.overrides;
+            this.map.useRuntimeElevationOverrides(this.runtimeElevationOverrides);
+        }
         if (navigation) {
             this.navigationResolver = navigation.candidateResolver;
             this.navigationFieldLookupCache = navigation.candidateLookupCache;
@@ -3872,7 +4737,11 @@ export class TowerDefenseGame {
             }
         }
         this.syncTemporaryWaterTiles();
-        this.lastEvents.push(...candidate.events);
+        const events = [
+            ...(terrainCandidate?.events ?? []),
+            ...(elevationCandidate?.events ?? [])
+        ].sort((left, right) => left.order - right.order);
+        this.lastEvents.push(...events.map((entry) => entry.event));
     }
     applyTerrainOverride(coord, terrainId, duration, source) {
         const terrain = this.content.terrainTypes[terrainId];
@@ -3885,6 +4754,9 @@ export class TowerDefenseGame {
         if (!tile)
             return this.fail("Tile is outside the map.", "reason.tileOutsideMap");
         const key = coordKey(coord);
+        if (this.activeTerraformingMechanics && this.isNativeTerraformTargetOwned("terrain", coord)) {
+            return this.fail(`Terraform terrain target ${key} is owned by a timed batch.`, "terraform.target_owned");
+        }
         if (!this.runtimeTerrainOverrides.has(key) && this.runtimeTerrainOverrides.size >= TOWER_SCRIPT_LIMITS.activeTerrainOverrides) {
             return this.fail(`Active terrain override limit (${TOWER_SCRIPT_LIMITS.activeTerrainOverrides}) exceeded.`, "reason.terrainOverrideLimit");
         }
@@ -3932,9 +4804,35 @@ export class TowerDefenseGame {
         return true;
     }
     syncTemporaryWaterTiles() {
-        this.temporaryWaterTiles = [...this.runtimeTerrainOverrides.values()]
+        const legacy = [...this.runtimeTerrainOverrides.values()]
             .filter((entry) => entry.source === "ability" && entry.terrain === "water" && typeof entry.expiresIn === "number")
             .map((entry) => ({ q: entry.q, r: entry.r, expiresIn: entry.expiresIn }));
+        if (!this.activeTerraformingMechanics) {
+            this.temporaryWaterTiles = legacy;
+            return;
+        }
+        const native = [...this.pendingTerraformExpiryGroups]
+            .sort((left, right) => left.sequence - right.sequence)
+            .flatMap((group) => group.remaining <= 0
+            ? []
+            : [...group.targets]
+                .sort((left, right) => left.order - right.order)
+                .flatMap((target) => {
+                if (target.layer !== "terrain" || target.appliedTerrain !== "water")
+                    return [];
+                const override = this.runtimeTerrainOverrides.get(coordKey(target));
+                if (!override || override.source !== "ability" || override.terrain !== "water")
+                    return [];
+                return [{ q: target.q, r: target.r, expiresIn: group.remaining }];
+            }));
+        const seen = new Set();
+        this.temporaryWaterTiles = [...legacy, ...native].filter((entry) => {
+            const key = coordKey(entry);
+            if (seen.has(key))
+                return false;
+            seen.add(key);
+            return true;
+        });
     }
     terrainMetadata(terrainId) {
         return this.content.terrainTypes[terrainId] ?? {
@@ -4574,6 +5472,71 @@ export class TowerDefenseGame {
                     amount
                 });
             });
+        }
+    }
+    advanceNativeTerraformingExpiry(delta) {
+        if (!this.activeTerraformingMechanics || this.pendingTerraformExpiryGroups.length === 0)
+            return;
+        const advanced = advanceTerraformExpiryGroups(this.pendingTerraformExpiryGroups, delta);
+        const due = advanced
+            .filter((group) => group.remaining === 0)
+            .sort((left, right) => left.sequence - right.sequence);
+        if (due.length === 0) {
+            this.pendingTerraformExpiryGroups = [...advanced];
+            this.syncTemporaryWaterTiles();
+            return;
+        }
+        const operations = [];
+        let order = 0;
+        for (const group of due) {
+            for (const target of [...group.targets].sort((left, right) => left.order - right.order)) {
+                const coord = { q: target.q, r: target.r };
+                if (target.layer === "terrain") {
+                    operations.push({
+                        kind: "restore_terrain",
+                        coord,
+                        order: order++,
+                        previousTerrainOverride: target.previousOverride
+                            ? { q: target.q, r: target.r, ...target.previousOverride }
+                            : null
+                    });
+                }
+                else {
+                    operations.push({
+                        kind: "restore_elevation",
+                        coord,
+                        order: order++,
+                        previousElevationOverride: target.previousElevationOverride === null
+                            ? null
+                            : { q: target.q, r: target.r, elevation: target.previousElevationOverride }
+                    });
+                }
+            }
+        }
+        const terrainOperations = operations.filter((operation) => operation.kind === "restore_terrain");
+        const elevationOperations = operations.filter((operation) => operation.kind === "restore_elevation");
+        try {
+            const terrainCandidate = terrainOperations.length > 0
+                ? this.planPersistentTerrainCandidate(terrainOperations)
+                : undefined;
+            const elevationCandidate = elevationOperations.length > 0
+                ? this.planPersistentElevationCandidate(elevationOperations)
+                : undefined;
+            const navigation = terrainCandidate && this.activeNavigationProfile
+                ? this.planDynamicPersistentTerrainNavigation(terrainCandidate)
+                : undefined;
+            this.publishPersistentTerraformCandidate(terrainCandidate, elevationCandidate, navigation);
+            const dueSequences = new Set(due.map((group) => group.sequence));
+            this.pendingTerraformExpiryGroups = advanced.filter((group) => !dueSequences.has(group.sequence));
+            this.syncTemporaryWaterTiles();
+        }
+        catch (error) {
+            if (!(error instanceof TowerScriptTerraformingError))
+                throw error;
+            // Expiry safety failures are retryable state, not script failures. Retain every due group
+            // at zero and retry on tick(0) without emitting diagnostics or partial events.
+            this.pendingTerraformExpiryGroups = [...advanced];
+            this.syncTemporaryWaterTiles();
         }
     }
     updateAbilities(delta) {

@@ -1,0 +1,7 @@
+{
+  "mechanics": {
+    "profiles": {
+      "physics": "tagged_fall_hazards"
+    }
+  }
+}

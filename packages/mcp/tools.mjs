@@ -58,7 +58,7 @@ const BALANCE_PATCH_KEYS = [
   "enemies", "towers", "waveSets", "missions", "abilities", "constants", "currencies", "defaultMissionId",
   "defaultDifficultyId", "difficulties", "metaProgression", "terrainTypes"
 ];
-const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
+const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
 
 // Maps an upsert_entity/delete_entity `collection` to (a) the balance.json key, (b) the shape
 // (a map keyed by id, or an array of {id,...} items — currencies only), and (c) the
@@ -216,6 +216,19 @@ const TERRAIN_TYPE_OVERRIDES_SCHEMA = {
   }
 };
 
+// The MCP input contract deliberately uses portable JSON Schema vocabulary. The canonical CLI
+// recipe materializer applies the stricter UTF-8 byte bounds and authored-reference checks.
+const TERRAFORMING_RECIPE_PARAMETERS_SCHEMA = Object.freeze({
+  type: "object",
+  properties: Object.freeze({
+    sourceTerrainTag: Object.freeze({ type: "string" }),
+    destinationTerrainId: Object.freeze({ type: "string" }),
+    transitionId: Object.freeze({ type: "string" })
+  }),
+  required: Object.freeze(["sourceTerrainTag", "destinationTerrainId"]),
+  additionalProperties: false
+});
+
 /** Tool definitions advertised over `tools/list`. */
 export const TOOLS = [
   {
@@ -248,7 +261,8 @@ export const TOOLS = [
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
         collection: { type: "string", enum: CONTENT_RECIPE_COLLECTIONS },
-        recipeId: { type: "string" }
+        recipeId: { type: "string" },
+        parameters: TERRAFORMING_RECIPE_PARAMETERS_SCHEMA
       },
       required: ["collection", "recipeId"],
       additionalProperties: false
@@ -445,7 +459,7 @@ export const TOOLS = [
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
         moduleId: { type: "string", description: "Engine-owned mechanics module id." },
-        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3], description: "Module contract version: navigation and physics support v1; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Omitted edits preserve an existing version and new modules default to v1." },
+        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3], description: "Module contract version: navigation, physics, and terraforming support v1; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Omitted edits preserve an existing version and new modules default to v1." },
         missionId: { type: "string", description: "Mission that would select the profile; defaults to the project's default mission." },
         profileId: { type: "string", description: "Profile id to preview." },
         profile: { type: "object", description: "Versioned module profile payload." },
@@ -466,7 +480,7 @@ export const TOOLS = [
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
         moduleId: { type: "string", description: "Engine-owned mechanics module id." },
-        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3], description: "Module contract version: navigation and physics support v1; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Upgrades are guarded and version downgrades are rejected." },
+        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3], description: "Module contract version: navigation, physics, and terraforming support v1; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Upgrades are guarded and version downgrades are rejected." },
         missionId: { type: "string", description: "Mission that would select the profile; defaults to the project's default mission." },
         profileId: { type: "string", description: "Profile id to enable." },
         profile: { type: "object", description: "Versioned module profile payload." },
@@ -1297,6 +1311,11 @@ export async function callTool(name, args = {}, ctx = {}) {
       snapshot: { field: null, optional: true, supportedSchemaVersions: [] },
       events: ["enemyDisplacementResolved", "enemyFell"]
     };
+    const terraforming = {
+      authoring: engine.TERRAFORMING_MECHANICS_SCHEMA,
+      snapshot: { field: "terraforming", optional: true, supportedSchemaVersions: [1] },
+      events: ["terrainChanged", "elevationChanged"]
+    };
     return {
       schemaVersion: 2,
       agentGuideVersion: TOWERFORGE_AGENT_GUIDE_VERSION,
@@ -1331,13 +1350,14 @@ export async function callTool(name, args = {}, ctx = {}) {
         difficulty: engine.DIFFICULTY_SCHEMA,
         metaProgression: engine.META_PROGRESSION_SCHEMA
       } : {}),
-      ...((includes("scripts") || includes("combat") || includes("reactions") || includes("mechanics"))
+      ...((includes("scripts") || includes("combat") || includes("reactions") || includes("terraforming") || includes("mechanics"))
         ? { towerScript: engine.TOWER_SCRIPT_SCHEMA }
         : {}),
       ...(includes("reactions") ? { reactions } : {}),
       ...(includes("navigation") ? { navigation } : {}),
       ...(includes("elevation") ? { elevation } : {}),
       ...(includes("physics") ? { physics } : {}),
+      ...(includes("terraforming") ? { terraforming } : {}),
       ...(includes("assets") ? {
         assetAuthoring: {
           themePacks: "Call list_theme_packs, preview_theme_pack, then apply_theme_pack with ifRevision.",
@@ -1354,14 +1374,17 @@ export async function callTool(name, args = {}, ctx = {}) {
           schemaVersion: 1,
           moduleIds: [...engine.MECHANICS_MODULE_IDS],
           implementedModuleIds: [...engine.IMPLEMENTED_MECHANICS_MODULE_IDS],
-          modules: { combat: combatShields, reactions, navigation, elevation, physics }
+          modules: { combat: combatShields, reactions, navigation, elevation, physics, terraforming }
         }
       } : {})
     };
   }
 
   if (name === "list_recipes") {
-    return { collection: args.collection, recipes: listContentRecipes(args.collection) };
+    return {
+      collection: args.collection,
+      recipes: listContentRecipes(args.collection).map(projectRecipeForMcp)
+    };
   }
 
   if (name === "list_theme_packs") {
@@ -1502,7 +1525,7 @@ export async function callTool(name, args = {}, ctx = {}) {
           engine.ELEVATION_MECHANICS_SCHEMA
         );
       }
-      for (const moduleId of ["combat", "reactions", "navigation", "elevation", "physics"]) {
+      for (const moduleId of ["combat", "reactions", "navigation", "elevation", "physics", "terraforming"]) {
         if (!Number.isSafeInteger(result[moduleId]?.moduleSchemaVersion)) continue;
         result.capabilities = {
           ...result.capabilities,
@@ -1605,7 +1628,12 @@ export async function callTool(name, args = {}, ctx = {}) {
     }
     case "get_recipe": {
       const files = loadProjectFiles(projectDir);
-      const recipe = materializeContentRecipe(args.collection, args.recipeId, contentRecipeContext(files));
+      const context = contentRecipeContext(files);
+      const materialized = materializeContentRecipe(args.collection, args.recipeId, {
+        ...context,
+        ...(args.parameters === undefined ? {} : { parameters: args.parameters })
+      });
+      const recipe = projectRecipeForMcp(materialized);
       if (args.collection === "mechanics") {
         const inspection = await inspectMechanicsAuthoring(projectDir, {
           ...(recipe.entity?.missionId ? { missionId: recipe.entity.missionId } : {})
@@ -1614,11 +1642,18 @@ export async function callTool(name, args = {}, ctx = {}) {
           collection: args.collection,
           recipe,
           revision: inspection.revision,
-          nextValidActions: [
-            "preview_mechanics_module with the materialized recipe entity",
-            "apply_mechanics_module with the preview revision as ifRevision",
-            "validate_project"
-          ]
+          nextValidActions: recipe.moduleId === "terraforming"
+            ? [
+                "preview_mechanics_module with explicit missionId and enabled:true plus the materialized recipe entity",
+                "apply_mechanics_module with the preview revision as ifRevision",
+                "upsert_tower_script with its own current scripts revision",
+                "validate_project"
+              ]
+            : [
+                "preview_mechanics_module with the materialized recipe entity",
+                "apply_mechanics_module with the preview revision as ifRevision",
+                "validate_project"
+              ]
         };
       }
       return {
@@ -1884,7 +1919,13 @@ function resolveDir(explicit, fallback, context = {}) {
     if (context.forceDefaultProject && Array.isArray(context.allowedProjectRoots)) {
       const canonical = fs.realpathSync(resolved);
       const inside = context.allowedProjectRoots.some((root) => {
-        const relative = path.relative(root, canonical);
+        let canonicalRoot;
+        try {
+          canonicalRoot = fs.realpathSync(path.resolve(root));
+        } catch {
+          return false;
+        }
+        const relative = path.relative(canonicalRoot, canonical);
         return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
       });
       if (!inside) throw new Error("The active project is outside the filesystem roots shared with this MCP session.");
@@ -2863,6 +2904,14 @@ function mechanicsAuthoringRequest(args) {
     ["enabled", args.enabled ?? true],
     ["ifRevision", args.ifRevision]
   ].filter(([, value]) => value !== undefined));
+}
+
+function projectRecipeForMcp(recipe) {
+  if (recipe?.moduleId !== "terraforming") return recipe;
+  return {
+    ...recipe,
+    parameterSchema: TERRAFORMING_RECIPE_PARAMETERS_SCHEMA
+  };
 }
 
 const NAVIGATION_ANALYSIS_ARGUMENTS = new Set([

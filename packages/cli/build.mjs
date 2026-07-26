@@ -1221,11 +1221,12 @@ import {
   projectReactionPresentationCues,
   projectSnapshotSpawnCoord,
   projectShieldPresentationCues,
+  projectTerraformingPresentation,
   resolveExposurePresentation,
   resolveMarkPresentation,
   resolveShieldPresentation
 } from "./renderer/index.mjs";
-import { resolveAutotile } from "./renderer/autotile.mjs";
+import { expandAutotileInvalidations, resolveAutotile } from "./renderer/autotile.mjs";
 import project from "./project-data.js";
 
 const content = createGameContentRegistry({
@@ -1593,9 +1594,9 @@ class PlayScene extends Phaser.Scene {
     gr.arc(x, y, radius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * shield.ratio, false);
     gr.strokePath();
   }
-  syncTileImages(snap, g) {
+  syncTileImages(snap, g, terraformingPresentation) {
     const stateKey = [snap.mapId, snap.grid?.kind, this.scale.width, this.scale.height].join("|");
-    const fullRedraw = stateKey !== this.tileImageKey;
+    let fullRedraw = stateKey !== this.tileImageKey;
     if (fullRedraw) {
       for (const images of this.tileImages.values()) for (const image of images) this.destroyTileImage(image);
       this.tileImages.clear();
@@ -1604,14 +1605,28 @@ class PlayScene extends Phaser.Scene {
     }
     const map = { id: snap.mapId || snap.missionId, grid: snap.grid, tiles: snap.tiles, pathRoutes: snap.pathRoutes || [] };
     const tileByKey = new Map(snap.tiles.map((tile) => [tile.q + "," + tile.r, tile]));
-    const dirty = new Set();
+    const changedRoots = [];
     for (const tile of snap.tiles) {
       const key = tile.q + "," + tile.r;
       if (fullRedraw || this.tileTerrainState.get(key) !== tile.terrain) {
-        dirty.add(key);
-        for (const neighbor of this.renderingNeighbors(tile, snap.grid)) dirty.add(neighbor.q + "," + neighbor.r);
+        changedRoots.push({ q: tile.q, r: tile.r });
       }
     }
+    if (changedRoots.length > 1_024) {
+      fullRedraw = true;
+      for (const images of this.tileImages.values()) for (const image of images) this.destroyTileImage(image);
+      this.tileImages.clear();
+      this.tileTerrainState.clear();
+    }
+    const roots = this.mergeAutotileRoots(changedRoots, terraformingPresentation?.terrainInvalidations);
+    const expanded = roots === null ? undefined : expandAutotileInvalidations({
+      gridType: snap.grid?.kind || "hex", coordinates: roots, tiles: snap.tiles
+    });
+    // The authoritative snapshot is the fallback whenever the bounded hint channel overflows
+    // or descriptor validation makes a partial redraw unsafe.
+    const dirty = roots === null || expanded === undefined
+      ? new Set(snap.tiles.map((tile) => tile.q + "," + tile.r))
+      : new Set(expanded.map((coord) => coord.q + "," + coord.r));
     for (const key of dirty) {
       for (const image of this.tileImages.get(key) || []) this.destroyTileImage(image);
       this.tileImages.delete(key);
@@ -1632,10 +1647,13 @@ class PlayScene extends Phaser.Scene {
     image.__towerforgeMaskShape?.destroy();
     image.destroy();
   }
-  renderingNeighbors(coord, grid) {
-    if (grid?.kind === "square") return [[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]].map(([q,r]) => ({ q: coord.q + q, r: coord.r + r }));
-    const offsets = coord.r % 2 === 0 ? [[-1,-1],[0,-1],[1,0],[0,1],[-1,1],[-1,0]] : [[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,0]];
-    return offsets.map(([q,r]) => ({ q: coord.q + q, r: coord.r + r }));
+  mergeAutotileRoots(changedRoots, hints) {
+    const unique = new Map();
+    for (const point of changedRoots) unique.set(point.q + "," + point.r, point);
+    if (Array.isArray(hints)) for (const point of hints) {
+      if (Number.isSafeInteger(point?.q) && Number.isSafeInteger(point?.r) && point.q >= 0 && point.r >= 0) unique.set(point.q + "," + point.r, { q: point.q, r: point.r });
+    }
+    return unique.size <= 1024 ? [...unique.values()] : null;
   }
   addTileImage(selected, p, g, sectorDirection, tileKey) {
     const texture = this.spriteTexture(selected?.spriteId);
@@ -1699,7 +1717,8 @@ class PlayScene extends Phaser.Scene {
       ...(snap.combat === undefined && this.previousCombat !== null ? { combat: this.previousCombat } : {}),
       lastEvents: events
     };
-    this.syncTileImages(snap, g);
+    const terraformingPresentation = projectTerraformingPresentation(presentationSnapshot);
+    this.syncTileImages(snap, g, terraformingPresentation);
     const map = { id: snap.mapId || snap.missionId, grid: snap.grid, tiles: snap.tiles, pathRoutes: snap.pathRoutes || [] };
 
     this.tileG.clear();
@@ -1714,7 +1733,7 @@ class PlayScene extends Phaser.Scene {
       }
     }
     for (const w of snap.temporaryWaterTiles) { const p = this.center(w, g); this.cell(this.tileG, p.x, p.y, g.r * 0.74, 0x427b88, 0.55, g.grid); }
-    this.drawElevationCues(snap.elevation, g);
+    this.drawElevationPresentation(terraformingPresentation?.elevationPresentation || projectElevationCues(snap.elevation), g);
     if (navigationOverlay.active) {
       for (const cue of navigationOverlay.cues) {
         const p = this.center(cue.coord, g);
@@ -1917,8 +1936,7 @@ class PlayScene extends Phaser.Scene {
     updateHud(snap);
   }
 
-  drawElevationCues(section, g) {
-    const presentation = projectElevationCues(section);
+  drawElevationPresentation(presentation, g) {
     const retained = new Set();
     if (presentation?.active) {
       for (const cue of presentation.cues) {

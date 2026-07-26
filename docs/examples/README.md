@@ -25,6 +25,7 @@ Reference examples show expected project and code patterns.
 | Opt-in elevation line of sight | `docs/examples/opt-in-elevation-line-of-sight/` | R3.2 elevation v2 reference with an existing `opaque` terrain-tag prerequisite; the recipe does not edit maps/terrain or auto-enable the module. |
 | Opt-in elevation high-ground | `docs/examples/opt-in-elevation-high-ground/` | R3.3 elevation v3 reference with bounded pairwise range/damage bonuses plus a separate map fragment; the recipe itself never edits the map, enables the module, or selects a mission. |
 | Opt-in tile displacement physics | `docs/examples/opt-in-physics-displacement/` | R3.4a physics v1 reference with bounded push/pull, explicit immunity and terrain-tag fall hazards; effects, terrain tagging and mission selection remain separate opt-in edits. |
+| Opt-in transactional terraforming | `docs/examples/opt-in-transactional-terraforming/` | R3.4b terraforming v1 reference with separate authored terrain, map, mission, mechanics and TowerScript v6 choices; flood, moat and bridge recipes remain inert until explicitly selected and bound. |
 | Headless smoke sim | `packages/cli/sim.mjs` | CLI wrapper for engine-backed mission smoke runs. |
 | Static web build | `packages/cli/build.mjs` | Generates the playable web bundle from project data, compiled engine modules, renderer, and safe assets. |
 | Native packaging | `packages/cli/lib/packaging.mjs` | Canonical Capacitor/Tauri scaffold generation around a built web bundle. |

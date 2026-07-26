@@ -762,6 +762,12 @@ export type GameEvent = {
     terrainMetadata: TerrainTypeDefinition;
     source: "script" | "ability" | "restore";
 } | {
+    type: "elevationChanged";
+    coord: GridCoord;
+    fromElevation: number;
+    toElevation: number;
+    source: "script" | "restore";
+} | {
     type: "scriptSignal";
     scriptId: string;
     signal: string;
@@ -799,6 +805,18 @@ export interface ElevationSnapshotV1 {
     readonly schemaVersion: 1;
     readonly defaultElevation: 0;
     readonly overrides: readonly import("./map.js").GridMapElevationOverride[];
+}
+export interface TerraformingSnapshotV1 {
+    readonly schemaVersion: 1;
+    readonly pendingExpiryGroups: readonly {
+        readonly sequence: number;
+        readonly remaining: number;
+        readonly targets: readonly {
+            readonly layer: "terrain" | "elevation";
+            readonly q: number;
+            readonly r: number;
+        }[];
+    }[];
 }
 export interface GameSnapshot {
     mapId: string;
@@ -841,6 +859,7 @@ export interface GameSnapshot {
     reactions?: ReactionStateV1;
     navigation?: NavigationSnapshotV1;
     elevation?: ElevationSnapshotV1;
+    terraforming?: TerraformingSnapshotV1;
     scriptState: import("../scripting/types.js").TowerScriptStateSnapshot;
     lastEvents: GameEvent[];
 }

@@ -646,9 +646,39 @@ label { font-size: 11px; font-weight: 500; color: var(--text-muted); display: bl
 .displacement-effect-editor { display: grid; gap: 8px; margin-top: 10px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; }
 .displacement-effect-row { grid-template-columns: minmax(100px,.7fr) minmax(100px,.5fr) minmax(170px,1fr) auto; }
 
+.mechanics-terraforming-transition-row {
+  display: grid;
+  grid-template-columns: minmax(140px, .8fr) minmax(220px, 1.4fr) auto minmax(170px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+.mechanics-terraforming-transition-row label,
+.mechanics-terraforming-elevation-fields label,
+.mechanics-terraforming-recipe-fields label,
+.mechanics-terraforming-snippet-label { display: grid; gap: 6px; }
+.mechanics-terraforming-source-tags { display: grid; gap: 6px; }
+.mechanics-terraforming-source-tags span { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; }
+.mechanics-terraforming-elevation-fields,
+.mechanics-terraforming-recipe-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.mechanics-terraforming-snippet-label { margin-top: 12px; }
+.mechanics-terraforming-snippet-label pre { margin: 0; max-height: 240px; overflow: auto; }
+
 @media (max-width: 840px) {
   .mechanics-elevation-high-ground-fields { grid-template-columns: 1fr; }
-  .mechanics-physics-fields, .displacement-effect-row { grid-template-columns: 1fr; }
+  .mechanics-physics-fields,
+  .displacement-effect-row,
+  .mechanics-terraforming-transition-row,
+  .mechanics-terraforming-elevation-fields,
+  .mechanics-terraforming-recipe-fields { grid-template-columns: 1fr; }
 }
 @media (max-width: 900px) {
   .mechanics-elevation-los-coordinates { grid-template-columns: 1fr 1fr; }

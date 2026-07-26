@@ -451,6 +451,18 @@ export class NavigationResolver {
         this.dirty = false;
         return field;
     }
+    /** Returns an already materialized field without changing resolver diagnostics. */
+    peekField(movementProfileId, routeId) {
+        const safeMovementProfileId = boundedId(movementProfileId, "movementProfileId");
+        const safeRouteId = boundedId(routeId, "routeId");
+        if (!Object.prototype.hasOwnProperty.call(this.profile.movementProfiles, safeMovementProfileId)) {
+            fail(`unknown movement profile "${safeMovementProfileId}".`);
+        }
+        const route = this.routes.byId.get(safeRouteId);
+        if (!route)
+            fail(`unknown route "${safeRouteId}".`);
+        return this.fields.get(cacheKey(safeMovementProfileId, route.goal));
+    }
     /**
      * Checks the installed cache entry without counting a field query. Cache identity reflects
      * selective resolver invalidation, so retained fields stay current while dirty fields do not.

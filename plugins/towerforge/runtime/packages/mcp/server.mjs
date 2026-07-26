@@ -41,8 +41,94 @@ const clientRequests = new Map();
 let nextClientRequestId = 1;
 let clientSupportsRoots = false;
 
+let outputQueue = Promise.resolve();
+let stdoutFailure;
+const stdoutFailureWaiters = new Set();
+
+function recordStdoutFailure(error) {
+  if (stdoutFailure !== undefined) return stdoutFailure;
+  stdoutFailure = error instanceof Error ? error : new Error(String(error));
+  process.exitCode = 1;
+  process.stderr.write(`TowerForge MCP stdout flush failed: ${stdoutFailure.message}\n`);
+  for (const reject of stdoutFailureWaiters) reject(stdoutFailure);
+  stdoutFailureWaiters.clear();
+  return stdoutFailure;
+}
+
+// stdout may emit EPIPE after an individual write callback has already run. Keep one listener for
+// the protocol channel's whole lifetime; per-write listeners leave a gap where that late event
+// would otherwise become an uncaught EventEmitter error.
+process.stdout.on("error", recordStdoutFailure);
+
+function writeOutputFrame(frame) {
+  return new Promise((resolve, reject) => {
+    if (stdoutFailure !== undefined) {
+      reject(stdoutFailure);
+      return;
+    }
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      stdoutFailureWaiters.delete(fail);
+      reject(error);
+    };
+    stdoutFailureWaiters.add(fail);
+    try {
+      process.stdout.write(frame, (error) => {
+        if (settled) return;
+        if (error) {
+          const failure = recordStdoutFailure(error);
+          fail(failure);
+          return;
+        }
+        settled = true;
+        stdoutFailureWaiters.delete(fail);
+        resolve();
+      });
+    } catch (error) {
+      const failure = recordStdoutFailure(error);
+      fail(failure);
+    }
+  });
+}
+
+function finishStdout() {
+  return new Promise((resolve, reject) => {
+    if (stdoutFailure !== undefined) {
+      reject(stdoutFailure);
+      return;
+    }
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      stdoutFailureWaiters.delete(fail);
+      reject(error);
+    };
+    stdoutFailureWaiters.add(fail);
+    try {
+      process.stdout.end(() => {
+        if (settled) return;
+        settled = true;
+        stdoutFailureWaiters.delete(fail);
+        if (stdoutFailure !== undefined) reject(stdoutFailure);
+        else resolve();
+      });
+    } catch (error) {
+      const failure = recordStdoutFailure(error);
+      fail(failure);
+    }
+  });
+}
+
 function send(message) {
-  process.stdout.write(JSON.stringify(message) + "\n");
+  const frame = `${JSON.stringify(message)}\n`;
+  outputQueue = outputQueue.then(() => writeOutputFrame(frame));
+  // Keep a rejection observable by the shutdown path without letting Node treat the queued
+  // protocol write as an unhandled rejection before stdin closes.
+  void outputQueue.catch(() => {});
+  return outputQueue;
 }
 function reply(id, result) {
   send({ jsonrpc: "2.0", id, result });
@@ -198,11 +284,20 @@ async function handleMessage(message) {
 
 let stdinClosed = false;
 const pending = new Set();
+let shutdownStarted = false;
 
 function drainAndExit() {
-  if (stdinClosed && pending.size === 0) {
-    process.exit(0);
-  }
+  if (!stdinClosed || pending.size !== 0 || shutdownStarted) return;
+  shutdownStarted = true;
+  void outputQueue
+    .then(() => finishStdout())
+    .then(() => {
+      if (stdoutFailure === undefined) process.exitCode = 0;
+    })
+    .catch((error) => {
+      recordStdoutFailure(error);
+      process.stdout.destroy();
+    });
 }
 
 const rl = readline.createInterface({ input: process.stdin });

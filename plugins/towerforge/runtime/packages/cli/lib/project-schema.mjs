@@ -12,6 +12,7 @@ const MECHANICS_MODULE_IDS = new Set([
   "navigation",
   "elevation",
   "physics",
+  "terraforming",
   "roguelite",
   "heroes",
   "logistics",

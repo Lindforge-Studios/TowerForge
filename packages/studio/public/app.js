@@ -69,6 +69,7 @@ const MECHANICS_MODULES = [
   { id: "navigation", title: "Dynamic Navigation", description: "Flow fields, movement layers, and route-safe placement." },
   { id: "elevation", title: "Elevation", description: "Authored tile elevation with optional deterministic line of sight and bounded high-ground bonuses." },
   { id: "physics", title: "Physics", description: "Bounded push/pull displacement, immunities, and explicit fall hazards." },
+  { id: "terraforming", title: "Terraforming", description: "Transactional terrain transitions and bounded elevation edits authored as an independent opt-in profile." },
   { id: "roguelite", title: "Rogue-lite", description: "Synergies, artifacts, draft choices, and campaign runs." },
   { id: "heroes", title: "Heroes", description: "Command units, abilities, auras, and skill trees." },
   { id: "logistics", title: "Logistics", description: "Power grids, inventories, ammunition, and production." },
@@ -83,6 +84,7 @@ const ELEVATION_RECIPE_IDS = new Set([
   "basic_elevation_high_ground"
 ]);
 const PHYSICS_RECIPE_IDS = new Set(["basic_displacement_physics", "tagged_fall_hazards"]);
+const TERRAFORMING_RECIPE_IDS = new Set(["tagged_flood", "tagged_moat", "tagged_destructible_bridge"]);
 const MAX_ELEVATION_CANVAS_TILES = 4_096;
 const MAX_ELEVATION_EDITOR_ROWS = 256;
 
@@ -103,7 +105,9 @@ const MechanicsUI = {
   navigationOverlayEnabled: true,
   loading: false,
   applying: false,
-  error: null
+  error: null,
+  terraformingSnippet: null,
+  terraformingRecipeLoading: false
 };
 
 // Map authoring has its own guarded revision cycle. It never mutates the mechanics profile draft
@@ -664,6 +668,12 @@ function mechanicsSelectedProfile() {
 }
 
 function normalizeMechanicsDraft(profile) {
+  if (MechanicsUI.selectedModuleId === "terraforming") {
+    const moduleSchemaVersion = mechanicsProjectModuleVersion();
+    return moduleSchemaVersion === 1
+      ? normalizeTerraformingMechanicsDraft(profile)
+      : deep(profile ?? {});
+  }
   if (MechanicsUI.selectedModuleId === "physics") return normalizePhysicsMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "elevation") return normalizeElevationLineOfSightDraft(profile);
   if (MechanicsUI.selectedModuleId === "navigation") return normalizeNavigationMechanicsDraft(profile);
@@ -707,6 +717,10 @@ function normalizeMechanicsDraft(profile) {
       : {};
   }
   return draft;
+}
+
+function normalizeTerraformingMechanicsDraft(profile) {
+  return deep(profile ?? {});
 }
 
 function normalizePhysicsMechanicsDraft(profile) {
@@ -866,6 +880,11 @@ function mechanicsHighGroundLimits() {
   return source && typeof source === "object" && !Array.isArray(source) ? source : {};
 }
 
+function mechanicsTerraformingLimits() {
+  const source = MechanicsUI.capabilities?.terraforming?.authoring?.limits;
+  return source && typeof source === "object" && !Array.isArray(source) ? source : {};
+}
+
 function mechanicsBoundedEntries(record, limit) {
   const entries = Object.entries(record ?? {});
   return Number.isInteger(limit) && limit >= 0 ? entries.slice(0, limit) : entries;
@@ -884,6 +903,7 @@ function mechanicsAuthoredMatrixEntryCount() {
 }
 
 function mechanicsEffectiveModuleSchemaVersion() {
+  if (MechanicsUI.selectedModuleId === "terraforming") return 1;
   if (MechanicsUI.selectedModuleId === "elevation") {
     const authoredVersion = Math.max(
       mechanicsProjectModuleVersion(),
@@ -905,6 +925,10 @@ function mechanicsEffectiveModuleSchemaVersion() {
 
 function mechanicsRecipeProfile() {
   return MechanicsUI.recipe?.entity?.profile ?? null;
+}
+
+function mechanicsRecipeModuleId(recipe) {
+  return recipe?.entity?.moduleId ?? recipe?.moduleId ?? null;
 }
 
 function initializeMechanicsDraft() {
@@ -931,9 +955,12 @@ function initializeMechanicsDraft() {
         ? "elemental_shatter"
         : MechanicsUI.selectedModuleId === "elevation"
           ? "basic_authored_elevation"
-          : MechanicsUI.selectedModuleId === "physics" ? "basic_displacement_physics" : "basic_regenerating_shields");
+          : MechanicsUI.selectedModuleId === "physics"
+            ? "basic_displacement_physics"
+            : MechanicsUI.selectedModuleId === "terraforming" ? "tagged_flood" : "basic_regenerating_shields");
   MechanicsUI.draft = normalizeMechanicsDraft(selectedProfile ?? mechanicsRecipeProfile());
   MechanicsUI.preview = null;
+  MechanicsUI.terraformingSnippet = null;
   invalidateElevationLineOfSightAnalysis();
 }
 
@@ -947,7 +974,9 @@ async function loadMechanicsRecipe() {
     ?? MechanicsUI.recipes[0]
     ?? null;
   MechanicsUI.recipeId = MechanicsUI.recipe?.id ?? "";
-  if (!MechanicsUI.recipe?.entity?.profile) throw new Error("The mechanics shield recipe is unavailable.");
+  if (!MechanicsUI.recipe?.entity?.profile && !MechanicsUI.recipe?.parameterSchema) {
+    throw new Error("The selected mechanics recipe is unavailable.");
+  }
   return MechanicsUI.recipe;
 }
 
@@ -999,6 +1028,7 @@ function loadMechanicsProfile() {
     ? normalizeNavigationMechanicsDraft(profile)
     : normalizeMechanicsDraft(profile);
   MechanicsUI.preview = null;
+  MechanicsUI.terraformingSnippet = null;
   MechanicsUI.error = null;
   invalidateElevationLineOfSightAnalysis();
   if (MechanicsUI.selectedModuleId === "elevation") loadElevationMap();
@@ -1018,6 +1048,10 @@ async function newMechanicsProfile() {
     await loadMechanicsRecipe();
     const selectedRecipeId = $("mechanics-recipe-select")?.value || MechanicsUI.recipeId;
     const recipe = MechanicsUI.recipes.find((candidate) => candidate.id === selectedRecipeId) ?? MechanicsUI.recipe;
+    if (MechanicsUI.selectedModuleId === "terraforming") {
+      await materializeTerraformingRecipeDraft(recipe);
+      return;
+    }
     if (!recipe?.entity?.profile) throw new Error("The selected mechanics recipe is unavailable.");
     MechanicsUI.recipe = recipe;
     MechanicsUI.recipeId = recipe.id;
@@ -1039,6 +1073,48 @@ async function newMechanicsProfile() {
     MechanicsUI.error = error;
     renderMechanicsPreviewResult();
   }
+}
+
+async function materializeTerraformingRecipeDraft(recipe) {
+  if (mechanicsProjectModuleVersion() !== 1) {
+    throw new Error("Future terraforming module versions are preserved read-only and cannot be materialized as v1.");
+  }
+  if (!recipe || !TERRAFORMING_RECIPE_IDS.has(recipe.id)) {
+    throw new Error("Choose a bundled terraforming recipe before materializing a draft.");
+  }
+  const sourceTerrainTag = $("mechanics-terraforming-recipe-source-tag")?.value ?? "";
+  const destinationTerrainId = $("mechanics-terraforming-recipe-destination")?.value ?? "";
+  const transitionId = $("mechanics-terraforming-recipe-transition-id")?.value.trim() ?? "";
+  MechanicsUI.terraformingRecipeLoading = true;
+  renderMechanicsHub();
+  try {
+    const materialized = await apiPost("/api/mechanics/recipe", {
+      recipeId: recipe.id,
+      parameters: {
+        sourceTerrainTag,
+        destinationTerrainId,
+        ...(transitionId ? { transitionId } : {})
+      }
+    });
+    const candidate = materialized?.recipe;
+    if (candidate?.moduleId !== "terraforming" || candidate?.entity?.moduleId !== "terraforming"
+      || candidate?.entity?.moduleSchemaVersion !== 1 || candidate?.towerScriptSnippet?.minimumSchemaVersion !== 6) {
+      throw new Error("The terraforming recipe response did not match the supported v1/v6 contract.");
+    }
+    MechanicsUI.recipe = candidate;
+    MechanicsUI.recipeId = candidate.id;
+    MechanicsUI.profileId = nextMechanicsProfileId(candidate.entity.profileId || candidate.suggestedId || candidate.id);
+    MechanicsUI.loadedProfileId = null;
+    MechanicsUI.draft = normalizeTerraformingMechanicsDraft(candidate.entity.profile);
+    MechanicsUI.moduleSchemaVersion = 1;
+    MechanicsUI.terraformingSnippet = deep(candidate.towerScriptSnippet);
+    MechanicsUI.preview = null;
+    MechanicsUI.error = null;
+  } finally {
+    MechanicsUI.terraformingRecipeLoading = false;
+    renderMechanicsHub();
+  }
+  $("mechanics-profile-id")?.focus();
 }
 
 function mechanicsRecipeShieldDefault(collection, targetId) {
@@ -2478,6 +2554,208 @@ function renderPhysicsMechanicsEditor() {
   }
 }
 
+function renderTerraformingMechanicsEditor() {
+  if (MechanicsUI.selectedModuleId !== "terraforming" || !MechanicsUI.draft) return;
+  const limits = mechanicsTerraformingLimits();
+  const transitionDefinitions = limits.transitionDefinitions;
+  const sourceTagsPerTransition = limits.sourceTagsPerTransition;
+  const idOrTagUtf8Bytes = limits.idOrTagUtf8Bytes;
+  const terrainTypes = S.project?.terrainTypes ?? {};
+  const terrainIds = new Set(Object.keys(terrainTypes));
+  const terrainTags = new Set();
+  for (const [, terrain] of Object.entries(terrainTypes)) {
+    for (const tag of Array.isArray(terrain?.tags) ? terrain.tags : []) {
+      if (typeof tag === "string" && tag) terrainTags.add(tag);
+    }
+  }
+  const transitions = MechanicsUI.draft.terrainTransitions
+    && typeof MechanicsUI.draft.terrainTransitions === "object"
+    && !Array.isArray(MechanicsUI.draft.terrainTransitions)
+    ? MechanicsUI.draft.terrainTransitions
+    : {};
+  for (const definition of Object.values(transitions)) {
+    if (typeof definition?.toTerrainId === "string") terrainIds.add(definition.toTerrainId);
+    for (const tag of Array.isArray(definition?.fromTerrainTags) ? definition.fromTerrainTags : []) {
+      if (typeof tag === "string") terrainTags.add(tag);
+    }
+  }
+  const sortedTerrainIds = [...terrainIds].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+  const sortedTerrainTags = [...terrainTags].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+  const supportedVersion = mechanicsProjectModuleVersion() === 1;
+  const rows = $("mechanics-terraforming-transition-rows");
+  const optionsFor = (values, selected) => values.map((value) => (
+    `<option value="${esc(value)}" ${value === selected ? "selected" : ""}>${esc(value)}</option>`
+  )).join("");
+  if (rows) {
+    rows.innerHTML = mechanicsBoundedEntries(transitions, transitionDefinitions).map(([transitionId, definition]) => {
+      const tags = Array.isArray(definition?.fromTerrainTags) ? definition.fromTerrainTags : [];
+      return `<div class="mechanics-terraforming-transition-row" data-transition-key="${esc(transitionId)}">
+        <label>Transition ID<input data-terraforming-transition-id data-role="transition-id" type="text" value="${esc(transitionId)}" autocomplete="off" spellcheck="false"></label>
+        <div class="mechanics-terraforming-source-tags">${tags.map((tag, index) => `<span>
+          <select data-terraforming-source-tag data-role="source-tag" data-source-index="${index}">${optionsFor(sortedTerrainTags, tag)}</select>
+          <button data-remove-terraforming-source-tag data-role="remove-source-tag" data-source-index="${index}" class="btn btn-ghost" type="button" aria-label="Remove source tag">×</button>
+        </span>`).join("")}</div>
+        <button data-add-terraforming-source-tag data-role="add-source-tag" class="btn btn-outline" type="button">+ Source tag</button>
+        <label>Destination terrain<select data-terraforming-destination-id data-role="destination-id">${optionsFor(sortedTerrainIds, definition?.toTerrainId)}</select></label>
+        <button data-remove-terraforming-transition data-role="remove-transition" class="btn btn-danger" type="button">Remove</button>
+      </div>`;
+    }).join("") || `<div class="workbench-empty">No transitions in this detached profile.</div>`;
+
+    rows.querySelectorAll("[data-transition-key]").forEach((row) => {
+      const transitionId = row.dataset.transitionKey;
+      const idInput = row.querySelector('[data-role="transition-id"]');
+      idInput?.addEventListener("change", () => {
+        const nextId = idInput.value.trim();
+        const bytes = new TextEncoder().encode(nextId).length;
+        if (!nextId || bytes > idOrTagUtf8Bytes || (nextId !== transitionId && ownDataValue(transitions, nextId))) {
+          idInput.setCustomValidity("Use a unique transition ID within the descriptor byte limit.");
+          idInput.reportValidity();
+          return;
+        }
+        idInput.setCustomValidity("");
+        if (nextId === transitionId) return;
+        const nextTransitions = { ...transitions };
+        const retained = deep(nextTransitions[transitionId]);
+        delete nextTransitions[transitionId];
+        defineOwnDataValue(nextTransitions, nextId, retained);
+        MechanicsUI.draft.terrainTransitions = nextTransitions;
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      });
+      row.querySelectorAll('[data-role="source-tag"]').forEach((select) => {
+        select.addEventListener("change", () => {
+          const definition = ownDataValue(MechanicsUI.draft.terrainTransitions, transitionId);
+          if (!definition) return;
+          definition.fromTerrainTags[Number(select.dataset.sourceIndex)] = select.value;
+          MechanicsUI.preview = null;
+          renderMechanicsPreviewResult();
+        });
+      });
+      row.querySelectorAll('[data-role="remove-source-tag"]').forEach((button) => {
+        button.disabled = !supportedVersion || (transitions[transitionId]?.fromTerrainTags?.length ?? 0) <= 1;
+        button.addEventListener("click", () => {
+          const definition = ownDataValue(MechanicsUI.draft.terrainTransitions, transitionId);
+          if (!definition || definition.fromTerrainTags.length <= 1) return;
+          definition.fromTerrainTags.splice(Number(button.dataset.sourceIndex), 1);
+          MechanicsUI.preview = null;
+          renderMechanicsHub();
+        });
+      });
+      row.querySelector('[data-role="add-source-tag"]')?.addEventListener("click", () => {
+        const definition = ownDataValue(MechanicsUI.draft.terrainTransitions, transitionId);
+        if (!definition || definition.fromTerrainTags.length >= sourceTagsPerTransition) return;
+        const nextTag = sortedTerrainTags.find((tag) => !definition.fromTerrainTags.includes(tag));
+        if (!nextTag) return;
+        definition.fromTerrainTags.push(nextTag);
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      });
+      row.querySelector('[data-role="destination-id"]')?.addEventListener("change", (event) => {
+        const definition = ownDataValue(MechanicsUI.draft.terrainTransitions, transitionId);
+        if (!definition) return;
+        definition.toTerrainId = event.currentTarget.value;
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector('[data-role="remove-transition"]')?.addEventListener("click", () => {
+        delete MechanicsUI.draft.terrainTransitions[transitionId];
+        if (Object.keys(MechanicsUI.draft.terrainTransitions).length === 0) delete MechanicsUI.draft.terrainTransitions;
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      });
+    });
+  }
+
+  const addTransition = $("btn-mechanics-add-terraforming-transition");
+  if (addTransition) {
+    addTransition.disabled = !supportedVersion || !sortedTerrainTags.length || !sortedTerrainIds.length
+      || Object.keys(transitions).length >= transitionDefinitions;
+    addTransition.onclick = () => {
+      MechanicsUI.draft.terrainTransitions ??= {};
+      let suffix = Object.keys(MechanicsUI.draft.terrainTransitions).length + 1;
+      let transitionId = `transition_${suffix}`;
+      while (ownDataValue(MechanicsUI.draft.terrainTransitions, transitionId)) transitionId = `transition_${++suffix}`;
+      defineOwnDataValue(MechanicsUI.draft.terrainTransitions, transitionId, {
+        fromTerrainTags: [sortedTerrainTags[0]],
+        toTerrainId: sortedTerrainIds[0]
+      });
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    };
+  }
+
+  const elevation = MechanicsUI.draft.elevation;
+  const elevationEnabled = $("mechanics-terraforming-elevation-enabled");
+  const minimumInput = $("mechanics-terraforming-elevation-minimum");
+  const maximumInput = $("mechanics-terraforming-elevation-maximum");
+  const deltaInput = $("mechanics-terraforming-elevation-max-delta");
+  const elevationInputs = [minimumInput, maximumInput, deltaInput].filter(Boolean);
+  if (elevationEnabled) {
+    elevationEnabled.checked = Boolean(elevation);
+    elevationEnabled.disabled = !supportedVersion;
+    elevationEnabled.onchange = () => {
+      if (elevationEnabled.checked) {
+        MechanicsUI.draft.elevation = { minimum: 0, maximum: 0, maximumDeltaPerOperation: 1 };
+      } else delete MechanicsUI.draft.elevation;
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    };
+  }
+  const elevationBindings = [
+    [minimumInput, "minimum", limits.elevationMinimum, limits.elevationMaximum, 0],
+    [maximumInput, "maximum", limits.elevationMinimum, limits.elevationMaximum, 0],
+    [deltaInput, "maximumDeltaPerOperation", 1, limits.maximumElevationDeltaPerOperation, 1]
+  ];
+  for (const [input, field, minimum, maximum, fallback] of elevationBindings) {
+    if (!input) continue;
+    input.disabled = !supportedVersion || !elevation;
+    input.min = String(minimum);
+    input.max = String(maximum);
+    input.step = "1";
+    input.value = String(elevation?.[field] ?? fallback);
+    input.oninput = () => {
+      const value = Number(input.value);
+      if (!MechanicsUI.draft.elevation || !Number.isSafeInteger(value)) return;
+      MechanicsUI.draft.elevation[field] = value;
+      MechanicsUI.preview = null;
+      renderMechanicsPreviewResult();
+    };
+  }
+  const dependency = $("mechanics-terraforming-elevation-dependency");
+  if (dependency) {
+    const elevationCapability = MechanicsUI.capabilities?.capabilities?.elevation;
+    dependency.textContent = !elevation
+      ? "Elevation mutation is not included in this profile."
+      : elevationCapability?.active
+        ? "The selected mission has the required elevation capability."
+        : "This profile requires an active elevation profile for the selected mission.";
+    dependency.classList.toggle("warning", Boolean(elevation && !elevationCapability?.active));
+  }
+
+  const recipeSource = $("mechanics-terraforming-recipe-source-tag");
+  const recipeDestination = $("mechanics-terraforming-recipe-destination");
+  const recipeTransition = $("mechanics-terraforming-recipe-transition-id");
+  const retainedSource = recipeSource?.value;
+  const retainedDestination = recipeDestination?.value;
+  if (recipeSource) {
+    recipeSource.innerHTML = optionsFor(sortedTerrainTags, sortedTerrainTags.includes(retainedSource) ? retainedSource : sortedTerrainTags[0]);
+    recipeSource.disabled = !supportedVersion || MechanicsUI.terraformingRecipeLoading;
+  }
+  if (recipeDestination) {
+    recipeDestination.innerHTML = optionsFor(sortedTerrainIds, sortedTerrainIds.includes(retainedDestination) ? retainedDestination : sortedTerrainIds[0]);
+    recipeDestination.disabled = !supportedVersion || MechanicsUI.terraformingRecipeLoading;
+  }
+  if (recipeTransition) recipeTransition.disabled = !supportedVersion || MechanicsUI.terraformingRecipeLoading;
+  const snippet = $("mechanics-terraforming-recipe-snippet");
+  if (snippet) snippet.textContent = MechanicsUI.terraformingSnippet
+    ? JSON.stringify(MechanicsUI.terraformingSnippet, null, 2)
+    : "Materialize a recipe to inspect its read-only TowerScript v6 snippet.";
+  if (!supportedVersion) {
+    for (const control of rows?.querySelectorAll("input, select, button") ?? []) control.disabled = true;
+    for (const input of elevationInputs) input.disabled = true;
+  }
+}
+
 async function analyzeElevationLineOfSight() {
   if (MechanicsUI.selectedModuleId !== "elevation" || !MechanicsUI.draft?.lineOfSight) return null;
   const requestSerial = ElevationLineOfSightUI.requestSerial + 1;
@@ -2559,7 +2837,7 @@ function drawElevationCanvas() {
   const presentation = projectElevationCues(section);
   if (presentation?.active) {
     const geometry = elevationRenderer.geometry(ElevationUI.canvasTiles, map.grid);
-    elevationRenderer.drawElevationCues(section, geometry);
+    elevationRenderer.drawElevationPresentation(presentation, geometry);
     const focusedCanvasCoord = elevationCanvasCoord(ElevationUI.focusedCoord, canvasWindow);
     if (focusedCanvasCoord) elevationRenderer.drawFocusCell(focusedCanvasCoord, geometry);
   }
@@ -2804,6 +3082,9 @@ function renderMechanicsPreviewResult() {
 }
 
 function mechanicsRequest(enabled) {
+  if (MechanicsUI.selectedModuleId === "terraforming" && mechanicsProjectModuleVersion() !== 1) {
+    throw new Error("Future terraforming module versions are read-only in this Studio version.");
+  }
   const moduleSchemaVersion = mechanicsEffectiveModuleSchemaVersion();
   const request = {
     moduleId: MechanicsUI.selectedModuleId,
@@ -2871,6 +3152,7 @@ async function applyMechanics(enabled) {
     MechanicsUI.draft = null;
     MechanicsUI.preview = null;
     MechanicsUI.error = null;
+    MechanicsUI.terraformingSnippet = null;
     await load();
     await refreshNavigationOverlay();
   } catch (error) {
@@ -2898,7 +3180,9 @@ function renderMechanicsHub() {
         ? "Author a sparse map layer separately, then opt into elevation v1 or deterministic line of sight with a v2 profile."
         : MechanicsUI.selectedModuleId === "physics"
           ? "Author a closed physics v1 profile for bounded push/pull immunity and explicit fall hazards."
-        : "Author a reusable combat profile, then explicitly select it for this mission.";
+          : MechanicsUI.selectedModuleId === "terraforming"
+            ? "Author detached terrain transitions and optional bounded elevation mutation, then explicitly enable the profile for this mission."
+            : "Author a reusable combat profile, then explicitly select it for this mission.";
   missionSelect.innerHTML = Object.entries(S.project.missions ?? {}).map(([id, mission]) =>
     `<option value="${esc(id)}" ${id === MechanicsUI.missionId ? "selected" : ""}>${esc(mission.label ?? id)}</option>`).join("");
   missionSelect.onchange = () => {
@@ -2907,6 +3191,7 @@ function renderMechanicsHub() {
     MechanicsUI.draft = null;
     MechanicsUI.preview = null;
     MechanicsUI.error = null;
+    MechanicsUI.terraformingSnippet = null;
     ElevationUI.mapId = null;
     ElevationUI.preview = null;
     ElevationUI.error = null;
@@ -2938,12 +3223,14 @@ function renderMechanicsHub() {
       const selectedModuleId = button.dataset.mechanicsModule;
       if (!capabilities[selectedModuleId]?.available || selectedModuleId === MechanicsUI.selectedModuleId) return;
       MechanicsUI.selectedModuleId = selectedModuleId;
-      const availableRecipes = MechanicsUI.recipes.filter((recipe) => recipe.entity?.moduleId === selectedModuleId
+      const availableRecipes = MechanicsUI.recipes.filter((recipe) => mechanicsRecipeModuleId(recipe) === selectedModuleId
         && (selectedModuleId !== "reactions" || REACTION_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "elevation" || ELEVATION_RECIPE_IDS.has(recipe.id))
-        && (selectedModuleId !== "physics" || PHYSICS_RECIPE_IDS.has(recipe.id)));
+        && (selectedModuleId !== "physics" || PHYSICS_RECIPE_IDS.has(recipe.id))
+        && (selectedModuleId !== "terraforming" || TERRAFORMING_RECIPE_IDS.has(recipe.id)));
       MechanicsUI.recipe = availableRecipes[0] ?? null;
       MechanicsUI.recipeId = MechanicsUI.recipe?.id ?? "";
+      MechanicsUI.terraformingSnippet = null;
       MechanicsUI.loadedProfileId = null;
       if (selectedModuleId === "elevation") loadElevationMap(null);
       ElevationLineOfSightUI.contextKey = null;
@@ -2969,6 +3256,7 @@ function renderMechanicsHub() {
   $("mechanics-navigation-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "navigation");
   $("mechanics-elevation-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "elevation");
   $("mechanics-physics-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "physics");
+  $("mechanics-terraforming-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "terraforming");
   const state = $("mechanics-hub-state");
   if (state) state.textContent = MechanicsUI.loading ? "Loading capabilities…"
     : MechanicsUI.error ? "Mechanics unavailable"
@@ -2991,13 +3279,14 @@ function renderMechanicsHub() {
     }
     const recipeSelect = $("mechanics-recipe-select");
     if (recipeSelect) {
-      const moduleRecipes = MechanicsUI.recipes.filter((recipe) => recipe.entity?.moduleId === MechanicsUI.selectedModuleId);
+      const moduleRecipes = MechanicsUI.recipes.filter((recipe) => mechanicsRecipeModuleId(recipe) === MechanicsUI.selectedModuleId);
       recipeSelect.innerHTML = moduleRecipes.slice(0, 32).map((recipe) =>
         `<option value="${esc(recipe.id)}">${esc(recipe.label ?? recipe.id)}</option>`).join("");
       if (moduleRecipes.some((recipe) => recipe.id === MechanicsUI.recipeId)) recipeSelect.value = MechanicsUI.recipeId;
       recipeSelect.onchange = () => {
         MechanicsUI.recipeId = recipeSelect.value;
         MechanicsUI.recipe = moduleRecipes.find((recipe) => recipe.id === MechanicsUI.recipeId) ?? MechanicsUI.recipe;
+        MechanicsUI.terraformingSnippet = null;
         renderMechanicsReactionPrerequisites();
       };
     }
@@ -3023,20 +3312,23 @@ function renderMechanicsHub() {
       renderElevationEditor();
     } else if (MechanicsUI.selectedModuleId === "physics") {
       renderPhysicsMechanicsEditor();
+    } else if (MechanicsUI.selectedModuleId === "terraforming") {
+      renderTerraformingMechanicsEditor();
     }
     // Recipe prerequisites are shared authoring metadata. Keep them visible for every module,
     // including elevation recipes, instead of hiding them inside the reactions-only editor.
     renderMechanicsReactionPrerequisites();
   }
-  const busy = MechanicsUI.loading || MechanicsUI.applying;
-  const writable = authoring.writable !== false && capability?.available && !busy;
+  const busy = MechanicsUI.loading || MechanicsUI.applying || MechanicsUI.terraformingRecipeLoading;
+  const supportedTerraformingVersion = MechanicsUI.selectedModuleId !== "terraforming" || mechanicsProjectModuleVersion() === 1;
+  const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion && !busy;
   const dirtyWriteGuard = Boolean(S.dirty);
   if ($("btn-mechanics-preview")) $("btn-mechanics-preview").disabled = !writable;
   $("btn-mechanics-enable").disabled = dirtyWriteGuard || !writable || Boolean(capability?.active);
   $("btn-mechanics-save").disabled = dirtyWriteGuard || !writable || !capability?.moduleEnabled;
   $("btn-mechanics-disable").disabled = dirtyWriteGuard || !writable || !capability?.moduleEnabled;
   $("btn-mechanics-load-profile").disabled = busy || mechanicsProfileIds().length === 0;
-  $("btn-mechanics-new-profile").disabled = busy || !MechanicsUI.recipe;
+  $("btn-mechanics-new-profile").disabled = busy || !MechanicsUI.recipe || (MechanicsUI.selectedModuleId === "terraforming" && !writable);
   if ($("mechanics-recipe-select")) $("mechanics-recipe-select").disabled = busy || MechanicsUI.recipes.length === 0;
   if ($("btn-mechanics-add-damage-type")) $("btn-mechanics-add-damage-type").disabled = !writable;
   if ($("btn-mechanics-add-armor-type")) $("btn-mechanics-add-armor-type").disabled = !writable;
@@ -3045,6 +3337,7 @@ function renderMechanicsHub() {
   if ($("btn-mechanics-add-exposure")) $("btn-mechanics-add-exposure").disabled = !writable;
   if ($("btn-mechanics-add-reaction")) $("btn-mechanics-add-reaction").disabled = !writable;
   if ($("btn-mechanics-add-movement-profile")) $("btn-mechanics-add-movement-profile").disabled = !writable || MechanicsUI.draft?.mode !== "dynamic_flow";
+  if ($("btn-mechanics-add-terraforming-transition")) $("btn-mechanics-add-terraforming-transition").disabled ||= !writable;
   $("btn-mechanics-reload").disabled = dirtyWriteGuard || busy;
   if ($("mechanics-profile-id")) $("mechanics-profile-id").disabled = !writable;
   $("btn-mechanics-load-profile").onclick = loadMechanicsProfile;

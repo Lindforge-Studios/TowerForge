@@ -28,6 +28,57 @@ export interface CheckpointSpawnItemV1 {
   readonly routeId?: string;
 }
 
+export interface RuntimeElevationOverrideV1 {
+  readonly q: number;
+  readonly r: number;
+  readonly elevation: number;
+}
+
+export interface TerraformingCheckpointStateV1 {
+  readonly schemaVersion: 1;
+  readonly runtimeElevationOverrides: readonly RuntimeElevationOverrideV1[];
+}
+
+export interface TerraformingTerrainExpiryEntryV2 {
+  readonly layer: "terrain";
+  readonly order: number;
+  readonly q: number;
+  readonly r: number;
+  readonly appliedTerrain: string;
+  readonly previousOverride: {
+    readonly terrain: string;
+    readonly source: "script" | "ability";
+  } | null;
+}
+
+export interface TerraformingElevationExpiryEntryV2 {
+  readonly layer: "elevation";
+  readonly order: number;
+  readonly q: number;
+  readonly r: number;
+  readonly appliedElevation: number;
+  readonly previousElevationOverride: number | null;
+}
+
+export type TerraformingExpiryEntryV2 =
+  | TerraformingTerrainExpiryEntryV2
+  | TerraformingElevationExpiryEntryV2;
+
+export interface TerraformingExpiryGroupV2 {
+  readonly sequence: number;
+  readonly remaining: number;
+  readonly entries: readonly TerraformingExpiryEntryV2[];
+}
+
+export interface TerraformingCheckpointStateV2 {
+  readonly schemaVersion: 2;
+  readonly runtimeElevationOverrides: readonly RuntimeElevationOverrideV1[];
+  readonly nextExpiryGroupSequence: number;
+  readonly pendingExpiryGroups: readonly TerraformingExpiryGroupV2[];
+}
+
+export type TerraformingCheckpointState = TerraformingCheckpointStateV1 | TerraformingCheckpointStateV2;
+
 /** Authoritative mutable simulation state. Map occupancy and water cues are rebuilt derivatives. */
 export interface GameCheckpointStateV1 {
   readonly coreHp: number;
@@ -53,6 +104,7 @@ export interface GameCheckpointStateV1 {
   readonly nextWaveStartAt: number | null;
   readonly abilityCooldowns: Readonly<Record<string, number>>;
   readonly runtimeTerrainOverrides: readonly RuntimeTerrainOverride[];
+  readonly terraforming?: TerraformingCheckpointState;
   readonly scriptValues: Readonly<Record<string, Record<string, Record<string, TowerScriptJson>>>>;
   readonly scriptDiagnostics: readonly TowerScriptDiagnostic[];
   readonly scriptHandlerLastRun: Readonly<Record<string, number>>;
