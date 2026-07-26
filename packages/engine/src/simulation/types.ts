@@ -619,6 +619,23 @@ export type GameEvent =
       rollIndex: number;
     }
   | {
+      type: "artifactSocketed";
+      artifactInstanceId: string;
+      artifactId: string;
+      towerId: string;
+      towerTypeId: string;
+      slotId: string;
+    }
+  | {
+      type: "artifactUnsocketed";
+      artifactInstanceId: string;
+      artifactId: string;
+      towerId: string;
+      towerTypeId: string;
+      slotId: string;
+      cause: "command" | "tower_sold" | "tower_destroyed";
+    }
+  | {
       type: "enemySpawnedOnDeath";
       parentEnemyId: string;
       parentEnemyTypeId: string;
@@ -752,6 +769,32 @@ export interface RogueliteArtifactInventoryEntryV1 {
   readonly socket: null;
 }
 
+export interface RogueliteArtifactSocketSnapshotV1 {
+  readonly towerId: string;
+  readonly towerTypeId: string;
+  readonly slotId: string;
+}
+
+export interface RogueliteArtifactInventoryEntryV2 {
+  readonly instanceId: string;
+  readonly artifactId: string;
+  readonly label: string;
+  readonly slotType: string;
+  readonly socket: RogueliteArtifactSocketSnapshotV1 | null;
+}
+
+export interface RogueliteTowerArtifactSlotSnapshotV1 {
+  readonly slotId: string;
+  readonly slotType: string;
+  readonly artifactInstanceId: string | null;
+}
+
+export interface RogueliteTowerArtifactSlotsSnapshotV1 {
+  readonly towerId: string;
+  readonly towerTypeId: string;
+  readonly slots: readonly RogueliteTowerArtifactSlotSnapshotV1[];
+}
+
 export interface RogueliteSnapshotV2 {
   readonly schemaVersion: 2;
   readonly synergies: readonly RogueliteSynergySnapshotV1[];
@@ -760,7 +803,21 @@ export interface RogueliteSnapshotV2 {
   };
 }
 
-export type RogueliteSnapshot = RogueliteSnapshotV1 | RogueliteSnapshotV2;
+export type RogueliteArtifactManagementSnapshotV1 =
+  | { readonly allowed: true }
+  | { readonly allowed: false; readonly reasonKey: string };
+
+export interface RogueliteSnapshotV3 {
+  readonly schemaVersion: 3;
+  readonly synergies: readonly RogueliteSynergySnapshotV1[];
+  readonly artifacts: {
+    readonly inventory: readonly RogueliteArtifactInventoryEntryV2[];
+    readonly towerSlots: readonly RogueliteTowerArtifactSlotsSnapshotV1[];
+    readonly management: RogueliteArtifactManagementSnapshotV1;
+  };
+}
+
+export type RogueliteSnapshot = RogueliteSnapshotV1 | RogueliteSnapshotV2 | RogueliteSnapshotV3;
 
 export interface GameSnapshot {
   mapId: string;

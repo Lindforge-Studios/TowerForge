@@ -33,7 +33,7 @@ function fixture() {
 }
 
 describe("R4.1A/R4.2E roguelite MCP and AI authoring contract", () => {
-  it("describes roguelite v1/v2 and exposes sorted tower tags through capabilities", async () => {
+  it("describes v1-v3 runtime sockets and exact v2 management commands for AI agents", async () => {
     const engine = await loadEngine();
     const projectDir = fixture();
     const roguelite = await callTool("describe_schema", { domain: "roguelite" }, {});
@@ -45,8 +45,22 @@ describe("R4.1A/R4.2E roguelite MCP and AI authoring contract", () => {
       requestedDomain: "roguelite",
       roguelite: {
         authoring: engine.ROGUELITE_MECHANICS_SCHEMA,
-        snapshot: { field: "roguelite", optional: true, supportedSchemaVersions: [1, 2] },
-        events: ["artifactDropped"]
+        snapshot: { field: "roguelite", optional: true, supportedSchemaVersions: [1, 2, 3] },
+        events: ["artifactDropped", "artifactSocketed", "artifactUnsocketed"],
+        commands: {
+          schemaVersion: 2,
+          phase: "between",
+          socketArtifact: {
+            requiredFields: ["artifactInstanceId", "towerId", "slotId"],
+            optionalFields: [],
+            additionalProperties: false
+          },
+          unsocketArtifact: {
+            requiredFields: ["artifactInstanceId", "towerId", "slotId"],
+            optionalFields: [],
+            additionalProperties: false
+          }
+        }
       }
     });
     expect(mechanics.mechanics.modules.roguelite).toEqual(roguelite.roguelite);

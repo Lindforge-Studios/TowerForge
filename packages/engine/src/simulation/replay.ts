@@ -4,7 +4,7 @@ import { cloneCheckpointJson } from "./checkpoint.js";
 import {
   decodeGameCommandJournal,
   type GameCommandJournalResultV1,
-  type GameCommandJournalV1
+  type GameCommandJournal
 } from "./journal.js";
 import { normalizeGameCommandJournalResult } from "./journal-result-internal.js";
 import { canonicalStringify } from "./stable-digest.js";
@@ -86,7 +86,7 @@ export interface GameCommandReplayResult {
  */
 export function replayGameCommandJournal(options: {
   content: GameContentRegistry;
-  journal: GameCommandJournalV1;
+  journal: GameCommandJournal;
 }): GameCommandReplayResult {
   const journal = decodeGameCommandJournal(options);
   const game = TowerDefenseGame.fromCheckpoint({

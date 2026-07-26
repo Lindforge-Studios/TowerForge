@@ -644,6 +644,7 @@ function playerTemplate() {
   return `import {
   createEmptyPlayerProfile,
   createGameContentRegistry,
+  dispatchGameCommand,
   getPlayerProfileLaunchOptions,
   isPlayerMissionUnlocked,
   parsePlayerProfileJson,
@@ -728,7 +729,7 @@ $("story-next").addEventListener("click", advanceStory);
 $("story-skip").addEventListener("click", finishStory);
 document.addEventListener("keydown", (event) => {
   const tag = event.target?.tagName;
-  if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;
+  if (tag === "BUTTON" || tag === "A" || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;
   if (event.code === "Space") { event.preventDefault(); setPaused(Number($("speed").value) > 0); return; }
   if (document.activeElement !== canvas) return;
   const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
@@ -1165,6 +1166,24 @@ function updateRogueliteStatus(snap) {
   const panel = $("roguelite-status");
   const artifactPanel = $("artifact-inventory");
   if (!panel || !artifactPanel) return;
+  const source = snap?.roguelite;
+  const nextCache = {
+    synergies: source?.synergies,
+    inventory: source?.artifacts?.inventory,
+    towerSlots: source?.artifacts?.towerSlots,
+    allowed: source?.artifacts?.management?.allowed,
+    reasonKey: source?.artifacts?.management?.reasonKey,
+    selectedTowerId
+  };
+  const previousCache = updateRogueliteStatus.lastRender;
+  if (previousCache
+    && previousCache.synergies === nextCache.synergies
+    && previousCache.inventory === nextCache.inventory
+    && previousCache.towerSlots === nextCache.towerSlots
+    && previousCache.allowed === nextCache.allowed
+    && previousCache.reasonKey === nextCache.reasonKey
+    && previousCache.selectedTowerId === nextCache.selectedTowerId) return;
+  updateRogueliteStatus.lastRender = nextCache;
   const presentation = projectRoguelitePresentation(snap);
   if (!presentation) { panel.hidden = true; panel.replaceChildren(); artifactPanel.hidden = true; artifactPanel.replaceChildren(); return; }
   panel.hidden = !presentation.active;
@@ -1185,8 +1204,43 @@ function updateRogueliteStatus(snap) {
     title.textContent = "Artifacts (" + presentation.artifacts.inventory.length + ")";
     artifactPanel.append(title);
     for (const artifact of presentation.artifacts.inventory) {
-      const row = document.createElement("span");
-      row.textContent = artifact.label + " · " + artifact.slotType;
+      const row = document.createElement("div");
+      const label = document.createElement("span");
+      label.textContent = artifact.label + " · " + artifact.slotType
+        + (artifact.socket ? " → " + artifact.socket.towerId + "/" + artifact.socket.slotId : "");
+      row.append(label);
+      const addAction = (action, text, activate) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.setAttribute("data-artifact-action", action);
+        button.textContent = text;
+        button.disabled = presentation.artifacts.management?.allowed !== true;
+        button.addEventListener("click", () => {
+          const result = activate();
+          report(result);
+          if (result.ok) updateRogueliteStatus(game.getSnapshot());
+        });
+        row.append(button);
+      };
+      if (artifact.socket) {
+        addAction("unsocket", "Unsocket", () => dispatchGameCommand(game, {
+          schemaVersion: 2, type: "unsocketArtifact",
+          artifactInstanceId: artifact.instanceId,
+          towerId: artifact.socket.towerId,
+          slotId: artifact.socket.slotId
+        }));
+      } else {
+        const tower = presentation.artifacts.towerSlots?.find((item) => item.towerId === selectedTowerId);
+        for (const slot of tower?.slots ?? []) {
+          if (slot.slotType !== artifact.slotType || slot.artifactInstanceId !== null) continue;
+          addAction("socket", "Socket in " + slot.slotId, () => dispatchGameCommand(game, {
+            schemaVersion: 2, type: "socketArtifact",
+            artifactInstanceId: artifact.instanceId,
+            towerId: tower.towerId,
+            slotId: slot.slotId
+          }));
+        }
+      }
       artifactPanel.append(row);
     }
   }
@@ -1233,6 +1287,7 @@ function phaserPlayerTemplate() {
   return `import {
   createEmptyPlayerProfile,
   createGameContentRegistry,
+  dispatchGameCommand,
   getPlayerProfileLaunchOptions,
   isPlayerMissionUnlocked,
   parsePlayerProfileJson,
@@ -1329,7 +1384,7 @@ $("story-next").addEventListener("click", advanceStory);
 $("story-skip").addEventListener("click", finishStory);
 document.addEventListener("keydown", (event) => {
   const tag = event.target?.tagName;
-  if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;
+  if (tag === "BUTTON" || tag === "A" || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;
   if (event.code === "Space") { event.preventDefault(); setPaused(Number($("speed").value) > 0); return; }
   if (document.activeElement !== $("playfield")) return;
   const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
@@ -2256,6 +2311,24 @@ function updateRogueliteStatus(snap) {
   const panel = $("roguelite-status");
   const artifactPanel = $("artifact-inventory");
   if (!panel || !artifactPanel) return;
+  const source = snap?.roguelite;
+  const nextCache = {
+    synergies: source?.synergies,
+    inventory: source?.artifacts?.inventory,
+    towerSlots: source?.artifacts?.towerSlots,
+    allowed: source?.artifacts?.management?.allowed,
+    reasonKey: source?.artifacts?.management?.reasonKey,
+    selectedTowerId
+  };
+  const previousCache = updateRogueliteStatus.lastRender;
+  if (previousCache
+    && previousCache.synergies === nextCache.synergies
+    && previousCache.inventory === nextCache.inventory
+    && previousCache.towerSlots === nextCache.towerSlots
+    && previousCache.allowed === nextCache.allowed
+    && previousCache.reasonKey === nextCache.reasonKey
+    && previousCache.selectedTowerId === nextCache.selectedTowerId) return;
+  updateRogueliteStatus.lastRender = nextCache;
   const presentation = projectRoguelitePresentation(snap);
   if (!presentation) { panel.hidden = true; panel.replaceChildren(); artifactPanel.hidden = true; artifactPanel.replaceChildren(); return; }
   panel.hidden = !presentation.active;
@@ -2276,8 +2349,43 @@ function updateRogueliteStatus(snap) {
     title.textContent = "Artifacts (" + presentation.artifacts.inventory.length + ")";
     artifactPanel.append(title);
     for (const artifact of presentation.artifacts.inventory) {
-      const row = document.createElement("span");
-      row.textContent = artifact.label + " · " + artifact.slotType;
+      const row = document.createElement("div");
+      const label = document.createElement("span");
+      label.textContent = artifact.label + " · " + artifact.slotType
+        + (artifact.socket ? " → " + artifact.socket.towerId + "/" + artifact.socket.slotId : "");
+      row.append(label);
+      const addAction = (action, text, activate) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.setAttribute("data-artifact-action", action);
+        button.textContent = text;
+        button.disabled = presentation.artifacts.management?.allowed !== true;
+        button.addEventListener("click", () => {
+          const result = activate();
+          report(result);
+          if (result.ok) updateRogueliteStatus(game.getSnapshot());
+        });
+        row.append(button);
+      };
+      if (artifact.socket) {
+        addAction("unsocket", "Unsocket", () => dispatchGameCommand(game, {
+          schemaVersion: 2, type: "unsocketArtifact",
+          artifactInstanceId: artifact.instanceId,
+          towerId: artifact.socket.towerId,
+          slotId: artifact.socket.slotId
+        }));
+      } else {
+        const tower = presentation.artifacts.towerSlots?.find((item) => item.towerId === selectedTowerId);
+        for (const slot of tower?.slots ?? []) {
+          if (slot.slotType !== artifact.slotType || slot.artifactInstanceId !== null) continue;
+          addAction("socket", "Socket in " + slot.slotId, () => dispatchGameCommand(game, {
+            schemaVersion: 2, type: "socketArtifact",
+            artifactInstanceId: artifact.instanceId,
+            towerId: tower.towerId,
+            slotId: slot.slotId
+          }));
+        }
+      }
       artifactPanel.append(row);
     }
   }

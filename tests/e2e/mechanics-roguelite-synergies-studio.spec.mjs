@@ -157,6 +157,39 @@ test.describe("R4.1A Studio rogue-lite synergy lifecycle", () => {
     expect(errors()).toEqual([]);
   });
 
+  test("runs boss loot and socket controls in the Studio Playtest", async ({ page }) => {
+    test.setTimeout(120_000);
+    writeArtifactRuntimeFixture(projectDir);
+    const errors = captureBrowserErrors(page);
+    await openStudio(page);
+    await page.getByRole("tab", { name: /Playtest/ }).click();
+    await expect(page.locator("#playtest-stage")).toBeVisible();
+    await expect(page.locator("#pt-artifact-inventory")).toBeVisible();
+
+    await clickHexTile(page, "#playtest-canvas", { q: 12, r: 8 }, { width: 15, height: 20 });
+    await expect(page.locator("#pt-towers-count")).toHaveText("1");
+    await page.locator("#pt-speed").fill("4");
+    await page.locator("#pt-start").click();
+    await expect(page.locator("#pt-artifact-inventory"), "Studio must surface deterministic boss loot")
+      .toContainText("Browser Scope", { timeout: 20_000 });
+
+    await page.locator("#pt-interaction-mode").selectOption("inspect");
+    await clickHexTile(page, "#playtest-canvas", { q: 12, r: 8 }, { width: 15, height: 20 });
+    await expect(page.locator("#pt-inspector")).toContainText("Arrow Tower");
+    const socket = page.locator('[data-pt-artifact-action="socket"]');
+    await expect(socket).toBeEnabled();
+    await socket.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#pt-artifact-inventory")).toContainText("tower_1/scope");
+
+    const unsocket = page.locator('[data-pt-artifact-action="unsocket"]');
+    await expect(unsocket).toBeEnabled();
+    await unsocket.click();
+    await expect(page.locator("#pt-artifact-inventory")).not.toContainText("tower_1/scope");
+    await expect(page.locator("#pt-msg")).toHaveText("Action completed.");
+    expect(errors()).toEqual([]);
+  });
+
   test("enables, reloads, edits, disables, and re-enables while preserving tags, profile, and selection", async ({ page }) => {
     test.setTimeout(90_000);
     const errors = captureBrowserErrors(page);
@@ -401,6 +434,58 @@ function writeFutureRogueliteFixture(root) {
   });
 }
 
+function writeArtifactRuntimeFixture(root) {
+  const manifestPath = path.join(root, "project.json");
+  const manifest = readJson(manifestPath);
+  manifest.schemaVersion = 3;
+  writeJson(manifestPath, manifest);
+
+  const balancePath = path.join(root, "content", "balance.json");
+  const balance = readJson(balancePath);
+  balance.missions.tutorial_01.mechanics = { profiles: { roguelite: "studio_artifacts" } };
+  balance.towers.arrow_tower.range = 32;
+  balance.towers.arrow_tower.attack.fireRate = 30;
+  balance.enemies.basic_grunt.maxHp = 1;
+  balance.enemies.basic_grunt.speed = 0.1;
+  balance.waveSets.tutorial_waves = [{
+    id: "artifact_boss_wave",
+    label: "Artifact boss wave",
+    groups: [{ enemyId: "basic_grunt", count: 1, spawnInterval: 0.1, startDelay: 0 }]
+  }, {
+    id: "pending_wave",
+    label: "Pending wave",
+    groups: [{ enemyId: "basic_grunt", count: 1, spawnInterval: 0.1, startDelay: 0 }]
+  }];
+  writeJson(balancePath, balance);
+  writeJson(path.join(root, "content", "mechanics.json"), {
+    schemaVersion: 1,
+    modules: {
+      roguelite: {
+        schemaVersion: 2,
+        enabled: true,
+        profiles: {
+          studio_artifacts: {
+            synergies: {},
+            artifacts: {
+              definitions: {
+                browser_scope: {
+                  label: "Browser Scope",
+                  slotType: "scope",
+                  modifiers: [{ target: "damage", operation: "additive_ratio", value: 0.1 }]
+                }
+              },
+              towerSlots: { arrow_tower: [{ slotId: "scope", slotType: "scope" }] },
+              bossLootTables: {
+                basic_grunt: { rolls: 1, entries: [{ artifactId: "browser_scope", weight: 1 }] }
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
 function authoringBytes(root) {
   const mechanicsPath = path.join(root, "content", "mechanics.json");
   return {
@@ -427,6 +512,21 @@ function readJson(filePath) {
 
 function writeJson(filePath, value) {
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+async function clickHexTile(page, selector, coord, mapSize) {
+  const canvas = page.locator(selector);
+  const position = await canvas.evaluate((element, args) => {
+    const radius = Math.min(
+      element.width / ((args.mapSize.width + 1) * 1.65),
+      element.height / ((args.mapSize.height + 1) * 1.45)
+    );
+    const x = radius * 1.5 + args.coord.q * radius * 1.48 + (args.coord.r % 2) * radius * 0.74;
+    const y = radius * 1.5 + args.coord.r * radius * 1.28;
+    const rect = element.getBoundingClientRect();
+    return { x: x / (element.width / rect.width), y: y / (element.height / rect.height) };
+  }, { coord, mapSize });
+  await canvas.click({ position });
 }
 
 async function freePort() {

@@ -1011,6 +1011,10 @@ button.workbench-row:hover { background: var(--surface-2); }
 .pt-inspector { min-height: 54px; padding: 7px 8px; border: 1px solid var(--border); background: var(--surface-2); border-radius: var(--radius); color: var(--text-muted); font-size: 10.5px; overflow-wrap: anywhere; }
 .pt-inspector strong { color: var(--text); }
 .pt-inspector code { font-family: var(--mono); color: var(--accent); }
+.pt-artifact-inventory { display: grid; gap: 6px; padding: 7px 8px; border: 1px solid var(--border); background: var(--surface-2); border-radius: var(--radius); font-size: 10.5px; }
+.pt-artifact-inventory[hidden] { display: none; }
+.pt-artifact-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; }
+.pt-artifact-row .btn { min-height: 24px; padding: 2px 7px; font-size: 10px; }
 .pt-inspector-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
 .pt-inspector-head .btn { min-height: 24px; padding: 2px 7px; font-size: 10px; }
 .pt-target-mode { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px; align-items: center; margin-top: 7px; }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createGameContentRegistry, type GameContentInput, type GameContentRegistry } from "../content/registry.js";
 import {
   computeCheckpointStateDigest,
+  dispatchGameCommand,
   JournaledGameSession,
   replayGameCommandJournal,
   SeededRng,
@@ -37,21 +38,28 @@ function artifactProfile(options: {
   reverseDefinitions?: boolean;
   includeOrphanDefinition?: boolean;
   orphanInGruntLoot?: boolean;
+  scopeOnly?: boolean;
+  artifactModifierCount?: number;
+  scopeSlotCount?: number;
+  budgetSynergy?: boolean;
 } = {}): Record<string, unknown> {
+  const scopeModifiers = Array.from({ length: options.artifactModifierCount ?? 1 }, () => (
+    { target: "damage", operation: "additive_ratio", value: options.artifactModifierCount ? 0.01 : 0.3 }
+  ));
   const baseDefinitions = options.reverseDefinitions
     ? {
         crystal: { label: "Vampiric crystal", slotType: "crystal", modifiers: [] },
         scope: {
           label: "Calibrated scope",
           slotType: "scope",
-          modifiers: [{ target: "damage", operation: "additive_ratio", value: 0.3 }]
+          modifiers: scopeModifiers
         }
       }
     : {
         scope: {
           label: "Calibrated scope",
           slotType: "scope",
-          modifiers: [{ target: "damage", operation: "additive_ratio", value: 0.3 }]
+          modifiers: scopeModifiers
         },
         crystal: { label: "Vampiric crystal", slotType: "crystal", modifiers: [] }
       };
@@ -62,22 +70,41 @@ function artifactProfile(options: {
       : {})
   };
   return {
-    synergies: {},
+    synergies: options.budgetSynergy ? {
+      budget: {
+        label: "Budget",
+        tag: "budget",
+        tierMode: "cumulative",
+        tiers: Array.from({ length: 8 }, (_, index) => ({
+          requiredCount: index + 1,
+          modifiers: Array.from({ length: 4 }, () => (
+            { target: "damage", operation: "additive_ratio", value: 0.01 }
+          ))
+        }))
+      }
+    } : {},
     artifacts: {
       definitions,
       towerSlots: {
-        cannon: [
-          { slotId: "optic", slotType: "scope" },
-          { slotId: "core", slotType: "crystal" }
-        ]
+        cannon: options.scopeSlotCount
+          ? Array.from({ length: options.scopeSlotCount }, (_, index) => ({
+              slotId: `optic_${index + 1}`,
+              slotType: "scope"
+            }))
+          : [
+              { slotId: "optic", slotType: "scope" },
+              { slotId: "core", slotType: "crystal" }
+            ]
       },
       bossLootTables: {
         boss: {
           rolls: options.rolls ?? 1,
-          entries: [
-            { artifactId: "scope", weight: 3 },
-            { artifactId: "crystal", weight: 1 }
-          ]
+          entries: options.scopeOnly
+            ? [{ artifactId: "scope", weight: 1 }]
+            : [
+                { artifactId: "scope", weight: 3 },
+                { artifactId: "crystal", weight: 1 }
+              ]
         },
         ...(options.orphanInGruntLoot
           ? { grunt: { rolls: 1, entries: [{ artifactId: "orphan", weight: 1 }] } }
@@ -95,6 +122,12 @@ function runtimeInput(options: {
   reverseDefinitions?: boolean;
   includeOrphanDefinition?: boolean;
   orphanInGruntLoot?: boolean;
+  scopeOnly?: boolean;
+  towerRange?: number;
+  towerMaxHp?: number;
+  artifactModifierCount?: number;
+  scopeSlotCount?: number;
+  budgetSynergy?: boolean;
 } = {}): GameContentInput {
   const mode = options.mode ?? "active";
   const waves = options.waves ?? 1;
@@ -165,7 +198,8 @@ function runtimeInput(options: {
           label: "Cannon",
           cost: { coins: 1 },
           footprintRadius: 0,
-          range: 1,
+          range: options.towerRange ?? 1,
+          ...(options.towerMaxHp === undefined ? {} : { maxHp: options.towerMaxHp }),
           attack: {
             kind: "single",
             fireRate: 1,
@@ -229,7 +263,11 @@ function runtimeInput(options: {
                     rolls: options.rolls,
                     reverseDefinitions: options.reverseDefinitions,
                     includeOrphanDefinition: options.includeOrphanDefinition,
-                    orphanInGruntLoot: options.orphanInGruntLoot
+                    orphanInGruntLoot: options.orphanInGruntLoot,
+                    scopeOnly: options.scopeOnly,
+                    artifactModifierCount: options.artifactModifierCount,
+                    scopeSlotCount: options.scopeSlotCount,
+                    budgetSynergy: options.budgetSynergy
                   })
             }
           }
@@ -319,9 +357,16 @@ describe("R4.2B deterministic battle-local artifact loot", () => {
     const active = game();
     const snapshot = artifactSnapshot(active) as Record<string, unknown>;
     expect(snapshot).toEqual({
-      schemaVersion: 2,
+      schemaVersion: 3,
       synergies: [],
-      artifacts: { inventory: [] }
+      artifacts: {
+        inventory: [],
+        towerSlots: [],
+        management: {
+          allowed: false,
+          reasonKey: "reason.artifactBetweenWavesOnly"
+        }
+      }
     });
     expect(Object.isFrozen(snapshot)).toBe(true);
     expect(Object.isFrozen(snapshot.artifacts)).toBe(true);
@@ -527,5 +572,202 @@ describe("R4.2B deterministic battle-local artifact loot", () => {
       content: wrongEnemyTableContent,
       checkpoint: forgeArtifact(wrongEnemyTableContent)
     })).toThrow(/artifact|event|loot table|enemy/i);
+  });
+
+  it("accepts closed GameCommand v2 socket commands, promotes Journal v2, and replays the same digest", () => {
+    const subjectContent = content({ waves: 2, scopeOnly: true });
+    const session = new JournaledGameSession(new TowerDefenseGame({
+      content: subjectContent,
+      missionId: "loot",
+      seed: "socket-journal"
+    }));
+    const uiGame = new TowerDefenseGame({
+      content: subjectContent,
+      missionId: "loot",
+      seed: "socket-journal"
+    });
+    for (const command of [
+      { schemaVersion: 2, type: "placeTower", towerTypeId: "cannon", coord: { q: 0, r: 0 } },
+      { schemaVersion: 2, type: "startWave" },
+      { schemaVersion: 2, type: "tick", units: 0 },
+      { schemaVersion: 2, type: "useAbility", abilityId: "strike", center: { q: 0, r: 1 } },
+      { schemaVersion: 2, type: "tick", units: 0 },
+      {
+        schemaVersion: 2,
+        type: "socketArtifact",
+        artifactInstanceId: "artifact_1",
+        towerId: "tower_1",
+        slotId: "optic"
+      }
+    ]) {
+      const headlessResult = session.dispatch(command);
+      expect(dispatchGameCommand(uiGame, command)).toEqual(headlessResult);
+      expect(headlessResult.ok).toBe(true);
+    }
+
+    expect(uiGame.getStateDigest()).toBe(session.game.getStateDigest());
+    expect(uiGame.getSnapshot()).toEqual(session.game.getSnapshot());
+
+    const journal = session.exportJournal() as unknown as { schemaVersion: number };
+    expect(journal.schemaVersion).toBe(2);
+    const replay = replayGameCommandJournal({
+      content: subjectContent,
+      journal: jsonClone(session.exportJournal()) as never
+    });
+    expect(replay.stateDigest).toBe(session.game.getStateDigest());
+    expect(replay.game.getSnapshot()).toEqual(session.game.getSnapshot());
+
+    const before = session.game.getStateDigest();
+    expect(session.dispatch({
+      schemaVersion: 2,
+      type: "unsocketArtifact",
+      artifactInstanceId: "artifact_1",
+      towerId: "tower_1",
+      slotId: "optic",
+      extra: true
+    })).toMatchObject({ ok: false, reasonKey: "reason.invalidGameCommand" });
+    expect(session.game.getStateDigest()).toBe(before);
+  });
+
+  it("sockets only during a real between-wave boundary and scopes run modifiers to the exact tower", () => {
+    const subject = game({ waves: 2, scopeOnly: true, towerRange: 4 }, "socket-scope");
+    expect(subject.placeTower("cannon", { q: 0, r: 0 }).ok).toBe(true);
+    expect(subject.placeTower("cannon", { q: 2, r: 0 }).ok).toBe(true);
+    const socketing = subject as unknown as {
+      socketArtifact(artifactInstanceId: string, towerId: string, slotId: string): { ok: boolean; reasonKey?: string };
+      unsocketArtifact(artifactInstanceId: string, towerId: string, slotId: string): { ok: boolean };
+    };
+    expect(socketing.socketArtifact("artifact_1", "tower_1", "optic"))
+      .toMatchObject({ ok: false, reasonKey: "reason.artifactBetweenWavesOnly" });
+
+    startAndSpawn(subject);
+    killSpawnedBoss(subject);
+    expect(subject.getSnapshot().waveState).toBe("between");
+    expect(socketing.socketArtifact("artifact_1", "tower_1", "optic")).toEqual({ ok: true });
+    const socketed = artifactSnapshot(subject) as {
+      schemaVersion: number;
+      artifacts: {
+        inventory: Array<{ instanceId: string; socket: unknown }>;
+        towerSlots: Array<{ towerId: string; slots: Array<{ slotId: string; artifactInstanceId: string | null }> }>;
+        management: { allowed: boolean };
+      };
+    };
+    expect(socketed.schemaVersion).toBe(3);
+    expect(socketed.artifacts.inventory[0]).toMatchObject({
+      instanceId: "artifact_1",
+      socket: { towerId: "tower_1", towerTypeId: "cannon", slotId: "optic" }
+    });
+    expect(socketed.artifacts.towerSlots[0]).toMatchObject({
+      towerId: "tower_1",
+      slots: expect.arrayContaining([{ slotId: "optic", slotType: "scope", artifactInstanceId: "artifact_1" }])
+    });
+    expect(socketed.artifacts.management).toEqual({ allowed: true });
+
+    startAndSpawn(subject);
+    let hits: ReturnType<TowerDefenseGame["getSnapshot"]>["lastEvents"] = [];
+    for (let index = 0; index < 8 && hits.length < 2; index += 1) {
+      subject.tick(0.2);
+      hits = subject.getSnapshot().lastEvents.filter((event) => event.type === "enemyHit");
+    }
+    expect(hits).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "enemyHit", towerId: "tower_1", damage: 1.3 }),
+      expect.objectContaining({ type: "enemyHit", towerId: "tower_2", damage: 1 })
+    ]));
+    expect(socketing.unsocketArtifact("artifact_1", "tower_1", "optic"))
+      .toMatchObject({ ok: false });
+  });
+
+  it("preserves artifact checkpoint v1 until socketing, restores v2 sockets, and auto-unsockets before sale", () => {
+    const subjectContent = content({ waves: 2, scopeOnly: true });
+    const subject = new TowerDefenseGame({ content: subjectContent, missionId: "loot", seed: "socket-checkpoint" });
+    expect(subject.placeTower("cannon", { q: 0, r: 0 }).ok).toBe(true);
+    startAndSpawn(subject);
+    killSpawnedBoss(subject);
+    const historic = subject.createCheckpoint();
+    expect((historic.state.artifacts as { schemaVersion: number }).schemaVersion).toBe(1);
+    const historicRestored = TowerDefenseGame.fromCheckpoint({ content: subjectContent, checkpoint: jsonClone(historic) });
+    expect(historicRestored.createCheckpoint()).toEqual(historic);
+
+    const socketing = subject as unknown as {
+      socketArtifact(artifactInstanceId: string, towerId: string, slotId: string): { ok: boolean };
+    };
+    expect(socketing.socketArtifact("artifact_1", "tower_1", "optic")).toEqual({ ok: true });
+    const checkpoint = subject.createCheckpoint();
+    expect(checkpoint.state.artifacts).toMatchObject({
+      schemaVersion: 2,
+      inventory: [{
+        instanceId: "artifact_1",
+        artifactId: "scope",
+        socket: { towerId: "tower_1", slotId: "optic" }
+      }]
+    });
+    const restored = TowerDefenseGame.fromCheckpoint({ content: subjectContent, checkpoint: jsonClone(checkpoint) });
+    expect(restored.getStateDigest()).toBe(subject.getStateDigest());
+    expect(restored.getSnapshot()).toEqual(subject.getSnapshot());
+
+    expect(subject.sellTower("tower_1").ok).toBe(true);
+    const terminal = subject.getSnapshot().lastEvents.slice(-2);
+    expect(terminal.map((event) => event.type)).toEqual(["artifactUnsocketed", "towerSold"]);
+    expect(terminal[0]).toMatchObject({
+      type: "artifactUnsocketed",
+      artifactInstanceId: "artifact_1",
+      towerId: "tower_1",
+      slotId: "optic",
+      cause: "tower_sold"
+    });
+    const afterSale = artifactSnapshot(subject) as { artifacts: { inventory: Array<{ socket: unknown }> } };
+    expect(afterSale.artifacts.inventory[0]!.socket).toBeNull();
+    subject.reset();
+    expect((artifactSnapshot(subject) as { artifacts: { inventory: unknown[] } }).artifacts.inventory).toEqual([]);
+    expect((subject.createCheckpoint().state.artifacts as { schemaVersion: number }).schemaVersion).toBe(1);
+  });
+
+  it("rejects socket modifier overflow atomically and hostile duplicate or missing-tower checkpoint sockets", () => {
+    const subjectContent = content({
+      waves: 2,
+      rolls: 4,
+      scopeOnly: true,
+      towerMaxHp: 10,
+      artifactModifierCount: 8,
+      scopeSlotCount: 4,
+      budgetSynergy: true
+    });
+    const subject = new TowerDefenseGame({ content: subjectContent, missionId: "loot", seed: "socket-budget" });
+    expect(subject.placeTower("cannon", { q: 0, r: 0 }).ok).toBe(true);
+    startAndSpawn(subject);
+    killSpawnedBoss(subject);
+    for (let index = 1; index <= 3; index += 1) {
+      expect(subject.socketArtifact(`artifact_${index}`, "tower_1", `optic_${index}`)).toEqual({ ok: true });
+    }
+    const beforeRejected = subject.getStateDigest();
+    expect(subject.socketArtifact("artifact_4", "tower_1", "optic_4"))
+      .toMatchObject({ ok: false, reasonKey: "reason.artifactModifierBudgetExceeded" });
+    expect(subject.getStateDigest()).toBe(beforeRejected);
+
+    const checkpoint = jsonClone(subject.createCheckpoint()) as unknown as Omit<GameCheckpointV1, "state"> & {
+      state: Omit<GameCheckpointV1["state"], "artifacts"> & {
+        artifacts: Omit<ArtifactCheckpointStateV1Fixture, "schemaVersion" | "inventory"> & {
+          schemaVersion: 2;
+          inventory: Array<ArtifactCheckpointEntry & { socket: { towerId: string; slotId: string } | null }>;
+        };
+      };
+    };
+    const duplicate = jsonClone(checkpoint);
+    duplicate.state.artifacts.inventory[1]!.socket = { towerId: "tower_1", slotId: "optic_1" };
+    resign(duplicate as unknown as MutableArtifactCheckpoint);
+    expect(() => TowerDefenseGame.fromCheckpoint({ content: subjectContent, checkpoint: duplicate as GameCheckpointV1 }))
+      .toThrow(/artifact|socket|duplicate/i);
+
+    const missingTower = jsonClone(checkpoint);
+    missingTower.state.artifacts.inventory[0]!.socket = { towerId: "tower_999", slotId: "optic_1" };
+    resign(missingTower as unknown as MutableArtifactCheckpoint);
+    expect(() => TowerDefenseGame.fromCheckpoint({ content: subjectContent, checkpoint: missingTower as GameCheckpointV1 }))
+      .toThrow(/artifact|socket|tower/i);
+
+    const deadTower = jsonClone(checkpoint);
+    (deadTower.state.towers[0] as { hp?: number }).hp = 0;
+    resign(deadTower as unknown as MutableArtifactCheckpoint);
+    expect(() => TowerDefenseGame.fromCheckpoint({ content: subjectContent, checkpoint: deadTower as GameCheckpointV1 }))
+      .toThrow(/artifact|socket|live|tower/i);
   });
 });

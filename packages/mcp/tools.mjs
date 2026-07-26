@@ -1361,8 +1361,22 @@ export async function callTool(name, args = {}, ctx = {}) {
     };
     const roguelite = {
       authoring: engine.ROGUELITE_MECHANICS_SCHEMA,
-      snapshot: { field: "roguelite", optional: true, supportedSchemaVersions: [1, 2] },
-      events: ["artifactDropped"]
+      snapshot: { field: "roguelite", optional: true, supportedSchemaVersions: [1, 2, 3] },
+      events: ["artifactDropped", "artifactSocketed", "artifactUnsocketed"],
+      commands: {
+        schemaVersion: 2,
+        phase: "between",
+        socketArtifact: {
+          requiredFields: ["artifactInstanceId", "towerId", "slotId"],
+          optionalFields: [],
+          additionalProperties: false
+        },
+        unsocketArtifact: {
+          requiredFields: ["artifactInstanceId", "towerId", "slotId"],
+          optionalFields: [],
+          additionalProperties: false
+        }
+      }
     };
     return {
       schemaVersion: 2,

@@ -32,6 +32,7 @@ import {
 import {
   ROGUELITE_SYNERGY_LIMITS,
   RogueliteProfileValidationError,
+  assertRogueliteV2ModifierBudget,
   normalizeRogueliteProfileV1,
   normalizeRogueliteProfileV2,
   normalizeTowerTagsV1
@@ -2840,6 +2841,16 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
       if (module.schemaVersion !== 2) continue;
       const artifactProfile = profile as ReturnType<typeof normalizeRogueliteProfileV2>;
       const semantic = activeMissionIds.length > 0 ? err : warn;
+      try {
+        assertRogueliteV2ModifierBudget(artifactProfile);
+      } catch (error) {
+        semantic(
+          "mechanics",
+          profileId,
+          `${root}.synergies`,
+          error instanceof Error ? error.message : "Roguelite v2 modifier budget is invalid."
+        );
+      }
       const slotTypes = new Set<string>();
       for (const [towerTypeId, slots] of Object.entries(artifactProfile.artifacts.towerSlots)) {
         slots.forEach((slot) => slotTypes.add(slot.slotType));

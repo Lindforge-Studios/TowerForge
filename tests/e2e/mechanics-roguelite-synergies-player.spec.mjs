@@ -19,6 +19,8 @@ let tempDir;
 let server;
 let port;
 
+test.use({ hasTouch: true });
+
 test.beforeAll(async () => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "towerforge-roguelite-player-"));
   for (const combination of combinations) buildFixture({ mode: "active", ...combination });
@@ -127,6 +129,51 @@ test("the active PWA and single-file artifacts both carry the same initial syner
   expect(browserErrors()).toEqual([]);
 });
 
+test("boss loot is socketed and unsocketed through native controls across the player matrix", async ({ page }) => {
+  test.setTimeout(180_000);
+  const browserErrors = captureBrowserErrors(page);
+  const activations = ["click", "enter", "space", "tap"];
+
+  for (const [{ grid, renderer }, activation] of combinations.map((entry, index) => [entry, activations[index]])) {
+    await page.goto(playerUrl("active", grid, renderer));
+    await waitForPlayerBoot(page);
+
+    const placement = await nextPlacementPoint(page);
+    expect(placement, `${grid}/${renderer} needs an artifact host tower`).not.toBeNull();
+    await page.mouse.click(placement.x, placement.y);
+    await expect(page.locator("#stat-towers")).toHaveText("1");
+
+    const startWave = page.locator("#start-wave");
+    await startWave.focus();
+    await page.keyboard.press("Enter");
+    await expect.poll(() => artifactState(page), {
+      message: `${grid}/${renderer} must receive deterministic boss loot`,
+      timeout: 20_000
+    }).toMatchObject({ inventoryCount: 1, managementAllowed: true, socket: null });
+
+    const socket = page.locator('[data-artifact-action="socket"]');
+    await expect(socket, `${grid}/${renderer} socket action`).toBeEnabled();
+    await activateNativeControl(page, socket, activation);
+    await expect.poll(() => artifactState(page), {
+      message: `${grid}/${renderer} socket command must update the authoritative snapshot`
+    }).toMatchObject({
+      inventoryCount: 1,
+      managementAllowed: true,
+      socket: { towerId: "tower_1", slotId: "scope" }
+    });
+    await expect(page.locator("#artifact-inventory")).toContainText("tower_1/scope");
+
+    const unsocket = page.locator('[data-artifact-action="unsocket"]');
+    await expect(unsocket, `${grid}/${renderer} unsocket action`).toBeEnabled();
+    await unsocket.click();
+    await expect.poll(() => artifactState(page), {
+      message: `${grid}/${renderer} unsocket command must update the authoritative snapshot`
+    }).toMatchObject({ inventoryCount: 1, managementAllowed: true, socket: null });
+  }
+
+  expect(browserErrors()).toEqual([]);
+});
+
 function buildFixture({ mode, grid, renderer }) {
   const name = fixtureName(mode, grid, renderer);
   const { projectDir } = createProject({ name, parentDir: tempDir, templateName: "classic", gridKind: grid });
@@ -139,16 +186,32 @@ function buildFixture({ mode, grid, renderer }) {
     const balancePath = path.join(projectDir, "content", "balance.json");
     const balance = readJson(balancePath);
     const missionId = balance.defaultMissionId ?? Object.keys(balance.missions)[0];
+    const hostTowerId = balance.missions[missionId].buildTowerIds[0];
+    const bossEnemyId = Object.keys(balance.enemies)[0];
     for (const tower of Object.values(balance.towers)) tower.tags = ["elemental"];
     if (mode === "active") {
       balance.missions[missionId].mechanics = { profiles: { roguelite: "browser_synergies" } };
+      balance.towers[hostTowerId].range = 32;
+      if ("fireRate" in balance.towers[hostTowerId].attack) balance.towers[hostTowerId].attack.fireRate = 30;
+      if ("interval" in balance.towers[hostTowerId].attack) balance.towers[hostTowerId].attack.interval = 0.05;
+      balance.enemies[bossEnemyId].maxHp = 1;
+      balance.enemies[bossEnemyId].speed = 0.1;
+      balance.waveSets[balance.missions[missionId].waveSetId] = [{
+        id: "artifact_boss_wave",
+        label: "Artifact boss wave",
+        groups: [{ enemyId: bossEnemyId, count: 1, spawnInterval: 0.1, startDelay: 0 }]
+      }, {
+        id: "pending_wave",
+        label: "Pending wave",
+        groups: [{ enemyId: bossEnemyId, count: 1, spawnInterval: 0.1, startDelay: 0 }]
+      }];
     }
     writeJson(balancePath, balance);
     writeJson(path.join(projectDir, "content", "mechanics.json"), {
       schemaVersion: 1,
       modules: {
         roguelite: {
-          schemaVersion: 1,
+          schemaVersion: mode === "active" ? 2 : 1,
           enabled: true,
           profiles: {
             browser_synergies: {
@@ -161,7 +224,27 @@ function buildFixture({ mode, grid, renderer }) {
                     { requiredCount: 4, modifiers: [{ target: "damage", operation: "additive_ratio", value: 0.2 }] }
                   ]
                 }
-              }
+              },
+              ...(mode === "active" ? {
+                artifacts: {
+                  definitions: {
+                    browser_scope: {
+                      label: "Browser Scope",
+                      slotType: "scope",
+                      modifiers: [{ target: "damage", operation: "additive_ratio", value: 0.1 }]
+                    }
+                  },
+                  towerSlots: {
+                    [hostTowerId]: [{ slotId: "scope", slotType: "scope" }]
+                  },
+                  bossLootTables: {
+                    [bossEnemyId]: {
+                      rolls: 1,
+                      entries: [{ artifactId: "browser_scope", weight: 1 }]
+                    }
+                  }
+                }
+              } : {})
             }
           }
         }
@@ -230,6 +313,25 @@ async function assertAuthoritativeStatus(page, expected) {
     activeTierRequiredCounts: expected.activeTierRequiredCounts
   });
   await expect(page.locator("#roguelite-status")).toHaveText(expected.text);
+}
+
+async function artifactState(page) {
+  return page.evaluate(() => {
+    const artifacts = window.__towerforgeInspect().roguelite?.artifacts;
+    const artifact = artifacts?.inventory?.[0];
+    return {
+      inventoryCount: artifacts?.inventory?.length ?? 0,
+      managementAllowed: artifacts?.management?.allowed ?? false,
+      socket: artifact?.socket ?? null
+    };
+  });
+}
+
+async function activateNativeControl(page, locator, activation) {
+  if (activation === "click") return locator.click();
+  if (activation === "tap") return locator.tap();
+  await locator.focus();
+  await page.keyboard.press(activation === "space" ? "Space" : "Enter");
 }
 
 function fixtureName(mode, grid, renderer) {

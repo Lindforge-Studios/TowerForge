@@ -262,8 +262,8 @@ describe("GameCommandJournalV1", () => {
     const game = createGame();
     const expectedInitial = game.createCheckpoint();
     const session = new JournaledGameSession(game);
-    const journal = session.exportJournal();
-    const publicContract: GameCommandJournalV1 = journal;
+    const publicContract = session.exportJournal();
+    if (publicContract.schemaVersion !== 1) throw new Error("Fresh journal must remain v1.");
 
     expect(Object.keys(publicContract)).toEqual([
       "schemaVersion",
@@ -280,10 +280,10 @@ describe("GameCommandJournalV1", () => {
     expect(publicContract.entries).toEqual([]);
 
     (expectedInitial.state.resources as Record<string, number>).coins = 1;
-    (journal.initialCheckpoint.state.resources as Record<string, number>).coins = 2;
+    (publicContract.initialCheckpoint.state.resources as Record<string, number>).coins = 2;
     const secondExport = session.exportJournal();
     expect(secondExport.initialCheckpoint.state.resources.coins).toBe(40);
-    expect(secondExport.initialCheckpoint).not.toBe(journal.initialCheckpoint);
+    expect(secondExport.initialCheckpoint).not.toBe(publicContract.initialCheckpoint);
   });
 
   it("uses the strict GameCommand decoder and never records malformed, future, extra, or accessor input", () => {
@@ -301,7 +301,7 @@ describe("GameCommandJournalV1", () => {
     const invalidInputs: unknown[] = [
       null,
       {},
-      { schemaVersion: 2, type: "startWave" },
+      { schemaVersion: 3, type: "startWave" },
       { schemaVersion: 1, type: "futureCommand" },
       { schemaVersion: 1, type: "startWave", timestamp: 123 },
       { schemaVersion: 1, type: "tick", units: Number.NaN },
@@ -382,16 +382,18 @@ describe("GameCommandJournalV1", () => {
       expectedDigests.push(game.getStateDigest());
     }
 
-    const entries = session.exportJournal().entries;
-    expect(entries.map((entry: GameCommandJournalV1["entries"][number]) => entry.sequence)).toEqual([0, 1, 2, 3]);
-    expect(entries.map((entry: GameCommandJournalV1["entries"][number]) => entry.command)).toEqual(commands);
-    expect(entries.map((entry: GameCommandJournalV1["entries"][number]) => entry.result)).toEqual([
+    const journal = session.exportJournal();
+    if (journal.schemaVersion !== 1) throw new Error("V1-only commands must keep journal v1.");
+    const entries = journal.entries;
+    expect(entries.map((entry) => entry.sequence)).toEqual([0, 1, 2, 3]);
+    expect(entries.map((entry) => entry.command)).toEqual(commands);
+    expect(entries.map((entry) => entry.result)).toEqual([
       { ok: true },
       { ok: true },
       { ok: true },
       { ok: true }
     ]);
-    expect(entries.map((entry: GameCommandJournalV1["entries"][number]) => entry.postStateDigest)).toEqual(expectedDigests);
+    expect(entries.map((entry) => entry.postStateDigest)).toEqual(expectedDigests);
     for (const entry of entries as GameCommandJournalV1["entries"]) {
       expect(Object.keys(entry)).toEqual(["sequence", "command", "result", "postStateDigest"]);
       expect(entry.postStateDigest).toMatch(/^tf-state-v1:[0-9a-f]{16}$/);
@@ -813,7 +815,9 @@ describe("decodeGameCommandJournal", () => {
       coord: { q: 1, r: 0 }
     }).ok).toBe(true);
     expect(session.dispatch({ schemaVersion: 1, type: "tick", units: 0.25 }).ok).toBe(true);
-    return { content, journal: session.exportJournal() };
+    const journal = session.exportJournal();
+    if (journal.schemaVersion !== 1) throw new Error("V1-only commands must keep journal v1.");
+    return { content, journal };
   }
 
   it("validates and returns a detached journal without executing any command", () => {
@@ -845,7 +849,7 @@ describe("decodeGameCommandJournal", () => {
   it("rejects a future journal header before reading entries or executing commands", () => {
     const { content, journal } = validJournal();
     let entryReads = 0;
-    const future = { ...journal, schemaVersion: 2 } as Record<string, unknown>;
+    const future = { ...journal, schemaVersion: 3 } as Record<string, unknown>;
     Object.defineProperty(future, "entries", {
       enumerable: true,
       get() {

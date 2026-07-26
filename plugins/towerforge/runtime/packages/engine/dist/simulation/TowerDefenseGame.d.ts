@@ -51,10 +51,13 @@ export declare class TowerDefenseGame {
     private readonly activeRogueliteMechanics;
     private rogueliteSnapshot;
     private rogueliteDamageModifiers;
+    private artifactDamageModifiersByTowerId;
     private artifactInitialRngState;
     private artifactRng;
     private artifactInventory;
     private nextArtifactInstanceSequence;
+    /** Preserve historic artifact checkpoint v1 until a socket assignment first changes. */
+    private artifactCheckpointForm;
     private readonly navigationMandatoryPairs;
     private readonly navigationKnownPairs;
     private navigationResolver;
@@ -120,6 +123,10 @@ export declare class TowerDefenseGame {
     canUpgradeTower(towerId: string): ActionResult;
     getTowerUpgradeCost(towerOrId: TowerState | string): ResourceCost | null;
     upgradeTower(towerId: string): ActionResult;
+    canSocketArtifact(artifactInstanceId: string, towerId: string, slotId: string): ActionResult;
+    socketArtifact(artifactInstanceId: string, towerId: string, slotId: string): ActionResult;
+    canUnsocketArtifact(artifactInstanceId: string, towerId: string, slotId: string): ActionResult;
+    unsocketArtifact(artifactInstanceId: string, towerId: string, slotId: string): ActionResult;
     getTowerSellRefund(towerOrId: TowerState | string): ResourceBag | null;
     canSellTower(towerId: string): ActionResult;
     sellTower(towerId: string): ActionResult;
@@ -270,8 +277,13 @@ export declare class TowerDefenseGame {
     private updateTowerDisruptions;
     /** Boss pattern: enemies with `towerAttack` periodically damage the nearest tower with hp; destroy it at 0. */
     private updateEnemyTowerAttacks;
+    private artifactManagementAvailability;
+    private replaceArtifactSocket;
+    private autoUnsocketTowerArtifacts;
     private destroyTower;
     private rebuildRogueliteSynergies;
+    private currentRogueliteSnapshot;
+    private artifactManagementSnapshot;
     private updateTowers;
     private updateSingleTower;
     /**

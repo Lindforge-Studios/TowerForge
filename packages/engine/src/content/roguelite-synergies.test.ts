@@ -217,11 +217,12 @@ describe("R4.1A roguelite v1 schema and capability", () => {
       limits: { synergies: EXPECTED_LIMITS },
       runtimeSnapshot: {
         path: "snapshot.roguelite",
-        supportedSchemaVersions: [1, 2],
+        supportedSchemaVersions: [1, 2, 3],
         optionalUnlessActive: true,
         fieldsByVersion: {
           1: ["schemaVersion", "synergies"],
-          2: ["schemaVersion", "synergies", "artifacts"]
+          2: ["schemaVersion", "synergies", "artifacts"],
+          3: ["schemaVersion", "synergies", "artifacts"]
         }
       }
     });

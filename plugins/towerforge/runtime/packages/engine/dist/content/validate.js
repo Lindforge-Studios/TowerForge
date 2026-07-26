@@ -9,7 +9,7 @@ import { GridElevationValidationError, inspectGridElevationOverrides, normalizeG
 import { HIGH_GROUND_LIMITS, LINE_OF_SIGHT_LIMITS } from "./elevation-mechanics.js";
 import { PHYSICS_LIMITS, inspectOwnDataEffect, parseDisplacementEffectV1, resolveActivePhysicsMechanics } from "./physics-mechanics.js";
 import { TERRAFORMING_LIMITS, TerraformingProfileValidationError, normalizeTerraformingProfileV1 } from "./terraforming-mechanics.js";
-import { ROGUELITE_SYNERGY_LIMITS, RogueliteProfileValidationError, normalizeRogueliteProfileV1, normalizeRogueliteProfileV2, normalizeTowerTagsV1 } from "./roguelite-mechanics.js";
+import { ROGUELITE_SYNERGY_LIMITS, RogueliteProfileValidationError, assertRogueliteV2ModifierBudget, normalizeRogueliteProfileV1, normalizeRogueliteProfileV2, normalizeTowerTagsV1 } from "./roguelite-mechanics.js";
 /** Derives a stable code like "TOWER_ATTACK_SLOWFACTOR" from entityKind + fieldPath. See the
  *  ValidationIssue.code caveat above — this is a coarse key, not a unique one. */
 export function deriveValidationCode(entityKind, fieldPath) {
@@ -2132,6 +2132,12 @@ export function validateGameContentRegistry(content) {
                 continue;
             const artifactProfile = profile;
             const semantic = activeMissionIds.length > 0 ? err : warn;
+            try {
+                assertRogueliteV2ModifierBudget(artifactProfile);
+            }
+            catch (error) {
+                semantic("mechanics", profileId, `${root}.synergies`, error instanceof Error ? error.message : "Roguelite v2 modifier budget is invalid.");
+            }
             const slotTypes = new Set();
             for (const [towerTypeId, slots] of Object.entries(artifactProfile.artifacts.towerSlots)) {
                 slots.forEach((slot) => slotTypes.add(slot.slotType));

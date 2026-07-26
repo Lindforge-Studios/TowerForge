@@ -3,7 +3,8 @@ import { cloneCheckpointJson, checkpointDataField, checkpointObjectDescriptors, 
 import { canonicalStringify, getSimulationContentDigest } from "./stable-digest.js";
 import { TowerDefenseGame } from "./TowerDefenseGame.js";
 import { GAME_COMMAND_JOURNAL_RESULT_LIMITS_INTERNAL, normalizeGameCommandJournalResult } from "./journal-result-internal.js";
-export const GAME_COMMAND_JOURNAL_SCHEMA_VERSION = 1;
+export const GAME_COMMAND_JOURNAL_SCHEMA_VERSION = 2;
+export const GAME_COMMAND_JOURNAL_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2]);
 export const GAME_COMMAND_JOURNAL_LIMITS = Object.freeze({
     entries: 100_000,
     totalBytes: 64 * 1_024 * 1_024,
@@ -85,9 +86,8 @@ function decodeResult(value) {
     canonicalStringify(value, { maxBytes: GAME_COMMAND_JOURNAL_LIMITS.resultBytes });
     return result;
 }
-function detachedJournal(initialCheckpoint, contentDigest, entries) {
-    return {
-        schemaVersion: GAME_COMMAND_JOURNAL_SCHEMA_VERSION,
+function detachedJournal(initialCheckpoint, contentDigest, entries, schemaVersion) {
+    const common = {
         engineVersion: SIMULATION_ENGINE_VERSION,
         contentDigest,
         initialCheckpoint: cloneCheckpointJson(initialCheckpoint),
@@ -98,6 +98,14 @@ function detachedJournal(initialCheckpoint, contentDigest, entries) {
             postStateDigest: entry.postStateDigest
         }))
     };
+    if (schemaVersion === 1) {
+        return {
+            schemaVersion: 1,
+            ...common,
+            entries: common.entries
+        };
+    }
+    return { schemaVersion: 2, ...common };
 }
 /**
  * Owns the command boundary around one simulation instance. Any mutation that
@@ -109,6 +117,7 @@ export class JournaledGameSession {
     initialCheckpoint;
     contentDigest;
     entries = [];
+    journalSchemaVersion = 1;
     expectedStateDigest;
     faulted = false;
     constructor(game) {
@@ -117,7 +126,7 @@ export class JournaledGameSession {
         this.initialCheckpoint = game.createCheckpoint();
         this.contentDigest = this.initialCheckpoint.contentDigest;
         this.expectedStateDigest = this.initialCheckpoint.stateDigest;
-        assertJournalTotalBudget(detachedJournal(this.initialCheckpoint, this.contentDigest, []));
+        assertJournalTotalBudget(detachedJournal(this.initialCheckpoint, this.contentDigest, [], 1));
     }
     assertHealthy() {
         if (this.faulted) {
@@ -158,7 +167,7 @@ export class JournaledGameSession {
             postStateDigest: "tf-state-v1:0000000000000000"
         };
         try {
-            assertJournalTotalBudget(detachedJournal(this.initialCheckpoint, this.contentDigest, [...this.entries, capacityProbe]));
+            assertJournalTotalBudget(detachedJournal(this.initialCheckpoint, this.contentDigest, [...this.entries, capacityProbe], this.journalSchemaVersion));
         }
         catch {
             this.fault("total byte capacity would be exceeded.");
@@ -175,6 +184,8 @@ export class JournaledGameSession {
         }
         if (!command)
             return invalidGameCommandResult();
+        if (command.schemaVersion === 2)
+            this.journalSchemaVersion = 2;
         this.assertLiveCapacity(command);
         let result;
         try {
@@ -195,7 +206,7 @@ export class JournaledGameSession {
                 result: durableResult,
                 postStateDigest
             };
-            assertJournalTotalBudget(detachedJournal(this.initialCheckpoint, this.contentDigest, [...this.entries, entry]));
+            assertJournalTotalBudget(detachedJournal(this.initialCheckpoint, this.contentDigest, [...this.entries, entry], this.journalSchemaVersion));
             this.entries.push(entry);
             this.expectedStateDigest = postStateDigest;
         }
@@ -207,7 +218,7 @@ export class JournaledGameSession {
     }
     exportJournal() {
         this.assertExpectedState();
-        const journal = detachedJournal(this.initialCheckpoint, this.contentDigest, this.entries);
+        const journal = detachedJournal(this.initialCheckpoint, this.contentDigest, this.entries, this.journalSchemaVersion);
         assertJournalTotalBudget(journal);
         return journal;
     }
@@ -219,7 +230,7 @@ export class JournaledGameSession {
 export function decodeGameCommandJournal(options) {
     const descriptors = checkpointObjectDescriptors(options.journal, "Game command journal");
     const schemaVersion = checkpointDataField(descriptors, "schemaVersion", "Game command journal");
-    if (schemaVersion !== GAME_COMMAND_JOURNAL_SCHEMA_VERSION) {
+    if (schemaVersion !== 1 && schemaVersion !== 2) {
         throw new Error(`Unsupported game command journal schema version "${String(schemaVersion)}".`);
     }
     const engineVersion = checkpointDataField(descriptors, "engineVersion", "Game command journal");
@@ -263,6 +274,9 @@ export function decodeGameCommandJournal(options) {
         if (!command) {
             throw new Error(`Game command journal entry ${index} contains an invalid command.`);
         }
+        if (schemaVersion === 1 && command.schemaVersion !== 1) {
+            throw new Error(`Game command journal v1 entry ${index} must contain a v1 command.`);
+        }
         const result = decodeResult(checkpointDataField(entryDescriptors, "result", `Game command journal entry ${index}`));
         const postStateDigest = checkpointDataField(entryDescriptors, "postStateDigest", `Game command journal entry ${index}`);
         if (typeof postStateDigest !== "string" || !STATE_DIGEST_RE.test(postStateDigest)) {
@@ -270,7 +284,7 @@ export function decodeGameCommandJournal(options) {
         }
         entries.push({ sequence: index, command, result, postStateDigest });
     }
-    const decoded = detachedJournal(initialCheckpoint, contentDigest, entries);
+    const decoded = detachedJournal(initialCheckpoint, contentDigest, entries, schemaVersion);
     assertJournalTotalBudget(decoded);
     return decoded;
 }

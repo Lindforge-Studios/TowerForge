@@ -94,6 +94,27 @@ export interface ArtifactCheckpointStateV1 {
   readonly inventory: readonly ArtifactCheckpointInventoryEntryV1[];
 }
 
+export interface ArtifactCheckpointSocketRefV2 {
+  readonly towerId: string;
+  readonly slotId: string;
+}
+
+export interface ArtifactCheckpointInventoryEntryV2 extends ArtifactCheckpointInventoryEntryV1 {
+  readonly socket: ArtifactCheckpointSocketRefV2 | null;
+}
+
+export interface ArtifactCheckpointStateV2 {
+  readonly schemaVersion: 2;
+  readonly rng: {
+    readonly initial: SeededRngStateV1;
+    readonly current: SeededRngStateV1;
+  };
+  readonly nextInstanceSequence: number;
+  readonly inventory: readonly ArtifactCheckpointInventoryEntryV2[];
+}
+
+export type ArtifactCheckpointState = ArtifactCheckpointStateV1 | ArtifactCheckpointStateV2;
+
 /** Authoritative mutable simulation state. Map occupancy and water cues are rebuilt derivatives. */
 export interface GameCheckpointStateV1 {
   readonly coreHp: number;
@@ -129,7 +150,7 @@ export interface GameCheckpointStateV1 {
   readonly scriptSignalDepth: number;
   readonly combat?: CombatState;
   readonly reactions?: ReactionStateV1;
-  readonly artifacts?: ArtifactCheckpointStateV1;
+  readonly artifacts?: ArtifactCheckpointState;
 }
 
 export interface GameCheckpointV1 {

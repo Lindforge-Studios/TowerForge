@@ -1,7 +1,7 @@
 # Opt-In Boss Artifact Loot
 
-This fixture demonstrates the isolated R4.2A/B `roguelite` v2 artifact catalog and deterministic
-boss-loot inventory. Nothing in this directory is enabled automatically.
+This fixture demonstrates the isolated R4.2 `roguelite` v2 artifact catalog, deterministic boss
+loot, and optional between-wave socketing. Nothing in this directory is enabled automatically.
 
 1. Confirm that `arrow_tower` and `armored_brute` exist in the target project.
 2. Use Mechanics Hub, or call `describe_schema({domain:"roguelite"})` and `get_capabilities`.
@@ -11,10 +11,12 @@ boss-loot inventory. Nothing in this directory is enabled automatically.
 
 The authored trophy has one typed `core` slot and the boss has one deterministic weighted roll. An
 active mission starts with an empty battle-local inventory. A successful drop appears in
-`snapshot.roguelite.artifacts.inventory` with `socket:null` and emits `artifactDropped` after
-`enemyKilled`. The dedicated loot RNG and inventory cursor are restored from the optional artifact
-checkpoint state.
+`snapshot.roguelite.artifacts.inventory` and emits `artifactDropped` after `enemyKilled`. At a real
+between-wave boundary, GameCommand v2 may socket the item into an authoritative compatible tower
+slot; snapshot v3 exposes the assignment and management availability. The dedicated loot RNG,
+inventory cursor, and post-mutation socket assignment restore from the optional artifact checkpoint.
 
-This slice does not socket the item, apply its authored modifier, persist it into `CampaignRunV1`,
-or add a new command. If the catalog is absent, the module is disabled/unselected, or it remains v1,
-there is no artifact inventory, drop event, RNG consumption, or artifact UI.
+Only immediate attacks from the exact socketed live tower receive the authored modifier. This fixture
+does not persist the item into `CampaignRunV1` or add draft/campaign navigation. If the catalog is
+absent, the module is disabled/unselected, or it remains v1, there is no artifact inventory, drop
+event, RNG consumption, socket command, or artifact UI.

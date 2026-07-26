@@ -8671,7 +8671,7 @@ const PT = {
   mod: null, rmod: null, content: null, game: null, renderer: null, raf: null,
   towerId: null, missionId: null, difficultyId: null, keyboardCoord: null, dirty: true, lastFrame: 0, error: null,
   events: [], selectedDebug: null, resumeSpeed: 1, lastDebugRender: 0,
-  navigationOverlayKey: null, navigationOverlayRequest: 0
+  navigationOverlayKey: null, navigationOverlayRequest: 0, artifactUiDirty: true
 };
 const PT_KIND_COLOR = { single: "#e8a44a", pulse: "#a07ec8", sniper: "#7eb87e", antiair: "#e8c84a", splash: "#6ea8d8", support: "#7ec8b8", support_buff: "#c87e9c", pipeline: "#79c8d3" };
 const PT_TARGET_MODES = [["first", "First"], ["last", "Last"], ["closest", "Closest"], ["furthest", "Furthest"], ["strongest", "Strongest"], ["weakest", "Weakest"]];
@@ -8835,6 +8835,7 @@ function newPlaytestGame() {
   PT.towerId = tids[0] ?? null;
   PT.events = [];
   PT.selectedDebug = null;
+  PT.artifactUiDirty = true;
   PT.keyboardCoord = null;
   syncPlaytestKeyboardCoord(ensurePlaytestKeyboardCoord());
   renderPlaytestDebugger(PT.game.getSnapshot());
@@ -8925,6 +8926,77 @@ function recordPlaytestEvents(events, snapshot) {
     PT.events.unshift({ time: snapshot.missionElapsed, type: event.type, target: playtestEventTarget(event), event: deep(event) });
   }
   if (PT.events.length > 120) PT.events.length = 120;
+  if (events.some((event) => [
+    "artifactDropped", "artifactSocketed", "artifactUnsocketed", "waveStarted", "waveCleared",
+    "towerPlaced", "towerMoved", "towerSold", "towerDestroyed"
+  ].includes(event.type))) PT.artifactUiDirty = true;
+}
+
+function renderPlaytestArtifacts(snapshot = PT.game?.getSnapshot()) {
+  const panel = $("pt-artifact-inventory");
+  if (!panel || !snapshot || !PT.rmod?.projectRoguelitePresentation) return;
+  const presentation = PT.rmod.projectRoguelitePresentation(snapshot);
+  panel.replaceChildren();
+  panel.hidden = !presentation?.active || !presentation.artifacts;
+  if (panel.hidden) return;
+  const title = document.createElement("div");
+  title.className = "form-section-title pt-debug-title";
+  title.textContent = `Artifacts (${presentation.artifacts.inventory.length})`;
+  panel.append(title);
+  const selectedTowerId = PT.selectedDebug?.kind === "tower" ? PT.selectedDebug.id : null;
+  for (const artifact of presentation.artifacts.inventory) {
+    const row = document.createElement("div");
+    row.className = "pt-artifact-row";
+    const label = document.createElement("span");
+    label.textContent = `${artifact.label} · ${artifact.slotType}`
+      + (artifact.socket ? ` → ${artifact.socket.towerId}/${artifact.socket.slotId}` : "");
+    row.append(label);
+    const addAction = (action, text, activate) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "btn btn-outline";
+      button.setAttribute("data-pt-artifact-action", action);
+      button.textContent = text;
+      button.disabled = presentation.artifacts.management?.allowed !== true;
+      button.addEventListener("click", () => {
+        const result = activate();
+        ptMsg(result);
+        if (result.ok) renderPlaytestArtifacts(PT.game.getSnapshot());
+      });
+      row.append(button);
+    };
+    if (artifact.socket) {
+      addAction("unsocket", "Unsocket", () => PT.mod.dispatchGameCommand(PT.game, {
+        schemaVersion: 2, type: "unsocketArtifact",
+        artifactInstanceId: artifact.instanceId,
+        towerId: artifact.socket.towerId,
+        slotId: artifact.socket.slotId
+      }));
+    } else {
+      const tower = presentation.artifacts.towerSlots?.find((item) => item.towerId === selectedTowerId);
+      for (const slot of tower?.slots ?? []) {
+        if (slot.slotType !== artifact.slotType || slot.artifactInstanceId !== null) continue;
+        addAction("socket", `Socket in ${slot.slotId}`, () => PT.mod.dispatchGameCommand(PT.game, {
+          schemaVersion: 2, type: "socketArtifact",
+          artifactInstanceId: artifact.instanceId,
+          towerId: tower.towerId,
+          slotId: slot.slotId
+        }));
+      }
+    }
+    panel.append(row);
+  }
+  if (!presentation.artifacts.management?.allowed) {
+    const note = document.createElement("span");
+    note.className = "text-muted";
+    note.textContent = "Artifact changes are available only between waves.";
+    panel.append(note);
+  } else if (!selectedTowerId && presentation.artifacts.inventory.some((artifact) => !artifact.socket)) {
+    const note = document.createElement("span");
+    note.className = "text-muted";
+    note.textContent = "Inspect a tower to choose one of its compatible slots.";
+    panel.append(note);
+  }
 }
 
 function renderPlaytestDebugger(snapshot = PT.game?.getSnapshot()) {
@@ -9035,6 +9107,10 @@ function updatePlaytestHud(s = PT.game.getSnapshot()) {
   const stars = s.stars ?? [];
   const starCount = stars.filter((item) => item.achieved).length;
   set("pt-objectives", `${objectiveCount}/${objectives.length}${stars.length ? ` | ${starCount}/${stars.length} stars` : ""}`);
+  if (PT.artifactUiDirty) {
+    renderPlaytestArtifacts(s);
+    PT.artifactUiDirty = false;
+  }
   for (const btn of document.querySelectorAll(".pt-ability")) {
     const a = s.abilities?.[btn.dataset.aid];
     const cd = Math.ceil(a?.cooldownRemaining ?? 0);
@@ -9080,6 +9156,7 @@ $("pt-event-timeline")?.addEventListener("click", (event) => {
   const item = row && PT.events[Number(row.dataset.ptEventIndex)];
   if (!item?.target) return;
   PT.selectedDebug = item.target;
+  PT.artifactUiDirty = true;
   renderPlaytestDebugger();
 });
 function actAtPlaytestCoord(coord) {
@@ -9090,6 +9167,7 @@ function actAtPlaytestCoord(coord) {
     const tower = snapshot.towers.find((item) => item.coord.q === coord.q && item.coord.r === coord.r);
     const enemy = snapshot.enemies.find((item) => { const at = PT.game.enemyCoord(item); return at.q === coord.q && at.r === coord.r; });
     PT.selectedDebug = tower ? { kind: "tower", id: tower.id } : enemy ? { kind: "enemy", id: enemy.id } : null;
+    PT.artifactUiDirty = true;
     renderPlaytestDebugger(snapshot);
     const el = $("pt-msg"); if (el) el.textContent = PT.selectedDebug ? `${PT.selectedDebug.kind} selected.` : "Nothing active on this tile.";
     return;

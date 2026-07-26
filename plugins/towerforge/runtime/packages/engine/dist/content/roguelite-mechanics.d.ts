@@ -1,4 +1,4 @@
-import type { ModifierSpec } from "../simulation/modifiers.js";
+import { type ModifierSpec } from "../simulation/modifiers.js";
 import type { RogueliteSnapshotV1, TowerState } from "../simulation/types.js";
 import type { GameContentRegistry } from "./registry.js";
 /** Closed authoring and runtime budgets for opt-in tower-tag synergies. */
@@ -36,6 +36,13 @@ export declare const ROGUELITE_ARTIFACT_LIMITS: Readonly<{
     labelUtf8Bytes: 256;
 }>;
 export declare const ROGUELITE_ARTIFACT_INVENTORY_LIMIT = 10000;
+export declare const ROGUELITE_DAMAGE_MODIFIER_RESERVE: Readonly<{
+    towerUpgrade: 0;
+    meta: 1;
+    spatial: 2;
+    temporary: 0;
+    total: 3;
+}>;
 /** Capability-aware descriptor shared by validation, Studio, and MCP. */
 export declare const ROGUELITE_MECHANICS_SCHEMA: Readonly<{
     schemaVersion: 2;
@@ -141,14 +148,25 @@ export declare const ROGUELITE_MECHANICS_SCHEMA: Readonly<{
             idUtf8Bytes: 128;
             labelUtf8Bytes: 256;
         }>;
+        damageResolution: Readonly<{
+            maximum: 64;
+            reserved: Readonly<{
+                towerUpgrade: 0;
+                meta: 1;
+                spatial: 2;
+                temporary: 0;
+                total: 3;
+            }>;
+        }>;
     }>;
     runtimeSnapshot: Readonly<{
         path: "snapshot.roguelite";
-        supportedSchemaVersions: readonly [1, 2];
+        supportedSchemaVersions: readonly [1, 2, 3];
         optionalUnlessActive: true;
         fieldsByVersion: Readonly<{
             1: readonly ["schemaVersion", "synergies"];
             2: readonly ["schemaVersion", "synergies", "artifacts"];
+            3: readonly ["schemaVersion", "synergies", "artifacts"];
         }>;
     }>;
 }>;
@@ -209,6 +227,8 @@ export interface ActiveRogueliteMechanicsV2 extends RogueliteMechanicsProfileV2 
     readonly towerTagsByTypeId: Readonly<Record<string, readonly string[]>>;
 }
 export type ActiveRogueliteMechanics = ActiveRogueliteMechanicsV1 | ActiveRogueliteMechanicsV2;
+export declare function rogueliteSynergyWorstCaseModifierCount(synergies: Readonly<Record<string, SynergyDefinitionV1>>): number;
+export declare function assertRogueliteV2ModifierBudget(profile: RogueliteMechanicsProfileV2): void;
 export declare class RogueliteProfileValidationError extends Error {
     readonly fieldPath: string;
     constructor(fieldPath: string, message: string);

@@ -135,6 +135,100 @@ describe("R4.1A shared rogue-lite synergy presentation", () => {
     expect(projected.artifacts.drops[0].artifactId).toBe("zeta");
   });
 
+  it("projects authoritative v3 sockets, tower slots, and between-wave management without deriving ownership", () => {
+    const snapshot = {
+      roguelite: {
+        schemaVersion: 3,
+        synergies: [],
+        artifacts: {
+          inventory: [
+            {
+              instanceId: "artifact_2",
+              artifactId: "crystal",
+              label: "Vampiric crystal",
+              slotType: "core",
+              socket: null
+            },
+            {
+              instanceId: "artifact_1",
+              artifactId: "scope",
+              label: "Calibrated scope",
+              slotType: "optic",
+              socket: { towerId: "tower_2", towerTypeId: "cannon", slotId: "optic" }
+            }
+          ],
+          towerSlots: [
+            {
+              towerId: "tower_2",
+              towerTypeId: "cannon",
+              slots: [
+                { slotId: "optic", slotType: "optic", artifactInstanceId: "artifact_1" },
+                { slotId: "core", slotType: "core", artifactInstanceId: null }
+              ]
+            },
+            {
+              towerId: "tower_1",
+              towerTypeId: "arrow",
+              slots: [{ slotId: "optic", slotType: "optic", artifactInstanceId: null }]
+            }
+          ],
+          management: { allowed: true }
+        }
+      },
+      lastEvents: []
+    };
+
+    const projected = projector()(snapshot);
+
+    expect(projected).toEqual({
+      active: true,
+      synergies: [],
+      artifacts: {
+        inventory: [
+          {
+            instanceId: "artifact_1",
+            artifactId: "scope",
+            label: "Calibrated scope",
+            slotType: "optic",
+            socket: { towerId: "tower_2", towerTypeId: "cannon", slotId: "optic" }
+          },
+          {
+            instanceId: "artifact_2",
+            artifactId: "crystal",
+            label: "Vampiric crystal",
+            slotType: "core",
+            socket: null
+          }
+        ],
+        towerSlots: [
+          {
+            towerId: "tower_1",
+            towerTypeId: "arrow",
+            slots: [{ slotId: "optic", slotType: "optic", artifactInstanceId: null }]
+          },
+          {
+            towerId: "tower_2",
+            towerTypeId: "cannon",
+            slots: [
+              { slotId: "core", slotType: "core", artifactInstanceId: null },
+              { slotId: "optic", slotType: "optic", artifactInstanceId: "artifact_1" }
+            ]
+          }
+        ],
+        management: { allowed: true },
+        drops: []
+      }
+    });
+    expectDeeplyFrozen(projected);
+
+    snapshot.roguelite.artifacts.inventory[1].socket.towerId = "mutated";
+    snapshot.roguelite.artifacts.towerSlots[0].slots[0].artifactInstanceId = null;
+    snapshot.roguelite.artifacts.management.allowed = false;
+    expect(projected.artifacts.inventory[0].socket.towerId).toBe("tower_2");
+    expect(projected.artifacts.towerSlots[1].slots[1].artifactInstanceId).toBe("artifact_1");
+    expect(projected.artifacts.management.allowed).toBe(true);
+  });
+
   it("fails closed on future, malformed, sparse, accessor, duplicate, and over-budget sections", () => {
     const row = {
       synergyId: "elemental",
@@ -146,7 +240,7 @@ describe("R4.1A shared rogue-lite synergy presentation", () => {
     };
     const sparse = new Array(1);
     const invalid = [
-      { schemaVersion: 3, synergies: [] },
+      { schemaVersion: 4, synergies: [] },
       { schemaVersion: 1 },
       { schemaVersion: 1, synergies: [], extra: true },
       { schemaVersion: 1, synergies: sparse },

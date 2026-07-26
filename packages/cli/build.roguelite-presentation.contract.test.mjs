@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 describe("R4.1A/R4.2E generated roguelite presentation contract", () => {
-  it("ships the shared projector and read-only artifact inventory to Canvas and Phaser players", () => {
+  it("ships the shared projector and accessible artifact socket controls to Canvas and Phaser players", () => {
     expect(buildSource).toContain("projectRoguelitePresentation");
     expect(buildSource).toContain('id="roguelite-status"');
     expect(buildSource).toContain('id="artifact-inventory"');
@@ -23,7 +23,12 @@ describe("R4.1A/R4.2E generated roguelite presentation contract", () => {
     expect(buildSource.match(/updateRogueliteStatus\(snap\)/g)?.length).toBeGreaterThanOrEqual(4);
     expect(buildSource).toContain("panel.hidden = !presentation.active");
     expect(buildSource).toMatch(/presentation\.artifacts\.inventory|artifacts\?\.inventory/);
-    expect(buildSource).not.toMatch(/socketArtifact|unsocketArtifact/);
+    expect(buildSource).not.toContain("game.socketArtifact(");
+    expect(buildSource).not.toContain("game.unsocketArtifact(");
+    expect(buildSource.match(/dispatchGameCommand\(game, \{/g)?.length).toBeGreaterThanOrEqual(4);
+    expect(buildSource.match(/schemaVersion: 2, type: "(?:un)?socketArtifact"/g)?.length).toBeGreaterThanOrEqual(4);
+    expect(buildSource).toContain("data-artifact-action");
+    expect(buildSource).toContain('button.type = "button"');
   });
 
   it("preserves active roguelite mechanics and tower tags through PWA, single-file, web package, and tdpack", async () => {

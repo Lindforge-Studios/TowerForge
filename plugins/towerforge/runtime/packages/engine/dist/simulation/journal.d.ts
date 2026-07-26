@@ -1,9 +1,10 @@
 import type { GameContentRegistry } from "../content/registry.js";
-import { type GameCommandV1 } from "./command-internal.js";
+import { type GameCommand, type GameCommandV1 } from "./command-internal.js";
 import { SIMULATION_ENGINE_VERSION, type GameCheckpointV1 } from "./checkpoint.js";
 import { TowerDefenseGame } from "./TowerDefenseGame.js";
 import type { ActionResult } from "./types.js";
-export declare const GAME_COMMAND_JOURNAL_SCHEMA_VERSION: 1;
+export declare const GAME_COMMAND_JOURNAL_SCHEMA_VERSION: 2;
+export declare const GAME_COMMAND_JOURNAL_SUPPORTED_SCHEMA_VERSIONS: readonly [1, 2];
 export declare const GAME_COMMAND_JOURNAL_LIMITS: Readonly<{
     entries: 100000;
     totalBytes: number;
@@ -22,12 +23,26 @@ export interface GameCommandJournalEntryV1 {
     readonly postStateDigest: string;
 }
 export interface GameCommandJournalV1 {
-    readonly schemaVersion: typeof GAME_COMMAND_JOURNAL_SCHEMA_VERSION;
+    readonly schemaVersion: 1;
     readonly engineVersion: typeof SIMULATION_ENGINE_VERSION;
     readonly contentDigest: string;
     readonly initialCheckpoint: GameCheckpointV1;
     readonly entries: readonly GameCommandJournalEntryV1[];
 }
+export interface GameCommandJournalEntryV2 {
+    readonly sequence: number;
+    readonly command: GameCommand;
+    readonly result: GameCommandJournalResultV1;
+    readonly postStateDigest: string;
+}
+export interface GameCommandJournalV2 {
+    readonly schemaVersion: 2;
+    readonly engineVersion: typeof SIMULATION_ENGINE_VERSION;
+    readonly contentDigest: string;
+    readonly initialCheckpoint: GameCheckpointV1;
+    readonly entries: readonly GameCommandJournalEntryV2[];
+}
+export type GameCommandJournal = GameCommandJournalV1 | GameCommandJournalV2;
 /**
  * Owns the command boundary around one simulation instance. Any mutation that
  * bypasses dispatch makes the journal ambiguous, so the session faults closed.
@@ -38,6 +53,7 @@ export declare class JournaledGameSession {
     private readonly initialCheckpoint;
     private readonly contentDigest;
     private readonly entries;
+    private journalSchemaVersion;
     private expectedStateDigest;
     private faulted;
     constructor(game: TowerDefenseGame);
@@ -46,7 +62,7 @@ export declare class JournaledGameSession {
     private assertExpectedState;
     private assertLiveCapacity;
     dispatch(input: unknown): ActionResult;
-    exportJournal(): GameCommandJournalV1;
+    exportJournal(): GameCommandJournal;
 }
 /**
  * Validate a journal as closed, bounded, detached data. Commands are decoded but
@@ -54,5 +70,5 @@ export declare class JournaledGameSession {
  */
 export declare function decodeGameCommandJournal(options: {
     content: GameContentRegistry;
-    journal: GameCommandJournalV1;
-}): GameCommandJournalV1;
+    journal: GameCommandJournal;
+}): GameCommandJournal;

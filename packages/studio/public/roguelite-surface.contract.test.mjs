@@ -30,4 +30,15 @@ describe("R4.1A/R4.2E Mechanics Hub rogue-lite surface contract", () => {
     expect(app).toMatch(/future roguelite|schemaVersion 3|v3[\s\S]*read-only/i);
     expect(app).toContain('$("mechanics-roguelite-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "roguelite")');
   });
+
+  it("uses the authoritative v3 snapshot for accessible playtest socket controls", () => {
+    expect(html).toContain('id="pt-artifact-inventory"');
+    expect(app).toContain("PT.rmod.projectRoguelitePresentation(snapshot)");
+    expect(app).not.toContain("PT.game.socketArtifact(");
+    expect(app).not.toContain("PT.game.unsocketArtifact(");
+    expect(app).toContain("PT.mod.dispatchGameCommand(PT.game, {");
+    expect(app).toContain('schemaVersion: 2, type: "socketArtifact"');
+    expect(app).toContain('schemaVersion: 2, type: "unsocketArtifact"');
+    expect(app).toContain("data-pt-artifact-action");
+  });
 });

@@ -1,3 +1,4 @@
+import { MAX_MODIFIERS_PER_RESOLUTION } from "../simulation/modifiers.js";
 /** Closed authoring and runtime budgets for opt-in tower-tag synergies. */
 export const ROGUELITE_SYNERGY_LIMITS = Object.freeze({
     towerTypesWithTags: 4_096,
@@ -33,6 +34,13 @@ export const ROGUELITE_ARTIFACT_LIMITS = Object.freeze({
     labelUtf8Bytes: 256
 });
 export const ROGUELITE_ARTIFACT_INVENTORY_LIMIT = 10_000;
+export const ROGUELITE_DAMAGE_MODIFIER_RESERVE = Object.freeze({
+    towerUpgrade: 0,
+    meta: 1,
+    spatial: 2,
+    temporary: 0,
+    total: 3
+});
 const REQUIRED_PROFILE_V1_FIELDS = Object.freeze(["synergies"]);
 const REQUIRED_PROFILE_V2_FIELDS = Object.freeze(["synergies", "artifacts"]);
 const REQUIRED_SYNERGY_FIELDS = Object.freeze(["label", "tag", "tiers"]);
@@ -119,18 +127,38 @@ export const ROGUELITE_MECHANICS_SCHEMA = Object.freeze({
     }),
     limits: Object.freeze({
         synergies: ROGUELITE_SYNERGY_LIMITS,
-        artifacts: ROGUELITE_ARTIFACT_LIMITS
+        artifacts: ROGUELITE_ARTIFACT_LIMITS,
+        damageResolution: Object.freeze({
+            maximum: MAX_MODIFIERS_PER_RESOLUTION,
+            reserved: ROGUELITE_DAMAGE_MODIFIER_RESERVE
+        })
     }),
     runtimeSnapshot: Object.freeze({
         path: "snapshot.roguelite",
-        supportedSchemaVersions: Object.freeze([1, 2]),
+        supportedSchemaVersions: Object.freeze([1, 2, 3]),
         optionalUnlessActive: true,
         fieldsByVersion: Object.freeze({
             1: Object.freeze(["schemaVersion", "synergies"]),
-            2: Object.freeze(["schemaVersion", "synergies", "artifacts"])
+            2: Object.freeze(["schemaVersion", "synergies", "artifacts"]),
+            3: Object.freeze(["schemaVersion", "synergies", "artifacts"])
         })
     })
 });
+export function rogueliteSynergyWorstCaseModifierCount(synergies) {
+    let total = 0;
+    for (const synergy of Object.values(synergies)) {
+        total += (synergy.tierMode ?? "highest") === "cumulative"
+            ? synergy.tiers.reduce((sum, tier) => sum + tier.modifiers.length, 0)
+            : synergy.tiers.reduce((maximum, tier) => Math.max(maximum, tier.modifiers.length), 0);
+    }
+    return total;
+}
+export function assertRogueliteV2ModifierBudget(profile) {
+    const synergyWorstCase = rogueliteSynergyWorstCaseModifierCount(profile.synergies);
+    if (synergyWorstCase + ROGUELITE_DAMAGE_MODIFIER_RESERVE.total > MAX_MODIFIERS_PER_RESOLUTION) {
+        throw new RogueliteProfileValidationError("profile.synergies", "Roguelite v2 worst-case synergy modifiers exceed the shared damage resolution budget.");
+    }
+}
 export class RogueliteProfileValidationError extends Error {
     fieldPath;
     constructor(fieldPath, message) {
@@ -524,6 +552,7 @@ export function resolveActiveRogueliteMechanics(content, missionId) {
             });
         }
         const profile = normalizeRogueliteProfileV2(ownData(profiles, capability.profileId));
+        assertRogueliteV2ModifierBudget(profile);
         return Object.freeze({
             schemaVersion: 2,
             profileId: capability.profileId,
