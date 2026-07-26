@@ -14,13 +14,16 @@ afterEach(() => {
   for (const projectDir of tempProjects.splice(0)) fs.rmSync(projectDir, { recursive: true, force: true });
 });
 
-describe("R4.1A generated roguelite presentation contract", () => {
-  it("ships the shared projector to Canvas and Phaser players without a legacy-only panel", () => {
+describe("R4.1A/R4.2E generated roguelite presentation contract", () => {
+  it("ships the shared projector and read-only artifact inventory to Canvas and Phaser players", () => {
     expect(buildSource).toContain("projectRoguelitePresentation");
     expect(buildSource).toContain('id="roguelite-status"');
+    expect(buildSource).toContain('id="artifact-inventory"');
     expect(buildSource).toContain("function updateRogueliteStatus(snap)");
     expect(buildSource.match(/updateRogueliteStatus\(snap\)/g)?.length).toBeGreaterThanOrEqual(4);
     expect(buildSource).toContain("panel.hidden = !presentation.active");
+    expect(buildSource).toMatch(/presentation\.artifacts\.inventory|artifacts\?\.inventory/);
+    expect(buildSource).not.toMatch(/socketArtifact|unsocketArtifact/);
   });
 
   it("preserves active roguelite mechanics and tower tags through PWA, single-file, web package, and tdpack", async () => {
@@ -43,7 +46,7 @@ describe("R4.1A generated roguelite presentation contract", () => {
       schemaVersion: 1,
       modules: {
         roguelite: {
-          schemaVersion: 1,
+          schemaVersion: 2,
           enabled: true,
           profiles: {
             packaged_synergy: {
@@ -55,6 +58,24 @@ describe("R4.1A generated roguelite presentation contract", () => {
                     requiredCount: 2,
                     modifiers: [{ target: "damage", operation: "additive_ratio", value: 0.1 }]
                   }]
+                }
+              },
+              artifacts: {
+                definitions: {
+                  boss_trophy: {
+                    label: "Boss Trophy",
+                    slotType: "core",
+                    modifiers: [{ target: "damage", operation: "additive_ratio", value: 0.1 }]
+                  }
+                },
+                towerSlots: {
+                  arrow_tower: [{ slotId: "core", slotType: "core" }]
+                },
+                bossLootTables: {
+                  armored_brute: {
+                    rolls: 1,
+                    entries: [{ artifactId: "boss_trophy", weight: 1 }]
+                  }
                 }
               }
             }
@@ -79,6 +100,7 @@ describe("R4.1A generated roguelite presentation contract", () => {
       "index.single.html"
     ]) expect(fs.existsSync(path.join(built.outDir, relative)), `missing ${relative}`).toBe(true);
     expect(fs.readFileSync(path.join(built.outDir, "project-data.js"), "utf8")).toContain('"roguelite"');
+    expect(fs.readFileSync(path.join(built.outDir, "project-data.js"), "utf8")).toContain('"boss_trophy"');
     expect(fs.readFileSync(path.join(built.outDir, "offline-sw.js"), "utf8"))
       .toContain('"./renderer/roguelite-presentation.mjs"');
 

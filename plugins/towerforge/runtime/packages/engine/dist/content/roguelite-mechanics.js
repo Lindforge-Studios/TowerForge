@@ -17,20 +17,55 @@ export const ROGUELITE_SYNERGY_LIMITS = Object.freeze({
     multiplierMinimum: 0,
     multiplierMaximum: 1_000
 });
-const REQUIRED_PROFILE_FIELDS = Object.freeze(["synergies"]);
+/** Closed authoring/runtime budgets for roguelite v2 artifacts and boss loot. */
+export const ROGUELITE_ARTIFACT_LIMITS = Object.freeze({
+    definitions: 256,
+    slotsPerTower: 8,
+    totalSlots: 4_096,
+    modifiersPerArtifact: 8,
+    totalArtifactModifiers: 1_024,
+    lootTables: 64,
+    rollsPerTable: 8,
+    entriesPerTable: 128,
+    weight: 1_000_000,
+    totalTableWeight: 0xffff_ffff,
+    idUtf8Bytes: 128,
+    labelUtf8Bytes: 256
+});
+export const ROGUELITE_ARTIFACT_INVENTORY_LIMIT = 10_000;
+const REQUIRED_PROFILE_V1_FIELDS = Object.freeze(["synergies"]);
+const REQUIRED_PROFILE_V2_FIELDS = Object.freeze(["synergies", "artifacts"]);
 const REQUIRED_SYNERGY_FIELDS = Object.freeze(["label", "tag", "tiers"]);
 const OPTIONAL_SYNERGY_FIELDS = Object.freeze(["tierMode"]);
 const REQUIRED_TIER_FIELDS = Object.freeze(["requiredCount", "modifiers"]);
 const REQUIRED_MODIFIER_FIELDS = Object.freeze(["target", "operation", "value"]);
+const REQUIRED_ARTIFACTS_FIELDS = Object.freeze(["definitions", "towerSlots", "bossLootTables"]);
+const REQUIRED_ARTIFACT_DEFINITION_FIELDS = Object.freeze(["label", "slotType", "modifiers"]);
+const REQUIRED_TOWER_SLOT_FIELDS = Object.freeze(["slotId", "slotType"]);
+const REQUIRED_LOOT_TABLE_FIELDS = Object.freeze(["rolls", "entries"]);
+const OPTIONAL_LOOT_TABLE_FIELDS = Object.freeze(["noDropWeight"]);
+const REQUIRED_LOOT_ENTRY_FIELDS = Object.freeze(["artifactId", "weight"]);
 /** Capability-aware descriptor shared by validation, Studio, and MCP. */
 export const ROGUELITE_MECHANICS_SCHEMA = Object.freeze({
-    schemaVersion: 1,
+    schemaVersion: 2,
     moduleId: "roguelite",
-    supportedModuleSchemaVersions: Object.freeze([1]),
+    supportedModuleSchemaVersions: Object.freeze([1, 2]),
     profile: Object.freeze({
-        requiredFields: REQUIRED_PROFILE_FIELDS,
+        requiredFields: REQUIRED_PROFILE_V2_FIELDS,
         optionalFields: Object.freeze([]),
         additionalProperties: false
+    }),
+    profileVersions: Object.freeze({
+        1: Object.freeze({
+            requiredFields: REQUIRED_PROFILE_V1_FIELDS,
+            optionalFields: Object.freeze([]),
+            additionalProperties: false
+        }),
+        2: Object.freeze({
+            requiredFields: REQUIRED_PROFILE_V2_FIELDS,
+            optionalFields: Object.freeze([]),
+            additionalProperties: false
+        })
     }),
     towerTags: Object.freeze({
         field: "tags",
@@ -57,12 +92,43 @@ export const ROGUELITE_MECHANICS_SCHEMA = Object.freeze({
         operations: Object.freeze(["flat", "additive_ratio", "multiplier"]),
         stage: "run"
     }),
-    limits: ROGUELITE_SYNERGY_LIMITS,
+    artifacts: Object.freeze({
+        requiredFields: REQUIRED_ARTIFACTS_FIELDS,
+        optionalFields: Object.freeze([]),
+        additionalProperties: false,
+        definition: Object.freeze({
+            requiredFields: REQUIRED_ARTIFACT_DEFINITION_FIELDS,
+            optionalFields: Object.freeze([]),
+            additionalProperties: false
+        }),
+        towerSlot: Object.freeze({
+            requiredFields: REQUIRED_TOWER_SLOT_FIELDS,
+            optionalFields: Object.freeze([]),
+            additionalProperties: false
+        }),
+        lootTable: Object.freeze({
+            requiredFields: REQUIRED_LOOT_TABLE_FIELDS,
+            optionalFields: OPTIONAL_LOOT_TABLE_FIELDS,
+            additionalProperties: false
+        }),
+        lootEntry: Object.freeze({
+            requiredFields: REQUIRED_LOOT_ENTRY_FIELDS,
+            optionalFields: Object.freeze([]),
+            additionalProperties: false
+        })
+    }),
+    limits: Object.freeze({
+        synergies: ROGUELITE_SYNERGY_LIMITS,
+        artifacts: ROGUELITE_ARTIFACT_LIMITS
+    }),
     runtimeSnapshot: Object.freeze({
         path: "snapshot.roguelite",
-        schemaVersion: 1,
+        supportedSchemaVersions: Object.freeze([1, 2]),
         optionalUnlessActive: true,
-        fields: Object.freeze(["schemaVersion", "synergies"])
+        fieldsByVersion: Object.freeze({
+            1: Object.freeze(["schemaVersion", "synergies"]),
+            2: Object.freeze(["schemaVersion", "synergies", "artifacts"])
+        })
     })
 });
 export class RogueliteProfileValidationError extends Error {
@@ -221,8 +287,8 @@ function normalizeModifier(value, path) {
 /** Validate and detach an exact closed roguelite v1 profile. */
 export function normalizeRogueliteProfileV1(value) {
     const profile = inspectRecord(value, "profile", "Roguelite profile");
-    rejectUnknownFields(profile, REQUIRED_PROFILE_FIELDS, "profile", "Roguelite profile");
-    requireFields(profile, REQUIRED_PROFILE_FIELDS, "profile", "Roguelite profile");
+    rejectUnknownFields(profile, REQUIRED_PROFILE_V1_FIELDS, "profile", "Roguelite profile");
+    requireFields(profile, REQUIRED_PROFILE_V1_FIELDS, "profile", "Roguelite profile");
     const authoredSynergies = inspectRecord(profile.synergies, "profile.synergies", "Roguelite synergies");
     const synergyIds = Object.keys(authoredSynergies).sort();
     if (synergyIds.length > ROGUELITE_SYNERGY_LIMITS.synergyDefinitions) {
@@ -284,6 +350,140 @@ export function normalizeRogueliteProfileV1(value) {
     }
     return Object.freeze({ synergies: Object.freeze(synergies) });
 }
+function boundedInteger(value, path, label, minimum, maximum) {
+    if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+        throw new RogueliteProfileValidationError(path, `${label} must be a safe integer in the range ${minimum}..${maximum}; ${maximum} is the maximum.`);
+    }
+    return value;
+}
+/** Validate and detach the exact closed artifact domain nested in a roguelite v2 profile. */
+export function normalizeRogueliteArtifactsV2(value) {
+    const artifacts = inspectRecord(value, "profile.artifacts", "Roguelite artifacts");
+    rejectUnknownFields(artifacts, REQUIRED_ARTIFACTS_FIELDS, "profile.artifacts", "Roguelite artifacts");
+    requireFields(artifacts, REQUIRED_ARTIFACTS_FIELDS, "profile.artifacts", "Roguelite artifacts");
+    const authoredDefinitions = inspectRecord(artifacts.definitions, "profile.artifacts.definitions", "Artifact definitions");
+    const definitionIds = Object.keys(authoredDefinitions).sort();
+    if (definitionIds.length > ROGUELITE_ARTIFACT_LIMITS.definitions) {
+        throw new RogueliteProfileValidationError("profile.artifacts.definitions", `Artifact definition count exceeds the ${ROGUELITE_ARTIFACT_LIMITS.definitions} item limit.`);
+    }
+    const definitions = Object.create(null);
+    let totalModifiers = 0;
+    for (const artifactId of definitionIds) {
+        boundedString(artifactId, `profile.artifacts.definitions.${artifactId}`, "Artifact id", ROGUELITE_ARTIFACT_LIMITS.idUtf8Bytes);
+        const path = `profile.artifacts.definitions.${artifactId}`;
+        const definition = inspectRecord(authoredDefinitions[artifactId], path, `Artifact definition "${artifactId}"`);
+        rejectUnknownFields(definition, REQUIRED_ARTIFACT_DEFINITION_FIELDS, path, `Artifact definition "${artifactId}"`);
+        requireFields(definition, REQUIRED_ARTIFACT_DEFINITION_FIELDS, path, `Artifact definition "${artifactId}"`);
+        const label = boundedString(definition.label, `${path}.label`, "Artifact label", ROGUELITE_ARTIFACT_LIMITS.labelUtf8Bytes);
+        const slotType = boundedString(definition.slotType, `${path}.slotType`, "Artifact slot type", ROGUELITE_ARTIFACT_LIMITS.idUtf8Bytes);
+        const authoredModifiers = inspectArray(definition.modifiers, `${path}.modifiers`, ROGUELITE_ARTIFACT_LIMITS.modifiersPerArtifact, "Artifact modifiers");
+        totalModifiers += authoredModifiers.length;
+        if (totalModifiers > ROGUELITE_ARTIFACT_LIMITS.totalArtifactModifiers) {
+            throw new RogueliteProfileValidationError(`${path}.modifiers`, `Artifact modifier count exceeds the ${ROGUELITE_ARTIFACT_LIMITS.totalArtifactModifiers} item budget.`);
+        }
+        Object.defineProperty(definitions, artifactId, {
+            value: Object.freeze({
+                label,
+                slotType,
+                modifiers: Object.freeze(authoredModifiers.map((modifier, index) => (normalizeModifier(modifier, `${path}.modifiers[${index}]`))))
+            }),
+            enumerable: true
+        });
+    }
+    const authoredTowerSlots = inspectRecord(artifacts.towerSlots, "profile.artifacts.towerSlots", "Artifact tower slots");
+    const towerSlots = Object.create(null);
+    let totalSlots = 0;
+    for (const towerTypeId of Object.keys(authoredTowerSlots).sort()) {
+        boundedString(towerTypeId, `profile.artifacts.towerSlots.${towerTypeId}`, "Tower type id", ROGUELITE_ARTIFACT_LIMITS.idUtf8Bytes);
+        const path = `profile.artifacts.towerSlots.${towerTypeId}`;
+        const authoredSlots = inspectArray(authoredTowerSlots[towerTypeId], path, ROGUELITE_ARTIFACT_LIMITS.slotsPerTower, "Tower artifact slots");
+        totalSlots += authoredSlots.length;
+        if (totalSlots > ROGUELITE_ARTIFACT_LIMITS.totalSlots) {
+            throw new RogueliteProfileValidationError(path, `Artifact tower slot count exceeds the ${ROGUELITE_ARTIFACT_LIMITS.totalSlots} item budget.`);
+        }
+        const seenSlotIds = new Set();
+        const slots = authoredSlots.map((slotValue, index) => {
+            const slotPath = `${path}[${index}]`;
+            const slot = inspectRecord(slotValue, slotPath, "Tower artifact slot");
+            rejectUnknownFields(slot, REQUIRED_TOWER_SLOT_FIELDS, slotPath, "Tower artifact slot");
+            requireFields(slot, REQUIRED_TOWER_SLOT_FIELDS, slotPath, "Tower artifact slot");
+            const slotId = boundedString(slot.slotId, `${slotPath}.slotId`, "Artifact slot id", ROGUELITE_ARTIFACT_LIMITS.idUtf8Bytes);
+            if (seenSlotIds.has(slotId)) {
+                throw new RogueliteProfileValidationError(`${slotPath}.slotId`, `Duplicate artifact slot id "${slotId}".`);
+            }
+            seenSlotIds.add(slotId);
+            return Object.freeze({
+                slotId,
+                slotType: boundedString(slot.slotType, `${slotPath}.slotType`, "Artifact slot type", ROGUELITE_ARTIFACT_LIMITS.idUtf8Bytes)
+            });
+        });
+        Object.defineProperty(towerSlots, towerTypeId, { value: Object.freeze(slots), enumerable: true });
+    }
+    const authoredLootTables = inspectRecord(artifacts.bossLootTables, "profile.artifacts.bossLootTables", "Artifact boss loot tables");
+    const lootTableEnemyIds = Object.keys(authoredLootTables).sort();
+    if (lootTableEnemyIds.length > ROGUELITE_ARTIFACT_LIMITS.lootTables) {
+        throw new RogueliteProfileValidationError("profile.artifacts.bossLootTables", `Artifact loot table count exceeds the ${ROGUELITE_ARTIFACT_LIMITS.lootTables} item limit.`);
+    }
+    const bossLootTables = Object.create(null);
+    for (const enemyTypeId of lootTableEnemyIds) {
+        boundedString(enemyTypeId, `profile.artifacts.bossLootTables.${enemyTypeId}`, "Loot-bearing enemy type id", ROGUELITE_ARTIFACT_LIMITS.idUtf8Bytes);
+        const path = `profile.artifacts.bossLootTables.${enemyTypeId}`;
+        const table = inspectRecord(authoredLootTables[enemyTypeId], path, `Artifact loot table "${enemyTypeId}"`);
+        rejectUnknownFields(table, [...REQUIRED_LOOT_TABLE_FIELDS, ...OPTIONAL_LOOT_TABLE_FIELDS], path, `Artifact loot table "${enemyTypeId}"`);
+        requireFields(table, REQUIRED_LOOT_TABLE_FIELDS, path, `Artifact loot table "${enemyTypeId}"`);
+        const rolls = boundedInteger(table.rolls, `${path}.rolls`, "Artifact loot table rolls", 1, ROGUELITE_ARTIFACT_LIMITS.rollsPerTable);
+        const noDropWeight = table.noDropWeight === undefined
+            ? 0
+            : boundedInteger(table.noDropWeight, `${path}.noDropWeight`, "Artifact no-drop weight", 0, ROGUELITE_ARTIFACT_LIMITS.weight);
+        const authoredEntries = inspectArray(table.entries, `${path}.entries`, ROGUELITE_ARTIFACT_LIMITS.entriesPerTable, "Artifact loot entries");
+        if (authoredEntries.length === 0) {
+            throw new RogueliteProfileValidationError(`${path}.entries`, "Artifact loot table must contain at least one entry.");
+        }
+        const seenArtifactIds = new Set();
+        let totalWeight = noDropWeight;
+        const entries = authoredEntries.map((entryValue, index) => {
+            const entryPath = `${path}.entries[${index}]`;
+            const entry = inspectRecord(entryValue, entryPath, "Artifact loot entry");
+            rejectUnknownFields(entry, REQUIRED_LOOT_ENTRY_FIELDS, entryPath, "Artifact loot entry");
+            requireFields(entry, REQUIRED_LOOT_ENTRY_FIELDS, entryPath, "Artifact loot entry");
+            const artifactId = boundedString(entry.artifactId, `${entryPath}.artifactId`, "Artifact id", ROGUELITE_ARTIFACT_LIMITS.idUtf8Bytes);
+            if (seenArtifactIds.has(artifactId)) {
+                throw new RogueliteProfileValidationError(`${entryPath}.artifactId`, `Duplicate artifact loot entry "${artifactId}".`);
+            }
+            seenArtifactIds.add(artifactId);
+            const weight = boundedInteger(entry.weight, `${entryPath}.weight`, "Artifact loot weight", 1, ROGUELITE_ARTIFACT_LIMITS.weight);
+            totalWeight += weight;
+            return Object.freeze({ artifactId, weight });
+        }).sort((left, right) => left.artifactId < right.artifactId ? -1 : left.artifactId > right.artifactId ? 1 : 0);
+        if (totalWeight < 1 || totalWeight > ROGUELITE_ARTIFACT_LIMITS.totalTableWeight) {
+            throw new RogueliteProfileValidationError(path, `Artifact loot table total weight exceeds the ${ROGUELITE_ARTIFACT_LIMITS.totalTableWeight} budget.`);
+        }
+        Object.defineProperty(bossLootTables, enemyTypeId, {
+            value: Object.freeze({
+                rolls,
+                ...(noDropWeight === 0 ? {} : { noDropWeight }),
+                entries: Object.freeze(entries)
+            }),
+            enumerable: true
+        });
+    }
+    return Object.freeze({
+        definitions: Object.freeze(definitions),
+        towerSlots: Object.freeze(towerSlots),
+        bossLootTables: Object.freeze(bossLootTables)
+    });
+}
+/** Validate and detach an exact closed roguelite v2 profile. */
+export function normalizeRogueliteProfileV2(value) {
+    const profile = inspectRecord(value, "profile", "Roguelite profile");
+    rejectUnknownFields(profile, REQUIRED_PROFILE_V2_FIELDS, "profile", "Roguelite profile");
+    requireFields(profile, REQUIRED_PROFILE_V2_FIELDS, "profile", "Roguelite profile");
+    const synergies = normalizeRogueliteProfileV1({ synergies: profile.synergies }).synergies;
+    return Object.freeze({
+        synergies,
+        artifacts: normalizeRogueliteArtifactsV2(profile.artifacts)
+    });
+}
 function normalizeTowerTagsByTypeId(content) {
     const result = Object.create(null);
     let taggedTowerTypes = 0;
@@ -302,23 +502,34 @@ function normalizeTowerTagsByTypeId(content) {
     }
     return Object.freeze(result);
 }
-/** Resolve a detached profile only when the mission genuinely activates roguelite v1. */
+/** Resolve a detached profile only when the mission genuinely activates a supported roguelite version. */
 export function resolveActiveRogueliteMechanics(content, missionId) {
     try {
         const capability = content.missions[missionId]?.capabilities.roguelite;
         if (!capability?.active || capability.profileId === undefined)
             return undefined;
         const module = inspectRecord(ownData(ownData(content.mechanics, "modules"), "roguelite"), "module", "Roguelite mechanics module");
-        if (module.schemaVersion !== 1 || module.enabled !== true)
+        if ((module.schemaVersion !== 1 && module.schemaVersion !== 2) || module.enabled !== true)
             return undefined;
         rejectUnknownFields(module, ["schemaVersion", "enabled", "profiles"], "module", "Roguelite mechanics module");
         const profiles = inspectRecord(module.profiles, "module.profiles", "Roguelite mechanics profiles");
-        const profile = normalizeRogueliteProfileV1(ownData(profiles, capability.profileId));
+        const towerTagsByTypeId = normalizeTowerTagsByTypeId(content);
+        if (module.schemaVersion === 1) {
+            const profile = normalizeRogueliteProfileV1(ownData(profiles, capability.profileId));
+            return Object.freeze({
+                schemaVersion: 1,
+                profileId: capability.profileId,
+                synergies: profile.synergies,
+                towerTagsByTypeId
+            });
+        }
+        const profile = normalizeRogueliteProfileV2(ownData(profiles, capability.profileId));
         return Object.freeze({
-            schemaVersion: 1,
+            schemaVersion: 2,
             profileId: capability.profileId,
             synergies: profile.synergies,
-            towerTagsByTypeId: normalizeTowerTagsByTypeId(content)
+            artifacts: profile.artifacts,
+            towerTagsByTypeId
         });
     }
     catch {

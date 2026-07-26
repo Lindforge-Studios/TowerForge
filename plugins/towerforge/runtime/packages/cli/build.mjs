@@ -387,6 +387,7 @@ function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "
         <label class="speed">Music <input id="music-volume" type="range" min="0" max="1" step="0.05" value="0.35"><span id="music-volume-label">35%</span></label>
         <div id="ability-bar" class="ability-bar"></div>
         <section id="roguelite-status" class="roguelite-status" aria-label="Tower synergies" hidden></section>
+        <section id="artifact-inventory" class="roguelite-status" aria-label="Artifact inventory" hidden></section>
         <section id="meta-panel" class="meta-panel" aria-label="Permanent upgrades" hidden>
           <div class="meta-title">Forge upgrades <span id="meta-resources"></span></div>
           <div id="meta-upgrades" class="meta-upgrades"></div>
@@ -1162,11 +1163,14 @@ function updateHud(snap) {
 
 function updateRogueliteStatus(snap) {
   const panel = $("roguelite-status");
-  if (!panel) return;
+  const artifactPanel = $("artifact-inventory");
+  if (!panel || !artifactPanel) return;
   const presentation = projectRoguelitePresentation(snap);
-  if (!presentation) { panel.hidden = true; panel.replaceChildren(); return; }
+  if (!presentation) { panel.hidden = true; panel.replaceChildren(); artifactPanel.hidden = true; artifactPanel.replaceChildren(); return; }
   panel.hidden = !presentation.active;
   panel.replaceChildren();
+  artifactPanel.hidden = !presentation.active || !presentation.artifacts;
+  artifactPanel.replaceChildren();
   if (!presentation.active) return;
   for (const synergy of presentation.synergies) {
     const row = document.createElement("span");
@@ -1175,6 +1179,16 @@ function updateRogueliteStatus(snap) {
       : "inactive";
     row.textContent = synergy.label + ": " + synergy.towerCount + " towers (" + active + ")";
     panel.append(row);
+  }
+  if (presentation.artifacts) {
+    const title = document.createElement("strong");
+    title.textContent = "Artifacts (" + presentation.artifacts.inventory.length + ")";
+    artifactPanel.append(title);
+    for (const artifact of presentation.artifacts.inventory) {
+      const row = document.createElement("span");
+      row.textContent = artifact.label + " · " + artifact.slotType;
+      artifactPanel.append(row);
+    }
   }
 }
 
@@ -2240,11 +2254,14 @@ function updateHud(snap) {
 
 function updateRogueliteStatus(snap) {
   const panel = $("roguelite-status");
-  if (!panel) return;
+  const artifactPanel = $("artifact-inventory");
+  if (!panel || !artifactPanel) return;
   const presentation = projectRoguelitePresentation(snap);
-  if (!presentation) { panel.hidden = true; panel.replaceChildren(); return; }
+  if (!presentation) { panel.hidden = true; panel.replaceChildren(); artifactPanel.hidden = true; artifactPanel.replaceChildren(); return; }
   panel.hidden = !presentation.active;
   panel.replaceChildren();
+  artifactPanel.hidden = !presentation.active || !presentation.artifacts;
+  artifactPanel.replaceChildren();
   if (!presentation.active) return;
   for (const synergy of presentation.synergies) {
     const row = document.createElement("span");
@@ -2253,6 +2270,16 @@ function updateRogueliteStatus(snap) {
       : "inactive";
     row.textContent = synergy.label + ": " + synergy.towerCount + " towers (" + active + ")";
     panel.append(row);
+  }
+  if (presentation.artifacts) {
+    const title = document.createElement("strong");
+    title.textContent = "Artifacts (" + presentation.artifacts.inventory.length + ")";
+    artifactPanel.append(title);
+    for (const artifact of presentation.artifacts.inventory) {
+      const row = document.createElement("span");
+      row.textContent = artifact.label + " · " + artifact.slotType;
+      artifactPanel.append(row);
+    }
   }
 }
 

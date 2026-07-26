@@ -85,7 +85,7 @@ const ELEVATION_RECIPE_IDS = new Set([
 ]);
 const PHYSICS_RECIPE_IDS = new Set(["basic_displacement_physics", "tagged_fall_hazards"]);
 const TERRAFORMING_RECIPE_IDS = new Set(["tagged_flood", "tagged_moat", "tagged_destructible_bridge"]);
-const ROGUELITE_RECIPE_IDS = new Set(["basic_elemental_synergy"]);
+const ROGUELITE_RECIPE_IDS = new Set(["basic_elemental_synergy", "basic_boss_artifact_loot"]);
 const MAX_ELEVATION_CANVAS_TILES = 4_096;
 const MAX_ELEVATION_EDITOR_ROWS = 256;
 
@@ -737,7 +737,22 @@ function normalizeRogueliteMechanicsDraft(profile) {
       tiers: Array.isArray(definition.tiers) ? deep(definition.tiers) : []
     });
   }
-  return { synergies };
+  const draft = { synergies };
+  const artifacts = normalizeRogueliteArtifactDraft(source?.artifacts);
+  if (artifacts) draft.artifacts = artifacts;
+  return draft;
+}
+
+function normalizeRogueliteArtifactDraft(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const normalizeRecord = (candidate) => candidate && typeof candidate === "object" && !Array.isArray(candidate)
+    ? deep(candidate)
+    : {};
+  return {
+    definitions: normalizeRecord(ownDataValue(value, "definitions")),
+    towerSlots: normalizeRecord(ownDataValue(value, "towerSlots")),
+    bossLootTables: normalizeRecord(ownDataValue(value, "bossLootTables"))
+  };
 }
 
 function initializeRogueliteTowerTags() {
@@ -918,6 +933,12 @@ function mechanicsTerraformingLimits() {
 
 function mechanicsRogueliteLimits() {
   const source = MechanicsUI.capabilities?.roguelite?.authoring?.limits;
+  if (!source || typeof source !== "object" || Array.isArray(source)) return {};
+  return source.synergies && typeof source.synergies === "object" ? source.synergies : source;
+}
+
+function mechanicsRogueliteArtifactLimits() {
+  const source = MechanicsUI.capabilities?.roguelite?.authoring?.limits?.artifacts;
   return source && typeof source === "object" && !Array.isArray(source) ? source : {};
 }
 
@@ -939,7 +960,11 @@ function mechanicsAuthoredMatrixEntryCount() {
 }
 
 function mechanicsEffectiveModuleSchemaVersion() {
-  if (MechanicsUI.selectedModuleId === "roguelite") return 1;
+  if (MechanicsUI.selectedModuleId === "roguelite") {
+    return MechanicsUI.draft?.artifacts
+      ? Math.max(mechanicsProjectModuleVersion(), MechanicsUI.moduleSchemaVersion ?? 1, 2)
+      : 1;
+  }
   if (MechanicsUI.selectedModuleId === "terraforming") return 1;
   if (MechanicsUI.selectedModuleId === "elevation") {
     const authoredVersion = Math.max(
@@ -1121,8 +1146,8 @@ async function newMechanicsProfile() {
 }
 
 async function materializeRogueliteRecipeDraft(recipe) {
-  if (mechanicsProjectModuleVersion() !== 1) {
-    throw new Error("Future roguelite module versions are preserved read-only and cannot be materialized as v1.");
+  if (mechanicsProjectModuleVersion() > 2) {
+    throw new Error("Future roguelite module versions are preserved read-only and cannot be materialized as v1/v2.");
   }
   if (!recipe || !ROGUELITE_RECIPE_IDS.has(recipe.id)) {
     throw new Error("The selected roguelite recipe is unavailable.");
@@ -1132,13 +1157,21 @@ async function materializeRogueliteRecipeDraft(recipe) {
     ? mission.buildTowerIds.filter((towerId) => ownDataValue(S.project?.towers, towerId)).slice(0, 16)
     : [];
   if (towerTypeIds.length === 0) throw new Error("The selected mission has no buildable towers for this recipe.");
+  const enemyIds = Object.keys(S.project?.enemies ?? {}).sort();
+  const bossEnemyTypeId = enemyIds.find((enemyId) => /boss|brute|elite/i.test(enemyId)) ?? enemyIds[0];
+  if (recipe.id === "basic_boss_artifact_loot" && !bossEnemyTypeId) {
+    throw new Error("The project has no authored enemy for the boss artifact recipe.");
+  }
   const materialized = await apiPost("/api/mechanics/recipe", {
     recipeId: recipe.id,
-    parameters: { towerTypeIds }
+    parameters: recipe.id === "basic_boss_artifact_loot"
+      ? { towerTypeIds, bossEnemyTypeId }
+      : { towerTypeIds }
   });
   const candidate = materialized?.recipe ?? materialized;
   const entity = candidate?.entity;
-  if (entity?.moduleId !== "roguelite" || !entity.profile || !entity.towerTags) {
+  if (entity?.moduleId !== "roguelite" || !entity.profile
+    || (recipe.id === "basic_elemental_synergy" && !entity.towerTags)) {
     throw new Error("The shared roguelite recipe returned an invalid detached candidate.");
   }
   MechanicsUI.recipe = recipe;
@@ -1147,12 +1180,12 @@ async function materializeRogueliteRecipeDraft(recipe) {
   MechanicsUI.loadedProfileId = null;
   MechanicsUI.draft = normalizeRogueliteMechanicsDraft(entity.profile);
   initializeRogueliteTowerTags();
-  for (const [towerId, tags] of Object.entries(entity.towerTags)) {
+  for (const [towerId, tags] of Object.entries(entity.towerTags ?? {})) {
     if (ownDataValue(MechanicsUI.towerTags, towerId) !== undefined) {
       defineOwnDataValue(MechanicsUI.towerTags, towerId, deep(tags));
     }
   }
-  MechanicsUI.moduleSchemaVersion = 1;
+  MechanicsUI.moduleSchemaVersion = entity.moduleSchemaVersion ?? 1;
   MechanicsUI.preview = null;
   MechanicsUI.error = null;
   renderMechanicsHub();
@@ -2677,7 +2710,7 @@ function rogueliteKnownTags() {
 
 function refreshRogueliteKnownTagControls() {
   const knownTags = rogueliteKnownTags();
-  const supportedVersion = mechanicsProjectModuleVersion() === 1;
+  const supportedVersion = mechanicsProjectModuleVersion() <= 2;
   const synergies = MechanicsUI.draft?.synergies ?? {};
   $("mechanics-roguelite-synergy-rows")?.querySelectorAll("[data-synergy-id]").forEach((row) => {
     const definition = ownDataValue(synergies, row.dataset.synergyId);
@@ -2697,7 +2730,7 @@ function renderRogueliteMechanicsEditor() {
   if (MechanicsUI.selectedModuleId !== "roguelite" || !MechanicsUI.draft) return;
   MechanicsUI.draft = normalizeRogueliteMechanicsDraft(MechanicsUI.draft);
   const limits = mechanicsRogueliteLimits();
-  const supportedVersion = mechanicsProjectModuleVersion() === 1;
+  const supportedVersion = mechanicsProjectModuleVersion() <= 2;
   const towerRows = $("mechanics-roguelite-tower-tag-rows");
   if (towerRows) {
     towerRows.innerHTML = Object.entries(S.project?.towers ?? {})
@@ -2811,6 +2844,75 @@ function renderRogueliteMechanicsEditor() {
       renderMechanicsHub();
     };
   }
+  renderRogueliteArtifactEditor(supportedVersion);
+}
+
+function renderRogueliteArtifactEditor(supportedVersion) {
+  const artifacts = MechanicsUI.draft?.artifacts;
+  const limits = mechanicsRogueliteArtifactLimits();
+  const editors = [
+    ["mechanics-roguelite-artifact-definition-rows", "definitions", "Artifact definitions JSON"],
+    ["mechanics-roguelite-tower-slot-rows", "towerSlots", "Tower slots JSON"],
+    ["mechanics-roguelite-boss-loot-table-rows", "bossLootTables", "Boss loot tables JSON"]
+  ];
+  for (const [containerId, field, label] of editors) {
+    const container = $(containerId);
+    if (!container) continue;
+    if (!artifacts) {
+      container.innerHTML = `<div class="workbench-empty">No roguelite v2 artifact data in this profile.</div>`;
+      continue;
+    }
+    container.innerHTML = `<label>${esc(label)}<textarea data-role="artifact-json" class="mono" spellcheck="false"></textarea></label>`;
+    const input = container.querySelector('[data-role="artifact-json"]');
+    input.value = JSON.stringify(artifacts[field] ?? {}, null, 2);
+    input.disabled = !supportedVersion;
+    input.onchange = () => {
+      try {
+        const value = JSON.parse(input.value);
+        if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Use one JSON object.");
+        artifacts[field] = value;
+        input.setCustomValidity("");
+        MechanicsUI.moduleSchemaVersion = 2;
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      } catch {
+        input.setCustomValidity(`${label} must be a valid JSON object.`);
+        input.reportValidity();
+      }
+    };
+  }
+
+  const add = $("btn-mechanics-add-artifact");
+  if (!add) return;
+  add.disabled = !supportedVersion
+    || Object.keys(artifacts?.definitions ?? {}).length >= (limits.definitions ?? 256);
+  add.onclick = () => {
+    MechanicsUI.draft.artifacts ??= { definitions: {}, towerSlots: {}, bossLootTables: {} };
+    const next = MechanicsUI.draft.artifacts;
+    let suffix = Object.keys(next.definitions).length + 1;
+    let artifactId = `artifact_${suffix}`;
+    while (ownDataValue(next.definitions, artifactId)) artifactId = `artifact_${++suffix}`;
+    defineOwnDataValue(next.definitions, artifactId, {
+      label: `Artifact ${suffix}`,
+      slotType: "core",
+      modifiers: [{ target: "damage", operation: "additive_ratio", value: 0.1 }]
+    });
+    const towerTypeId = Object.keys(S.project?.towers ?? {}).sort()[0];
+    if (towerTypeId && !ownDataValue(next.towerSlots, towerTypeId)) {
+      defineOwnDataValue(next.towerSlots, towerTypeId, [{ slotId: "core", slotType: "core" }]);
+    }
+    const bossEnemyTypeId = Object.keys(S.project?.enemies ?? {}).sort()
+      .find((enemyId) => /boss|brute|elite/i.test(enemyId)) ?? Object.keys(S.project?.enemies ?? {}).sort()[0];
+    if (bossEnemyTypeId && !ownDataValue(next.bossLootTables, bossEnemyTypeId)) {
+      defineOwnDataValue(next.bossLootTables, bossEnemyTypeId, {
+        rolls: 1,
+        entries: [{ artifactId, weight: 1 }]
+      });
+    }
+    MechanicsUI.moduleSchemaVersion = 2;
+    MechanicsUI.preview = null;
+    renderMechanicsHub();
+  };
 }
 
 function renderTerraformingMechanicsEditor() {
@@ -3341,8 +3443,8 @@ function renderMechanicsPreviewResult() {
 }
 
 function mechanicsRequest(enabled) {
-  if (MechanicsUI.selectedModuleId === "roguelite" && mechanicsProjectModuleVersion() !== 1) {
-    throw new Error("Future roguelite module versions are read-only in this Studio version.");
+  if (MechanicsUI.selectedModuleId === "roguelite" && mechanicsProjectModuleVersion() > 2) {
+    throw new Error("Future roguelite schemaVersion 3 modules are read-only in this Studio version.");
   }
   if (MechanicsUI.selectedModuleId === "terraforming" && mechanicsProjectModuleVersion() !== 1) {
     throw new Error("Future terraforming module versions are read-only in this Studio version.");
@@ -3447,7 +3549,7 @@ function renderMechanicsHub() {
           : MechanicsUI.selectedModuleId === "terraforming"
             ? "Author detached terrain transitions and optional bounded elevation mutation, then explicitly enable the profile for this mission."
             : MechanicsUI.selectedModuleId === "roguelite"
-              ? "Author tower tags and global damage synergies as one opt-in profile transaction."
+              ? "Author tower tags, global synergies, and optional v2 artifact loot as one opt-in profile transaction."
               : "Author a reusable combat profile, then explicitly select it for this mission.";
   missionSelect.innerHTML = Object.entries(S.project.missions ?? {}).map(([id, mission]) =>
     `<option value="${esc(id)}" ${id === MechanicsUI.missionId ? "selected" : ""}>${esc(mission.label ?? id)}</option>`).join("");
@@ -3592,7 +3694,7 @@ function renderMechanicsHub() {
   }
   const busy = MechanicsUI.loading || MechanicsUI.applying || MechanicsUI.terraformingRecipeLoading;
   const supportedTerraformingVersion = MechanicsUI.selectedModuleId !== "terraforming" || mechanicsProjectModuleVersion() === 1;
-  const supportedRogueliteVersion = MechanicsUI.selectedModuleId !== "roguelite" || mechanicsProjectModuleVersion() === 1;
+  const supportedRogueliteVersion = MechanicsUI.selectedModuleId !== "roguelite" || mechanicsProjectModuleVersion() <= 2;
   const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion && supportedRogueliteVersion && !busy;
   const dirtyWriteGuard = Boolean(S.dirty);
   if ($("btn-mechanics-preview")) $("btn-mechanics-preview").disabled = !writable;
@@ -3612,6 +3714,7 @@ function renderMechanicsHub() {
   if ($("btn-mechanics-add-movement-profile")) $("btn-mechanics-add-movement-profile").disabled = !writable || MechanicsUI.draft?.mode !== "dynamic_flow";
   if ($("btn-mechanics-add-terraforming-transition")) $("btn-mechanics-add-terraforming-transition").disabled ||= !writable;
   if ($("btn-mechanics-add-synergy")) $("btn-mechanics-add-synergy").disabled ||= !writable;
+  if ($("btn-mechanics-add-artifact")) $("btn-mechanics-add-artifact").disabled ||= !writable;
   $("btn-mechanics-reload").disabled = dirtyWriteGuard || busy;
   if ($("mechanics-profile-id")) $("mechanics-profile-id").disabled = !writable;
   $("btn-mechanics-load-profile").onclick = loadMechanicsProfile;

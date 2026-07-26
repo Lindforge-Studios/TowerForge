@@ -26,6 +26,29 @@ const profile = Object.freeze({
     })
   })
 });
+const artifactProfile = Object.freeze({
+  synergies: profile.synergies,
+  artifacts: Object.freeze({
+    definitions: Object.freeze({
+      boss_trophy: Object.freeze({
+        label: "Boss Trophy",
+        slotType: "core",
+        modifiers: Object.freeze([
+          Object.freeze({ target: "damage", operation: "additive_ratio", value: 0.1 })
+        ])
+      })
+    }),
+    towerSlots: Object.freeze({
+      arrow_tower: Object.freeze([Object.freeze({ slotId: "core", slotType: "core" })])
+    }),
+    bossLootTables: Object.freeze({
+      armored_brute: Object.freeze({
+        rolls: 1,
+        entries: Object.freeze([Object.freeze({ artifactId: "boss_trophy", weight: 1 })])
+      })
+    })
+  })
+});
 
 afterEach(() => {
   for (const projectDir of tempProjects.splice(0)) fs.rmSync(projectDir, { recursive: true, force: true });
@@ -179,6 +202,31 @@ describe("R4.1A roguelite CLI and recipe authoring contract", () => {
     expect(raw.balance.towers.arrow_tower.tags).toEqual(["elemental", "sniper"]);
     expect(raw.balance.towers.cannon_tower.tags).toEqual(["elemental", "tech"]);
     expect(raw.mechanics.modules.roguelite.profiles.basic_elemental_synergy).toEqual(profile);
+  });
+
+  it("supports a guarded roguelite v2 artifact profile without changing the v1 authoring path", async () => {
+    const projectDir = fixture();
+    const authored = request({
+      moduleSchemaVersion: 2,
+      profileId: "basic_boss_artifact_loot",
+      profile: artifactProfile
+    });
+
+    const preview = await previewMechanicsModule(projectDir, authored);
+    expect(preview).toMatchObject({ ok: true, dryRun: true, written: false });
+    expect(preview.candidate.mechanics.modules.roguelite).toEqual({
+      schemaVersion: 2,
+      enabled: true,
+      profiles: { basic_boss_artifact_loot: artifactProfile }
+    });
+
+    const applied = await applyMechanicsModule(projectDir, {
+      ...authored,
+      ifRevision: preview.revision
+    });
+    expect(applied).toMatchObject({ ok: true, written: true, rolledBack: false });
+    expect(readRawProjectFiles(projectDir).mechanics.modules.roguelite)
+      .toEqual(preview.candidate.mechanics.modules.roguelite);
   });
 
   it("rejects a stale tower-tag apply and rolls balance back after a final replace failure", async () => {

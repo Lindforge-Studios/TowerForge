@@ -130,7 +130,7 @@ function rogueliteInput(
         schemaVersion: 1,
         modules: {
           roguelite: {
-            schemaVersion: mode === "future" ? 2 : 1,
+            schemaVersion: mode === "future" ? 3 : 1,
             enabled: mode !== "disabled",
             profiles: { core: profile }
           }
@@ -176,19 +176,25 @@ describe("R4.1A roguelite v1 schema and capability", () => {
       "moduleId",
       "supportedModuleSchemaVersions",
       "profile",
+      "profileVersions",
       "towerTags",
       "synergy",
       "tiers",
       "modifier",
+      "artifacts",
       "limits",
       "runtimeSnapshot"
     ]);
     expect(schema).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       moduleId: "roguelite",
-      supportedModuleSchemaVersions: [1],
+      supportedModuleSchemaVersions: [1, 2],
       profile: {
-        requiredFields: ["synergies"], optionalFields: [], additionalProperties: false
+        requiredFields: ["synergies", "artifacts"], optionalFields: [], additionalProperties: false
+      },
+      profileVersions: {
+        1: { requiredFields: ["synergies"], optionalFields: [], additionalProperties: false },
+        2: { requiredFields: ["synergies", "artifacts"], optionalFields: [], additionalProperties: false }
       },
       towerTags: { field: "tags", optional: true, itemType: "string", uniqueItems: true },
       synergy: {
@@ -208,12 +214,15 @@ describe("R4.1A roguelite v1 schema and capability", () => {
         operations: ["flat", "additive_ratio", "multiplier"],
         stage: "run"
       },
-      limits: EXPECTED_LIMITS,
+      limits: { synergies: EXPECTED_LIMITS },
       runtimeSnapshot: {
         path: "snapshot.roguelite",
-        schemaVersion: 1,
+        supportedSchemaVersions: [1, 2],
         optionalUnlessActive: true,
-        fields: ["schemaVersion", "synergies"]
+        fieldsByVersion: {
+          1: ["schemaVersion", "synergies"],
+          2: ["schemaVersion", "synergies", "artifacts"]
+        }
       }
     });
     expect(Object.isFrozen(schema)).toBe(true);

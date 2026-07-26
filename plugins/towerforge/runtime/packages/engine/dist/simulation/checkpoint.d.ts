@@ -56,6 +56,19 @@ export interface TerraformingCheckpointStateV2 {
     readonly pendingExpiryGroups: readonly TerraformingExpiryGroupV2[];
 }
 export type TerraformingCheckpointState = TerraformingCheckpointStateV1 | TerraformingCheckpointStateV2;
+export interface ArtifactCheckpointInventoryEntryV1 {
+    readonly instanceId: string;
+    readonly artifactId: string;
+}
+export interface ArtifactCheckpointStateV1 {
+    readonly schemaVersion: 1;
+    readonly rng: {
+        readonly initial: SeededRngStateV1;
+        readonly current: SeededRngStateV1;
+    };
+    readonly nextInstanceSequence: number;
+    readonly inventory: readonly ArtifactCheckpointInventoryEntryV1[];
+}
 /** Authoritative mutable simulation state. Map occupancy and water cues are rebuilt derivatives. */
 export interface GameCheckpointStateV1 {
     readonly coreHp: number;
@@ -91,6 +104,7 @@ export interface GameCheckpointStateV1 {
     readonly scriptSignalDepth: number;
     readonly combat?: CombatState;
     readonly reactions?: ReactionStateV1;
+    readonly artifacts?: ArtifactCheckpointStateV1;
 }
 export interface GameCheckpointV1 {
     readonly schemaVersion: typeof GAME_CHECKPOINT_SCHEMA_VERSION;

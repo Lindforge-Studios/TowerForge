@@ -151,8 +151,8 @@ describe("R1 combat mechanics MCP contract", () => {
     };
     const rogueliteSurface = {
       authoring: engine.ROGUELITE_MECHANICS_SCHEMA,
-      snapshot: { field: "roguelite", optional: true, supportedSchemaVersions: [1] },
-      events: []
+      snapshot: { field: "roguelite", optional: true, supportedSchemaVersions: [1, 2] },
+      events: ["artifactDropped"]
     };
 
     expect(engine.COMBAT_MECHANICS_SCHEMA).toMatchObject({

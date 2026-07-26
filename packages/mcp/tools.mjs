@@ -242,10 +242,20 @@ const ROGUELITE_RECIPE_PARAMETERS_SCHEMA = Object.freeze({
   required: Object.freeze(["towerTypeIds"]),
   additionalProperties: false
 });
+const ROGUELITE_ARTIFACT_RECIPE_PARAMETERS_SCHEMA = Object.freeze({
+  type: "object",
+  properties: Object.freeze({
+    towerTypeIds: ROGUELITE_RECIPE_PARAMETERS_SCHEMA.properties.towerTypeIds,
+    bossEnemyTypeId: Object.freeze({ type: "string", minLength: 1, maxLength: 128 })
+  }),
+  required: Object.freeze(["towerTypeIds", "bossEnemyTypeId"]),
+  additionalProperties: false
+});
 const MECHANICS_RECIPE_PARAMETERS_SCHEMA = Object.freeze({
   oneOf: Object.freeze([
     TERRAFORMING_RECIPE_PARAMETERS_SCHEMA,
-    ROGUELITE_RECIPE_PARAMETERS_SCHEMA
+    ROGUELITE_RECIPE_PARAMETERS_SCHEMA,
+    ROGUELITE_ARTIFACT_RECIPE_PARAMETERS_SCHEMA
   ])
 });
 const ROGUELITE_TOWER_TAGS_SCHEMA = Object.freeze({
@@ -490,7 +500,7 @@ export const TOOLS = [
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
         moduleId: { type: "string", description: "Engine-owned mechanics module id." },
-        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3], description: "Module contract version: navigation, physics, terraforming, and roguelite support v1; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Omitted edits preserve an existing version and new modules default to v1." },
+        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3], description: "Module contract version: navigation, physics, and terraforming support v1; roguelite supports v1 for synergies and v2 for artifact loot; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Omitted edits preserve an existing version and new modules default to v1." },
         missionId: { type: "string", description: "Mission that would select the profile; defaults to the project's default mission." },
         profileId: { type: "string", description: "Profile id to preview." },
         profile: { type: "object", description: "Versioned module profile payload." },
@@ -512,7 +522,7 @@ export const TOOLS = [
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
         moduleId: { type: "string", description: "Engine-owned mechanics module id." },
-        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3], description: "Module contract version: navigation, physics, terraforming, and roguelite support v1; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Upgrades are guarded and version downgrades are rejected." },
+        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3], description: "Module contract version: navigation, physics, and terraforming support v1; roguelite supports v1 for synergies and v2 for artifact loot; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Upgrades are guarded and version downgrades are rejected." },
         missionId: { type: "string", description: "Mission that would select the profile; defaults to the project's default mission." },
         profileId: { type: "string", description: "Profile id to enable." },
         profile: { type: "object", description: "Versioned module profile payload." },
@@ -1351,8 +1361,8 @@ export async function callTool(name, args = {}, ctx = {}) {
     };
     const roguelite = {
       authoring: engine.ROGUELITE_MECHANICS_SCHEMA,
-      snapshot: { field: "roguelite", optional: true, supportedSchemaVersions: [1] },
-      events: []
+      snapshot: { field: "roguelite", optional: true, supportedSchemaVersions: [1, 2] },
+      events: ["artifactDropped"]
     };
     return {
       schemaVersion: 2,
@@ -2951,7 +2961,12 @@ function projectRecipeForMcp(recipe) {
     return { ...recipe, parameterSchema: TERRAFORMING_RECIPE_PARAMETERS_SCHEMA };
   }
   if (recipe?.moduleId === "roguelite") {
-    return { ...recipe, parameterSchema: ROGUELITE_RECIPE_PARAMETERS_SCHEMA };
+    return {
+      ...recipe,
+      parameterSchema: recipe.id === "basic_boss_artifact_loot"
+        ? ROGUELITE_ARTIFACT_RECIPE_PARAMETERS_SCHEMA
+        : ROGUELITE_RECIPE_PARAMETERS_SCHEMA
+    };
   }
   return recipe;
 }

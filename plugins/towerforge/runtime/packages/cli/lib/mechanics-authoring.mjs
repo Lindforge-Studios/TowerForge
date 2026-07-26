@@ -33,7 +33,7 @@ const MECHANICS_MODULE_SCHEMA_VERSIONS = Object.freeze({
   elevation: Object.freeze([1, 2, 3]),
   physics: Object.freeze([1]),
   terraforming: Object.freeze([1]),
-  roguelite: Object.freeze([1])
+  roguelite: Object.freeze([1, 2])
 });
 const SOURCE_BYTE_LIMITS = Object.freeze({
   project: 256 * 1024,

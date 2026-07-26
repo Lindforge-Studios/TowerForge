@@ -51,6 +51,10 @@ export declare class TowerDefenseGame {
     private readonly activeRogueliteMechanics;
     private rogueliteSnapshot;
     private rogueliteDamageModifiers;
+    private artifactInitialRngState;
+    private artifactRng;
+    private artifactInventory;
+    private nextArtifactInstanceSequence;
     private readonly navigationMandatoryPairs;
     private readonly navigationKnownPairs;
     private navigationResolver;
@@ -185,6 +189,7 @@ export declare class TowerDefenseGame {
     private buildNavigationFieldDiagnostics;
     private buildNavigationSnapshot;
     private buildElevationSnapshot;
+    private buildArtifactCheckpointState;
     private buildCheckpointState;
     private static validateCheckpointIdentity;
     private static validateCheckpointState;
@@ -363,6 +368,7 @@ export declare class TowerDefenseGame {
     private applyPassiveIncome;
     private awardClearedWaveIncome;
     private removeDeadEnemies;
+    private settleArtifactLoot;
     private dynamicEnemyAtGoal;
     private spawnOnDeathChildren;
     private resolveWaveState;

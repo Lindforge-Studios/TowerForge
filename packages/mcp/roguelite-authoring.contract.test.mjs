@@ -32,8 +32,8 @@ function fixture() {
   return projectDir;
 }
 
-describe("R4.1A roguelite MCP and AI authoring contract", () => {
-  it("describes roguelite v1 and exposes sorted tower tags through capabilities", async () => {
+describe("R4.1A/R4.2E roguelite MCP and AI authoring contract", () => {
+  it("describes roguelite v1/v2 and exposes sorted tower tags through capabilities", async () => {
     const engine = await loadEngine();
     const projectDir = fixture();
     const roguelite = await callTool("describe_schema", { domain: "roguelite" }, {});
@@ -45,8 +45,8 @@ describe("R4.1A roguelite MCP and AI authoring contract", () => {
       requestedDomain: "roguelite",
       roguelite: {
         authoring: engine.ROGUELITE_MECHANICS_SCHEMA,
-        snapshot: { field: "roguelite", optional: true, supportedSchemaVersions: [1] },
-        events: []
+        snapshot: { field: "roguelite", optional: true, supportedSchemaVersions: [1, 2] },
+        events: ["artifactDropped"]
       }
     });
     expect(mechanics.mechanics.modules.roguelite).toEqual(roguelite.roguelite);
@@ -58,6 +58,99 @@ describe("R4.1A roguelite MCP and AI authoring contract", () => {
         towerTagsByTowerId: { arrow_tower: ["sniper"] }
       }
     });
+  });
+
+  it("materializes detached boss loot and applies its v2 profile only through the guarded transaction", async () => {
+    const projectDir = fixture();
+    const before = ["project.json", "content/mechanics.json", "content/balance.json"].map((relativePath) => {
+      const filePath = path.join(projectDir, relativePath);
+      return fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : null;
+    });
+
+    const listed = await callTool("list_recipes", { collection: "mechanics" }, {});
+    const listedRecipe = listed.recipes.find((recipe) => recipe.id === "basic_boss_artifact_loot");
+    expect(listedRecipe?.parameterSchema).toEqual({
+      type: "object",
+      properties: {
+        towerTypeIds: {
+          type: "array",
+          items: { type: "string", minLength: 1, maxLength: 128 },
+          minItems: 1,
+          maxItems: 16,
+          uniqueItems: true
+        },
+        bossEnemyTypeId: { type: "string", minLength: 1, maxLength: 128 }
+      },
+      required: ["towerTypeIds", "bossEnemyTypeId"],
+      additionalProperties: false
+    });
+
+    const materialized = await callTool("get_recipe", {
+      projectDir,
+      collection: "mechanics",
+      recipeId: "basic_boss_artifact_loot",
+      parameters: {
+        towerTypeIds: ["arrow_tower"],
+        bossEnemyTypeId: "armored_brute"
+      }
+    }, {});
+    expect(materialized.recipe).toMatchObject({
+      moduleId: "roguelite",
+      moduleSchemaVersion: 2,
+      entity: {
+        moduleId: "roguelite",
+        moduleSchemaVersion: 2,
+        profileId: "basic_boss_artifact_loot",
+        profile: {
+          synergies: {},
+          artifacts: {
+            definitions: {
+              boss_trophy: {
+                label: "Boss Trophy",
+                slotType: "core",
+                modifiers: [{ target: "damage", operation: "additive_ratio", value: 0.1 }]
+              }
+            },
+            towerSlots: {
+              arrow_tower: [{ slotId: "core", slotType: "core" }]
+            },
+            bossLootTables: {
+              armored_brute: {
+                rolls: 1,
+                entries: [{ artifactId: "boss_trophy", weight: 1 }]
+              }
+            }
+          }
+        }
+      }
+    });
+    expect(materialized.recipe.entity).not.toHaveProperty("enabled");
+    expect(materialized.recipe.entity).not.toHaveProperty("missionId");
+    expect(["project.json", "content/mechanics.json", "content/balance.json"].map((relativePath) => {
+      const filePath = path.join(projectDir, relativePath);
+      return fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : null;
+    })).toEqual(before);
+
+    const request = {
+      projectDir,
+      ...materialized.recipe.entity,
+      missionId: "tutorial_01",
+      enabled: true
+    };
+    const preview = await callTool("preview_mechanics_module", request, {});
+    expect(preview).toMatchObject({ ok: true, dryRun: true, written: false });
+    expect(preview.candidate.mechanics.modules.roguelite).toEqual({
+      schemaVersion: 2,
+      enabled: true,
+      profiles: { basic_boss_artifact_loot: materialized.recipe.entity.profile }
+    });
+    const applied = await callTool("apply_mechanics_module", {
+      ...request,
+      ifRevision: preview.revision
+    }, {});
+    expect(applied).toMatchObject({ ok: true, written: true, rolledBack: false });
+    expect(JSON.parse(fs.readFileSync(path.join(projectDir, "content", "mechanics.json"), "utf8")))
+      .toEqual(preview.candidate.mechanics);
   });
 
   it("advertises the parameterized inert recipe and forwards towerTags through guarded preview/apply", async () => {

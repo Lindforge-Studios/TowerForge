@@ -611,6 +611,14 @@ export type GameEvent =
   | { type: "towerTargetModeChanged"; towerId: string; mode: TowerTargetMode }
   | { type: "enemyKilled"; enemyId: string; enemyTypeId: string; coins: number; resources: ResourceBag }
   | {
+      type: "artifactDropped";
+      enemyId: string;
+      enemyTypeId: string;
+      artifactInstanceId: string;
+      artifactId: string;
+      rollIndex: number;
+    }
+  | {
       type: "enemySpawnedOnDeath";
       parentEnemyId: string;
       parentEnemyTypeId: string;
@@ -736,6 +744,24 @@ export interface RogueliteSnapshotV1 {
   readonly synergies: readonly RogueliteSynergySnapshotV1[];
 }
 
+export interface RogueliteArtifactInventoryEntryV1 {
+  readonly instanceId: string;
+  readonly artifactId: string;
+  readonly label: string;
+  readonly slotType: string;
+  readonly socket: null;
+}
+
+export interface RogueliteSnapshotV2 {
+  readonly schemaVersion: 2;
+  readonly synergies: readonly RogueliteSynergySnapshotV1[];
+  readonly artifacts: {
+    readonly inventory: readonly RogueliteArtifactInventoryEntryV1[];
+  };
+}
+
+export type RogueliteSnapshot = RogueliteSnapshotV1 | RogueliteSnapshotV2;
+
 export interface GameSnapshot {
   mapId: string;
   grid: GridDefinition;
@@ -778,7 +804,7 @@ export interface GameSnapshot {
   navigation?: NavigationSnapshotV1;
   elevation?: ElevationSnapshotV1;
   terraforming?: TerraformingSnapshotV1;
-  roguelite?: RogueliteSnapshotV1;
+  roguelite?: RogueliteSnapshot;
   scriptState: import("../scripting/types.js").TowerScriptStateSnapshot;
   lastEvents: GameEvent[];
 }

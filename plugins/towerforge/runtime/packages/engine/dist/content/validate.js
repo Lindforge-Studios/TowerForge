@@ -9,7 +9,7 @@ import { GridElevationValidationError, inspectGridElevationOverrides, normalizeG
 import { HIGH_GROUND_LIMITS, LINE_OF_SIGHT_LIMITS } from "./elevation-mechanics.js";
 import { PHYSICS_LIMITS, inspectOwnDataEffect, parseDisplacementEffectV1, resolveActivePhysicsMechanics } from "./physics-mechanics.js";
 import { TERRAFORMING_LIMITS, TerraformingProfileValidationError, normalizeTerraformingProfileV1 } from "./terraforming-mechanics.js";
-import { ROGUELITE_SYNERGY_LIMITS, RogueliteProfileValidationError, normalizeRogueliteProfileV1, normalizeTowerTagsV1 } from "./roguelite-mechanics.js";
+import { ROGUELITE_SYNERGY_LIMITS, RogueliteProfileValidationError, normalizeRogueliteProfileV1, normalizeRogueliteProfileV2, normalizeTowerTagsV1 } from "./roguelite-mechanics.js";
 /** Derives a stable code like "TOWER_ATTACK_SLOWFACTOR" from entityKind + fieldPath. See the
  *  ValidationIssue.code caveat above — this is a coarse key, not a unique one. */
 export function deriveValidationCode(entityKind, fieldPath) {
@@ -2077,8 +2077,9 @@ export function validateGameContentRegistry(content) {
                 err("mechanics", "roguelite", `modules.roguelite.${key}`, `Roguelite module is closed; unknown field "${key}".`);
             }
         }
-        if (module.schemaVersion !== 1) {
-            err("mechanics", "roguelite", "modules.roguelite.schemaVersion", "Roguelite future or unsupported schemaVersion; only version 1 is supported.");
+        const supportedVersion = module.schemaVersion === 1 || module.schemaVersion === 2;
+        if (!supportedVersion) {
+            err("mechanics", "roguelite", "modules.roguelite.schemaVersion", "Roguelite future or unsupported schemaVersion; only versions 1 and 2 are supported.");
         }
         if (typeof module.enabled !== "boolean") {
             err("mechanics", "roguelite", "modules.roguelite.enabled", "Roguelite mechanics enabled must be boolean.");
@@ -2089,14 +2090,20 @@ export function validateGameContentRegistry(content) {
         for (const [missionId, profileId] of selections) {
             if (Object.prototype.hasOwnProperty.call(profiles, profileId))
                 continue;
-            const active = module.enabled === true && module.schemaVersion === 1;
+            const active = module.enabled === true && supportedVersion;
             (active ? err : warn)("mission", missionId, "mechanics.profiles.roguelite", `Mission selects missing roguelite profile "${profileId}"${active ? "" : " from an inactive module"}.`);
         }
+        // Future profiles are intentionally opaque. Studio preserves them read-only, while
+        // validation reports only the unsupported module version instead of guessing their shape.
+        if (!supportedVersion)
+            return;
         for (const profileId of Object.keys(profiles).sort()) {
             const root = `modules.roguelite.profiles.${profileId}`;
             let profile;
             try {
-                profile = normalizeRogueliteProfileV1(profiles[profileId]);
+                profile = module.schemaVersion === 2
+                    ? normalizeRogueliteProfileV2(profiles[profileId])
+                    : normalizeRogueliteProfileV1(profiles[profileId]);
             }
             catch (error) {
                 const relativePath = error instanceof RogueliteProfileValidationError
@@ -2119,6 +2126,45 @@ export function validateGameContentRegistry(content) {
                     if (!reachable) {
                         warn("mechanics", profileId, `${root}.synergies.${synergyId}.tag`, `Synergy tag "${synergy.tag}" exists but no tagged tower is buildable in mission "${missionId}".`);
                     }
+                }
+            }
+            if (module.schemaVersion !== 2)
+                continue;
+            const artifactProfile = profile;
+            const semantic = activeMissionIds.length > 0 ? err : warn;
+            const slotTypes = new Set();
+            for (const [towerTypeId, slots] of Object.entries(artifactProfile.artifacts.towerSlots)) {
+                slots.forEach((slot) => slotTypes.add(slot.slotType));
+                if (Object.prototype.hasOwnProperty.call(content.towers, towerTypeId))
+                    continue;
+                semantic("mechanics", profileId, `${root}.artifacts.towerSlots.${towerTypeId}`, `Artifact tower slots reference unknown tower type "${towerTypeId}"${activeMissionIds.length > 0 ? "" : " in this inactive profile"}.`);
+            }
+            const referencedArtifacts = new Set();
+            for (const [enemyTypeId, table] of Object.entries(artifactProfile.artifacts.bossLootTables)) {
+                if (!Object.prototype.hasOwnProperty.call(content.enemies, enemyTypeId)) {
+                    semantic("mechanics", profileId, `${root}.artifacts.bossLootTables.${enemyTypeId}`, `Artifact boss loot table references unknown enemy type "${enemyTypeId}"${activeMissionIds.length > 0 ? "" : " in this inactive profile"}.`);
+                }
+                for (const entry of table.entries) {
+                    referencedArtifacts.add(entry.artifactId);
+                    if (Object.prototype.hasOwnProperty.call(artifactProfile.artifacts.definitions, entry.artifactId))
+                        continue;
+                    semantic("mechanics", profileId, `${root}.artifacts.bossLootTables.${enemyTypeId}.entries.${entry.artifactId}`, `Artifact loot entry references unknown artifact "${entry.artifactId}"${activeMissionIds.length > 0 ? "" : " in this inactive profile"}.`);
+                }
+            }
+            for (const [artifactId, definition] of Object.entries(artifactProfile.artifacts.definitions)) {
+                if (!slotTypes.has(definition.slotType)) {
+                    warn("mechanics", profileId, `${root}.artifacts.definitions.${artifactId}.slotType`, `Artifact "${artifactId}" uses slot type "${definition.slotType}" that is not declared by any tower slot.`);
+                }
+                if (!referencedArtifacts.has(artifactId)) {
+                    warn("mechanics", profileId, `${root}.artifacts.definitions.${artifactId}`, `Artifact "${artifactId}" is not referenced by any boss loot table.`);
+                }
+            }
+            for (const missionId of activeMissionIds) {
+                const authoredEnemyIds = new Set(content.missions[missionId].waves.flatMap((wave) => wave.groups.map((group) => group.enemyId)));
+                for (const enemyTypeId of Object.keys(artifactProfile.artifacts.bossLootTables)) {
+                    if (authoredEnemyIds.has(enemyTypeId))
+                        continue;
+                    warn("mechanics", profileId, `${root}.artifacts.bossLootTables.${enemyTypeId}`, `Loot-bearing enemy "${enemyTypeId}" does not appear in mission "${missionId}" waves.`);
                 }
             }
         }

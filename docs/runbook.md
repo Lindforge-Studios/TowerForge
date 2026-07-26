@@ -43,7 +43,7 @@ The template/grid/renderer conformance gate is part of `npm run test` and `npm r
 
 ## Opt-In Mechanics
 
-Open **Mechanics** in Studio to use the isolated Mechanics Hub. Pick a mission and switch between combat, reactions, navigation, elevation, physics, terraforming, and rogue-lite synergies. Combat profiles edit shields, the v2 damage/armor matrix, or v3 marks; reactions v1 profiles edit exposures, predicates, and bounded effects; navigation v1 profiles choose `authored_routes` or `dynamic_flow`, movement profiles, costs, occupancy policies, and optional enemy assignments; physics v1 profiles edit only immunity lists and fall-hazard tag selectors; terraforming v1 profiles edit authored terrain-tag transitions and an optional elevation policy; roguelite v1 profiles edit tower tags and global damage synergy tiers. Preview before apply. Apply uses the revision returned by preview and atomically updates `project.json`, `content/mechanics.json`, and the mission selection with validation, backup, and rollback; a roguelite transaction also owns the explicit tower-tag arrays in `content/balance.json`. Disable preserves the authored profile and module version but restores the lower-capability runtime path; re-enable selects it again. The ordinary tower, enemy, map, mission, and TowerScript forms remain unchanged.
+Open **Mechanics** in Studio to use the isolated Mechanics Hub. Pick a mission and switch between combat, reactions, navigation, elevation, physics, terraforming, and rogue-lite mechanics. Combat profiles edit shields, the v2 damage/armor matrix, or v3 marks; reactions v1 profiles edit exposures, predicates, and bounded effects; navigation v1 profiles choose `authored_routes` or `dynamic_flow`, movement profiles, costs, occupancy policies, and optional enemy assignments; physics v1 profiles edit only immunity lists and fall-hazard tag selectors; terraforming v1 profiles edit authored terrain-tag transitions and an optional elevation policy; roguelite v1 profiles edit tower tags and global damage synergy tiers, while v2 adds isolated JSON editors for artifact definitions, typed tower slots, and boss loot tables. Preview before apply. Apply uses the revision returned by preview and atomically updates `project.json`, `content/mechanics.json`, and the mission selection with validation, backup, and rollback; a roguelite transaction also owns the explicit tower-tag arrays in `content/balance.json`. Disable preserves the authored profile and module version but restores the lower-capability runtime path; re-enable selects it again. The ordinary tower, enemy, map, mission, and TowerScript forms remain unchanged.
 
 In Playtest, the dynamic-navigation overlay analyzes all cells when the viewport contains at most 4,096 tiles. On a larger viewport it shows a deterministic focus window around the most recent pointer or keyboard interaction coordinate and reports `analyzed/total` partial coverage; move focus near the area you want to inspect. The overlay is advisory: every click still runs authoritative `canPlaceTower` preflight and `placeTower`, so a cell outside the current window cannot bypass last-path validation.
 
@@ -68,6 +68,15 @@ then validate. The recipe accepts 1–16 authored tower type IDs, merges `elemen
 tags, and returns the 2/4/6 additive damage candidate. It does not enable the module or select a
 mission. Do not patch tower tags separately after preview: they are part of the guarded transaction.
 Use `docs/examples/opt-in-elemental-synergies/` as the reference fixture.
+
+For R4.2A/B use the same discovery and guarded transaction with
+`get_recipe({collection:"mechanics",recipeId:"basic_boss_artifact_loot",parameters:{towerTypeIds:[...],bossEnemyTypeId:"..."}})`.
+Both IDs must already exist in project content. The recipe stages a detached v2 profile and does not
+enable/select it. The generated inventory is read-only in this slice: `socket` stays `null`, artifact
+modifiers are not applied, and no data is copied into `CampaignRunV1`. Validate and playtest both
+renderers after apply; disable/re-enable must remove/restore the optional surface without rewriting
+the profile. Reference data is in `docs/examples/opt-in-boss-artifact-loot/`; the accepted boundary is
+[ADR 0031](adr/0031-opt-in-roguelite-artifact-loot.md).
 
 Combat v1 accepts only `shields`. A target definition requires positive bounded `capacity` and may add `{ ratePerUnit, delayAfterDamage }` regeneration. Tower shields require a tower with `maxHp`. At runtime shield state is keyed by entity instance ID and appears only under active `snapshot.combat`; Canvas and Phaser consume the same presentation projection. A copyable v1 reference is under `docs/examples/opt-in-basic-shields/`.
 

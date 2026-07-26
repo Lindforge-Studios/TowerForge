@@ -3,6 +3,8 @@ const MAX_TIERS = 8;
 const MAX_REQUIRED_COUNT = 65_536;
 const MAX_ID_OR_TAG_BYTES = 128;
 const MAX_LABEL_BYTES = 256;
+const MAX_ARTIFACT_INVENTORY = 10_000;
+const MAX_DROP_EVENTS = 10_000;
 
 const INACTIVE = Object.freeze({ active: false, synergies: Object.freeze([]) });
 
@@ -109,8 +111,13 @@ function projectRow(value) {
 export function projectRoguelitePresentation(snapshot) {
   const sectionValue = ownData(snapshot, "roguelite");
   if (sectionValue === undefined || sectionValue === null) return INACTIVE;
-  const section = record(sectionValue, ["schemaVersion", "synergies"]);
-  if (!section || Object.keys(section).length !== 2 || section.schemaVersion !== 1) return undefined;
+  const schemaVersion = ownData(sectionValue, "schemaVersion");
+  const section = schemaVersion === 1
+    ? record(sectionValue, ["schemaVersion", "synergies"])
+    : schemaVersion === 2
+      ? record(sectionValue, ["schemaVersion", "synergies", "artifacts"])
+      : null;
+  if (!section || Object.keys(section).length !== (schemaVersion === 1 ? 2 : 3)) return undefined;
   const authoredRows = denseArray(section.synergies, MAX_SYNERGIES);
   if (!authoredRows) return undefined;
   const rows = [];
@@ -122,5 +129,57 @@ export function projectRoguelitePresentation(snapshot) {
     rows.push(row);
   }
   rows.sort((left, right) => left.synergyId < right.synergyId ? -1 : left.synergyId > right.synergyId ? 1 : 0);
-  return Object.freeze({ active: true, synergies: Object.freeze(rows) });
+  if (schemaVersion === 1) return Object.freeze({ active: true, synergies: Object.freeze(rows) });
+
+  const artifacts = record(section.artifacts, ["inventory"]);
+  if (!artifacts || Object.keys(artifacts).length !== 1) return undefined;
+  const authoredInventory = denseArray(artifacts.inventory, MAX_ARTIFACT_INVENTORY);
+  if (!authoredInventory) return undefined;
+  const inventory = [];
+  const instances = new Set();
+  for (const value of authoredInventory) {
+    const entry = record(value, ["instanceId", "artifactId", "label", "slotType", "socket"]);
+    if (!entry || Object.keys(entry).length !== 5 || entry.socket !== null) return undefined;
+    const instanceId = boundedText(entry.instanceId, MAX_ID_OR_TAG_BYTES);
+    const artifactId = boundedText(entry.artifactId, MAX_ID_OR_TAG_BYTES);
+    const label = boundedText(entry.label, MAX_LABEL_BYTES);
+    const slotType = boundedText(entry.slotType, MAX_ID_OR_TAG_BYTES);
+    if (!instanceId || !artifactId || !label || !slotType || instances.has(instanceId)) return undefined;
+    instances.add(instanceId);
+    inventory.push(Object.freeze({ instanceId, artifactId, label, slotType, socket: null }));
+  }
+  inventory.sort((left, right) => left.instanceId < right.instanceId ? -1 : left.instanceId > right.instanceId ? 1 : 0);
+
+  const eventsValue = ownData(snapshot, "lastEvents");
+  const events = eventsValue === undefined ? [] : denseArray(eventsValue, MAX_DROP_EVENTS);
+  if (!events) return undefined;
+  const drops = [];
+  for (const value of events) {
+    if (ownData(value, "type") !== "artifactDropped") continue;
+    const event = record(value, [
+      "type", "enemyId", "enemyTypeId", "artifactInstanceId", "artifactId", "rollIndex"
+    ]);
+    if (!event || Object.keys(event).length !== 6) return undefined;
+    const enemyId = boundedText(event.enemyId, MAX_ID_OR_TAG_BYTES);
+    const enemyTypeId = boundedText(event.enemyTypeId, MAX_ID_OR_TAG_BYTES);
+    const artifactInstanceId = boundedText(event.artifactInstanceId, MAX_ID_OR_TAG_BYTES);
+    const artifactId = boundedText(event.artifactId, MAX_ID_OR_TAG_BYTES);
+    if (!enemyId || !enemyTypeId || !artifactInstanceId || !artifactId
+      || !Number.isSafeInteger(event.rollIndex) || event.rollIndex < 0 || event.rollIndex > 7) return undefined;
+    drops.push(Object.freeze({
+      enemyId,
+      enemyTypeId,
+      artifactInstanceId,
+      artifactId,
+      rollIndex: event.rollIndex
+    }));
+  }
+  return Object.freeze({
+    active: true,
+    synergies: Object.freeze(rows),
+    artifacts: Object.freeze({
+      inventory: Object.freeze(inventory),
+      drops: Object.freeze(drops)
+    })
+  });
 }

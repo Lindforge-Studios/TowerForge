@@ -437,8 +437,8 @@ describe("R3.4b C5A MCP and AI terraforming authoring contract", () => {
     expect(snapshotTree(projectDir)).toEqual(before);
   });
 
-  it("publishes guide v16 with the exact safe AI order and enforces workspace-bound project selection", async () => {
-    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(16);
+  it("preserves the terraforming safe AI order in the additive guide and enforces workspace-bound project selection", async () => {
+    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBeGreaterThanOrEqual(16);
     for (const phrase of [
       "tagged_flood",
       "tagged_moat",

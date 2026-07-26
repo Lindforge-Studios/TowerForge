@@ -102,7 +102,9 @@ export function resolveCapabilitySet(catalog, selection = {}, availableModuleIds
             ? schemaVersion === 1 || schemaVersion === 2 || schemaVersion === 3
             : moduleId === "elevation"
                 ? schemaVersion === 1 || schemaVersion === 2 || schemaVersion === 3
-                : schemaVersion === 1;
+                : moduleId === "roguelite"
+                    ? schemaVersion === 1 || schemaVersion === 2
+                    : schemaVersion === 1;
         const profiles = ownEnumerableDataValue(module, "profiles");
         const profile = profileId === undefined ? undefined : ownEnumerableDataValue(profiles, profileId);
         let reason;

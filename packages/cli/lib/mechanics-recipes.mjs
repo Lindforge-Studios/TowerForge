@@ -14,6 +14,7 @@ const TAGGED_FLOOD_ID = "tagged_flood";
 const TAGGED_MOAT_ID = "tagged_moat";
 const TAGGED_DESTRUCTIBLE_BRIDGE_ID = "tagged_destructible_bridge";
 const BASIC_ELEMENTAL_SYNERGY_ID = "basic_elemental_synergy";
+const BASIC_BOSS_ARTIFACT_LOOT_ID = "basic_boss_artifact_loot";
 const TERRAFORMING_RECIPE_IDS = Object.freeze([
   TAGGED_FLOOD_ID,
   TAGGED_MOAT_ID,
@@ -46,6 +47,15 @@ const ROGUELITE_TOWER_TAG_PARAMETER_SCHEMA = Object.freeze({
       uniqueItems: true,
       items: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 })
     })
+  })
+});
+const ROGUELITE_ARTIFACT_PARAMETER_SCHEMA = Object.freeze({
+  type: "object",
+  required: Object.freeze(["towerTypeIds", "bossEnemyTypeId"]),
+  additionalProperties: false,
+  properties: Object.freeze({
+    towerTypeIds: ROGUELITE_TOWER_TAG_PARAMETER_SCHEMA.properties.towerTypeIds,
+    bossEnemyTypeId: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 })
   })
 });
 export class MechanicsRecipeParameterError extends Error {
@@ -185,6 +195,15 @@ const RECIPES = Object.freeze([
     suggestedId: BASIC_ELEMENTAL_SYNERGY_ID,
     moduleSchemaVersion: 1,
     parameterSchema: ROGUELITE_TOWER_TAG_PARAMETER_SCHEMA
+  }),
+  Object.freeze({
+    id: BASIC_BOSS_ARTIFACT_LOOT_ID,
+    moduleId: "roguelite",
+    label: "Basic Boss Artifact Loot",
+    description: "Inert roguelite v2 profile with typed tower slots and one deterministic boss artifact drop.",
+    suggestedId: BASIC_BOSS_ARTIFACT_LOOT_ID,
+    moduleSchemaVersion: 2,
+    parameterSchema: ROGUELITE_ARTIFACT_PARAMETER_SCHEMA
   })
 ]);
 
@@ -213,6 +232,18 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
       throw invalidRogueliteRecipeParameter("Roguelite recipe parameters must be an enumerable own data field.");
     }
     return materializeElementalSynergyRecipe(recipe, context, parameterField.value);
+  }
+  if (recipeId === BASIC_BOSS_ARTIFACT_LOOT_ID) {
+    if (parameterField.kind === "absent") {
+      throw new MechanicsRecipeParameterError(
+        "roguelite_recipe_parameters_required",
+        "Artifact recipe parameters are required and must contain towerTypeIds and bossEnemyTypeId."
+      );
+    }
+    if (parameterField.kind === "invalid") {
+      throw invalidRogueliteRecipeParameter("Artifact recipe parameters must be enumerable own data.");
+    }
+    return materializeBossArtifactRecipe(recipe, context, parameterField.value);
   }
   if (TERRAFORMING_RECIPE_IDS.includes(recipeId)) {
     if (parameterField.kind === "absent") {
@@ -369,6 +400,90 @@ function materializeElementalSynergyRecipe(recipe, context, parameterValue) {
       towerTags
     }
   };
+}
+
+function materializeBossArtifactRecipe(recipe, context, parameterValue) {
+  const parameters = inspectArtifactParameters(parameterValue);
+  const towerTypeIds = inspectTowerTypeIds(parameters.towerTypeIds);
+  const bossEnemyTypeId = boundedRogueliteRecipeId(parameters.bossEnemyTypeId, "bossEnemyTypeId");
+  const authoredTowerIds = new Set(sortedSafeIds(ownDataValue(context, "towerIds")));
+  for (const towerTypeId of towerTypeIds) {
+    if (!authoredTowerIds.has(towerTypeId)) {
+      throw new MechanicsRecipeParameterError(
+        "roguelite_recipe_tower_missing",
+        `Recipe parameter towerTypeIds references unknown authored tower "${towerTypeId}".`
+      );
+    }
+  }
+  const authoredEnemyIds = new Set(sortedSafeIds(ownDataValue(context, "enemyIds")));
+  if (!authoredEnemyIds.has(bossEnemyTypeId)) {
+    throw new MechanicsRecipeParameterError(
+      "roguelite_recipe_enemy_missing",
+      `Recipe parameter bossEnemyTypeId references unknown authored enemy "${bossEnemyTypeId}".`
+    );
+  }
+  const towerSlots = safeRecord();
+  for (const towerTypeId of [...towerTypeIds].sort(compareBinary)) {
+    defineOwn(towerSlots, towerTypeId, [{ slotId: "core", slotType: "core" }]);
+  }
+  const bossLootTables = safeRecord();
+  defineOwn(bossLootTables, bossEnemyTypeId, {
+    rolls: 1,
+    entries: [{ artifactId: "boss_trophy", weight: 1 }]
+  });
+  const definitions = safeRecord();
+  defineOwn(definitions, "boss_trophy", {
+    label: "Boss Trophy",
+    slotType: "core",
+    modifiers: [{ target: "damage", operation: "additive_ratio", value: 0.1 }]
+  });
+  return {
+    ...recipe,
+    entity: {
+      moduleId: "roguelite",
+      moduleSchemaVersion: 2,
+      profileId: recipe.suggestedId,
+      profile: {
+        synergies: safeRecord(),
+        artifacts: { definitions, towerSlots, bossLootTables }
+      }
+    }
+  };
+}
+
+function inspectArtifactParameters(value) {
+  if (!isPlainRecord(value)) {
+    throw invalidRogueliteRecipeParameter("Artifact recipe parameters must be a closed ordinary object.");
+  }
+  let descriptors;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    throw invalidRogueliteRecipeParameter("Artifact recipe parameters could not be inspected safely.");
+  }
+  if (Reflect.ownKeys(descriptors).some((key) => key !== "towerTypeIds" && key !== "bossEnemyTypeId")) {
+    throw invalidRogueliteRecipeParameter(
+      "Artifact recipe parameters are closed; only towerTypeIds and bossEnemyTypeId are allowed."
+    );
+  }
+  const towerTypeIds = descriptors.towerTypeIds;
+  const bossEnemyTypeId = descriptors.bossEnemyTypeId;
+  if (!towerTypeIds?.enumerable || !("value" in towerTypeIds)
+    || !bossEnemyTypeId?.enumerable || !("value" in bossEnemyTypeId)) {
+    throw invalidRogueliteRecipeParameter(
+      "Artifact recipe parameters towerTypeIds and bossEnemyTypeId are required as enumerable own data fields."
+    );
+  }
+  return { towerTypeIds: towerTypeIds.value, bossEnemyTypeId: bossEnemyTypeId.value };
+}
+
+function boundedRogueliteRecipeId(value, name) {
+  if (typeof value !== "string" || value.length === 0 || utf8ByteLength(value) > 128) {
+    throw invalidRogueliteRecipeParameter(
+      `Roguelite recipe parameter ${name} must contain 1..128 UTF-8 bytes.`
+    );
+  }
+  return value;
 }
 
 function inspectRogueliteParameters(value) {

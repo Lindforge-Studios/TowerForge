@@ -30,9 +30,10 @@ import {
   type ActiveTerraformingMechanicsV1
 } from "../content/terraforming-mechanics.js";
 import {
+  ROGUELITE_ARTIFACT_INVENTORY_LIMIT,
   deriveRogueliteSynergyStateV1,
   resolveActiveRogueliteMechanics,
-  type ActiveRogueliteMechanicsV1
+  type ActiveRogueliteMechanics
 } from "../content/roguelite-mechanics.js";
 import { evaluateTowerScriptExpression } from "../scripting/expression.js";
 import {
@@ -110,6 +111,8 @@ import {
   inspectCheckpointEnvelope,
   requireExactCheckpointKeys,
   type GameCheckpointIdentityV1,
+  type ArtifactCheckpointInventoryEntryV1,
+  type ArtifactCheckpointStateV1,
   type RuntimeElevationOverrideV1,
   type TerraformingCheckpointStateV2,
   type GameCheckpointStateV1,
@@ -567,6 +570,12 @@ const SCRIPT_GAME_EVENT_NAMES = new Set<TowerScriptEventName>([
   "enemyEnteredTile", "terrainChanged", "elevationChanged", "objectiveFailed", "starEarned", "victory", "defeat"
 ]);
 
+function artifactLootSeed(seed: GameSeed, missionId: string): string {
+  const seedType = typeof seed === "string" ? "s" : "n";
+  const seedPayload = String(seed);
+  return `towerforge:artifact-loot:v1|${seedType}:${seedPayload.length}:${seedPayload}|m:${missionId.length}:${missionId}`;
+}
+
 export interface TowerDefenseGameOptions {
   missionId: string;
   content: GameContentRegistry;
@@ -611,9 +620,13 @@ export class TowerDefenseGame {
   private readonly activeHighGroundProfile: ActiveHighGroundMechanics | undefined;
   private readonly activePhysicsMechanics: ActivePhysicsMechanicsV1 | undefined;
   private readonly activeTerraformingMechanics: ActiveTerraformingMechanicsV1 | undefined;
-  private readonly activeRogueliteMechanics: ActiveRogueliteMechanicsV1 | undefined;
+  private readonly activeRogueliteMechanics: ActiveRogueliteMechanics | undefined;
   private rogueliteSnapshot: GameSnapshot["roguelite"];
   private rogueliteDamageModifiers: readonly ModifierSpec[] = Object.freeze([]);
+  private artifactInitialRngState: SeededRngStateV1 | undefined;
+  private artifactRng: SeededRng | undefined;
+  private artifactInventory: ArtifactCheckpointInventoryEntryV1[] = [];
+  private nextArtifactInstanceSequence = 1;
   private readonly navigationMandatoryPairs: readonly NavigationMandatoryPair[];
   private readonly navigationKnownPairs: readonly NavigationMandatoryPair[];
   private navigationResolver: NavigationResolver | undefined;
@@ -703,6 +716,10 @@ export class TowerDefenseGame {
     this.activePhysicsMechanics = resolveActivePhysicsMechanics(this.content, missionId);
     this.activeTerraformingMechanics = resolveActiveTerraformingMechanics(this.content, missionId);
     this.activeRogueliteMechanics = resolveActiveRogueliteMechanics(this.content, missionId);
+    if (this.activeRogueliteMechanics?.schemaVersion === 2) {
+      this.artifactRng = new SeededRng(artifactLootSeed(options.seed ?? 0, missionId));
+      this.artifactInitialRngState = this.artifactRng.exportState();
+    }
     this.rebuildRogueliteSynergies();
     this.terraformingCheckpointForm = this.activeTerraformingMechanics ? 2 : 0;
     this.map.useRuntimeElevationOverrides(this.runtimeElevationOverrides);
@@ -808,6 +825,11 @@ export class TowerDefenseGame {
     this.enemies = [];
     this.navigationEnemyFields?.clear();
     this.towers = [];
+    this.artifactInventory = [];
+    this.nextArtifactInstanceSequence = 1;
+    if (this.artifactInitialRngState) {
+      this.artifactRng = SeededRng.fromState(this.artifactInitialRngState);
+    }
     this.rebuildRogueliteSynergies();
     this.enemyShields = {};
     this.towerShields = {};
@@ -2674,6 +2696,21 @@ export class TowerDefenseGame {
     };
   }
 
+  private buildArtifactCheckpointState(): ArtifactCheckpointStateV1 | undefined {
+    if (this.activeRogueliteMechanics?.schemaVersion !== 2
+      || !this.artifactInitialRngState
+      || !this.artifactRng) return undefined;
+    return {
+      schemaVersion: 1,
+      rng: {
+        initial: this.artifactInitialRngState,
+        current: this.artifactRng.exportState()
+      },
+      nextInstanceSequence: this.nextArtifactInstanceSequence,
+      inventory: this.artifactInventory.map((entry) => ({ ...entry }))
+    };
+  }
+
   private buildCheckpointState(): GameCheckpointStateV1 {
     const enemies = this.enemies.map((enemy): EnemyState => ({
       id: enemy.id,
@@ -2722,6 +2759,7 @@ export class TowerDefenseGame {
     }));
     const combat = this.buildCombatState();
     const reactions = this.buildReactionState();
+    const artifacts = this.buildArtifactCheckpointState();
     const runtimeElevationOverrides = [...this.runtimeElevationOverrides.values()]
       .sort((left, right) => left.r - right.r || left.q - right.q)
       .map((entry) => ({ q: entry.q, r: entry.r, elevation: entry.elevation }));
@@ -2814,7 +2852,8 @@ export class TowerDefenseGame {
       scriptTerrainChangesRemaining: this.scriptTerrainChangesRemaining,
       scriptSignalDepth: this.scriptSignalDepth,
       ...(combat === undefined ? {} : { combat }),
-      ...(reactions === undefined ? {} : { reactions })
+      ...(reactions === undefined ? {} : { reactions }),
+      ...(artifacts === undefined ? {} : { artifacts })
     };
     return cloneCheckpointJson(state);
   }
@@ -2869,6 +2908,8 @@ export class TowerDefenseGame {
     ] as const;
     for (const key of required) checkpointDataField(descriptors, key, "Game checkpoint state");
     const checkpointTerraforming = resolveActiveTerraformingMechanics(content, identity.missionId);
+    const checkpointRoguelite = resolveActiveRogueliteMechanics(content, identity.missionId);
+    const requiresArtifactCheckpoint = checkpointRoguelite?.schemaVersion === 2;
     const requiresElevationTerraformingCheckpoint = (
       resolveActiveElevationMechanics(content, identity.missionId) !== undefined
       && checkpointTerraforming?.elevation !== undefined
@@ -2883,11 +2924,20 @@ export class TowerDefenseGame {
     if (hasTerraformingCheckpoint) {
       checkpointDataField(descriptors, "terraforming", "Game checkpoint state");
     }
+    const hasArtifactCheckpoint = Object.prototype.hasOwnProperty.call(descriptors, "artifacts");
+    if (requiresArtifactCheckpoint && !hasArtifactCheckpoint) {
+      throw new Error("Game checkpoint artifact state is required for active roguelite v2.");
+    }
+    if (!requiresArtifactCheckpoint && hasArtifactCheckpoint) {
+      throw new Error("Game checkpoint artifact state is unsupported for an inactive capability.");
+    }
+    if (hasArtifactCheckpoint) checkpointDataField(descriptors, "artifacts", "Game checkpoint state");
     requireExactCheckpointKeys(descriptors, [
       ...required,
       ...(hasTerraformingCheckpoint ? ["terraforming"] : []),
       ...(Object.prototype.hasOwnProperty.call(descriptors, "combat") ? ["combat"] : []),
-      ...(Object.prototype.hasOwnProperty.call(descriptors, "reactions") ? ["reactions"] : [])
+      ...(Object.prototype.hasOwnProperty.call(descriptors, "reactions") ? ["reactions"] : []),
+      ...(hasArtifactCheckpoint ? ["artifacts"] : [])
     ], "Game checkpoint state");
 
     const finite = (value: unknown, label: string, minimum = 0, maximum = Infinity): number => {
@@ -2946,6 +2996,71 @@ export class TowerDefenseGame {
       }
       return result;
     };
+
+    if (requiresArtifactCheckpoint) {
+      const artifactState = state.artifacts;
+      if (!artifactState) throw new Error("Game checkpoint artifact state is required.");
+      const artifact = closed(
+        artifactState,
+        "artifact state",
+        ["schemaVersion", "rng", "nextInstanceSequence", "inventory"]
+      );
+      if (checkpointDataField(artifact, "schemaVersion", "artifact state") !== 1) {
+        throw new Error("Game checkpoint artifact state schema version is unsupported.");
+      }
+      const artifactRng = closed(
+        checkpointDataField(artifact, "rng", "artifact state"),
+        "artifact RNG",
+        ["initial", "current"]
+      );
+      const artifactInitial = checkpointDataField(artifactRng, "initial", "artifact RNG") as SeededRngStateV1;
+      const artifactCurrent = checkpointDataField(artifactRng, "current", "artifact RNG") as SeededRngStateV1;
+      for (const [label, rngState] of [["initial", artifactInitial], ["current", artifactCurrent]] as const) {
+        closed(rngState, `artifact ${label} RNG state`, ["schemaVersion", "algorithm", "words"]);
+        SeededRng.fromState(rngState);
+      }
+      const inventory = array(
+        checkpointDataField(artifact, "inventory", "artifact state"),
+        "artifact inventory"
+      );
+      if (inventory.length > ROGUELITE_ARTIFACT_INVENTORY_LIMIT) {
+        throw new Error("Game checkpoint artifact inventory budget is exceeded.");
+      }
+      const reachableArtifactIds = new Set(
+        Object.values(checkpointRoguelite.artifacts.bossLootTables)
+          .flatMap((table) => table.entries.map((entry) => entry.artifactId))
+      );
+      const seenInstances = new Set<string>();
+      for (let index = 0; index < inventory.length; index += 1) {
+        const entry = closed(inventory[index], "artifact inventory entry", ["instanceId", "artifactId"]);
+        const instanceId = stringValue(
+          checkpointDataField(entry, "instanceId", "artifact inventory entry"),
+          "artifact inventory instanceId"
+        );
+        const artifactId = stringValue(
+          checkpointDataField(entry, "artifactId", "artifact inventory entry"),
+          "artifact inventory artifactId"
+        );
+        if (instanceId !== `artifact_${index + 1}` || seenInstances.has(instanceId)) {
+          throw new Error("Game checkpoint artifact inventory has an invalid or duplicate instance id.");
+        }
+        if (!checkpointRoguelite.artifacts.definitions[artifactId]) {
+          throw new Error("Game checkpoint artifact inventory references an unknown definition.");
+        }
+        if (!reachableArtifactIds.has(artifactId)) {
+          throw new Error("Game checkpoint artifact inventory references an artifact unreachable from authored loot tables.");
+        }
+        seenInstances.add(instanceId);
+      }
+      const nextInstanceSequence = integer(
+        checkpointDataField(artifact, "nextInstanceSequence", "artifact state"),
+        "artifact nextInstanceSequence",
+        1
+      );
+      if (nextInstanceSequence !== inventory.length + 1) {
+        throw new Error("Game checkpoint artifact instance sequence is incoherent with inventory.");
+      }
+    }
 
     finite(state.coreHp, "coreHp");
     const mission = content.missions[identity.missionId]!;
@@ -3585,6 +3700,9 @@ export class TowerDefenseGame {
       towerDestroyed: { required: ["type", "towerId", "towerTypeId", "enemyId"] },
       towerTargetModeChanged: { required: ["type", "towerId", "mode"] },
       enemyKilled: { required: ["type", "enemyId", "enemyTypeId", "coins", "resources"] },
+      artifactDropped: {
+        required: ["type", "enemyId", "enemyTypeId", "artifactInstanceId", "artifactId", "rollIndex"]
+      },
       enemySpawnedOnDeath: { required: ["type", "parentEnemyId", "parentEnemyTypeId", "enemyTypeId", "enemyIds"] },
       enemyLeaked: { required: ["type", "enemyId", "enemyTypeId", "damage"] },
       enemyDisplacementResolved: {
@@ -3651,14 +3769,16 @@ export class TowerDefenseGame {
       "level", "stacks", "duration", "damage", "coins", "waveIndex", "rawDamage", "amount", "hpRatio", "pathOrder",
       "previous", "current", "capacity", "overflowDamage", "previousStacks", "currentStacks",
       "previousRemaining", "remaining"
-      , "depth", "limit", "dropped", "requestedDistance", "movedDistance", "fromElevation", "toElevation"
+      , "depth", "limit", "dropped", "requestedDistance", "movedDistance", "fromElevation", "toElevation",
+      "rollIndex"
     ]);
     const stringEventFields = new Set([
       "towerId", "towerTypeId", "enemyId", "enemyTypeId", "parentEnemyId", "parentEnemyTypeId", "healerEnemyId",
       "targetEnemyId", "targetEnemyTypeId", "source", "objectiveId", "kind", "starId", "abilityId", "terrain",
       "fromTerrain", "toTerrain", "scriptId", "signal", "routeId", "mode", "cause", "markId",
       "exposureId", "reactionId", "originEnemyId", "originEnemyTypeId", "rootEnemyId", "rootEnemyTypeId",
-      "triggerDamageType", "budget", "sourceKind", "sourceId", "stopReason", "terrainTag"
+      "triggerDamageType", "budget", "sourceKind", "sourceId", "stopReason", "terrainTag",
+      "artifactInstanceId", "artifactId"
     ]);
     const coordEventFields = new Set(["coord", "from", "to", "center", "originCoord", "sourceCoord"]);
     const bagEventFields = new Set(["refund", "cost", "resources", "income", "interest"]);
@@ -3914,6 +4034,34 @@ export class TowerDefenseGame {
           throw new Error("Game checkpoint reaction budget event limit is invalid.");
         }
         integer(checkpointDataField(event, "dropped", type), `${type}.dropped`, 1);
+      }
+      if (type === "artifactDropped") {
+        if (checkpointRoguelite?.schemaVersion !== 2 || !state.artifacts) {
+          throw new Error("Game checkpoint artifact drop event requires active roguelite v2.");
+        }
+        const artifactId = stringValue(
+          checkpointDataField(event, "artifactId", type),
+          `${type}.artifactId`
+        );
+        const instanceId = stringValue(
+          checkpointDataField(event, "artifactInstanceId", type),
+          `${type}.artifactInstanceId`
+        );
+        const enemyTypeId = stringValue(
+          checkpointDataField(event, "enemyTypeId", type),
+          `${type}.enemyTypeId`
+        );
+        const rollIndex = integer(checkpointDataField(event, "rollIndex", type), `${type}.rollIndex`);
+        const table = checkpointRoguelite.artifacts.bossLootTables[enemyTypeId];
+        if (!checkpointRoguelite.artifacts.definitions[artifactId]
+          || !table
+          || !table.entries.some((entry) => entry.artifactId === artifactId)
+          || rollIndex >= table.rolls
+          || !state.artifacts.inventory.some((entry) => (
+            entry.instanceId === instanceId && entry.artifactId === artifactId
+          ))) {
+          throw new Error("Game checkpoint artifact drop event is inconsistent with authored loot or inventory.");
+        }
       }
       optionalRoute(event, `last event ${type}`);
     }
@@ -4312,6 +4460,17 @@ export class TowerDefenseGame {
     }));
     this.navigationEnemyFields?.clear();
     this.towers = [...state.towers] as TowerState[];
+    if (this.activeRogueliteMechanics?.schemaVersion === 2 && state.artifacts) {
+      this.artifactInitialRngState = cloneCheckpointJson(state.artifacts.rng.initial);
+      this.artifactRng = SeededRng.fromState(state.artifacts.rng.current);
+      this.nextArtifactInstanceSequence = state.artifacts.nextInstanceSequence;
+      this.artifactInventory = state.artifacts.inventory.map((entry) => Object.freeze({ ...entry }));
+    } else {
+      this.artifactInitialRngState = undefined;
+      this.artifactRng = undefined;
+      this.nextArtifactInstanceSequence = 1;
+      this.artifactInventory = [];
+    }
     this.rebuildRogueliteSynergies();
     this.lastEvents = [...state.lastEvents] as GameEvent[];
     this.enemyCounter = state.enemyCounter;
@@ -7197,7 +7356,27 @@ export class TowerDefenseGame {
       return;
     }
     const derived = deriveRogueliteSynergyStateV1(this.activeRogueliteMechanics, this.towers);
-    this.rogueliteSnapshot = derived.snapshot;
+    this.rogueliteSnapshot = this.activeRogueliteMechanics.schemaVersion === 1
+      ? derived.snapshot
+      : Object.freeze({
+          schemaVersion: 2 as const,
+          synergies: derived.snapshot.synergies,
+          artifacts: Object.freeze({
+            inventory: Object.freeze(this.artifactInventory.map((entry) => {
+              const definition = this.activeRogueliteMechanics!.schemaVersion === 2
+                ? this.activeRogueliteMechanics!.artifacts.definitions[entry.artifactId]
+                : undefined;
+              if (!definition) throw new Error(`Artifact inventory references unknown definition "${entry.artifactId}".`);
+              return Object.freeze({
+                instanceId: entry.instanceId,
+                artifactId: entry.artifactId,
+                label: definition.label,
+                slotType: definition.slotType,
+                socket: null
+              });
+            }))
+          })
+        });
     this.rogueliteDamageModifiers = derived.damageModifiers;
   }
 
@@ -8948,11 +9127,51 @@ export class TowerDefenseGame {
           coins: reward.coins ?? 0,
           resources: reward
         });
+        this.settleArtifactLoot(enemy);
         spawned.push(...this.spawnOnDeathChildren(enemy));
       }
     }
 
     this.enemies = [...survivors, ...spawned];
+  }
+
+  private settleArtifactLoot(enemy: EnemyState): void {
+    const active = this.activeRogueliteMechanics;
+    const rng = this.artifactRng;
+    if (active?.schemaVersion !== 2 || !rng) return;
+    const table = active.artifacts.bossLootTables[enemy.typeId];
+    if (!table) return;
+    const noDropWeight = table.noDropWeight ?? 0;
+    const totalWeight = noDropWeight + table.entries.reduce((sum, entry) => sum + entry.weight, 0);
+    for (let rollIndex = 0; rollIndex < table.rolls; rollIndex += 1) {
+      let cursor = rng.nextInt(totalWeight);
+      if (cursor < noDropWeight) continue;
+      cursor -= noDropWeight;
+      let selectedArtifactId: string | undefined;
+      for (const entry of table.entries) {
+        if (cursor < entry.weight) {
+          selectedArtifactId = entry.artifactId;
+          break;
+        }
+        cursor -= entry.weight;
+      }
+      if (!selectedArtifactId || this.artifactInventory.length >= ROGUELITE_ARTIFACT_INVENTORY_LIMIT) continue;
+      const artifactInstanceId = `artifact_${this.nextArtifactInstanceSequence}`;
+      this.nextArtifactInstanceSequence += 1;
+      this.artifactInventory.push(Object.freeze({
+        instanceId: artifactInstanceId,
+        artifactId: selectedArtifactId
+      }));
+      this.lastEvents.push({
+        type: "artifactDropped",
+        enemyId: enemy.id,
+        enemyTypeId: enemy.typeId,
+        artifactInstanceId,
+        artifactId: selectedArtifactId,
+        rollIndex
+      });
+    }
+    this.rebuildRogueliteSynergies();
   }
 
   private dynamicEnemyAtGoal(enemy: EnemyState): boolean {

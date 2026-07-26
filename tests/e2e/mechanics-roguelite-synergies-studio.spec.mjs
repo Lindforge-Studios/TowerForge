@@ -104,6 +104,59 @@ test.describe("R4.1A Studio rogue-lite synergy lifecycle", () => {
     await expect(synergyRow(page, "synergy_1").locator('[data-role="tag"]')).toHaveValue("nature");
   });
 
+  test("authors, reloads, edits, disables, and re-enables the isolated v2 artifact profile", async ({ page }) => {
+    test.setTimeout(90_000);
+    const errors = captureBrowserErrors(page);
+    await openStudio(page);
+    await openRogueliteMechanics(page);
+
+    await page.locator("#mechanics-recipe-select").selectOption("basic_boss_artifact_loot");
+    await page.locator("#btn-mechanics-new-profile").click();
+    await expect(page.locator("#mechanics-profile-id")).toHaveValue("basic_boss_artifact_loot");
+    const definitions = page.locator('#mechanics-roguelite-artifact-definition-rows [data-role="artifact-json"]');
+    const slots = page.locator('#mechanics-roguelite-tower-slot-rows [data-role="artifact-json"]');
+    const loot = page.locator('#mechanics-roguelite-boss-loot-table-rows [data-role="artifact-json"]');
+    await expect(definitions).toHaveValue(/Boss Trophy/);
+    await expect(slots).toHaveValue(/arrow_tower/);
+    await expect(slots).toHaveValue(/cannon_tower/);
+    await expect(loot).toHaveValue(/armored_brute/);
+
+    await page.locator("#btn-mechanics-enable").click();
+    await expect(page.locator("#mechanics-hub-state")).toHaveText("Rogue-lite active for mission");
+    const initialState = {
+      projectSchemaVersion: 3,
+      moduleSchemaVersion: 2,
+      enabled: true,
+      selectedProfileId: "basic_boss_artifact_loot",
+      towerTagsByTowerId: { arrow_tower: ["sniper"] },
+      profile: bossArtifactProfile()
+    };
+    await expect.poll(() => readRogueliteState(projectDir)).toEqual(initialState);
+
+    await page.reload();
+    await openRogueliteMechanics(page);
+    const editedProfile = bossArtifactProfile();
+    editedProfile.artifacts.definitions.boss_trophy.label = "Boss Trophy Mk II";
+    const definitionsAfterReload = page.locator('#mechanics-roguelite-artifact-definition-rows [data-role="artifact-json"]');
+    await definitionsAfterReload.fill(JSON.stringify(editedProfile.artifacts.definitions, null, 2));
+    await definitionsAfterReload.press("Tab");
+    await page.locator("#btn-mechanics-save").click();
+    const editedState = { ...initialState, profile: editedProfile };
+    await expect.poll(() => readRogueliteState(projectDir)).toEqual(editedState);
+
+    await page.reload();
+    await openRogueliteMechanics(page);
+    await expect(page.locator('#mechanics-roguelite-artifact-definition-rows [data-role="artifact-json"]'))
+      .toHaveValue(/Boss Trophy Mk II/);
+
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.locator("#btn-mechanics-disable").click();
+    await expect.poll(() => readRogueliteState(projectDir)).toEqual({ ...editedState, enabled: false });
+    await page.locator("#btn-mechanics-enable").click();
+    await expect.poll(() => readRogueliteState(projectDir)).toEqual(editedState);
+    expect(errors()).toEqual([]);
+  });
+
   test("enables, reloads, edits, disables, and re-enables while preserving tags, profile, and selection", async ({ page }) => {
     test.setTimeout(90_000);
     const errors = captureBrowserErrors(page);
@@ -191,7 +244,7 @@ test.describe("R4.1A Studio rogue-lite synergy lifecycle", () => {
     expect(errors()).toEqual([]);
   });
 
-  test("keeps a future roguelite v2 module visible, byte-identical, and read-only", async ({ page }) => {
+  test("keeps a future roguelite v3 module visible, byte-identical, and read-only", async ({ page }) => {
     writeFutureRogueliteFixture(projectDir);
     const before = authoringBytes(projectDir);
     const errors = captureBrowserErrors(page);
@@ -268,6 +321,31 @@ function elementalProfile() {
   };
 }
 
+function bossArtifactProfile() {
+  return {
+    synergies: {},
+    artifacts: {
+      definitions: {
+        boss_trophy: {
+          label: "Boss Trophy",
+          slotType: "core",
+          modifiers: [{ target: "damage", operation: "additive_ratio", value: 0.1 }]
+        }
+      },
+      towerSlots: {
+        arrow_tower: [{ slotId: "core", slotType: "core" }],
+        cannon_tower: [{ slotId: "core", slotType: "core" }]
+      },
+      bossLootTables: {
+        armored_brute: {
+          rolls: 1,
+          entries: [{ artifactId: "boss_trophy", weight: 1 }]
+        }
+      }
+    }
+  };
+}
+
 function readRogueliteState(root) {
   const manifest = readJson(path.join(root, "project.json"));
   const balance = readJson(path.join(root, "content", "balance.json"));
@@ -301,7 +379,7 @@ function writeFutureRogueliteFixture(root) {
     schemaVersion: 1,
     modules: {
       roguelite: {
-        schemaVersion: 2,
+        schemaVersion: 3,
         enabled: true,
         profiles: {
           future_profile: {

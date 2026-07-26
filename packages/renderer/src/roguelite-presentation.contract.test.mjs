@@ -84,6 +84,57 @@ describe("R4.1A shared rogue-lite synergy presentation", () => {
     expectDeeplyFrozen(first);
   });
 
+  it("projects v2 inventory and bounded drop events while preserving the v1 result shape", () => {
+    const snapshot = {
+      roguelite: {
+        schemaVersion: 2,
+        synergies: [],
+        artifacts: {
+          inventory: [
+            { instanceId: "artifact_2", artifactId: "zeta", label: "Zeta", slotType: "core", socket: null },
+            { instanceId: "artifact_1", artifactId: "alpha", label: "Alpha", slotType: "optic", socket: null }
+          ]
+        }
+      },
+      lastEvents: [
+        { type: "enemyKilled", enemyId: "enemy_1", enemyTypeId: "boss", coins: 1, resources: { coins: 1 } },
+        {
+          type: "artifactDropped",
+          enemyId: "enemy_1",
+          enemyTypeId: "boss",
+          artifactInstanceId: "artifact_2",
+          artifactId: "zeta",
+          rollIndex: 0
+        }
+      ]
+    };
+
+    const projected = projector()(snapshot);
+
+    expect(projected).toEqual({
+      active: true,
+      synergies: [],
+      artifacts: {
+        inventory: [
+          { instanceId: "artifact_1", artifactId: "alpha", label: "Alpha", slotType: "optic", socket: null },
+          { instanceId: "artifact_2", artifactId: "zeta", label: "Zeta", slotType: "core", socket: null }
+        ],
+        drops: [{
+          enemyId: "enemy_1",
+          enemyTypeId: "boss",
+          artifactInstanceId: "artifact_2",
+          artifactId: "zeta",
+          rollIndex: 0
+        }]
+      }
+    });
+    expectDeeplyFrozen(projected);
+    snapshot.roguelite.artifacts.inventory[0].label = "mutated";
+    snapshot.lastEvents[1].artifactId = "mutated";
+    expect(projected.artifacts.inventory[1].label).toBe("Zeta");
+    expect(projected.artifacts.drops[0].artifactId).toBe("zeta");
+  });
+
   it("fails closed on future, malformed, sparse, accessor, duplicate, and over-budget sections", () => {
     const row = {
       synergyId: "elemental",
@@ -95,7 +146,7 @@ describe("R4.1A shared rogue-lite synergy presentation", () => {
     };
     const sparse = new Array(1);
     const invalid = [
-      { schemaVersion: 2, synergies: [] },
+      { schemaVersion: 3, synergies: [] },
       { schemaVersion: 1 },
       { schemaVersion: 1, synergies: [], extra: true },
       { schemaVersion: 1, synergies: sparse },

@@ -134,7 +134,7 @@ describe("R3.4a MCP and AI physics authoring contract", () => {
   });
 
   it("teaches the guarded flow, inert recipes, and deferred/forbidden scope", () => {
-    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(16);
+    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBeGreaterThanOrEqual(16);
     for (const phrase of [
       "basic_displacement_physics",
       "tagged_fall_hazards",
