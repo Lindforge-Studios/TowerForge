@@ -226,6 +226,66 @@ describe("R5.3A targeted hero ability recipe", () => {
   });
 });
 
+describe("R5.4A battle-local hero skill-tree recipe", () => {
+  it("materializes an inert heroes v5 tree without enabling or mutating adjacent mechanics", () => {
+    expect(listMechanicsRecipes().map((recipe) => recipe.id)).toContain("basic_hero_skill_tree");
+
+    const recipe = materializeMechanicsRecipe("basic_hero_skill_tree", context);
+    expect(recipe).toMatchObject({
+      id: "basic_hero_skill_tree",
+      moduleId: "heroes",
+      moduleSchemaVersion: 5,
+      entity: {
+        moduleId: "heroes",
+        moduleSchemaVersion: 5,
+        missionId: "mission_b",
+        profileId: "basic_hero_skill_tree",
+        profile: {
+          selectedHeroId: "commander",
+          definitions: {
+            commander: {
+              label: expect.any(String),
+              spawn: "core",
+              skillTree: {
+                points: { starting: expect.any(Number), perInterwave: expect.any(Number) },
+                nodes: expect.any(Object)
+              }
+            }
+          }
+        }
+      }
+    });
+    const nodes = recipe.entity.profile.definitions.commander.skillTree.nodes;
+    expect(Object.keys(nodes).length).toBeGreaterThanOrEqual(2);
+    expect(Object.values(nodes)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ requires: [] }),
+      expect.objectContaining({ requires: [expect.any(String)] })
+    ]));
+    for (const node of Object.values(nodes)) {
+      expect(node).toMatchObject({
+        label: expect.any(String),
+        description: expect.any(String),
+        cost: expect.any(Number),
+        requires: expect.any(Array),
+        effects: [{
+          kind: "modifier",
+          scope: "hero_ability_damage",
+          modifier: {
+            target: "damage",
+            operation: expect.stringMatching(/^(flat|additive_ratio|multiplier)$/),
+            value: expect.any(Number)
+          }
+        }]
+      });
+    }
+    expect(recipe.entity).not.toHaveProperty("enabled");
+    for (const adjacent of ["navigation", "combat", "roguelite", "logistics", "scripts", "visuals"]) {
+      expect(recipe.entity).not.toHaveProperty(adjacent);
+      expect(recipe.entity.profile).not.toHaveProperty(adjacent);
+    }
+  });
+});
+
 describe("R1.5 reaction mechanics recipes", () => {
   it("materializes directional Fire/Ice Shatter with explicit combat prerequisites", () => {
     expect(listMechanicsRecipes().map((recipe) => recipe.id)).toContain("elemental_shatter");

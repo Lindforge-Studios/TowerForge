@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { migrateProjectFiles, writeMigratedProjectFiles } from "../cli/lib/project-migrations.mjs";
 import { readRawProjectFiles } from "../cli/lib/project-loader.mjs";
 import { callTool, TOOLS } from "./tools.mjs";
-import { TOWERFORGE_AGENT_INSTRUCTIONS } from "./agent-instructions.mjs";
+import { TOWERFORGE_AGENT_GUIDE_VERSION, TOWERFORGE_AGENT_INSTRUCTIONS } from "./agent-instructions.mjs";
 
 const STARTER = path.resolve("examples/starter.tdproj");
 const PLUGIN_SKILL = path.resolve("plugins/towerforge/skills/towerforge-authoring/SKILL.md");
@@ -43,11 +43,11 @@ describe("R5.1A MCP/AI static hero authoring", () => {
       heroes: {
         authoring: {
           moduleId: "heroes",
-          schemaVersion: 4,
-          supportedModuleSchemaVersions: [1, 2, 3, 4],
+          schemaVersion: 5,
+          supportedModuleSchemaVersions: [1, 2, 3, 4, 5],
           limits: { definitions: 32, idUtf8Bytes: 128, labelUtf8Bytes: 128 }
         },
-        snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2, 3, 4] },
+        snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2, 3, 4, 5] },
         events: {
           heroShieldChanged: {
             requiredFields: ["heroId", "previous", "current", "capacity", "cause", "amount"],
@@ -230,8 +230,8 @@ describe("R5.1B MCP/AI deterministic hero movement", () => {
     expect(described.heroes).toMatchObject({
       authoring: {
         moduleId: "heroes",
-        schemaVersion: 4,
-        supportedModuleSchemaVersions: [1, 2, 3, 4],
+        schemaVersion: 5,
+        supportedModuleSchemaVersions: [1, 2, 3, 4, 5],
         versions: {
           2: {
             movementProfile: {
@@ -248,9 +248,9 @@ describe("R5.1B MCP/AI deterministic hero movement", () => {
           }
         }
       },
-      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2, 3, 4] },
+      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2, 3, 4, 5] },
       commands: {
-        schemaVersion: 5,
+        schemaVersion: 6,
         moveHero: {
           requiredFields: ["heroId", "target"],
           optionalFields: [],
@@ -404,8 +404,8 @@ describe("R5.2A MCP/AI durable hero authoring", () => {
     const described = await callTool("describe_schema", { domain: "heroes" }, {});
     expect(described.heroes).toMatchObject({
       authoring: {
-        schemaVersion: 4,
-        supportedModuleSchemaVersions: [1, 2, 3, 4],
+        schemaVersion: 5,
+        supportedModuleSchemaVersions: [1, 2, 3, 4, 5],
         versions: {
           3: {
             durability: {
@@ -420,7 +420,7 @@ describe("R5.2A MCP/AI durable hero authoring", () => {
           }
         }
       },
-      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2, 3, 4] }
+      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2, 3, 4, 5] }
     });
 
     const projectDir = fixture();
@@ -491,8 +491,8 @@ describe("R5.3A MCP/AI targeted hero ability authoring", () => {
     const described = await callTool("describe_schema", { domain: "heroes" }, {});
     expect(described.heroes).toMatchObject({
       authoring: {
-        schemaVersion: 4,
-        supportedModuleSchemaVersions: [1, 2, 3, 4],
+        schemaVersion: 5,
+        supportedModuleSchemaVersions: [1, 2, 3, 4, 5],
         versions: {
           4: {
             definition: {
@@ -517,7 +517,7 @@ describe("R5.3A MCP/AI targeted hero ability authoring", () => {
       snapshot: {
         field: "heroes",
         optional: true,
-        supportedSchemaVersions: [1, 2, 3, 4],
+        supportedSchemaVersions: [1, 2, 3, 4, 5],
         versions: {
           4: {
             unitFields: [
@@ -533,7 +533,7 @@ describe("R5.3A MCP/AI targeted hero ability authoring", () => {
         }
       },
       commands: {
-        schemaVersion: 5,
+        schemaVersion: 6,
         useHeroAbility: {
           requiredFields: ["heroId", "abilityId", "targetEnemyId"],
           optionalFields: [],
@@ -635,6 +635,196 @@ describe("R5.3A MCP/AI targeted hero ability authoring", () => {
     expect(skill).toMatch(/GameCommandV?5[\s\S]*useHeroAbility[\s\S]*targetEnemyId/i);
     expect(skill).toMatch(/heroAbilityUsed/);
     expect(skill).not.toMatch(/Heroes v1[\s\S]{0,900}no movement,[\s\S]{0,200}abilities/i);
+  });
+});
+
+describe("R5.4A MCP/AI battle-local hero skill-tree authoring", () => {
+  it("describes exact v5 authoring, snapshot v5, GameCommand v6, and skill events", async () => {
+    const described = await callTool("describe_schema", { domain: "heroes" }, {});
+    expect(described.heroes).toMatchObject({
+      authoring: {
+        schemaVersion: 5,
+        supportedModuleSchemaVersions: [1, 2, 3, 4, 5],
+        versions: {
+          5: {
+            definition: {
+              requiredFields: [
+                "label", "spawn", "movement", "durability", "mana", "activeAbility", "skillTree"
+              ],
+              optionalFields: [],
+              additionalProperties: false
+            },
+            skillTree: {
+              nullable: true,
+              requiredFields: ["points", "nodes"],
+              optionalFields: [],
+              additionalProperties: false
+            },
+            points: {
+              requiredFields: ["starting", "perInterwave"],
+              optionalFields: [],
+              additionalProperties: false
+            },
+            node: {
+              requiredFields: ["label", "description", "cost", "requires", "effects"],
+              optionalFields: [],
+              additionalProperties: false
+            },
+            effect: {
+              requiredFields: ["kind", "scope", "modifier"],
+              optionalFields: [],
+              additionalProperties: false,
+              kindValues: ["modifier"],
+              scopeValues: ["hero_ability_damage"]
+            },
+            modifier: {
+              requiredFields: ["target", "operation", "value"],
+              optionalFields: [],
+              additionalProperties: false,
+              targetValues: ["damage"],
+              operationValues: ["flat", "additive_ratio", "multiplier"]
+            }
+          }
+        }
+      },
+      snapshot: {
+        field: "heroes",
+        optional: true,
+        supportedSchemaVersions: [1, 2, 3, 4, 5],
+        versions: {
+          5: {
+            unitFields: [
+              "id", "definitionId", "label", "coord", "movement", "durability", "mana", "activeAbility", "skills"
+            ],
+            skillsFields: [
+              "availablePoints", "startingPoints", "pointsPerInterwave", "maximumEarnablePoints",
+              "managementAvailable", "nodes"
+            ],
+            skillNodeFields: [
+              "id", "label", "description", "cost", "requiresSkillIds", "missingRequirementIds",
+              "unlocked", "unlockable"
+            ]
+          }
+        }
+      },
+      commands: {
+        schemaVersion: 6,
+        unlockHeroSkill: {
+          requiredFields: ["heroId", "skillId"],
+          optionalFields: [],
+          additionalProperties: false
+        }
+      },
+      events: {
+        heroSkillPointsGranted: {
+          requiredFields: [
+            "type", "heroId", "heroDefinitionId", "waveIndex", "previousPoints", "currentPoints", "amount"
+          ],
+          optionalFields: []
+        },
+        heroSkillUnlocked: {
+          requiredFields: [
+            "type", "heroId", "heroDefinitionId", "skillId", "cost", "previousPoints", "currentPoints"
+          ],
+          optionalFields: []
+        }
+      }
+    });
+    expect(described.heroes).not.toHaveProperty("towerScript");
+    expect(TOOLS.map((tool) => tool.name)).not.toContain("analyze_heroes");
+  });
+
+  it("runs the inert v5 recipe through preview, guarded apply, validation, and stale rejection", async () => {
+    const projectDir = fixture();
+    const before = await callTool("get_capabilities", { projectDir, missionId: "tutorial_01" }, {});
+    expect(before.capabilities.heroes).toMatchObject({ active: false, reason: "module_missing" });
+
+    const materialized = await callTool("get_recipe", {
+      projectDir,
+      collection: "mechanics",
+      recipeId: "basic_hero_skill_tree"
+    }, {});
+    expect(materialized.recipe).toMatchObject({
+      id: "basic_hero_skill_tree",
+      moduleId: "heroes",
+      moduleSchemaVersion: 5,
+      entity: {
+        moduleId: "heroes",
+        moduleSchemaVersion: 5,
+        missionId: "tutorial_01",
+        profileId: "basic_hero_skill_tree",
+        profile: {
+          definitions: {
+            commander: {
+              skillTree: {
+                points: { starting: expect.any(Number), perInterwave: expect.any(Number) },
+                nodes: expect.any(Object)
+              }
+            }
+          }
+        }
+      }
+    });
+    expect(materialized.recipe.entity).not.toHaveProperty("enabled");
+
+    const request = { projectDir, ...materialized.recipe.entity, enabled: true };
+    const preview = await callTool("preview_mechanics_module", request, {});
+    expect(preview).toMatchObject({
+      ok: true,
+      dryRun: true,
+      revision: materialized.revision,
+      validation: { ok: true, issues: [] },
+      candidate: { mechanics: { modules: { heroes: { schemaVersion: 5, enabled: true } } } }
+    });
+    for (const adjacent of ["navigation", "combat", "roguelite", "logistics"]) {
+      expect(preview.candidate.mechanics.modules[adjacent]).toBeUndefined();
+    }
+    const applied = await callTool("apply_mechanics_module", {
+      ...request,
+      ifRevision: preview.revision
+    }, {});
+    expect(applied).toMatchObject({ ok: true, previousRevision: preview.revision });
+    expect(await callTool("validate_project", { projectDir }, {})).toMatchObject({ ok: true });
+    expect(await callTool("get_capabilities", { projectDir, missionId: "tutorial_01" }, {}))
+      .toMatchObject({
+        capabilities: {
+          heroes: { active: true, moduleSchemaVersion: 5, profileId: "basic_hero_skill_tree" }
+        }
+      });
+
+    const stale = await rejection(callTool("apply_mechanics_module", {
+      ...request,
+      ifRevision: preview.revision
+    }, {}));
+    expect(stale).toMatchObject({ code: "conflict" });
+  });
+
+  it("publishes guide v25 with the guarded tree flow and authoritative v6 runtime contract", () => {
+    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(25);
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/Heroes v5[\s\S]*skillTree[\s\S]*basic_hero_skill_tree/i);
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(
+      /get_capabilities[\s\S]*get_recipe[\s\S]*preview_mechanics_module[\s\S]*apply_mechanics_module[\s\S]*ifRevision/i
+    );
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/GameCommand v6[\s\S]*unlockHeroSkill[\s\S]*heroId[\s\S]*skillId/i);
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/heroSkillPointsGranted[\s\S]*heroSkillUnlocked/i);
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/between[- ]wave|interwave/i);
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/snapshot[\s\S]*never (?:mutate|write)/i);
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/battle[- ]local|resets? between campaign battles/i);
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).not.toMatch(/skillTree[\s\S]{0,400}(?:aura|blocking|logistics|TowerScript)/i);
+  });
+
+  it("keeps the public Codex authoring skill aligned with the complete v5 AI contract", () => {
+    const skill = fs.readFileSync(PLUGIN_SKILL, "utf8");
+    expect(skill).toMatch(/Heroes v5[\s\S]*skillTree/i);
+    expect(skill).toMatch(/(?:required nullable[\s\S]{0,80}skillTree|skillTree[\s\S]{0,80}required nullable)/i);
+    expect(skill).toMatch(
+      /basic_hero_skill_tree[\s\S]*preview_mechanics_module[\s\S]*apply_mechanics_module[\s\S]*ifRevision/i
+    );
+    expect(skill).toMatch(/GameCommandV?6[\s\S]*unlockHeroSkill[\s\S]*heroId[\s\S]*skillId/i);
+    expect(skill).toMatch(/snapshot[\s\S]*(?:available skill points|unlockability)/i);
+    expect(skill).toMatch(/heroSkillPointsGranted[\s\S]*heroSkillUnlocked/i);
+    expect(skill).toMatch(/battle[- ]local[\s\S]*(?:reset|no carry|does not carry|campaign)/i);
+    expect(skill).not.toMatch(/no (?:multiple abilities, )?skill trees/i);
   });
 });
 

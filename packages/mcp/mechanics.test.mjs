@@ -193,13 +193,36 @@ describe("R1 combat mechanics MCP contract", () => {
         }
       }
     };
+    const heroesAuthoringV5 = engine.HEROES_MECHANICS_SCHEMA.versions[5];
+    const heroesSnapshotV5 = engine.HEROES_MECHANICS_SCHEMA.runtimeSnapshot.versions[5];
     const heroesSurface = {
-      authoring: engine.HEROES_MECHANICS_SCHEMA,
+      authoring: {
+        ...engine.HEROES_MECHANICS_SCHEMA,
+        versions: {
+          ...engine.HEROES_MECHANICS_SCHEMA.versions,
+          5: {
+            ...heroesAuthoringV5,
+            points: heroesAuthoringV5.skillPoints,
+            node: heroesAuthoringV5.skillNode,
+            effect: heroesAuthoringV5.skillEffect,
+            modifier: heroesAuthoringV5.skillModifier
+          }
+        }
+      },
       snapshot: {
         field: "heroes",
         optional: true,
-        supportedSchemaVersions: [1, 2, 3, 4],
-        versions: engine.HEROES_MECHANICS_SCHEMA.runtimeSnapshot.versions
+        supportedSchemaVersions: [1, 2, 3, 4, 5],
+        versions: {
+          ...engine.HEROES_MECHANICS_SCHEMA.runtimeSnapshot.versions,
+          5: {
+            ...heroesSnapshotV5,
+            skillNodeFields: [
+              "id", "label", "description", "cost", "requiresSkillIds", "missingRequirementIds",
+              "unlocked", "unlockable"
+            ]
+          }
+        }
       },
       events: {
         heroShieldChanged: {
@@ -222,10 +245,22 @@ describe("R1 combat mechanics MCP contract", () => {
             "resolvedDamage", "shieldAbsorbed", "hpDamage"
           ],
           optionalFields: []
+        },
+        heroSkillPointsGranted: {
+          requiredFields: [
+            "type", "heroId", "heroDefinitionId", "waveIndex", "previousPoints", "currentPoints", "amount"
+          ],
+          optionalFields: []
+        },
+        heroSkillUnlocked: {
+          requiredFields: [
+            "type", "heroId", "heroDefinitionId", "skillId", "cost", "previousPoints", "currentPoints"
+          ],
+          optionalFields: []
         }
       },
       commands: {
-        schemaVersion: 5,
+        schemaVersion: 6,
         moveHero: {
           requiredFields: ["heroId", "target"],
           optionalFields: [],
@@ -233,6 +268,11 @@ describe("R1 combat mechanics MCP contract", () => {
         },
         useHeroAbility: {
           requiredFields: ["heroId", "abilityId", "targetEnemyId"],
+          optionalFields: [],
+          additionalProperties: false
+        },
+        unlockHeroSkill: {
+          requiredFields: ["heroId", "skillId"],
           optionalFields: [],
           additionalProperties: false
         }
@@ -408,10 +448,10 @@ describe("R1 combat mechanics MCP contract", () => {
     expect(preview.inputSchema.properties.enabled).toEqual({ type: "boolean", default: true });
     expect(apply.inputSchema.properties.enabled).toEqual({ type: "boolean", default: true });
     expect(preview.inputSchema.properties.moduleSchemaVersion).toMatchObject({
-      type: "integer", enum: [1, 2, 3, 4]
+      type: "integer", enum: [1, 2, 3, 4, 5]
     });
     expect(apply.inputSchema.properties.moduleSchemaVersion).toMatchObject({
-      type: "integer", enum: [1, 2, 3, 4]
+      type: "integer", enum: [1, 2, 3, 4, 5]
     });
     expect(apply.inputSchema.required).toContain("ifRevision");
   });

@@ -143,7 +143,7 @@ function abilityInput(activation: Activation = "v4", fixture: AbilityFixture = {
         schemaVersion: 1,
         modules: {
           heroes: {
-            schemaVersion: (activation === "future" ? 5 : active === "v4" ? 4 : 3) as 1,
+            schemaVersion: (activation === "future" ? 6 : active === "v4" ? 4 : 3) as 1,
             enabled: true,
             profiles: { commanders: profile(active as "v3" | "v4", fixture) }
           }

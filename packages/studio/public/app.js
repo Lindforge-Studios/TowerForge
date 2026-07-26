@@ -71,13 +71,13 @@ const MECHANICS_MODULES = [
   { id: "physics", title: "Physics", description: "Bounded push/pull displacement, immunities, and explicit fall hazards." },
   { id: "terraforming", title: "Terraforming", description: "Transactional terrain transitions and bounded elevation edits authored as an independent opt-in profile." },
   { id: "roguelite", title: "Rogue-lite", description: "Synergies, artifacts, draft choices, and campaign runs." },
-  { id: "heroes", title: "Heroes", description: "Optional opt-in hero roster spawning at the core; v2 adds movement, v3 durability, and v4 one targeted ability." },
+  { id: "heroes", title: "Heroes", description: "Optional opt-in hero roster spawning at the core; v2 adds movement, v3 durability, v4 one targeted ability, and v5 a nullable battle-local skill tree." },
   { id: "logistics", title: "Logistics", description: "Power grids, inventories, ammunition, and production." },
   { id: "director", title: "AI Director", description: "Deterministic adaptation and generative Studio hooks." },
   { id: "scriptingDx", title: "TowerScript DX", description: "Visual graphs, structured traces, and step debugging." },
   { id: "multiplayer", title: "Multiplayer", description: "Deterministic matches, replay, and local transport." }
 ];
-const HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4]);
+const HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4, 5]);
 const REACTION_RECIPE_IDS = new Set(["elemental_shatter", "wet_chain_shock", "poison_combustion"]);
 const ELEVATION_RECIPE_IDS = new Set([
   "basic_authored_elevation",
@@ -1035,6 +1035,9 @@ function mechanicsEffectiveModuleSchemaVersion() {
       .some((definition) => definition?.durability !== undefined);
     const hasActiveAbility = Object.values(MechanicsUI.draft?.definitions ?? {})
       .some((definition) => definition?.mana !== undefined || definition?.activeAbility !== undefined);
+    const hasSkillTree = Object.values(MechanicsUI.draft?.definitions ?? {})
+      .some((definition) => definition?.skillTree !== undefined);
+    if (hasSkillTree) return Math.max(authoredVersion, 5);
     if (hasActiveAbility) return Math.max(authoredVersion, 4);
     if (hasDurability) return Math.max(authoredVersion, 3);
     return MechanicsUI.draft?.movementProfiles ? Math.max(authoredVersion, 2) : authoredVersion;
@@ -1174,7 +1177,7 @@ function loadMechanicsProfile() {
   MechanicsUI.profileId = profileId;
   MechanicsUI.loadedProfileId = profileId;
   const authoredVersion = MechanicsUI.capabilities?.[MechanicsUI.selectedModuleId]?.moduleSchemaVersion;
-  MechanicsUI.moduleSchemaVersion = [1, 2, 3, 4].includes(authoredVersion)
+  MechanicsUI.moduleSchemaVersion = [1, 2, 3, 4, 5].includes(authoredVersion)
     ? authoredVersion
     : mechanicsProjectModuleVersion();
   MechanicsUI.draft = MechanicsUI.selectedModuleId === "navigation"
@@ -1201,8 +1204,8 @@ function nextMechanicsProfileId(suggestedId) {
 
 async function newMechanicsProfile() {
   try {
-    if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 4) {
-      throw new Error("Future heroes schemaVersion 5+ modules are read-only in this Studio version.");
+    if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 5) {
+      throw new Error("Future heroes schemaVersion 6+ modules are read-only in this Studio version.");
     }
     await loadMechanicsRecipe();
     const selectedRecipeId = $("mechanics-recipe-select")?.value || MechanicsUI.recipeId;
@@ -2773,9 +2776,10 @@ function renderHeroesMechanicsEditor() {
   const editorVersion = Math.max(projectVersion, Number.isInteger(MechanicsUI.moduleSchemaVersion) ? MechanicsUI.moduleSchemaVersion : 1);
   const supportedVersion = HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS.includes(editorVersion)
     && descriptor?.supportedModuleSchemaVersions?.includes(editorVersion) !== false;
-  const movementEnabled = editorVersion >= 2 && editorVersion <= 4;
-  const durabilityEnabled = editorVersion >= 3 && editorVersion <= 4;
-  const abilityEnabled = editorVersion === 4;
+  const movementEnabled = editorVersion >= 2 && editorVersion <= 5;
+  const durabilityEnabled = editorVersion >= 3 && editorVersion <= 5;
+  const abilityEnabled = editorVersion >= 4 && editorVersion <= 5;
+  const skillTreeVisible = editorVersion >= 4 && editorVersion <= 5;
   const durabilityDescriptor = descriptor?.versions?.[3]?.durability;
   const shieldDescriptor = descriptor?.versions?.[3]?.shield;
   const manaDescriptor = descriptor?.versions?.[4]?.mana;
@@ -2785,7 +2789,7 @@ function renderHeroesMechanicsEditor() {
     notice.classList.toggle("hidden", supportedVersion);
     notice.textContent = supportedVersion
       ? ""
-      : "Future heroes schemaVersion 5+ is preserved losslessly and read-only by this Studio version.";
+      : "Future heroes schemaVersion 6+ is preserved losslessly and read-only by this Studio version.";
   }
 
   const definitions = MechanicsUI.draft.definitions ?? {};
@@ -2810,6 +2814,36 @@ function renderHeroesMechanicsEditor() {
     const movementProfileIds = Object.keys(MechanicsUI.draft.movementProfiles ?? {}).sort();
     rows.innerHTML = entries.map(([heroId, definition]) => {
       const authoredMovementProfileId = definition?.movement?.movementProfileId;
+      const skillTree = definition?.skillTree && typeof definition.skillTree === "object"
+        ? definition.skillTree
+        : null;
+      const skillNodes = Object.entries(skillTree?.nodes ?? {})
+        .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
+      const skillRows = skillNodes.map(([skillId, node]) => {
+        const effects = Array.isArray(node?.effects) ? node.effects : [];
+        const effectRows = effects.map((effect, effectIndex) => {
+          const operation = effect?.modifier?.operation ?? "multiplier";
+          return `<div class="mechanics-definition-row" data-hero-skill-effect-row data-hero-skill-effect-index="${effectIndex}">
+            <label>Operation<select data-hero-skill-operation data-hero-skill-effect-operation ${supportedVersion ? "" : "disabled"}>
+              <option value="flat" ${operation === "flat" ? "selected" : ""}>flat</option>
+              <option value="additive_ratio" ${operation === "additive_ratio" ? "selected" : ""}>additive_ratio</option>
+              <option value="multiplier" ${operation === "multiplier" ? "selected" : ""}>multiplier</option>
+            </select></label>
+            <label>Value<input data-hero-skill-value data-hero-skill-effect-value type="number" step="any" value="${esc(effect?.modifier?.value ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+            <button type="button" class="btn btn-danger" data-remove-hero-skill-effect ${supportedVersion && effects.length > 1 ? "" : "disabled"}>Remove effect</button>
+          </div>`;
+        }).join("");
+        return `<div class="mechanics-definition-row" data-hero-skill-node-id="${esc(skillId)}">
+          <label>Skill ID<input data-hero-skill-id type="text" autocomplete="off" spellcheck="false" value="${esc(skillId)}" ${supportedVersion ? "" : "disabled"}></label>
+          <label>Label<input data-hero-skill-label type="text" value="${esc(node?.label ?? skillId)}" ${supportedVersion ? "" : "disabled"}></label>
+          <label>Description<input data-hero-skill-description type="text" value="${esc(node?.description ?? "Hero ability damage modifier.")}" ${supportedVersion ? "" : "disabled"}></label>
+          <label>Cost<input data-hero-skill-cost type="number" min="1" step="1" value="${esc(node?.cost ?? 1)}" ${supportedVersion ? "" : "disabled"}></label>
+          <label>Requires<input data-hero-skill-requires type="text" value="${esc(Array.isArray(node?.requires) ? node.requires.join(", ") : "")}" ${supportedVersion ? "" : "disabled"}></label>
+          <div class="mechanics-definition-rows">${effectRows}</div>
+          <button type="button" class="btn btn-outline" data-add-hero-skill-effect ${supportedVersion && effects.length < 4 ? "" : "disabled"}>+ Add effect</button>
+          <button type="button" class="btn btn-danger" data-remove-hero-skill ${supportedVersion ? "" : "disabled"}>Remove skill</button>
+        </div>`;
+      }).join("");
       const movementProfileOptions = [
         ...(typeof authoredMovementProfileId === "string" && !movementProfileIds.includes(authoredMovementProfileId)
           ? [{ id: authoredMovementProfileId, missing: true }] : []),
@@ -2834,6 +2868,13 @@ function renderHeroesMechanicsEditor() {
       <label>Cooldown<input data-hero-ability-cooldown type="number" min="0"${mechanicsMaximumAttribute("max", abilityDescriptor?.cooldown?.maximum)} value="${esc(definition?.activeAbility?.cooldown ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
       <label>Range<input data-hero-ability-range type="number" min="0" step="1"${mechanicsMaximumAttribute("max", abilityDescriptor?.range?.maximum)} value="${esc(definition?.activeAbility?.range ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
       <label>Damage<input data-hero-ability-damage type="number" min="0.000001"${mechanicsMaximumAttribute("max", abilityDescriptor?.damage?.maximum)} value="${esc(definition?.activeAbility?.damage ?? "")}" ${supportedVersion ? "" : "disabled"}></label>` : ""}
+      ${skillTreeVisible ? `<fieldset class="mechanics-heroes-section">
+        <label><input data-hero-skill-tree-enabled type="checkbox" ${skillTree ? "checked" : ""} ${supportedVersion ? "" : "disabled"}> Battle-local skill tree (Heroes v5)</label>
+        ${skillTree ? `<label>Starting points<input data-hero-skill-starting-points type="number" min="0" step="1" value="${esc(skillTree?.points?.starting ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+        <label>Points per interwave<input data-hero-skill-points-per-interwave type="number" min="0" step="1" value="${esc(skillTree?.points?.perInterwave ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+        <div class="mechanics-definition-rows">${skillRows}</div>
+        <button type="button" class="btn btn-outline" data-add-hero-skill ${supportedVersion && skillNodes.length < 32 ? "" : "disabled"}>+ Add skill</button>` : ""}
+      </fieldset>` : ""}
       <button type="button" class="btn btn-danger" data-remove-hero ${supportedVersion && entries.length > 1 ? "" : "disabled"}>Remove</button>
     </div>`;
     }).join("");
@@ -2919,6 +2960,159 @@ function renderHeroesMechanicsEditor() {
         MechanicsUI.preview = null;
         renderMechanicsPreviewResult();
       });
+      row.querySelector("[data-hero-skill-tree-enabled]")?.addEventListener("change", (event) => {
+        for (const candidate of Object.values(MechanicsUI.draft.definitions)) {
+          if (candidate.skillTree === undefined) candidate.skillTree = null;
+        }
+        const defaultSkillTree = {
+          points: { starting: 1, perInterwave: 1 },
+          nodes: {
+            focused_cast: {
+              label: "Focused Cast",
+              description: "Increase active ability damage.",
+              cost: 1,
+              requires: [],
+              effects: [{
+                kind: "modifier",
+                scope: "hero_ability_damage",
+                modifier: { target: "damage", operation: "multiplier", value: 1.25 }
+              }]
+            }
+          }
+        };
+        definition.skillTree = event.target.checked
+          ? (definition.skillTree && typeof definition.skillTree === "object"
+              ? definition.skillTree
+              : defaultSkillTree)
+          : null;
+        MechanicsUI.moduleSchemaVersion = 5;
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      });
+      row.querySelector("[data-hero-skill-starting-points]")?.addEventListener("input", (event) => {
+        definition.skillTree.points.starting = Number(event.target.value);
+        MechanicsUI.moduleSchemaVersion = 5;
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-skill-points-per-interwave]")?.addEventListener("input", (event) => {
+        definition.skillTree.points.perInterwave = Number(event.target.value);
+        MechanicsUI.moduleSchemaVersion = 5;
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelectorAll("[data-hero-skill-node-id]").forEach((skillRow) => {
+        const skillId = skillRow.dataset.heroSkillNodeId;
+        const node = ownDataValue(definition.skillTree?.nodes, skillId);
+        if (!node) return;
+        skillRow.querySelector("[data-hero-skill-id]")?.addEventListener("change", (event) => {
+          const nextId = String(event.target.value ?? "").trim();
+          if (!nextId || (nextId !== skillId && ownDataValue(definition.skillTree.nodes, nextId))) {
+            return renderMechanicsHub();
+          }
+          if (nextId !== skillId) {
+            delete definition.skillTree.nodes[skillId];
+            defineOwnDataValue(definition.skillTree.nodes, nextId, node);
+            for (const candidate of Object.values(definition.skillTree.nodes)) {
+              if (Array.isArray(candidate.requires)) {
+                candidate.requires = candidate.requires.map((requiredId) => requiredId === skillId ? nextId : requiredId);
+              }
+            }
+          }
+          MechanicsUI.moduleSchemaVersion = 5;
+          MechanicsUI.preview = null;
+          renderMechanicsHub();
+        });
+        skillRow.querySelector("[data-hero-skill-label]")?.addEventListener("input", (event) => {
+          node.label = String(event.target.value ?? "");
+          MechanicsUI.moduleSchemaVersion = 5;
+          MechanicsUI.preview = null;
+          renderMechanicsPreviewResult();
+        });
+        skillRow.querySelector("[data-hero-skill-description]")?.addEventListener("input", (event) => {
+          node.description = String(event.target.value ?? "");
+          MechanicsUI.moduleSchemaVersion = 5;
+          MechanicsUI.preview = null;
+          renderMechanicsPreviewResult();
+        });
+        skillRow.querySelector("[data-hero-skill-cost]")?.addEventListener("input", (event) => {
+          node.cost = Number(event.target.value);
+          MechanicsUI.moduleSchemaVersion = 5;
+          MechanicsUI.preview = null;
+          renderMechanicsPreviewResult();
+        });
+        skillRow.querySelector("[data-hero-skill-requires]")?.addEventListener("input", (event) => {
+          node.requires = String(event.target.value ?? "").split(",").map((value) => value.trim()).filter(Boolean);
+          MechanicsUI.moduleSchemaVersion = 5;
+          MechanicsUI.preview = null;
+          renderMechanicsPreviewResult();
+        });
+        skillRow.querySelectorAll("[data-hero-skill-effect-row]").forEach((effectRow) => {
+          const effectIndex = Number(effectRow.dataset.heroSkillEffectIndex);
+          const effect = node.effects?.[effectIndex];
+          if (!effect) return;
+          effectRow.querySelector("[data-hero-skill-effect-operation]")?.addEventListener("change", (event) => {
+            effect.modifier.operation = event.target.value;
+            MechanicsUI.moduleSchemaVersion = 5;
+            MechanicsUI.preview = null;
+            renderMechanicsPreviewResult();
+          });
+          effectRow.querySelector("[data-hero-skill-value][data-hero-skill-effect-value]")?.addEventListener("input", (event) => {
+            effect.modifier.value = Number(event.target.value);
+            MechanicsUI.moduleSchemaVersion = 5;
+            MechanicsUI.preview = null;
+            renderMechanicsPreviewResult();
+          });
+          effectRow.querySelector("[data-remove-hero-skill-effect]")?.addEventListener("click", () => {
+            if (!Array.isArray(node.effects) || node.effects.length <= 1) return;
+            node.effects.splice(effectIndex, 1);
+            MechanicsUI.moduleSchemaVersion = 5;
+            MechanicsUI.preview = null;
+            renderMechanicsHub();
+          });
+        });
+        skillRow.querySelector("[data-add-hero-skill-effect]")?.addEventListener("click", () => {
+          if (!Array.isArray(node.effects) || node.effects.length >= 4) return;
+          node.effects.push({
+            kind: "modifier",
+            scope: "hero_ability_damage",
+            modifier: { target: "damage", operation: "flat", value: 1 }
+          });
+          MechanicsUI.moduleSchemaVersion = 5;
+          MechanicsUI.preview = null;
+          renderMechanicsHub();
+        });
+        skillRow.querySelector("[data-remove-hero-skill]")?.addEventListener("click", () => {
+          delete definition.skillTree.nodes[skillId];
+          for (const candidate of Object.values(definition.skillTree.nodes)) {
+            if (Array.isArray(candidate.requires)) {
+              candidate.requires = candidate.requires.filter((requiredId) => requiredId !== skillId);
+            }
+          }
+          MechanicsUI.moduleSchemaVersion = 5;
+          MechanicsUI.preview = null;
+          renderMechanicsHub();
+        });
+      });
+      row.querySelector("[data-add-hero-skill]")?.addEventListener("click", () => {
+        let suffix = Object.keys(definition.skillTree.nodes).length + 1;
+        let skillId = `skill_${suffix}`;
+        while (ownDataValue(definition.skillTree.nodes, skillId)) skillId = `skill_${++suffix}`;
+        defineOwnDataValue(definition.skillTree.nodes, skillId, {
+          label: "New Skill",
+          description: "Modify active ability damage.",
+          cost: 1,
+          requires: [],
+          effects: [{
+            kind: "modifier",
+            scope: "hero_ability_damage",
+            modifier: { target: "damage", operation: "multiplier", value: 1.1 }
+          }]
+        });
+        MechanicsUI.moduleSchemaVersion = 5;
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      });
       row.querySelector("[data-hero-id]")?.addEventListener("change", (event) => {
         const nextId = String(event.target.value ?? "").trim();
         if (!nextId || new TextEncoder().encode(nextId).length > limits.idUtf8Bytes
@@ -2975,7 +3169,8 @@ function renderHeroesMechanicsEditor() {
           activeAbility: {
             id: "arc_bolt", label: "Arc Bolt", target: "enemy",
             manaCost: 20, cooldown: 3, range: 6, damage: 30
-          }
+          },
+          ...(editorVersion === 5 ? { skillTree: null } : {})
         } : {})
       });
       MechanicsUI.preview = null;
@@ -4061,8 +4256,8 @@ function renderMechanicsPreviewResult() {
 }
 
 function mechanicsRequest(enabled) {
-  if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 4) {
-    throw new Error("Future heroes schemaVersion 5+ modules are read-only in this Studio version.");
+  if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 5) {
+    throw new Error("Future heroes schemaVersion 6+ modules are read-only in this Studio version.");
   }
   if (MechanicsUI.selectedModuleId === "roguelite" && mechanicsProjectModuleVersion() > 4) {
     throw new Error("Future roguelite schemaVersion 5+ modules are read-only in this Studio version.");
@@ -4326,7 +4521,7 @@ function renderMechanicsHub() {
     mechanicsProjectModuleVersion() <= 4
     && !hasUnsupportedRogueliteCampaignMarker(MechanicsUI.draft)
   );
-  const supportedHeroesVersion = MechanicsUI.selectedModuleId !== "heroes" || mechanicsProjectModuleVersion() <= 4;
+  const supportedHeroesVersion = MechanicsUI.selectedModuleId !== "heroes" || mechanicsProjectModuleVersion() <= 5;
   const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion
     && supportedRogueliteVersion && supportedHeroesVersion && !busy;
   const dirtyWriteGuard = Boolean(S.dirty);

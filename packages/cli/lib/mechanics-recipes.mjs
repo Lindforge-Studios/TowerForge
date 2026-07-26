@@ -19,6 +19,7 @@ const BASIC_COMMANDER_HERO_ID = "basic_commander_hero";
 const BASIC_MOBILE_COMMANDER_HERO_ID = "basic_mobile_commander_hero";
 const BASIC_DURABLE_COMMANDER_HERO_ID = "basic_durable_commander_hero";
 const BASIC_TARGETED_HERO_ABILITY_ID = "basic_targeted_hero_ability";
+const BASIC_HERO_SKILL_TREE_ID = "basic_hero_skill_tree";
 const TERRAFORMING_RECIPE_IDS = Object.freeze([
   TAGGED_FLOOD_ID,
   TAGGED_MOAT_ID,
@@ -240,6 +241,14 @@ const RECIPES = Object.freeze([
     description: "Inert heroes v4 profile with bounded mana and one deterministic enemy-targeted damage ability.",
     suggestedId: BASIC_TARGETED_HERO_ABILITY_ID,
     moduleSchemaVersion: 4
+  }),
+  Object.freeze({
+    id: BASIC_HERO_SKILL_TREE_ID,
+    moduleId: "heroes",
+    label: "Basic Hero Skill Tree",
+    description: "Inert heroes v5 profile with a battle-local deterministic active-ability damage skill tree.",
+    suggestedId: BASIC_HERO_SKILL_TREE_ID,
+    moduleSchemaVersion: 5
   })
 ]);
 
@@ -408,6 +417,73 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
                 cooldown: 3,
                 range: 6,
                 damage: 30
+              }
+            }
+          },
+          movementProfiles: {
+            ground: {
+              label: "Ground",
+              terrainMode: "respect_walkable",
+              towerOccupancy: "blocked",
+              defaultTerrainCost: 1_000
+            }
+          }
+        }
+      }
+    };
+  }
+  if (recipeId === BASIC_HERO_SKILL_TREE_ID) {
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "heroes",
+        moduleSchemaVersion: 5,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: {
+          selectedHeroId: "commander",
+          definitions: {
+            commander: {
+              label: "Commander",
+              spawn: "core",
+              movement: { movementProfileId: "ground", speed: 1 },
+              durability: { maxHp: 100, shield: { capacity: 25 } },
+              mana: { max: 100, starting: 60, regenerationPerUnit: 5 },
+              activeAbility: {
+                id: "arc_bolt",
+                label: "Arc Bolt",
+                target: "enemy",
+                manaCost: 20,
+                cooldown: 3,
+                range: 6,
+                damage: 30
+              },
+              skillTree: {
+                points: { starting: 1, perInterwave: 1 },
+                nodes: {
+                  focused_cast: {
+                    label: "Focused Cast",
+                    description: "Increase active ability damage by twenty-five percent.",
+                    cost: 1,
+                    requires: [],
+                    effects: [{
+                      kind: "modifier",
+                      scope: "hero_ability_damage",
+                      modifier: { target: "damage", operation: "multiplier", value: 1.25 }
+                    }]
+                  },
+                  overcharge: {
+                    label: "Overcharge",
+                    description: "Add ten damage after Focused Cast is unlocked.",
+                    cost: 1,
+                    requires: ["focused_cast"],
+                    effects: [{
+                      kind: "modifier",
+                      scope: "hero_ability_damage",
+                      modifier: { target: "damage", operation: "flat", value: 10 }
+                    }]
+                  }
+                }
               }
             }
           },

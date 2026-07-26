@@ -8,8 +8,8 @@ import {
   type TowerTargetMode
 } from "./types.js";
 
-export const GAME_COMMAND_SCHEMA_VERSION = 5 as const;
-export const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4, 5] as const);
+export const GAME_COMMAND_SCHEMA_VERSION = 6 as const;
+export const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4, 5, 6] as const);
 
 export type GameCommandV1 =
   | { readonly schemaVersion: 1; readonly type: "tick"; readonly units: number }
@@ -129,7 +129,22 @@ export type GameCommandV5 =
       readonly targetEnemyId: string;
     };
 
-export type GameCommand = GameCommandV1 | GameCommandV2 | GameCommandV3 | GameCommandV4 | GameCommandV5;
+export type GameCommandV6 =
+  | WithCommandSchemaVersion<GameCommandV5, 6>
+  | {
+      readonly schemaVersion: 6;
+      readonly type: "unlockHeroSkill";
+      readonly heroId: string;
+      readonly skillId: string;
+    };
+
+export type GameCommand =
+  | GameCommandV1
+  | GameCommandV2
+  | GameCommandV3
+  | GameCommandV4
+  | GameCommandV5
+  | GameCommandV6;
 
 const MAX_PAYLOAD_DEPTH = 32;
 const MAX_PAYLOAD_NODES = 4_096;
@@ -183,7 +198,7 @@ function isBoundedCommandId(value: unknown): value is string {
   return isTrimmedId(value) && utf8ByteLength(value) <= 128;
 }
 
-function isCommandId(schemaVersion: 1 | 2 | 3 | 4 | 5, value: unknown): value is string {
+function isCommandId(schemaVersion: 1 | 2 | 3 | 4 | 5 | 6, value: unknown): value is string {
   return schemaVersion === 1 ? isTrimmedId(value) : isBoundedCommandId(value);
 }
 
@@ -310,7 +325,8 @@ export function parseGameCommand(input: unknown): GameCommand | undefined {
   if (!fields) return undefined;
   const schemaVersion = fields.get("schemaVersion");
   const type = fields.get("type");
-  if ((schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3 && schemaVersion !== 4 && schemaVersion !== 5)
+  if ((schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3 && schemaVersion !== 4
+    && schemaVersion !== 5 && schemaVersion !== 6)
     || typeof type !== "string") return undefined;
 
   if (type === "tick") {
@@ -395,7 +411,7 @@ export function parseGameCommand(input: unknown): GameCommand | undefined {
     if (!isBoundedCommandId(heroId) || !target) return undefined;
     return { schemaVersion, type, heroId, target } as GameCommand;
   }
-  if (schemaVersion === 5 && type === "useHeroAbility") {
+  if (schemaVersion >= 5 && type === "useHeroAbility") {
     if (!hasClosedFields(fields, ["schemaVersion", "type", "heroId", "abilityId", "targetEnemyId"])) return undefined;
     const heroId = fields.get("heroId");
     const abilityId = fields.get("abilityId");
@@ -403,7 +419,14 @@ export function parseGameCommand(input: unknown): GameCommand | undefined {
     if (!isBoundedCommandId(heroId) || !isBoundedCommandId(abilityId) || !isBoundedCommandId(targetEnemyId)) {
       return undefined;
     }
-    return { schemaVersion: 5, type, heroId, abilityId, targetEnemyId };
+    return { schemaVersion, type, heroId, abilityId, targetEnemyId } as GameCommand;
+  }
+  if (schemaVersion === 6 && type === "unlockHeroSkill") {
+    if (!hasClosedFields(fields, ["schemaVersion", "type", "heroId", "skillId"])) return undefined;
+    const heroId = fields.get("heroId");
+    const skillId = fields.get("skillId");
+    if (!isBoundedCommandId(heroId) || !isBoundedCommandId(skillId)) return undefined;
+    return { schemaVersion: 6, type, heroId, skillId };
   }
   return undefined;
 }
@@ -443,5 +466,7 @@ export function executeParsedGameCommand(
       return game.moveHero(command.heroId, command.target);
     case "useHeroAbility":
       return game.useHeroAbility(command.heroId, command.abilityId, command.targetEnemyId);
+    case "unlockHeroSkill":
+      return game.unlockHeroSkill(command.heroId, command.skillId);
   }
 }

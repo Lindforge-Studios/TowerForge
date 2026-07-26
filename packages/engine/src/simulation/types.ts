@@ -644,6 +644,24 @@ export type GameEvent =
       shieldAbsorbed: number;
       hpDamage: number;
     }
+  | {
+      type: "heroSkillUnlocked";
+      heroId: string;
+      heroDefinitionId: string;
+      skillId: string;
+      cost: number;
+      previousPoints: number;
+      currentPoints: number;
+    }
+  | {
+      type: "heroSkillPointsGranted";
+      heroId: string;
+      heroDefinitionId: string;
+      waveIndex: number;
+      previousPoints: number;
+      currentPoints: number;
+      amount: number;
+    }
   | { type: "towerTargetModeChanged"; towerId: string; mode: TowerTargetMode }
   | { type: "enemyKilled"; enemyId: string; enemyTypeId: string; coins: number; resources: ResourceBag }
   | {
@@ -950,7 +968,41 @@ export interface HeroesSnapshotV4 {
   readonly units: readonly HeroUnitStateV4[];
 }
 
-export type HeroesSnapshot = HeroesSnapshotV1 | HeroesSnapshotV2 | HeroesSnapshotV3 | HeroesSnapshotV4;
+export interface HeroSkillNodeStateSnapshotV5 {
+  readonly id: string;
+  readonly label: string;
+  readonly description: string;
+  readonly cost: number;
+  readonly requiresSkillIds: readonly string[];
+  readonly missingRequirementIds: readonly string[];
+  readonly unlocked: boolean;
+  readonly unlockable: boolean;
+}
+
+export interface HeroSkillsStateSnapshotV5 {
+  readonly availablePoints: number;
+  readonly startingPoints: number;
+  readonly pointsPerInterwave: number;
+  readonly maximumEarnablePoints: number;
+  readonly managementAvailable: boolean;
+  readonly nodes: readonly HeroSkillNodeStateSnapshotV5[];
+}
+
+export interface HeroUnitStateV5 extends HeroUnitStateV4 {
+  readonly skills: HeroSkillsStateSnapshotV5;
+}
+
+export interface HeroesSnapshotV5 {
+  readonly schemaVersion: 5;
+  readonly units: readonly HeroUnitStateV5[];
+}
+
+export type HeroesSnapshot =
+  | HeroesSnapshotV1
+  | HeroesSnapshotV2
+  | HeroesSnapshotV3
+  | HeroesSnapshotV4
+  | HeroesSnapshotV5;
 
 export interface GameSnapshot {
   /** Canonical authored map identity for presentation and renderer adapters. */

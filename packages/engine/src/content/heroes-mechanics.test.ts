@@ -179,9 +179,77 @@ function selfRevokingOnLastDescriptor<T extends object>(target: T): T {
 describe("R5.1A static heroes v1 authoring contract", () => {
   it("publishes heroes as implemented with one exact deep-frozen versioned descriptor", () => {
     expect(Engine.IMPLEMENTED_MECHANICS_MODULE_IDS).toContain("heroes");
-    const schema = (Engine as unknown as { HEROES_MECHANICS_SCHEMA?: unknown }).HEROES_MECHANICS_SCHEMA;
+    const currentSchema = (Engine as unknown as { HEROES_MECHANICS_SCHEMA?: Record<string, any> })
+      .HEROES_MECHANICS_SCHEMA!;
     const limits = (Engine as unknown as { HEROES_LIMITS?: unknown }).HEROES_LIMITS;
     expect(limits).toEqual(HEROES_LIMITS_V1);
+    expect(currentSchema.schemaVersion).toBe(5);
+    expect(currentSchema.supportedModuleSchemaVersions).toEqual([1, 2, 3, 4, 5]);
+    const { 5: version5, ...legacyVersions } = currentSchema.versions;
+    const { 5: snapshotVersion5, ...legacySnapshotVersions } = currentSchema.runtimeSnapshot.versions;
+    expect(version5).toEqual({
+      ...legacyVersions[4],
+      definition: {
+        requiredFields: ["label", "spawn", "movement", "durability", "mana", "activeAbility", "skillTree"],
+        optionalFields: [],
+        additionalProperties: false,
+        spawnValues: ["core"]
+      },
+      skillTree: {
+        nullable: true,
+        requiredFields: ["points", "nodes"],
+        optionalFields: [],
+        additionalProperties: false
+      },
+      skillPoints: {
+        requiredFields: ["starting", "perInterwave"],
+        optionalFields: [],
+        additionalProperties: false,
+        starting: { integer: true, minimum: 0, maximum: 65_536 },
+        perInterwave: { integer: true, minimum: 0, maximum: 65_536 }
+      },
+      skillNode: {
+        requiredFields: ["label", "description", "cost", "requires", "effects"],
+        optionalFields: [],
+        additionalProperties: false,
+        cost: { integer: true, minimum: 1, maximum: 65_536 }
+      },
+      skillEffect: {
+        requiredFields: ["kind", "scope", "modifier"],
+        optionalFields: [],
+        additionalProperties: false,
+        kindValues: ["modifier"],
+        scopeValues: ["hero_ability_damage"]
+      },
+      skillModifier: {
+        requiredFields: ["target", "operation", "value"],
+        optionalFields: [],
+        additionalProperties: false,
+        targetValues: ["damage"],
+        operationValues: ["flat", "additive_ratio", "multiplier"]
+      }
+    });
+    expect(snapshotVersion5).toEqual({
+      ...legacySnapshotVersions[4],
+      unitFields: [
+        "id", "definitionId", "label", "coord", "movement", "durability", "mana", "activeAbility", "skills"
+      ],
+      skillsFields: [
+        "availablePoints", "startingPoints", "pointsPerInterwave", "maximumEarnablePoints",
+        "managementAvailable", "nodes"
+      ]
+    });
+    const schema = {
+      ...currentSchema,
+      schemaVersion: 4,
+      supportedModuleSchemaVersions: [1, 2, 3, 4],
+      versions: legacyVersions,
+      runtimeSnapshot: {
+        ...currentSchema.runtimeSnapshot,
+        schemaVersions: [1, 2, 3, 4],
+        versions: legacySnapshotVersions
+      }
+    };
     expect(schema).toEqual({
       schemaVersion: 4,
       moduleId: "heroes",
@@ -382,7 +450,9 @@ describe("R5.1A static heroes v1 authoring contract", () => {
         }
       }
     });
-    expect(Object.isFrozen(schema)).toBe(true);
+    expect(Object.isFrozen(currentSchema)).toBe(true);
+    expect(Object.isFrozen(version5)).toBe(true);
+    expect(Object.isFrozen(snapshotVersion5)).toBe(true);
     expect(Object.isFrozen(limits)).toBe(true);
   });
 
@@ -399,7 +469,7 @@ describe("R5.1A static heroes v1 authoring contract", () => {
       { profiles: { heroes: "field_commander" } }
     ).heroes).toMatchObject({ available: true, active: false, reason: "module_disabled" });
     expect(Engine.resolveCapabilitySet(
-      heroesInput({ moduleSchemaVersion: 5 }).mechanics!,
+      heroesInput({ moduleSchemaVersion: 6 }).mechanics!,
       { profiles: { heroes: "field_commander" } }
     ).heroes).toMatchObject({ available: true, active: false, reason: "module_version_unsupported" });
     expect(Engine.resolveCapabilitySet(
@@ -504,7 +574,7 @@ describe("R5.1A static heroes v1 authoring contract", () => {
   });
 
   it("rejects future versions and accessor/prototype-backed authored values without invoking them", () => {
-    expect(validate({ enabled: false, moduleSchemaVersion: 5 }).ok).toBe(false);
+    expect(validate({ enabled: false, moduleSchemaVersion: 6 }).ok).toBe(false);
     let calls = 0;
     const hostileDefinition = Object.defineProperty({}, "label", {
       enumerable: true,
@@ -598,7 +668,7 @@ describe("R5.1B heroes v2 movement authoring contract (RED)", () => {
     const registry = createGameContentRegistry(v2Input());
     expect(validateGameContentRegistry(registry)).toEqual({ ok: true, issues: [] });
     expect(registry.mechanics.modules).not.toHaveProperty("navigation");
-    expect(Engine.HEROES_MECHANICS_SCHEMA.supportedModuleSchemaVersions).toEqual([1, 2, 3, 4]);
+    expect(Engine.HEROES_MECHANICS_SCHEMA.supportedModuleSchemaVersions).toEqual([1, 2, 3, 4, 5]);
     expect((Engine as unknown as {
       normalizeHeroesProfileV2?: (input: unknown) => unknown;
     }).normalizeHeroesProfileV2?.(movingProfile())).toEqual(movingProfile());
@@ -650,9 +720,9 @@ describe("R5.1B heroes v2 movement authoring contract (RED)", () => {
     ))).toBe(true);
   });
 
-  it("treats v5 as future while preserving v1 validation", () => {
+  it("treats v6 as future while preserving v1 validation", () => {
     const future = v2Input();
-    (future.mechanics!.modules.heroes as unknown as { schemaVersion: number }).schemaVersion = 5;
+    (future.mechanics!.modules.heroes as unknown as { schemaVersion: number }).schemaVersion = 6;
     expect(validateGameContentRegistry(createGameContentRegistry(future)).ok).toBe(false);
     expect(validate().ok).toBe(true);
   });

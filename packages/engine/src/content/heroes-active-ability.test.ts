@@ -141,8 +141,8 @@ describe("R5.3A heroes v4 targeted active-ability authoring (RED)", () => {
   it("publishes the exact closed v4 schema, snapshot shape, and shared numeric budgets", () => {
     const schema = (Engine as unknown as { HEROES_MECHANICS_SCHEMA: Record<string, any> }).HEROES_MECHANICS_SCHEMA;
     expect(schema).toMatchObject({
-      schemaVersion: 4,
-      supportedModuleSchemaVersions: [1, 2, 3, 4],
+      schemaVersion: 5,
+      supportedModuleSchemaVersions: [1, 2, 3, 4, 5],
       versions: {
         4: {
           definition: {
@@ -171,7 +171,7 @@ describe("R5.3A heroes v4 targeted active-ability authoring (RED)", () => {
         }
       },
       runtimeSnapshot: {
-        schemaVersions: [1, 2, 3, 4],
+        schemaVersions: [1, 2, 3, 4, 5],
         versions: {
           4: {
             unitFields: [
@@ -254,12 +254,12 @@ describe("R5.3A heroes v4 targeted active-ability authoring (RED)", () => {
     }
   });
 
-  it("keeps unselected v4 structurally validated and treats v5 as future fail-closed content", () => {
+  it("keeps unselected v4 structurally validated and treats v6 as future fail-closed content", () => {
     expect(validateGameContentRegistry(createGameContentRegistry(input(activeProfile(), true, false))))
       .toEqual({ ok: true, issues: [] });
 
     const future = input();
-    (future.mechanics!.modules.heroes as unknown as { schemaVersion: number }).schemaVersion = 5;
+    (future.mechanics!.modules.heroes as unknown as { schemaVersion: number }).schemaVersion = 6;
     const result = validateGameContentRegistry(createGameContentRegistry(future));
     expect(result.ok).toBe(false);
     expect(result.issues).toContainEqual(expect.objectContaining({

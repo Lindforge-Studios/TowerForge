@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "heroes": {
+      "schemaVersion": 5,
+      "enabled": true,
+      "profiles": {
+        "field_commander": {
+          "selectedHeroId": "commander",
+          "definitions": {
+            "commander": {
+              "label": "Field Commander",
+              "spawn": "core",
+              "movement": { "movementProfileId": "ground", "speed": 2 },
+              "durability": { "maxHp": 100, "shield": { "capacity": 25 } },
+              "mana": { "max": 100, "starting": 60, "regenerationPerUnit": 5 },
+              "activeAbility": {
+                "id": "arc_bolt",
+                "label": "Arc Bolt",
+                "target": "enemy",
+                "manaCost": 20,
+                "cooldown": 3,
+                "range": 6,
+                "damage": 30
+              },
+              "skillTree": {
+                "points": { "starting": 1, "perInterwave": 1 },
+                "nodes": {
+                  "focused_cast": {
+                    "label": "Focused Cast",
+                    "description": "Increase active ability damage by twenty-five percent.",
+                    "cost": 1,
+                    "requires": [],
+                    "effects": [
+                      {
+                        "kind": "modifier",
+                        "scope": "hero_ability_damage",
+                        "modifier": { "target": "damage", "operation": "multiplier", "value": 1.25 }
+                      }
+                    ]
+                  },
+                  "overcharge": {
+                    "label": "Overcharge",
+                    "description": "Add ten damage after Focused Cast is unlocked.",
+                    "cost": 1,
+                    "requires": ["focused_cast"],
+                    "effects": [
+                      {
+                        "kind": "modifier",
+                        "scope": "hero_ability_damage",
+                        "modifier": { "target": "damage", "operation": "flat", "value": 10 }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "movementProfiles": {
+            "ground": {
+              "label": "Ground",
+              "terrainMode": "respect_walkable",
+              "towerOccupancy": "blocked",
+              "defaultTerrainCost": 1000
+            }
+          }
+        }
+      }
+    }
+  }
+}

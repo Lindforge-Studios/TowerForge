@@ -550,7 +550,7 @@ export const TOOLS = [
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
         moduleId: { type: "string", description: "Engine-owned mechanics module id." },
-        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3, 4], description: "Module contract version: navigation, physics, and terraforming support v1; roguelite supports v1 for synergies, v2 for artifact loot, v3 for optional wave draft, and v4 for an optional campaign marker; heroes supports v1 for a static roster, v2 for movement, v3 for durability, and v4 for mana plus one targeted ability; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Omitted edits preserve an existing version and new modules default to v1." },
+        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3, 4, 5], description: "Module contract version: navigation, physics, and terraforming support v1; roguelite supports v1 for synergies, v2 for artifact loot, v3 for optional wave draft, and v4 for an optional campaign marker; heroes supports v1 for a static roster, v2 for movement, v3 for durability, v4 for mana plus one targeted ability, and v5 for an optional battle-local skill tree; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Omitted edits preserve an existing version and new modules default to v1." },
         missionId: { type: "string", description: "Mission that would select the profile; defaults to the project's default mission." },
         profileId: { type: "string", description: "Profile id to preview." },
         profile: { type: "object", description: "Versioned module profile payload." },
@@ -572,7 +572,7 @@ export const TOOLS = [
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
         moduleId: { type: "string", description: "Engine-owned mechanics module id." },
-        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3, 4], description: "Module contract version: navigation, physics, and terraforming support v1; roguelite supports v1 for synergies, v2 for artifact loot, v3 for optional wave draft, and v4 for an optional campaign marker; heroes supports v1 for a static roster, v2 for movement, v3 for durability, and v4 for mana plus one targeted ability; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Upgrades are guarded and version downgrades are rejected." },
+        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3, 4, 5], description: "Module contract version: navigation, physics, and terraforming support v1; roguelite supports v1 for synergies, v2 for artifact loot, v3 for optional wave draft, and v4 for an optional campaign marker; heroes supports v1 for a static roster, v2 for movement, v3 for durability, v4 for mana plus one targeted ability, and v5 for an optional battle-local skill tree; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Upgrades are guarded and version downgrades are rejected." },
         missionId: { type: "string", description: "Mission that would select the profile; defaults to the project's default mission." },
         profileId: { type: "string", description: "Profile id to enable." },
         profile: { type: "object", description: "Versioned module profile payload." },
@@ -1453,16 +1453,43 @@ export async function callTool(name, args = {}, ctx = {}) {
         }
       }
     };
+    const heroesAuthoringV5 = engine.HEROES_MECHANICS_SCHEMA.versions?.[5];
+    const heroesSnapshotV5 = engine.HEROES_MECHANICS_SCHEMA.runtimeSnapshot.versions?.[5];
     const heroes = {
-      authoring: engine.HEROES_MECHANICS_SCHEMA,
+      authoring: {
+        ...engine.HEROES_MECHANICS_SCHEMA,
+        versions: {
+          ...engine.HEROES_MECHANICS_SCHEMA.versions,
+          ...(heroesAuthoringV5 ? {
+            5: {
+              ...heroesAuthoringV5,
+              points: heroesAuthoringV5.skillPoints,
+              node: heroesAuthoringV5.skillNode,
+              effect: heroesAuthoringV5.skillEffect,
+              modifier: heroesAuthoringV5.skillModifier
+            }
+          } : {})
+        }
+      },
       snapshot: {
         field: "heroes",
         optional: true,
-        supportedSchemaVersions: [1, 2, 3, 4],
-        versions: engine.HEROES_MECHANICS_SCHEMA.runtimeSnapshot.versions
+        supportedSchemaVersions: [1, 2, 3, 4, 5],
+        versions: {
+          ...engine.HEROES_MECHANICS_SCHEMA.runtimeSnapshot.versions,
+          ...(heroesSnapshotV5 ? {
+            5: {
+              ...heroesSnapshotV5,
+              skillNodeFields: [
+                "id", "label", "description", "cost", "requiresSkillIds", "missingRequirementIds",
+                "unlocked", "unlockable"
+              ]
+            }
+          } : {})
+        }
       },
       commands: {
-        schemaVersion: 5,
+        schemaVersion: 6,
         moveHero: {
           requiredFields: ["heroId", "target"],
           optionalFields: [],
@@ -1470,6 +1497,11 @@ export async function callTool(name, args = {}, ctx = {}) {
         },
         useHeroAbility: {
           requiredFields: ["heroId", "abilityId", "targetEnemyId"],
+          optionalFields: [],
+          additionalProperties: false
+        },
+        unlockHeroSkill: {
+          requiredFields: ["heroId", "skillId"],
           optionalFields: [],
           additionalProperties: false
         }
@@ -1493,6 +1525,18 @@ export async function callTool(name, args = {}, ctx = {}) {
             "heroId", "heroDefinitionId", "abilityId", "targetEnemyId", "targetEnemyTypeId",
             "previousMana", "currentMana", "manaSpent", "cooldownApplied", "requestedDamage",
             "resolvedDamage", "shieldAbsorbed", "hpDamage"
+          ],
+          optionalFields: []
+        },
+        heroSkillPointsGranted: {
+          requiredFields: [
+            "type", "heroId", "heroDefinitionId", "waveIndex", "previousPoints", "currentPoints", "amount"
+          ],
+          optionalFields: []
+        },
+        heroSkillUnlocked: {
+          requiredFields: [
+            "type", "heroId", "heroDefinitionId", "skillId", "cost", "previousPoints", "currentPoints"
           ],
           optionalFields: []
         }

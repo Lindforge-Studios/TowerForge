@@ -206,6 +206,8 @@ export declare class TowerDefenseGame {
     moveHero(heroId: string, target: HexCoord): ActionResult;
     /** Use the single deterministic enemy-targeted ability authored by an active heroes v4 profile. */
     useHeroAbility(heroId: string, abilityId: string, targetEnemyId: string): ActionResult;
+    /** Atomically spend battle-local points on one authored v5 hero skill. */
+    unlockHeroSkill(heroId: string, skillId: string): ActionResult;
     tick(deltaUnits: number): void;
     getSnapshot(): GameSnapshot;
     getRenderSnapshot(): GameSnapshot;
@@ -297,6 +299,8 @@ export declare class TowerDefenseGame {
     private applyDisplacementEffect;
     private navigationMovementProfileId;
     private activeHeroesV2;
+    private heroSkillManagementAvailable;
+    private heroAbilitySkillModifiers;
     private buildHeroMovementField;
     private stabilizeHeroMovement;
     private moveHeroUnit;

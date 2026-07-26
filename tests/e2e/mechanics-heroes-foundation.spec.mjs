@@ -354,7 +354,209 @@ test.describe("R5.1A Studio static heroes lifecycle", () => {
     }
   });
 
-  test("enables, edits, reloads, disables, re-enables, and preserves future v5 read-only", async ({ page }) => {
+  test("enables, edits, saves, reloads, disables, and re-enables a v5 battle-local skill tree", async ({ page }) => {
+    test.setTimeout(120_000);
+    const balancePath = path.join(projectDir, "content", "balance.json");
+    const mechanicsPath = path.join(projectDir, "content", "mechanics.json");
+    const originalBalanceBytes = fs.readFileSync(balancePath, "utf8");
+    const originalMechanicsBytes = fs.existsSync(mechanicsPath) ? fs.readFileSync(mechanicsPath, "utf8") : null;
+    try {
+      await openStudio(page, studioUrl);
+      await openHeroesMechanics(page);
+      await expect(page.locator('#mechanics-recipe-select option[value="basic_hero_skill_tree"]'))
+        .toHaveCount(1);
+      await page.locator("#mechanics-recipe-select").selectOption("basic_hero_skill_tree");
+      await page.locator("#btn-mechanics-new-profile").click();
+      await expect(page.locator("#mechanics-profile-id")).toHaveValue("basic_hero_skill_tree");
+
+      const commander = page.locator('[data-hero-definition-id="commander"]');
+      await expect(commander.locator("[data-hero-skill-tree-enabled]")).toBeChecked();
+      await commander.locator("[data-hero-skill-starting-points]").fill("2");
+      await commander.locator("[data-hero-skill-points-per-interwave]").fill("2");
+      const node = commander.locator("[data-hero-skill-node-id]").first();
+      await expect(node).toBeVisible();
+      const nodeId = await node.locator("[data-hero-skill-id]").inputValue();
+      expect(nodeId).not.toBe("");
+      await node.locator("[data-hero-skill-label]").fill("Focused Cast+");
+      await node.locator("[data-hero-skill-description]").fill("Authored in Mechanics Hub.");
+      await node.locator("[data-hero-skill-value]").fill("1.5");
+
+      const beforePreview = readHeroesState(projectDir);
+      await page.locator("#btn-mechanics-preview").click();
+      await expect(page.locator("#mechanics-preview-result")).toContainText('"ok": true');
+      expect(readHeroesState(projectDir)).toEqual(beforePreview);
+      await page.locator("#btn-mechanics-enable").click();
+      await expect.poll(() => readHeroesState(projectDir)).toMatchObject({
+        moduleSchemaVersion: 5,
+        enabled: true,
+        selectedProfileId: "basic_hero_skill_tree",
+        profile: {
+          definitions: {
+            commander: {
+              skillTree: {
+                points: { starting: 2, perInterwave: 2 },
+                nodes: {
+                  [nodeId]: {
+                    label: "Focused Cast+",
+                    description: "Authored in Mechanics Hub.",
+                    effects: [{
+                      kind: "modifier",
+                      scope: "hero_ability_damage",
+                      modifier: { target: "damage", value: 1.5 }
+                    }]
+                  }
+                }
+              }
+            }
+          }
+        }
+      });
+
+      await page.reload();
+      await openHeroesMechanics(page);
+      const reloadedNode = page.locator(`[data-hero-skill-node-id="${nodeId}"]`);
+      await expect(reloadedNode.locator("[data-hero-skill-label]")).toHaveValue("Focused Cast+");
+      const beforeInvalidPreview = readHeroesState(projectDir);
+      await reloadedNode.locator("[data-hero-skill-cost]").fill("0");
+      await page.locator("#btn-mechanics-preview").click();
+      await expect(page.locator("#mechanics-preview-result")).toContainText(/cost|positive|greater|range/i);
+      await expect(page.locator("#mechanics-preview-result")).not.toContainText('"ok": true');
+      expect(readHeroesState(projectDir)).toEqual(beforeInvalidPreview);
+      await reloadedNode.locator("[data-hero-skill-cost]").fill("1");
+      await reloadedNode.locator("[data-hero-skill-description]").fill("Saved battle-local upgrade.");
+      await page.locator("#btn-mechanics-save").click();
+      await expect.poll(() => (
+        readHeroesState(projectDir).profile?.definitions?.commander?.skillTree?.nodes?.[nodeId]?.description
+      )).toBe("Saved battle-local upgrade.");
+
+      await page.reload();
+      await openHeroesMechanics(page);
+      await expect(page.locator(`[data-hero-skill-node-id="${nodeId}"] [data-hero-skill-description]`))
+        .toHaveValue("Saved battle-local upgrade.");
+      const preservedProfile = structuredClone(readHeroesState(projectDir).profile);
+      page.once("dialog", (dialog) => dialog.accept());
+      await page.locator("#btn-mechanics-disable").click();
+      await expect.poll(() => readHeroesState(projectDir)).toMatchObject({
+        enabled: false,
+        selectedProfileId: "basic_hero_skill_tree",
+        profile: preservedProfile
+      });
+      await page.locator("#btn-mechanics-enable").click();
+      await expect.poll(() => readHeroesState(projectDir)).toMatchObject({
+        enabled: true,
+        selectedProfileId: "basic_hero_skill_tree",
+        profile: preservedProfile
+      });
+    } finally {
+      fs.writeFileSync(balancePath, originalBalanceBytes, "utf8");
+      if (originalMechanicsBytes === null) fs.rmSync(mechanicsPath, { force: true });
+      else fs.writeFileSync(mechanicsPath, originalMechanicsBytes, "utf8");
+    }
+  });
+
+  test("promotes every definition in a multi-hero v4 profile to explicit v5 tree-or-null", async ({ page }) => {
+    test.setTimeout(120_000);
+    const balancePath = path.join(projectDir, "content", "balance.json");
+    const mechanicsPath = path.join(projectDir, "content", "mechanics.json");
+    const originalBalanceBytes = fs.readFileSync(balancePath, "utf8");
+    const originalMechanicsBytes = fs.existsSync(mechanicsPath) ? fs.readFileSync(mechanicsPath, "utf8") : null;
+    try {
+      await openStudio(page, studioUrl);
+      await openHeroesMechanics(page);
+      await page.locator("#mechanics-recipe-select").selectOption("basic_targeted_hero_ability");
+      await page.locator("#btn-mechanics-new-profile").click();
+      await page.locator("#btn-mechanics-add-hero").click();
+      await page.locator('[data-hero-definition-id="hero_2"] [data-hero-label]').fill("Warden");
+      await page.locator("#btn-mechanics-enable").click();
+      await expect.poll(() => readHeroesState(projectDir).moduleSchemaVersion).toBe(4);
+
+      await page.reload();
+      await openHeroesMechanics(page);
+      const beforePromotion = readHeroesState(projectDir);
+      await page.locator('[data-hero-definition-id="commander"] [data-hero-skill-tree-enabled]').check();
+      await page.locator("#btn-mechanics-preview").click();
+      await expect(page.locator("#mechanics-preview-result")).toContainText('"ok": true');
+      expect(readHeroesState(projectDir)).toEqual(beforePromotion);
+
+      await page.locator("#btn-mechanics-save").click();
+      await expect.poll(() => readHeroesState(projectDir)).toMatchObject({
+        moduleSchemaVersion: 5,
+        profile: {
+          definitions: {
+            commander: { skillTree: { points: { starting: 1, perInterwave: 1 } } },
+            hero_2: { skillTree: null }
+          }
+        }
+      });
+    } finally {
+      fs.writeFileSync(balancePath, originalBalanceBytes, "utf8");
+      if (originalMechanicsBytes === null) fs.rmSync(mechanicsPath, { force: true });
+      else fs.writeFileSync(mechanicsPath, originalMechanicsBytes, "utf8");
+    }
+  });
+
+  test("exposes, adds, removes, and saves every bounded skill effect", async ({ page }) => {
+    test.setTimeout(120_000);
+    const balancePath = path.join(projectDir, "content", "balance.json");
+    const mechanicsPath = path.join(projectDir, "content", "mechanics.json");
+    const originalBalanceBytes = fs.readFileSync(balancePath, "utf8");
+    const originalMechanicsBytes = fs.existsSync(mechanicsPath) ? fs.readFileSync(mechanicsPath, "utf8") : null;
+    try {
+      await openStudio(page, studioUrl);
+      await openHeroesMechanics(page);
+      await page.locator("#mechanics-recipe-select").selectOption("basic_hero_skill_tree");
+      await page.locator("#btn-mechanics-new-profile").click();
+      await page.locator("#btn-mechanics-enable").click();
+      await expect.poll(() => fs.existsSync(mechanicsPath)).toBe(true);
+      await expect.poll(() => readHeroesState(projectDir)).toMatchObject({
+        moduleSchemaVersion: 5,
+        enabled: true,
+        selectedProfileId: "basic_hero_skill_tree"
+      });
+
+      const mechanics = readJson(mechanicsPath);
+      const authoredEffects = mechanics.modules.heroes.profiles.basic_hero_skill_tree
+        .definitions.commander.skillTree.nodes.focused_cast.effects;
+      authoredEffects.push({
+        kind: "modifier",
+        scope: "hero_ability_damage",
+        modifier: { target: "damage", operation: "flat", value: 10 }
+      });
+      writeJson(mechanicsPath, mechanics);
+
+      await page.reload();
+      await openHeroesMechanics(page);
+      const node = page.locator('[data-hero-skill-node-id="focused_cast"]');
+      const effects = node.locator("[data-hero-skill-effect-row]");
+      await expect(effects).toHaveCount(2);
+      await effects.nth(1).locator("[data-hero-skill-effect-value]").fill("12");
+
+      await node.locator("[data-add-hero-skill-effect]").click();
+      await node.locator("[data-add-hero-skill-effect]").click();
+      await expect(effects).toHaveCount(4);
+      await expect(node.locator("[data-add-hero-skill-effect]")).toBeDisabled();
+      await effects.nth(3).locator("[data-hero-skill-effect-operation]").selectOption("additive_ratio");
+      await effects.nth(3).locator("[data-hero-skill-effect-value]").fill("0.2");
+      await effects.nth(2).locator("[data-remove-hero-skill-effect]").click();
+      await expect(effects).toHaveCount(3);
+
+      await page.locator("#btn-mechanics-save").click();
+      await expect.poll(() => (
+        readHeroesState(projectDir).profile?.definitions?.commander?.skillTree
+          ?.nodes?.focused_cast?.effects
+      )).toEqual([
+        expect.objectContaining({ modifier: expect.objectContaining({ operation: "multiplier", value: 1.25 }) }),
+        expect.objectContaining({ modifier: expect.objectContaining({ operation: "flat", value: 12 }) }),
+        expect.objectContaining({ modifier: expect.objectContaining({ operation: "additive_ratio", value: 0.2 }) })
+      ]);
+    } finally {
+      fs.writeFileSync(balancePath, originalBalanceBytes, "utf8");
+      if (originalMechanicsBytes === null) fs.rmSync(mechanicsPath, { force: true });
+      else fs.writeFileSync(mechanicsPath, originalMechanicsBytes, "utf8");
+    }
+  });
+
+  test("enables, edits, reloads, disables, re-enables, and preserves future v6 read-only", async ({ page }) => {
     test.setTimeout(120_000);
     const browserErrors = captureBrowserErrors(page);
     await openStudio(page, studioUrl);
@@ -431,8 +633,8 @@ test.describe("R5.1A Studio static heroes lifecycle", () => {
 
     const mechanicsPath = path.join(projectDir, "content", "mechanics.json");
     const future = readJson(mechanicsPath);
-    future.modules.heroes.schemaVersion = 5;
-    future.modules.heroes.futureModuleRule = { preserve: ["exact", 5] };
+    future.modules.heroes.schemaVersion = 6;
+    future.modules.heroes.futureModuleRule = { preserve: ["exact", 6] };
     future.modules.heroes.profiles.basic_commander_hero.futureProfileRule = { preserve: true };
     writeJson(mechanicsPath, future);
     const futureBytes = fs.readFileSync(mechanicsPath, "utf8");
@@ -476,6 +678,7 @@ test.describe("R5.1A generated-player static hero presentation", () => {
       buildMobileHeroPlayerFixture(tempRoot, combination);
       buildDurableHeroPlayerFixture(tempRoot, combination);
       buildAbilityHeroPlayerFixture(tempRoot, combination);
+      buildSkillHeroPlayerFixture(tempRoot, combination);
     }
     buildLegacyPlayerFixture(tempRoot);
     port = await freeHttpPort();
@@ -483,7 +686,7 @@ test.describe("R5.1A generated-player static hero presentation", () => {
       const relative = decodeURIComponent(new URL(request.url, `http://127.0.0.1:${port}`).pathname)
         .replace(/^\/+/, "");
       const [mode, grid, renderer, ...parts] = relative.split("/");
-      if (!(["active", "mobile", "durable", "ability", "legacy"].includes(mode)
+      if (!(["active", "mobile", "durable", "ability", "skill", "legacy"].includes(mode)
         && ["hex", "square"].includes(grid)
         && ["canvas", "phaser"].includes(renderer))) return respond404(response);
       const fixture = mode === "legacy"
@@ -549,6 +752,7 @@ test.describe("R5.1A generated-player static hero presentation", () => {
     const snapshot = await inspectPlayer(page);
     expect(snapshot).not.toHaveProperty("heroes");
     await expect(page.locator('[id*="hero"], [data-hero]')).toHaveCount(0);
+    await expect(page.locator("#hero-skill-tree")).toHaveCount(0);
     expect(await countHeroPixels(page, "canvas", "either", snapshot.coreCoord)).toBe(0);
     await exerciseOrdinaryInput(page, "canvas", "click");
     expect(await inspectPlayer(page)).not.toHaveProperty("heroes");
@@ -576,6 +780,7 @@ test.describe("R5.1A generated-player static hero presentation", () => {
           }]
         });
         await expect(page.locator("#hero-action-bar")).toHaveCount(0);
+        await expect(page.locator("#hero-skill-tree")).toHaveCount(0);
 
         const target = initial.spawnCoord;
         expect(target).not.toEqual(initial.coreCoord);
@@ -630,6 +835,7 @@ test.describe("R5.1A generated-player static hero presentation", () => {
         }]
       });
       await expect(page.locator("#hero-action-bar")).toHaveCount(0);
+      await expect(page.locator("#hero-skill-tree")).toHaveCount(0);
       await expect.poll(
         () => countHeroDurabilityPixels(page, renderer, initial.coreCoord, "healthy"),
         { message: `${grid}/${renderer} must draw HP/shield cues`, timeout: 10_000 }
@@ -702,6 +908,7 @@ test.describe("R5.1A generated-player static hero presentation", () => {
       await expect(heroBar).toHaveAttribute("data-mana-current", "100");
       await expect(heroButton).toContainText("Arc Bolt [1]");
       await expect(heroButton).toBeEnabled();
+      await expect(page.locator("#hero-skill-tree")).toHaveCount(0);
 
       await page.locator("#start-wave").click();
       await expect.poll(async () => (await inspectPlayer(page)).enemies.length, {
@@ -757,6 +964,83 @@ test.describe("R5.1A generated-player static hero presentation", () => {
       await expect(heroButton).toContainText("(3)");
       expect(browserErrors()).toEqual([]);
     });
+    }
+  }
+
+  for (const { grid, renderer } of combinations) {
+    for (const inputFamily of mobileInputFamilies) {
+      test(`unlocks the authoritative v5 hero skill with ${inputFamily} on ${grid}/${renderer}`, async ({ page }) => {
+        test.setTimeout(90_000);
+        const browserErrors = captureBrowserErrors(page);
+        await page.goto(playerUrl(port, "skill", grid, renderer));
+        await waitForPlayerBoot(page);
+
+        const initial = await inspectPlayer(page);
+        expect(initial.heroes).toMatchObject({
+          schemaVersion: 5,
+          units: [{
+            id: "commander",
+            skills: {
+              availablePoints: 1,
+              startingPoints: 1,
+              pointsPerInterwave: 1,
+              maximumEarnablePoints: expect.any(Number),
+              managementAvailable: true,
+              nodes: [{
+                id: "focused_cast",
+                requiresSkillIds: [],
+                missingRequirementIds: [],
+                unlocked: false,
+                unlockable: true
+              }, {
+                id: "overcharge",
+                requiresSkillIds: ["focused_cast"],
+                missingRequirementIds: ["focused_cast"],
+                unlocked: false,
+                unlockable: false
+              }]
+            }
+          }]
+        });
+        const skillTree = page.locator("#hero-skill-tree");
+        const skillButton = skillTree.locator('button[data-hero-skill-id="focused_cast"]');
+        await expect(skillTree).toBeVisible();
+        await expect(skillTree).toHaveAttribute("data-available-points", "1");
+        await expect(skillButton).toBeEnabled();
+
+        if (inputFamily === "touch") {
+          const box = await skillButton.boundingBox();
+          expect(box).toBeTruthy();
+          await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+        } else if (inputFamily === "keyboard") {
+          await skillButton.focus();
+          await page.keyboard.press("Enter");
+        } else {
+          await skillButton.click();
+        }
+
+        await expect.poll(async () => (await inspectPlayer(page)).heroes?.units?.[0]?.skills)
+          .toMatchObject({
+            availablePoints: 0,
+            managementAvailable: true,
+            nodes: [{ id: "focused_cast", unlocked: true, unlockable: false }, {
+              id: "overcharge", missingRequirementIds: [], unlocked: false, unlockable: false
+            }]
+          });
+        await expect(skillTree).toHaveAttribute("data-available-points", "0");
+        await expect(skillButton).toBeDisabled();
+        expect((await inspectPlayer(page)).lastEvents).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            type: "heroSkillUnlocked",
+            heroId: "commander",
+            skillId: "focused_cast",
+            cost: 1,
+            previousPoints: 1,
+            currentPoints: 0
+          })
+        ]));
+        expect(browserErrors()).toEqual([]);
+      });
     }
   }
 });
@@ -938,6 +1222,84 @@ function buildAbilityHeroPlayerFixture(root, { grid, renderer }) {
                 activeAbility: {
                   id: "arc_bolt", label: "Arc Bolt", target: "enemy", manaCost: 20,
                   cooldown: 3, range: 65_536, damage: 30
+                }
+              }
+            },
+            movementProfiles: {
+              ground: {
+                label: "Ground",
+                terrainMode: "respect_walkable",
+                towerOccupancy: "blocked",
+                defaultTerrainCost: 1_000
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+  buildPlayer(projectDir, renderer, "heroes");
+}
+
+function buildSkillHeroPlayerFixture(root, { grid, renderer }) {
+  const name = `hero_skill_${grid}_${renderer}`;
+  const { projectDir } = createProject({ name, parentDir: root, templateName: "classic", gridKind: grid });
+  const manifestPath = path.join(projectDir, "project.json");
+  const manifest = readJson(manifestPath);
+  manifest.schemaVersion = 3;
+  writeJson(manifestPath, manifest);
+
+  const balancePath = path.join(projectDir, "content", "balance.json");
+  const balance = readJson(balancePath);
+  const missionId = balance.defaultMissionId ?? Object.keys(balance.missions)[0];
+  balance.missions[missionId].mechanics = { profiles: { heroes: "skill_commanders" } };
+  writeJson(balancePath, balance);
+  writeJson(path.join(projectDir, "content", "mechanics.json"), {
+    schemaVersion: 1,
+    modules: {
+      heroes: {
+        schemaVersion: 5,
+        enabled: true,
+        profiles: {
+          skill_commanders: {
+            selectedHeroId: "commander",
+            definitions: {
+              commander: {
+                label: "Skill Commander",
+                spawn: "core",
+                movement: { movementProfileId: "ground", speed: 2 },
+                durability: { maxHp: 100, shield: { capacity: 25 } },
+                mana: { max: 100, starting: 100, regenerationPerUnit: 5 },
+                activeAbility: {
+                  id: "arc_bolt", label: "Arc Bolt", target: "enemy", manaCost: 20,
+                  cooldown: 3, range: 65_536, damage: 30
+                },
+                skillTree: {
+                  points: { starting: 1, perInterwave: 1 },
+                  nodes: {
+                    focused_cast: {
+                      label: "Focused Cast",
+                      description: "Increase active ability damage.",
+                      cost: 1,
+                      requires: [],
+                      effects: [{
+                        kind: "modifier",
+                        scope: "hero_ability_damage",
+                        modifier: { target: "damage", operation: "multiplier", value: 1.25 }
+                      }]
+                    },
+                    overcharge: {
+                      label: "Overcharge",
+                      description: "Further increase active ability damage.",
+                      cost: 2,
+                      requires: ["focused_cast"],
+                      effects: [{
+                        kind: "modifier",
+                        scope: "hero_ability_damage",
+                        modifier: { target: "damage", operation: "additive_ratio", value: 0.5 }
+                      }]
+                    }
+                  }
                 }
               }
             },

@@ -78,9 +78,9 @@ describe("R5.3A shared hero active-ability presentation", () => {
     }
   });
 
-  it("treats v5 as future and retains v1-v3 compatibility", () => {
+  it("treats v6 as future and retains v1-v4 compatibility", () => {
     expect(Renderer.projectHeroesPresentation({
-      heroes: { ...abilitySnapshot().heroes, schemaVersion: 5 }
+      heroes: { ...abilitySnapshot().heroes, schemaVersion: 6 }
     })).toEqual({ active: false, units: [] });
     expect(Renderer.projectHeroesPresentation({
       heroes: {

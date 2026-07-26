@@ -5,6 +5,10 @@ const MAX_COORDINATE = 1_000_000;
 const MAX_DURABILITY = 1_000_000_000_000;
 const MAX_ABILITY_COOLDOWN = 86_400;
 const MAX_ABILITY_RANGE = 65_536;
+const MAX_SKILL_POINTS = 65_536;
+const MAX_SKILL_NODES = 32;
+const MAX_SKILL_REQUIREMENTS = 8;
+const MAX_DESCRIPTION_BYTES = 512;
 
 const INACTIVE = Object.freeze({ active: false, units: Object.freeze([]) });
 
@@ -168,6 +172,77 @@ function activeAbility(value, projectedMana, projectedDurability) {
   });
 }
 
+function skillIdList(value) {
+  const source = denseArray(value, MAX_SKILL_REQUIREMENTS);
+  if (!source) return null;
+  const ids = [];
+  const seen = new Set();
+  for (const value of source) {
+    const id = boundedText(value, MAX_ID_BYTES);
+    if (!id || seen.has(id)) return null;
+    seen.add(id);
+    ids.push(id);
+  }
+  return Object.freeze(ids);
+}
+
+function skills(value) {
+  const record = exactRecord(value, [
+    "availablePoints", "startingPoints", "pointsPerInterwave", "maximumEarnablePoints",
+    "managementAvailable", "nodes"
+  ]);
+  if (!record || typeof record.managementAvailable !== "boolean") return null;
+  for (const field of ["availablePoints", "startingPoints", "pointsPerInterwave", "maximumEarnablePoints"]) {
+    if (!Number.isSafeInteger(record[field]) || record[field] < 0 || record[field] > MAX_SKILL_POINTS) {
+      return null;
+    }
+  }
+  if (record.availablePoints > record.maximumEarnablePoints
+    || record.startingPoints > record.maximumEarnablePoints) return null;
+  const sourceNodes = denseArray(record.nodes, MAX_SKILL_NODES);
+  if (!sourceNodes) return null;
+  const projectedNodes = [];
+  const ids = new Set();
+  for (const value of sourceNodes) {
+    const node = exactRecord(value, [
+      "id", "label", "description", "cost", "requiresSkillIds", "missingRequirementIds",
+      "unlocked", "unlockable"
+    ]);
+    if (!node) return null;
+    const id = boundedText(node.id, MAX_ID_BYTES);
+    const label = boundedText(node.label, MAX_LABEL_BYTES);
+    const description = boundedText(node.description, MAX_DESCRIPTION_BYTES);
+    const requiresSkillIds = skillIdList(node.requiresSkillIds);
+    const missingRequirementIds = skillIdList(node.missingRequirementIds);
+    if (!id || !label || !description || !requiresSkillIds || !missingRequirementIds
+      || ids.has(id) || !Number.isSafeInteger(node.cost) || node.cost < 1
+      || node.cost > MAX_SKILL_POINTS || typeof node.unlocked !== "boolean"
+      || typeof node.unlockable !== "boolean") return null;
+    const required = new Set(requiresSkillIds);
+    if (missingRequirementIds.some((requirementId) => !required.has(requirementId))) return null;
+    if (node.unlocked && missingRequirementIds.length > 0) return null;
+    // Unlockability is authoritative gameplay state. Presentation validates only impossible
+    // combinations and must not reconstruct phase, liveness, prerequisite, or point rules.
+    if (node.unlocked && node.unlockable) return null;
+    ids.add(id);
+    projectedNodes.push(Object.freeze({
+      id, label, description, cost: node.cost, requiresSkillIds, missingRequirementIds,
+      unlocked: node.unlocked, unlockable: node.unlockable
+    }));
+  }
+  for (const node of projectedNodes) {
+    if (node.requiresSkillIds.some((requirementId) => !ids.has(requirementId))) return null;
+  }
+  return Object.freeze({
+    availablePoints: record.availablePoints,
+    startingPoints: record.startingPoints,
+    pointsPerInterwave: record.pointsPerInterwave,
+    maximumEarnablePoints: record.maximumEarnablePoints,
+    managementAvailable: record.managementAvailable,
+    nodes: Object.freeze(projectedNodes)
+  });
+}
+
 /**
  * Project only the authoritative optional engine snapshot. Invalid/future/untrusted shapes fail
  * closed to the same inactive sentinel; renderers never reconstruct a hero from mechanics data.
@@ -177,7 +252,8 @@ export function projectHeroesPresentation(snapshot) {
   if (value === undefined || value === null) return INACTIVE;
   const section = exactRecord(value, ["schemaVersion", "units"]);
   if (!section || (section.schemaVersion !== 1 && section.schemaVersion !== 2
-    && section.schemaVersion !== 3 && section.schemaVersion !== 4)) return INACTIVE;
+    && section.schemaVersion !== 3 && section.schemaVersion !== 4
+    && section.schemaVersion !== 5)) return INACTIVE;
   const authoredUnits = denseArray(section.units, MAX_UNITS);
   if (!authoredUnits || authoredUnits.length !== 1) return INACTIVE;
   const units = [];
@@ -190,7 +266,9 @@ export function projectHeroesPresentation(snapshot) {
         ? ["id", "definitionId", "label", "coord", "movement"]
         : section.schemaVersion === 3
           ? ["id", "definitionId", "label", "coord", "movement", "durability"]
-          : ["id", "definitionId", "label", "coord", "movement", "durability", "mana", "activeAbility"]);
+          : section.schemaVersion === 4
+            ? ["id", "definitionId", "label", "coord", "movement", "durability", "mana", "activeAbility"]
+            : ["id", "definitionId", "label", "coord", "movement", "durability", "mana", "activeAbility", "skills"]);
     if (!unit) return INACTIVE;
     const id = boundedText(unit.id, MAX_ID_BYTES);
     const definitionId = boundedText(unit.definitionId, MAX_ID_BYTES);
@@ -223,9 +301,18 @@ export function projectHeroesPresentation(snapshot) {
       ? activeAbility(unit.activeAbility, projectedMana, projectedDurability)
       : null;
     if (!projectedMana || !projectedAbility) return INACTIVE;
+    if (section.schemaVersion === 4) {
+      units.push(Object.freeze({
+        id, definitionId, label, coord, movement: projectedMovement, durability: projectedDurability,
+        mana: projectedMana, activeAbility: projectedAbility
+      }));
+      continue;
+    }
+    const projectedSkills = skills(unit.skills);
+    if (!projectedSkills) return INACTIVE;
     units.push(Object.freeze({
       id, definitionId, label, coord, movement: projectedMovement, durability: projectedDurability,
-      mana: projectedMana, activeAbility: projectedAbility
+      mana: projectedMana, activeAbility: projectedAbility, skills: projectedSkills
     }));
   }
   return Object.freeze({ active: true, units: Object.freeze(units) });

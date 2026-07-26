@@ -67,12 +67,12 @@ describe("R5.1A generated Canvas/Phaser static hero foundation", () => {
     expect(emptyGuard).toBeLessThan(lookupIndex);
   });
 
-  it("keeps later skills and TowerScript actions out while v4 adds its isolated active ability", () => {
+  it("keeps TowerScript actions out while opt-in hero controls remain isolated", () => {
     const canvas = functionSource(buildSource, "playerTemplate");
     const phaser = functionSource(buildSource, "phaserPlayerTemplate");
     expect(canvas).toMatch(/useHeroAbility/);
     expect(phaser).toMatch(/useHeroAbility/);
-    expect(canvas).not.toMatch(/unlockHeroSkill|heroTowerScript/i);
-    expect(phaser).not.toMatch(/unlockHeroSkill|heroTowerScript/i);
+    expect(canvas).not.toMatch(/heroTowerScript/i);
+    expect(phaser).not.toMatch(/heroTowerScript/i);
   });
 });

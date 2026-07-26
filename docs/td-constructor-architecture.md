@@ -556,6 +556,44 @@ existing revision/validation/backup/rollback transaction. Canvas and Phaser cons
 snapshot/event projections. See [ADR 0039](adr/0039-opt-in-hero-durability.md) and
 `docs/examples/opt-in-hero-roster/mechanics-durable.json`.
 
+### R5.3A targeted hero ability
+
+Heroes v4 retains v3 and adds exact bounded `mana` plus one inline enemy-targeted
+`activeAbility`. Exact `GameCommandV5 useHeroAbility` carries only hero, ability, and live target
+IDs. The engine checks outcome, defeat, range, mana, and cooldown before spending state and routing
+one ability packet through the shared resolver. Deterministic regeneration/cooldown state appears
+only in optional snapshot v4 and nested heroes checkpoint v3; the outer checkpoint remains v1.
+
+Studio and MCP use the inert `basic_targeted_hero_ability` recipe and the ordinary guarded
+revision/validation/backup/rollback transaction. Canvas and Phaser read authoritative readiness and
+dispatch the same command across pointer, touch, and keyboard. V1–v3 and absent/disabled paths keep
+their earlier shape. See [ADR 0040](adr/0040-opt-in-targeted-hero-ability.md) and
+`docs/examples/opt-in-hero-roster/mechanics-targeted-ability.json`.
+
+### R5.4A battle-local hero skill tree
+
+Heroes v5 retains the exact v4 definition and adds required nullable `skillTree`. `null` is an
+explicit opt-out that continues to publish snapshot v4/checkpoint v3. A non-null tree contains
+bounded starting/interwave points and a canonical all-of-prerequisite DAG. Nodes can contain one
+to four allowlisted modifier effects, all scoped to `hero_ability_damage`; the engine compiles them
+to collision-safe `run` modifiers for that packet only and rejects sequences that can overflow the
+shared damage bounds.
+
+Exact `GameCommandV6 unlockHeroSkill` is accepted only during setup or a clear non-final
+interwave. Unlocking is atomic and deterministic, while the tree itself never pauses automatic
+wave scheduling. Non-final clears emit `waveCleared` then `heroSkillPointsGranted` before an
+optional draft offer. Snapshot v5 publishes authoritative points, phase availability,
+prerequisites, and unlockability. Nested heroes checkpoint v4 validates binary unlock order,
+prerequisite closure, earned-minus-spent accounting, retained event order, and authoritative final
+state. Outer checkpoint v1, project v3, PlayerProfile v3, and CampaignRun v1 do not change.
+
+Mechanics Hub owns explicit v4→v5 promotion and materializes `skillTree:null` on definitions that
+do not opt in. MCP exposes guide v25 and inert `basic_hero_skill_tree`; both players create controls
+only from valid snapshot v5 and dispatch command v6. No XP, respec, aura, blocking, logistics,
+TowerScript hero scope, or cross-battle carry is added. See
+[ADR 0041](adr/0041-opt-in-battle-local-hero-skill-tree.md) and
+`docs/examples/opt-in-hero-roster/mechanics-skill-tree.json`.
+
 ## Done Criteria For Constructor Changes
 
 - Engine changes pass `npm run typecheck`.

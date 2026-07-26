@@ -196,6 +196,14 @@ export interface HeroesCheckpointStateV3 {
   };
 }
 
+export interface HeroesCheckpointStateV4 {
+  readonly schemaVersion: 4;
+  readonly unit: HeroesCheckpointStateV3["unit"] & {
+    readonly skillPoints: number;
+    readonly unlockedSkillIds: readonly string[];
+  };
+}
+
 /** Authoritative mutable simulation state. Map occupancy and water cues are rebuilt derivatives. */
 export interface GameCheckpointStateV1 {
   readonly coreHp: number;
@@ -234,7 +242,11 @@ export interface GameCheckpointStateV1 {
   readonly artifacts?: ArtifactCheckpointState;
   readonly draft?: DraftCheckpointState;
   readonly campaignBattle?: CampaignBattleCheckpointStateV1;
-  readonly heroes?: HeroesCheckpointStateV1 | HeroesCheckpointStateV2 | HeroesCheckpointStateV3;
+  readonly heroes?:
+    | HeroesCheckpointStateV1
+    | HeroesCheckpointStateV2
+    | HeroesCheckpointStateV3
+    | HeroesCheckpointStateV4;
 }
 
 export interface GameCheckpointV1 {

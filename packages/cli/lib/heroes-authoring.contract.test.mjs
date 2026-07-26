@@ -302,3 +302,111 @@ describe("R5.3A CLI targeted hero ability authoring", () => {
     }
   }, 15_000);
 });
+
+describe("R5.4A CLI battle-local hero skill-tree authoring", () => {
+  const skilledHero = (skillTree = {
+    points: { starting: 1, perInterwave: 1 },
+    nodes: {
+      focused_cast: {
+        label: "Focused Cast",
+        description: "Increase active ability damage.",
+        cost: 1,
+        requires: [],
+        effects: [{
+          kind: "modifier",
+          scope: "hero_ability_damage",
+          modifier: { target: "damage", operation: "multiplier", value: 1.25 }
+        }]
+      },
+      overcharge: {
+        label: "Overcharge",
+        description: "Further increase active ability damage.",
+        cost: 2,
+        requires: ["focused_cast"],
+        effects: [{
+          kind: "modifier",
+          scope: "hero_ability_damage",
+          modifier: { target: "damage", operation: "additive_ratio", value: 0.5 }
+        }]
+      }
+    }
+  }) => request({
+    moduleSchemaVersion: 5,
+    profileId: "skilled_commander",
+    profile: {
+      selectedHeroId: "commander",
+      definitions: {
+        commander: {
+          label: "Commander",
+          spawn: "core",
+          movement: { movementProfileId: "ground", speed: 1 },
+          durability: { maxHp: 100, shield: { capacity: 25 } },
+          mana: { max: 100, starting: 60, regenerationPerUnit: 5 },
+          activeAbility: {
+            id: "arc_bolt", label: "Arc Bolt", target: "enemy",
+            manaCost: 20, cooldown: 3, range: 6, damage: 30
+          },
+          skillTree
+        }
+      },
+      movementProfiles: {
+        ground: {
+          label: "Ground", terrainMode: "respect_walkable",
+          towerOccupancy: "blocked", defaultTerrainCost: 1000
+        }
+      }
+    }
+  });
+
+  it("previews, guardedly applies, and rereads the exact required nullable v5 tree", async () => {
+    for (const skillTree of [null, undefined]) {
+      const projectDir = fixture();
+      const before = transactionBytes(projectDir);
+      const authored = skilledHero(skillTree === undefined ? undefined : skillTree);
+      const preview = await previewMechanicsModule(projectDir, authored);
+
+      expect(preview).toMatchObject({
+        ok: true,
+        dryRun: true,
+        validation: { ok: true, issues: [] },
+        candidate: {
+          mechanics: { modules: { heroes: { schemaVersion: 5, enabled: true } } },
+          balance: { missions: { tutorial_01: { mechanics: { profiles: { heroes: "skilled_commander" } } } } }
+        }
+      });
+      expect(preview.candidate.mechanics.modules.navigation).toBeUndefined();
+      expect(transactionBytes(projectDir)).toEqual(before);
+
+      const applied = await applyMechanicsModule(projectDir, {
+        ...authored,
+        ifRevision: preview.revision
+      });
+      expect(applied).toMatchObject({ ok: true, written: true, previousRevision: preview.revision });
+      const reread = await inspectMechanicsAuthoring(projectDir, { missionId: "tutorial_01" });
+      expect(reread.heroes).toMatchObject({
+        enabled: true,
+        moduleSchemaVersion: 5,
+        selectedProfileId: "skilled_commander",
+        selectedProfile: authored.profile
+      });
+      expect(reread.capabilities.navigation.active).toBe(false);
+    }
+  }, 30_000);
+
+  it("rejects a malformed v5 tree without silently repairing or writing it", async () => {
+    const projectDir = fixture();
+    const before = transactionBytes(projectDir);
+    const malformed = skilledHero();
+    malformed.profile.definitions.commander.skillTree.nodes.overcharge.requires = ["ghost"];
+
+    const preview = await previewMechanicsModule(projectDir, malformed);
+    expect(preview.ok).toBe(false);
+    expect(preview.validation.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        severity: "error",
+        fieldPath: expect.stringMatching(/skillTree|overcharge|requires|ghost/i)
+      })
+    ]));
+    expect(transactionBytes(projectDir)).toEqual(before);
+  }, 15_000);
+});

@@ -66,16 +66,24 @@ shared workspace roots. In a workspace-bound session, never supply or request an
   tool exists. Mechanics and TowerScript revisions are independent.
 - Heroes are monotonically opt-in: v1 is a static roster, v2 adds deterministic movement, v3 adds
   exact HP/shield durability, and Heroes v4 adds bounded `mana` plus one inline `activeAbility`
-  targeting a live enemy ID. Use `describe_schema` for `heroes`, then `get_capabilities` and one of
+  targeting a live enemy ID. Heroes v5 adds a required nullable per-hero `skillTree`; use
+  `skillTree: null` for opt-out and to preserve v4 behavior. Use `describe_schema` for `heroes`,
+  then `get_capabilities` and one of
   the inert `basic_commander_hero`, `basic_mobile_commander_hero`,
-  `basic_durable_commander_hero`, or `basic_targeted_hero_ability` recipes. Continue through
+  `basic_durable_commander_hero`, `basic_targeted_hero_ability`, or `basic_hero_skill_tree`
+  recipes. For a skill tree, inspect the `basic_hero_skill_tree` recipe, then continue through
   `preview_mechanics_module`, `apply_mechanics_module` with the preview `ifRevision`, and
   `validate_project`; recipes never enable/select Heroes or adjacent mechanics. Dispatch a v4
   ability only as exact `GameCommandV5 useHeroAbility` with `heroId`, `abilityId`, and
-  `targetEnemyId`. Read mana, cooldown, readiness, and the successful `heroAbilityUsed` event only
-  from authoritative engine snapshots/events. Bind an optional sprite separately with
+  `targetEnemyId`. Unlock a v5 skill only between waves as exact `GameCommandV6 unlockHeroSkill`
+  with `heroId` and `skillId`. Treat snapshot `available skill points` and `unlockability` as
+  authoritative: never mutate or write snapshot fields. Read successful progression only from
+  the `heroSkillPointsGranted` and `heroSkillUnlocked` events. The tree is battle-local and resets
+  between campaign battles; it does not carry through `CampaignRun` or the persistent profile.
+  Read mana, cooldown, readiness, and the successful `heroAbilityUsed` event only from authoritative
+  engine snapshots/events. Bind an optional sprite separately with
   `bind_sprite(kind: "heroes")` because visuals and mechanics use different revisions. This slice
-  has no multiple abilities, skill trees, auras, blocking, TowerScript hero actions, or
+  has no multiple abilities, auras, blocking, logistics coupling, TowerScript hero actions, or
   `analyze_heroes` tool. Do not invent those surfaces.
 - Pass the latest `ifRevision` token to guarded writes. On a conflict, reread and reconcile instead
   of retrying with stale data.

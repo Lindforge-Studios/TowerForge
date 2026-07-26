@@ -1,6 +1,6 @@
 import { TOWER_TARGET_MODES } from "./types.js";
-export const GAME_COMMAND_SCHEMA_VERSION = 5;
-export const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4, 5]);
+export const GAME_COMMAND_SCHEMA_VERSION = 6;
+export const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4, 5, 6]);
 const MAX_PAYLOAD_DEPTH = 32;
 const MAX_PAYLOAD_NODES = 4_096;
 const MAX_PAYLOAD_BYTES = 64 * 1_024;
@@ -174,7 +174,8 @@ export function parseGameCommand(input) {
         return undefined;
     const schemaVersion = fields.get("schemaVersion");
     const type = fields.get("type");
-    if ((schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3 && schemaVersion !== 4 && schemaVersion !== 5)
+    if ((schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3 && schemaVersion !== 4
+        && schemaVersion !== 5 && schemaVersion !== 6)
         || typeof type !== "string")
         return undefined;
     if (type === "tick") {
@@ -280,7 +281,7 @@ export function parseGameCommand(input) {
             return undefined;
         return { schemaVersion, type, heroId, target };
     }
-    if (schemaVersion === 5 && type === "useHeroAbility") {
+    if (schemaVersion >= 5 && type === "useHeroAbility") {
         if (!hasClosedFields(fields, ["schemaVersion", "type", "heroId", "abilityId", "targetEnemyId"]))
             return undefined;
         const heroId = fields.get("heroId");
@@ -289,7 +290,16 @@ export function parseGameCommand(input) {
         if (!isBoundedCommandId(heroId) || !isBoundedCommandId(abilityId) || !isBoundedCommandId(targetEnemyId)) {
             return undefined;
         }
-        return { schemaVersion: 5, type, heroId, abilityId, targetEnemyId };
+        return { schemaVersion, type, heroId, abilityId, targetEnemyId };
+    }
+    if (schemaVersion === 6 && type === "unlockHeroSkill") {
+        if (!hasClosedFields(fields, ["schemaVersion", "type", "heroId", "skillId"]))
+            return undefined;
+        const heroId = fields.get("heroId");
+        const skillId = fields.get("skillId");
+        if (!isBoundedCommandId(heroId) || !isBoundedCommandId(skillId))
+            return undefined;
+        return { schemaVersion: 6, type, heroId, skillId };
     }
     return undefined;
 }
@@ -325,5 +335,7 @@ export function executeParsedGameCommand(game, command) {
             return game.moveHero(command.heroId, command.target);
         case "useHeroAbility":
             return game.useHeroAbility(command.heroId, command.abilityId, command.targetEnemyId);
+        case "unlockHeroSkill":
+            return game.unlockHeroSkill(command.heroId, command.skillId);
     }
 }

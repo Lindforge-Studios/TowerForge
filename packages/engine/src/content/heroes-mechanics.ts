@@ -7,12 +7,23 @@ import {
   normalizeMovementProfileV1,
   type MovementProfileV1
 } from "./navigation-mechanics.js";
+import type { ModifierOperation, ModifierTarget } from "../simulation/modifiers.js";
 
 /** Closed structural budgets for the first opt-in hero roster schema. */
 export const HEROES_LIMITS = Object.freeze({
   definitions: 32,
   idUtf8Bytes: 128,
   labelUtf8Bytes: 128
+});
+
+/** Closed budgets for the independently optional v5 hero skill-tree extension. */
+export const HERO_SKILL_TREE_LIMITS = Object.freeze({
+  descriptionUtf8Bytes: 512,
+  nodes: 32,
+  prerequisitesPerNode: 8,
+  effectsPerNode: 4,
+  effectsPerTree: 32,
+  points: 65_536
 });
 
 const HERO_ABILITY_COOLDOWN_MAX = 86_400;
@@ -110,11 +121,55 @@ export interface ActiveHeroesMechanicsV4 extends HeroesProfileV4 {
   readonly profileId: string;
 }
 
+export interface HeroSkillPointsDefinitionV5 {
+  readonly starting: number;
+  readonly perInterwave: number;
+}
+
+export interface HeroSkillModifierEffectV5 {
+  readonly kind: "modifier";
+  readonly scope: "hero_ability_damage";
+  readonly modifier: {
+    readonly target: ModifierTarget;
+    readonly operation: ModifierOperation;
+    readonly value: number;
+  };
+}
+
+export interface HeroSkillNodeDefinitionV5 {
+  readonly label: string;
+  readonly description: string;
+  readonly cost: number;
+  readonly requires: readonly string[];
+  readonly effects: readonly HeroSkillModifierEffectV5[];
+}
+
+export interface HeroSkillTreeDefinitionV5 {
+  readonly points: HeroSkillPointsDefinitionV5;
+  readonly nodes: Readonly<Record<string, HeroSkillNodeDefinitionV5>>;
+}
+
+export interface HeroUnitDefinitionV5 extends HeroUnitDefinitionV4 {
+  readonly skillTree: HeroSkillTreeDefinitionV5 | null;
+}
+
+export interface HeroesProfileV5 {
+  readonly selectedHeroId: string;
+  readonly definitions: Readonly<Record<string, HeroUnitDefinitionV5>>;
+  readonly movementProfiles: Readonly<Record<string, MovementProfileV1>>;
+}
+
+export interface ActiveHeroesMechanicsV5 extends HeroesProfileV5 {
+  readonly schemaVersion: 5;
+  readonly profileId: string;
+}
+
 export type ActiveHeroesMechanics =
   | ActiveHeroesMechanicsV1
   | ActiveHeroesMechanicsV2
   | ActiveHeroesMechanicsV3
-  | ActiveHeroesMechanicsV4;
+  | ActiveHeroesMechanicsV4
+  | ActiveHeroesMechanicsV5;
 
 const PROFILE_SCHEMA = Object.freeze({
   requiredFields: Object.freeze(["selectedHeroId", "definitions"] as const),
@@ -178,6 +233,53 @@ const DEFINITION_SCHEMA_V4 = Object.freeze({
   spawnValues: Object.freeze(["core"] as const)
 });
 
+const DEFINITION_SCHEMA_V5 = Object.freeze({
+  requiredFields: Object.freeze([
+    "label", "spawn", "movement", "durability", "mana", "activeAbility", "skillTree"
+  ] as const),
+  optionalFields: Object.freeze([] as const),
+  additionalProperties: false,
+  spawnValues: Object.freeze(["core"] as const)
+});
+
+const SKILL_TREE_SCHEMA_V5 = Object.freeze({
+  nullable: true,
+  requiredFields: Object.freeze(["points", "nodes"] as const),
+  optionalFields: Object.freeze([] as const),
+  additionalProperties: false
+});
+
+const SKILL_POINTS_SCHEMA_V5 = Object.freeze({
+  requiredFields: Object.freeze(["starting", "perInterwave"] as const),
+  optionalFields: Object.freeze([] as const),
+  additionalProperties: false,
+  starting: Object.freeze({ integer: true, minimum: 0, maximum: HERO_SKILL_TREE_LIMITS.points }),
+  perInterwave: Object.freeze({ integer: true, minimum: 0, maximum: HERO_SKILL_TREE_LIMITS.points })
+});
+
+const SKILL_NODE_SCHEMA_V5 = Object.freeze({
+  requiredFields: Object.freeze(["label", "description", "cost", "requires", "effects"] as const),
+  optionalFields: Object.freeze([] as const),
+  additionalProperties: false,
+  cost: Object.freeze({ integer: true, minimum: 1, maximum: HERO_SKILL_TREE_LIMITS.points })
+});
+
+const SKILL_EFFECT_SCHEMA_V5 = Object.freeze({
+  requiredFields: Object.freeze(["kind", "scope", "modifier"] as const),
+  optionalFields: Object.freeze([] as const),
+  additionalProperties: false,
+  kindValues: Object.freeze(["modifier"] as const),
+  scopeValues: Object.freeze(["hero_ability_damage"] as const)
+});
+
+const SKILL_MODIFIER_SCHEMA_V5 = Object.freeze({
+  requiredFields: Object.freeze(["target", "operation", "value"] as const),
+  optionalFields: Object.freeze([] as const),
+  additionalProperties: false,
+  targetValues: Object.freeze(["damage"] as const),
+  operationValues: Object.freeze(["flat", "additive_ratio", "multiplier"] as const)
+});
+
 const MANA_SCHEMA_V4 = Object.freeze({
   requiredFields: Object.freeze(["max", "starting", "regenerationPerUnit"] as const),
   optionalFields: Object.freeze([] as const),
@@ -200,9 +302,9 @@ const ACTIVE_ABILITY_SCHEMA_V4 = Object.freeze({
 
 /** Capability-aware authoring descriptor shared by Studio and MCP. */
 export const HEROES_MECHANICS_SCHEMA = Object.freeze({
-  schemaVersion: 4,
+  schemaVersion: 5,
   moduleId: "heroes" as const,
-  supportedModuleSchemaVersions: Object.freeze([1, 2, 3, 4] as const),
+  supportedModuleSchemaVersions: Object.freeze([1, 2, 3, 4, 5] as const),
   profile: PROFILE_SCHEMA,
   definition: DEFINITION_SCHEMA,
   versions: Object.freeze({
@@ -230,12 +332,27 @@ export const HEROES_MECHANICS_SCHEMA = Object.freeze({
       shield: SHIELD_SCHEMA_V3,
       mana: MANA_SCHEMA_V4,
       activeAbility: ACTIVE_ABILITY_SCHEMA_V4
+    }),
+    5: Object.freeze({
+      profile: PROFILE_SCHEMA_V2,
+      definition: DEFINITION_SCHEMA_V5,
+      movement: MOVEMENT_SCHEMA_V2,
+      movementProfile: MOVEMENT_PROFILE_V1_SCHEMA,
+      durability: DURABILITY_SCHEMA_V3,
+      shield: SHIELD_SCHEMA_V3,
+      mana: MANA_SCHEMA_V4,
+      activeAbility: ACTIVE_ABILITY_SCHEMA_V4,
+      skillTree: SKILL_TREE_SCHEMA_V5,
+      skillPoints: SKILL_POINTS_SCHEMA_V5,
+      skillNode: SKILL_NODE_SCHEMA_V5,
+      skillEffect: SKILL_EFFECT_SCHEMA_V5,
+      skillModifier: SKILL_MODIFIER_SCHEMA_V5
     })
   }),
   limits: HEROES_LIMITS,
   runtimeSnapshot: Object.freeze({
     path: "snapshot.heroes",
-    schemaVersions: Object.freeze([1, 2, 3, 4] as const),
+    schemaVersions: Object.freeze([1, 2, 3, 4, 5] as const),
     optionalUnlessActive: true,
     versions: Object.freeze({
       1: Object.freeze({ unitFields: Object.freeze(["id", "definitionId", "label", "coord"] as const) }),
@@ -257,6 +374,21 @@ export const HEROES_MECHANICS_SCHEMA = Object.freeze({
         manaFields: Object.freeze(["current", "max", "regenerationPerUnit"] as const),
         activeAbilityFields: Object.freeze([
           "id", "label", "target", "manaCost", "cooldown", "cooldownRemaining", "range", "damage", "ready"
+        ] as const)
+      }),
+      5: Object.freeze({
+        unitFields: Object.freeze([
+          "id", "definitionId", "label", "coord", "movement", "durability", "mana", "activeAbility", "skills"
+        ] as const),
+        movementFields: Object.freeze(["targetCoord", "nextCoord", "edgeProgress"] as const),
+        durabilityFields: Object.freeze(["hp", "maxHp", "shield", "defeated"] as const),
+        manaFields: Object.freeze(["current", "max", "regenerationPerUnit"] as const),
+        activeAbilityFields: Object.freeze([
+          "id", "label", "target", "manaCost", "cooldown", "cooldownRemaining", "range", "damage", "ready"
+        ] as const),
+        skillsFields: Object.freeze([
+          "availablePoints", "startingPoints", "pointsPerInterwave", "maximumEarnablePoints",
+          "managementAvailable", "nodes"
         ] as const)
       })
     })
@@ -282,6 +414,11 @@ function utf8ByteLength(value: string): number {
     bytes += point <= 0x7f ? 1 : point <= 0x7ff ? 2 : point <= 0xffff ? 3 : 4;
   }
   return bytes;
+}
+
+/** Stable collision-safe runtime id for one authored skill modifier. */
+export function heroSkillModifierIdV5(skillId: string, effectIndex: number): string {
+  return `heroes:skill:${utf8ByteLength(skillId)}:${skillId}:effect:${effectIndex}`;
 }
 
 function dataRecord(value: unknown, fieldPath: string, label: string): Record<string, unknown> {
@@ -344,6 +481,50 @@ function boundedText(value: unknown, maximum: number, fieldPath: string, label: 
     throw new HeroesProfileValidationError(
       fieldPath,
       `${label} must contain 1..${maximum} UTF-8 bytes without surrounding whitespace.`
+    );
+  }
+  return value;
+}
+
+function dataArray(value: unknown, fieldPath: string, label: string): readonly unknown[] {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+    throw new HeroesProfileValidationError(fieldPath, `${label} must be a plain dense array.`);
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value) as unknown as DescriptorMap;
+  if (Object.getOwnPropertySymbols(descriptors).length > 0) {
+    throw new HeroesProfileValidationError(fieldPath, `${label} must not contain symbol fields.`);
+  }
+  const lengthDescriptor = descriptors.length;
+  if (!lengthDescriptor || !("value" in lengthDescriptor)
+    || typeof lengthDescriptor.value !== "number" || !Number.isSafeInteger(lengthDescriptor.value)) {
+    throw new HeroesProfileValidationError(fieldPath, `${label} has an invalid length.`);
+  }
+  const length = lengthDescriptor.value;
+  if (Object.keys(descriptors).length !== length + 1) {
+    throw new HeroesProfileValidationError(fieldPath, `${label} must be dense and contain no extra fields.`);
+  }
+  const result: unknown[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = descriptors[String(index)];
+    if (!descriptor?.enumerable || !("value" in descriptor)) {
+      throw new HeroesProfileValidationError(`${fieldPath}[${index}]`, `${label} entries must be enumerable own data.`);
+    }
+    result.push(descriptor.value);
+  }
+  return result;
+}
+
+function boundedInteger(
+  value: unknown,
+  minimum: number,
+  maximum: number,
+  fieldPath: string,
+  label: string
+): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new HeroesProfileValidationError(
+      fieldPath,
+      `${label} must be an integer inside [${minimum}, ${maximum}].`
     );
   }
   return value;
@@ -720,6 +901,273 @@ export function normalizeHeroesProfileV4(input: unknown, root = "profile"): Hero
   });
 }
 
+/** Normalize the closed nullable R5.4A battle-local skill-tree profile. */
+export function normalizeHeroesProfileV5(input: unknown, root = "profile"): HeroesProfileV5 {
+  const profile = dataRecord(input, root, "Heroes profile");
+  exactFields(profile, PROFILE_SCHEMA_V2.requiredFields, root, "Heroes profile");
+  const rawDefinitions = dataRecord(profile.definitions, `${root}.definitions`, "Heroes definitions");
+  const legacyDefinitions: Record<string, unknown> = {};
+  for (const heroId of Object.keys(rawDefinitions).sort(compareBinary)) {
+    const definitionRoot = `${root}.definitions.${heroId}`;
+    const rawDefinition = dataRecord(rawDefinitions[heroId], definitionRoot, `Hero definition "${heroId}"`);
+    exactFields(rawDefinition, DEFINITION_SCHEMA_V5.requiredFields, definitionRoot, `Hero definition "${heroId}"`);
+    Object.defineProperty(legacyDefinitions, heroId, {
+      value: {
+        label: rawDefinition.label,
+        spawn: rawDefinition.spawn,
+        movement: rawDefinition.movement,
+        durability: rawDefinition.durability,
+        mana: rawDefinition.mana,
+        activeAbility: rawDefinition.activeAbility
+      },
+      enumerable: true
+    });
+  }
+  const abilityProfile = normalizeHeroesProfileV4({
+    selectedHeroId: profile.selectedHeroId,
+    definitions: legacyDefinitions,
+    movementProfiles: profile.movementProfiles
+  }, root);
+  const definitions: Record<string, HeroUnitDefinitionV5> = {};
+  for (const heroId of Object.keys(abilityProfile.definitions).sort(compareBinary)) {
+    const definitionRoot = `${root}.definitions.${heroId}`;
+    const rawDefinition = dataRecord(rawDefinitions[heroId], definitionRoot, `Hero definition "${heroId}"`);
+    let skillTree: HeroSkillTreeDefinitionV5 | null = null;
+    if (rawDefinition.skillTree !== null) {
+      const treeRoot = `${definitionRoot}.skillTree`;
+      const rawTree = dataRecord(rawDefinition.skillTree, treeRoot, `Hero skill tree "${heroId}"`);
+      exactFields(rawTree, SKILL_TREE_SCHEMA_V5.requiredFields, treeRoot, `Hero skill tree "${heroId}"`);
+      const pointsRoot = `${treeRoot}.points`;
+      const rawPoints = dataRecord(rawTree.points, pointsRoot, `Hero skill points "${heroId}"`);
+      exactFields(rawPoints, SKILL_POINTS_SCHEMA_V5.requiredFields, pointsRoot, `Hero skill points "${heroId}"`);
+      const points = Object.freeze({
+        starting: boundedInteger(
+          rawPoints.starting, 0, HERO_SKILL_TREE_LIMITS.points, `${pointsRoot}.starting`, "Starting hero skill points"
+        ),
+        perInterwave: boundedInteger(
+          rawPoints.perInterwave, 0, HERO_SKILL_TREE_LIMITS.points,
+          `${pointsRoot}.perInterwave`, "Interwave hero skill points"
+        )
+      });
+      const rawNodes = dataRecord(rawTree.nodes, `${treeRoot}.nodes`, `Hero skill nodes "${heroId}"`);
+      const skillIds = Object.keys(rawNodes).sort(compareBinary);
+      if (skillIds.length < 1 || skillIds.length > HERO_SKILL_TREE_LIMITS.nodes) {
+        throw new HeroesProfileValidationError(
+          `${treeRoot}.nodes`,
+          `Hero skill tree nodes must contain 1..${HERO_SKILL_TREE_LIMITS.nodes} entries.`
+        );
+      }
+      const nodes: Record<string, HeroSkillNodeDefinitionV5> = {};
+      let totalEffects = 0;
+      for (const skillId of skillIds) {
+        boundedText(skillId, HEROES_LIMITS.idUtf8Bytes, `${treeRoot}.nodes.${skillId}`, "Hero skill id");
+        const nodeRoot = `${treeRoot}.nodes.${skillId}`;
+        const rawNode = dataRecord(rawNodes[skillId], nodeRoot, `Hero skill node "${skillId}"`);
+        exactFields(rawNode, SKILL_NODE_SCHEMA_V5.requiredFields, nodeRoot, `Hero skill node "${skillId}"`);
+        const rawRequires = dataArray(rawNode.requires, `${nodeRoot}.requires`, `Hero skill requirements "${skillId}"`);
+        if (rawRequires.length > HERO_SKILL_TREE_LIMITS.prerequisitesPerNode) {
+          throw new HeroesProfileValidationError(
+            `${nodeRoot}.requires`,
+            `Hero skill prerequisites exceed ${HERO_SKILL_TREE_LIMITS.prerequisitesPerNode} entries.`
+          );
+        }
+        const requires = rawRequires.map((requiredId, index) => boundedText(
+          requiredId,
+          HEROES_LIMITS.idUtf8Bytes,
+          `${nodeRoot}.requires[${index}]`,
+          "Hero skill prerequisite id"
+        )).sort(compareBinary);
+        const rawEffects = dataArray(rawNode.effects, `${nodeRoot}.effects`, `Hero skill effects "${skillId}"`);
+        if (rawEffects.length < 1 || rawEffects.length > HERO_SKILL_TREE_LIMITS.effectsPerNode) {
+          throw new HeroesProfileValidationError(
+            `${nodeRoot}.effects`,
+            `Hero skill effects must contain 1..${HERO_SKILL_TREE_LIMITS.effectsPerNode} entries.`
+          );
+        }
+        totalEffects += rawEffects.length;
+        if (totalEffects > HERO_SKILL_TREE_LIMITS.effectsPerTree) {
+          throw new HeroesProfileValidationError(
+            `${treeRoot}.nodes`,
+            `Hero skill tree effects exceed ${HERO_SKILL_TREE_LIMITS.effectsPerTree} entries.`
+          );
+        }
+        const effects = rawEffects.map((rawEffect, index): HeroSkillModifierEffectV5 => {
+          const effectRoot = `${nodeRoot}.effects[${index}]`;
+          const effect = dataRecord(rawEffect, effectRoot, `Hero skill effect "${skillId}"`);
+          exactFields(effect, SKILL_EFFECT_SCHEMA_V5.requiredFields, effectRoot, `Hero skill effect "${skillId}"`);
+          if (effect.kind !== "modifier") {
+            throw new HeroesProfileValidationError(`${effectRoot}.kind`, "Hero skill effect kind must be modifier.");
+          }
+          if (effect.scope !== "hero_ability_damage") {
+            throw new HeroesProfileValidationError(
+              `${effectRoot}.scope`,
+              "Hero skill modifier scope must be hero_ability_damage."
+            );
+          }
+          const modifierRoot = `${effectRoot}.modifier`;
+          const rawModifier = dataRecord(effect.modifier, modifierRoot, `Hero skill modifier "${skillId}"`);
+          exactFields(
+            rawModifier,
+            SKILL_MODIFIER_SCHEMA_V5.requiredFields,
+            modifierRoot,
+            `Hero skill modifier "${skillId}"`
+          );
+          if (rawModifier.target !== "damage") {
+            throw new HeroesProfileValidationError(`${modifierRoot}.target`, "Hero skill modifier target must be damage.");
+          }
+          if (rawModifier.operation !== "flat" && rawModifier.operation !== "additive_ratio"
+            && rawModifier.operation !== "multiplier") {
+            throw new HeroesProfileValidationError(
+              `${modifierRoot}.operation`,
+              "Hero skill modifier operation is unsupported."
+            );
+          }
+          if (typeof rawModifier.value !== "number" || !Number.isFinite(rawModifier.value)) {
+            throw new HeroesProfileValidationError(`${modifierRoot}.value`, "Hero skill modifier value must be finite.");
+          }
+          return Object.freeze({
+            kind: "modifier" as const,
+            scope: "hero_ability_damage" as const,
+            modifier: Object.freeze({
+              target: "damage" as const,
+              operation: rawModifier.operation,
+              value: Object.is(rawModifier.value, -0) ? 0 : rawModifier.value
+            })
+          });
+        });
+        Object.defineProperty(nodes, skillId, {
+          value: Object.freeze({
+            label: boundedText(rawNode.label, HEROES_LIMITS.labelUtf8Bytes, `${nodeRoot}.label`, "Hero skill label"),
+            description: boundedText(
+              rawNode.description,
+              HERO_SKILL_TREE_LIMITS.descriptionUtf8Bytes,
+              `${nodeRoot}.description`,
+              "Hero skill description"
+            ),
+            cost: boundedInteger(rawNode.cost, 1, HERO_SKILL_TREE_LIMITS.points, `${nodeRoot}.cost`, "Hero skill cost"),
+            requires: Object.freeze(requires),
+            effects: Object.freeze(effects)
+          }),
+          enumerable: true
+        });
+      }
+      skillTree = Object.freeze({ points, nodes: Object.freeze(nodes) });
+    }
+    Object.defineProperty(definitions, heroId, {
+      value: Object.freeze({ ...abilityProfile.definitions[heroId]!, skillTree }),
+      enumerable: true
+    });
+  }
+  return Object.freeze({
+    selectedHeroId: abilityProfile.selectedHeroId,
+    definitions: Object.freeze(definitions),
+    movementProfiles: abilityProfile.movementProfiles
+  });
+}
+
+export interface HeroSkillTreeSemanticIssueV5 {
+  readonly fieldPath: string;
+  readonly message: string;
+}
+
+/** Validate graph references and mission-dependent point budgets after structural normalization. */
+export function validateHeroSkillTreeSemanticsV5(
+  profile: HeroesProfileV5,
+  root = "profile",
+  missionWaveCounts: readonly number[] = []
+): readonly HeroSkillTreeSemanticIssueV5[] {
+  const issues: HeroSkillTreeSemanticIssueV5[] = [];
+  for (const [heroId, definition] of Object.entries(profile.definitions)) {
+    const tree = definition.skillTree;
+    if (!tree) continue;
+    const treeRoot = `${root}.definitions.${heroId}.skillTree`;
+    const nodeIds = new Set(Object.keys(tree.nodes));
+    for (const [skillId, node] of Object.entries(tree.nodes)) {
+      const seen = new Set<string>();
+      for (let index = 0; index < node.requires.length; index += 1) {
+        const requiredId = node.requires[index]!;
+        const fieldPath = `${treeRoot}.nodes.${skillId}.requires[${index}]`;
+        if (seen.has(requiredId)) {
+          issues.push({ fieldPath, message: `Hero skill prerequisite "${requiredId}" is duplicated.` });
+        } else {
+          seen.add(requiredId);
+        }
+        if (requiredId === skillId) {
+          issues.push({ fieldPath, message: `Hero skill "${skillId}" cannot require itself.` });
+        } else if (!nodeIds.has(requiredId)) {
+          issues.push({ fieldPath, message: `Hero skill prerequisite references unknown skill "${requiredId}".` });
+        }
+      }
+    }
+    const visiting = new Set<string>();
+    const visited = new Set<string>();
+    const visit = (skillId: string): void => {
+      if (visited.has(skillId)) return;
+      if (visiting.has(skillId)) {
+        issues.push({
+          fieldPath: `${treeRoot}.nodes.${skillId}.requires`,
+          message: `Hero skill tree contains a prerequisite cycle involving "${skillId}".`
+        });
+        return;
+      }
+      visiting.add(skillId);
+      for (const requiredId of tree.nodes[skillId]?.requires ?? []) {
+        if (nodeIds.has(requiredId) && requiredId !== skillId) visit(requiredId);
+      }
+      visiting.delete(skillId);
+      visited.add(skillId);
+    };
+    for (const skillId of Object.keys(tree.nodes)) visit(skillId);
+    for (const waveCount of missionWaveCounts) {
+      const interwaves = Math.max(0, waveCount - 1);
+      const maximumEarnable = tree.points.starting + tree.points.perInterwave * interwaves;
+      if (!Number.isSafeInteger(maximumEarnable) || maximumEarnable > HERO_SKILL_TREE_LIMITS.points) {
+        issues.push({
+          fieldPath: `${treeRoot}.points`,
+          message: `Hero skill points exceed the mission maximum of ${HERO_SKILL_TREE_LIMITS.points}.`
+        });
+        break;
+      }
+    }
+    if (heroId === profile.selectedHeroId) {
+      const orderedEffects = Object.entries(tree.nodes).flatMap(([skillId, node]) => (
+        node.effects.map((effect, effectIndex) => ({
+          id: heroSkillModifierIdV5(skillId, effectIndex),
+          operation: effect.modifier.operation,
+          value: effect.modifier.value,
+          fieldPath: `${treeRoot}.nodes.${skillId}.effects[${effectIndex}].modifier.value`
+        }))
+      )).sort((left, right) => {
+        const operationOrder = (operation: ModifierOperation): number => (
+          operation === "flat" ? 0 : operation === "additive_ratio" ? 1 : 2
+        );
+        return operationOrder(left.operation) - operationOrder(right.operation)
+          || compareBinary(left.id, right.id);
+      });
+      let resolvedDamage = definition.activeAbility.damage;
+      let additiveRatioAnchor = resolvedDamage;
+      for (const effect of orderedEffects) {
+        if (effect.operation === "flat") {
+          resolvedDamage += effect.value;
+          additiveRatioAnchor = resolvedDamage;
+        } else if (effect.operation === "additive_ratio") {
+          resolvedDamage += additiveRatioAnchor * effect.value;
+        } else {
+          resolvedDamage *= effect.value;
+        }
+        if (!Number.isFinite(resolvedDamage)) {
+          issues.push({
+            fieldPath: effect.fieldPath,
+            message: "Hero skill modifier sequence overflows the finite DamageResolver range."
+          });
+          break;
+        }
+      }
+    }
+  }
+  return Object.freeze(issues.map((issue) => Object.freeze(issue)));
+}
+
 function ownData(value: unknown, key: string): unknown {
   if (value === null || typeof value !== "object") return undefined;
   try {
@@ -739,12 +1187,12 @@ export function resolveActiveHeroesMechanics(
   if (!capability?.active || capability.profileId === undefined) return undefined;
   const module = ownData(ownData(content.mechanics, "modules"), "heroes");
   const schemaVersion = ownData(module, "schemaVersion");
-  if ((schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3 && schemaVersion !== 4)
+  if ((schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3 && schemaVersion !== 4 && schemaVersion !== 5)
     || ownData(module, "enabled") !== true) {
     return undefined;
   }
   const profile = ownData(ownData(module, "profiles"), capability.profileId);
-  let normalized: HeroesProfileV1 | HeroesProfileV2 | HeroesProfileV3 | HeroesProfileV4;
+  let normalized: HeroesProfileV1 | HeroesProfileV2 | HeroesProfileV3 | HeroesProfileV4 | HeroesProfileV5;
   try {
     normalized = schemaVersion === 1
       ? normalizeHeroesProfileV1(profile, `modules.heroes.profiles.${capability.profileId}`)
@@ -752,16 +1200,33 @@ export function resolveActiveHeroesMechanics(
         ? normalizeHeroesProfileV2(profile, `modules.heroes.profiles.${capability.profileId}`)
         : schemaVersion === 3
           ? normalizeHeroesProfileV3(profile, `modules.heroes.profiles.${capability.profileId}`)
-          : normalizeHeroesProfileV4(profile, `modules.heroes.profiles.${capability.profileId}`);
+          : schemaVersion === 4
+            ? normalizeHeroesProfileV4(profile, `modules.heroes.profiles.${capability.profileId}`)
+            : normalizeHeroesProfileV5(profile, `modules.heroes.profiles.${capability.profileId}`);
   } catch {
     return undefined;
   }
   if (!Object.prototype.hasOwnProperty.call(normalized.definitions, normalized.selectedHeroId)) return undefined;
-  if (schemaVersion === 2 || schemaVersion === 3 || schemaVersion === 4) {
-    const moving = normalized as HeroesProfileV2 | HeroesProfileV3 | HeroesProfileV4;
+  if (schemaVersion === 2 || schemaVersion === 3 || schemaVersion === 4 || schemaVersion === 5) {
+    const moving = normalized as HeroesProfileV2 | HeroesProfileV3 | HeroesProfileV4 | HeroesProfileV5;
     const definition = moving.definitions[moving.selectedHeroId];
     if (!definition || !Object.prototype.hasOwnProperty.call(moving.movementProfiles, definition.movement.movementProfileId)) {
       return undefined;
+    }
+    if (schemaVersion === 5) {
+      const v5 = moving as HeroesProfileV5;
+      if (validateHeroSkillTreeSemanticsV5(
+        v5,
+        `modules.heroes.profiles.${capability.profileId}`,
+        [content.missions[missionId]?.waves.length ?? 0]
+      ).length > 0) return undefined;
+      return Object.freeze({
+        schemaVersion: 5 as const,
+        profileId: capability.profileId,
+        selectedHeroId: v5.selectedHeroId,
+        definitions: v5.definitions,
+        movementProfiles: v5.movementProfiles
+      });
     }
     return schemaVersion === 2
       ? Object.freeze({

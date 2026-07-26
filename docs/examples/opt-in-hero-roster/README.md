@@ -106,3 +106,23 @@ Invoke the spell with exact `GameCommandV5 useHeroAbility` fields `heroId`, `abi
 liveness and range, spends mana, starts cooldown, and resolves damage. This slice has no multiple
 abilities, skills, auras, blocking, logistics coupling, or TowerScript hero actions. See
 [ADR 0040](../../adr/0040-opt-in-targeted-hero-ability.md).
+
+## Optional battle-local skill tree (R5.4A)
+
+Use `mechanics-skill-tree.json` to opt into Heroes v5, or stage the equivalent inert
+`basic_hero_skill_tree` recipe through the guarded preview/apply flow. Every v5 definition retains
+the exact v4 fields and adds required `skillTree`; set it to `null` for an explicit per-definition
+opt-out. The recipe does not enable Heroes, select a mission, bind visuals, install scripts, or
+activate navigation, roguelite, or logistics.
+
+A non-null tree grants its `starting` points at battle creation and `perInterwave` points after
+each cleared non-final wave. Unlock only with exact `GameCommandV6 unlockHeroSkill` fields
+`heroId` and `skillId`. Read points, management availability, missing prerequisites, and
+unlockability only from `snapshot.heroes` v5. Effects use the common modifier/damage pipeline and
+apply only to the selected hero's active-ability packet.
+
+Points and unlocks are battle-local: reset and every new campaign battle start from the authored
+tree, while `CampaignRunV1` and `PlayerProfileV3` remain unchanged. V5 definitions with
+`skillTree:null` keep snapshot v4 and nested checkpoint v3; absent, disabled, unselected, and v1–v4
+paths have no skill panel or state. See
+[ADR 0041](../../adr/0041-opt-in-battle-local-hero-skill-tree.md).

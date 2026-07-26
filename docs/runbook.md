@@ -177,6 +177,27 @@ Future heroes v4+ remains lossless/read-only in Studio. This slice has no healin
 revival, mana, abilities, auras, blocking, or TowerScript hero actions. See
 [ADR 0039](adr/0039-opt-in-hero-durability.md).
 
+For R5.3A, stage `basic_targeted_hero_ability` or copy
+`docs/examples/opt-in-hero-roster/mechanics-targeted-ability.json`. Heroes v4 adds bounded mana and
+one enemy-targeted damage ability without activating any other module. Dispatch only exact
+`GameCommandV5 useHeroAbility`; read mana, cooldown, target readiness, and results from snapshot v4
+and `heroAbilityUsed`. See [ADR 0040](adr/0040-opt-in-targeted-hero-ability.md).
+
+For R5.4A, use the separate inert `basic_hero_skill_tree` recipe or
+`docs/examples/opt-in-hero-roster/mechanics-skill-tree.json`, then follow the same
+`describe -> capabilities -> recipe -> preview -> guarded apply -> validate` flow. Heroes v5
+requires `skillTree` on every definition: use `null` for explicit opt-out. A non-null tree owns
+battle-local `points` and a bounded DAG of `nodes`; every effect is a data-only
+`hero_ability_damage` modifier. Mechanics Hub exposes all one-to-four effects and prevents invalid
+trees from being saved.
+
+At runtime, dispatch only exact `GameCommandV6 unlockHeroSkill` during setup or a clear non-final
+interwave. Read `managementAvailable`, points, missing prerequisites, and `unlockable` from
+snapshot v5; do not reconstruct them in Studio or renderer code. A tree does not pause normal wave
+scheduling. Its state resets with the battle and is not exported through CampaignRun or profile.
+Definitions with `skillTree:null`, v1–v4, disabled/unselected, and future v6 paths retain their
+previous or fail-closed behavior. See [ADR 0041](adr/0041-opt-in-battle-local-hero-skill-tree.md).
+
 Combat v1 accepts only `shields`. A target definition requires positive bounded `capacity` and may add `{ ratePerUnit, delayAfterDamage }` regeneration. Tower shields require a tower with `maxHp`. At runtime shield state is keyed by entity instance ID and appears only under active `snapshot.combat`; Canvas and Phaser consume the same presentation projection. A copyable v1 reference is under `docs/examples/opt-in-basic-shields/`.
 
 Combat v2 retains shields and adds `damageTypes`, `armorTypes`, and `armorAssignments.enemies`. Every assigned enemy requires an existing armor type, and any non-empty assignment set requires a declared `physical` damage type because an untyped packet falls back to `physical`. Multipliers are finite numbers from `0` through `1,000,000`; `0` is a valid immunity, an absent explicit/default multiplier means `1`, and per-enemy `resistances` apply after the matrix. The fixed order is `source modifiers → armor matrix → entity resistance → legacy pierce_only → shield → HP`. `armor_piercing` bypasses only legacy `pierce_only`, not the matrix.

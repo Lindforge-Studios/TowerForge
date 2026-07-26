@@ -718,6 +718,7 @@ let lastRunningSpeed = 1;
 let activeStory = null;
 let storyWasRunning = false;
 let victoryRewarded = false;
+let lastObservedEvents = [];
 const shownStories = new Set();
 
 initSelectors();
@@ -770,7 +771,13 @@ syncAudioSettings();
 applyBattleBackground();
 selectMissionMusic();
 showStoryForMission("beforeMission");
-window.__towerforgeInspect = () => game.getRenderSnapshot();
+window.__towerforgeInspect = () => {
+  const snapshot = game.getRenderSnapshot();
+  if (snapshot.lastEvents.length === 0 && lastObservedEvents.length > 0) {
+    snapshot.lastEvents = lastObservedEvents;
+  }
+  return snapshot;
+};
 window.__towerforgeCampaignInspect = () => ({
   active: Boolean(activeCampaign && campaignRun),
   run: campaignRun ? JSON.parse(exportCampaignRun(campaignRun)) : null,
@@ -1226,6 +1233,76 @@ function updateHeroActionBar(snap) {
   if (!ability.ready && targetingMode.kind === "heroAbility") setTargetingMode({ kind: "build" });
 }
 
+function updateHeroSkillTree(snap) {
+  const presentation = projectHeroesPresentation(snap);
+  const unit = presentation.active && presentation.units.length === 1
+    ? presentation.units[0]
+    : null;
+  const skills = unit?.skills;
+  let panel = document.getElementById("hero-skill-tree");
+  const panelCreated = !panel;
+  if (!skills) {
+    if (panel) panel.remove();
+    return;
+  }
+  if (!panel) {
+    panel = document.createElement("section");
+    panel.id = "hero-skill-tree";
+    panel.className = "roguelite-status hero-skill-tree";
+    panel.setAttribute("aria-label", "Hero skill tree");
+    const heading = document.createElement("strong");
+    heading.textContent = "Hero skills";
+    const status = document.createElement("span");
+    status.dataset.heroSkillPoints = "true";
+    const nodes = document.createElement("div");
+    nodes.dataset.heroSkillNodes = "true";
+    panel.append(heading, status, nodes);
+    $("message").before(panel);
+  }
+  const status = panel.querySelector("[data-hero-skill-points]");
+  panel.dataset.availablePoints = String(skills.availablePoints);
+  status.textContent = "Available points: " + skills.availablePoints;
+  const nodes = panel.querySelector("[data-hero-skill-nodes]");
+  const retained = new Set();
+  for (let nodeIndex = 0; nodeIndex < skills.nodes.length; nodeIndex += 1) {
+    const node = skills.nodes[nodeIndex];
+    retained.add(node.id);
+    let button = [...nodes.querySelectorAll("button")]
+      .find((candidate) => candidate.dataset.heroSkillId === node.id);
+    if (!button) {
+      button = document.createElement("button");
+      button.type = "button";
+      button.dataset.heroSkillId = node.id;
+      button.addEventListener("click", () => {
+        const result = dispatchGameCommand(game, {
+          schemaVersion: 6,
+          type: "unlockHeroSkill",
+          heroId: button.dataset.heroId,
+          skillId: button.dataset.heroSkillId
+        });
+        report(result);
+        updateHeroSkillTree(game.getRenderSnapshot());
+      });
+      button.addEventListener("touchend", (event) => {
+        event.preventDefault();
+        button.click();
+      }, { passive: false });
+    }
+    button.dataset.heroId = unit.id;
+    button.disabled = !skills.managementAvailable || !node.unlockable;
+    button.textContent = (node.unlocked ? "Unlocked: " : "Unlock: ")
+      + node.label + " (" + node.cost + ")";
+    button.title = node.description;
+    if (nodes.children[nodeIndex] !== button) {
+      nodes.insertBefore(button, nodes.children[nodeIndex] ?? null);
+    }
+  }
+  for (const button of [...nodes.querySelectorAll("button")]) {
+    if (!retained.has(button.dataset.heroSkillId)) button.remove();
+  }
+  if (panelCreated) panel.scrollIntoView({ block: "nearest" });
+}
+
 function updateCampaignRun() {
   const panel = $("campaign-run-panel");
   if (!panel) return;
@@ -1478,6 +1555,7 @@ function loop(now) {
   }
   syncNavigationOverlaySnapshot(snap);
   const events = ticked ? pending.concat(snap.lastEvents) : pending;
+  if (events.length > 0) lastObservedEvents = events;
   game.lastEvents = []; // consumed this frame — clear so nothing replays on the next frame
   draw(snap, events);
   updateHud(snap);
@@ -1498,6 +1576,7 @@ function draw(snap, events) {
 function updateHud(snap) {
   updateAbilityBar(snap);
   updateHeroActionBar(snap);
+  updateHeroSkillTree(snap);
   updateTargetMode(snap);
   updateRogueliteStatus(snap);
   if (snap.outcome === "victory" && !victoryRewarded) {
@@ -1785,6 +1864,7 @@ let lastRunningSpeed = 1;
 let activeStory = null;
 let storyWasRunning = false;
 let victoryRewarded = false;
+let lastObservedEvents = [];
 const shownStories = new Set();
 
 const rendererTheme = content.visuals?.theme?.renderer ?? {};
@@ -2315,6 +2395,7 @@ class PlayScene extends Phaser.Scene {
     }
     syncNavigationOverlaySnapshot(snap);
     const events = ticked ? pending.concat(snap.lastEvents) : pending;
+    if (events.length > 0) lastObservedEvents = events;
     game.lastEvents = []; // consumed this frame — clear so nothing replays next frame
     if ($("snd")?.checked) audio.handleEvents(events);
     const g = this.geometry(snap.tiles, snap.grid);
@@ -2679,7 +2760,13 @@ const phaserGame = new Phaser.Game({
   scale: { mode: Phaser.Scale.RESIZE, width: "100%", height: "100%" },
   scene: PlayScene
 });
-window.__towerforgeInspect = () => game.getRenderSnapshot();
+window.__towerforgeInspect = () => {
+  const snapshot = game.getRenderSnapshot();
+  if (snapshot.lastEvents.length === 0 && lastObservedEvents.length > 0) {
+    snapshot.lastEvents = lastObservedEvents;
+  }
+  return snapshot;
+};
 window.__towerforgeCampaignInspect = () => ({
   active: Boolean(activeCampaign && campaignRun),
   run: campaignRun ? JSON.parse(exportCampaignRun(campaignRun)) : null,
@@ -2884,6 +2971,76 @@ function updateHeroActionBar(snap) {
   bar.dataset.manaMax = String(hero.mana.max);
   bar.dataset.cooldownRemaining = String(ability.cooldownRemaining);
   if (!ability.ready && targetingMode.kind === "heroAbility") setTargetingMode({ kind: "build" });
+}
+
+function updateHeroSkillTree(snap) {
+  const presentation = projectHeroesPresentation(snap);
+  const unit = presentation.active && presentation.units.length === 1
+    ? presentation.units[0]
+    : null;
+  const skills = unit?.skills;
+  let panel = document.getElementById("hero-skill-tree");
+  const panelCreated = !panel;
+  if (!skills) {
+    if (panel) panel.remove();
+    return;
+  }
+  if (!panel) {
+    panel = document.createElement("section");
+    panel.id = "hero-skill-tree";
+    panel.className = "roguelite-status hero-skill-tree";
+    panel.setAttribute("aria-label", "Hero skill tree");
+    const heading = document.createElement("strong");
+    heading.textContent = "Hero skills";
+    const status = document.createElement("span");
+    status.dataset.heroSkillPoints = "true";
+    const nodes = document.createElement("div");
+    nodes.dataset.heroSkillNodes = "true";
+    panel.append(heading, status, nodes);
+    $("message").before(panel);
+  }
+  const status = panel.querySelector("[data-hero-skill-points]");
+  panel.dataset.availablePoints = String(skills.availablePoints);
+  status.textContent = "Available points: " + skills.availablePoints;
+  const nodes = panel.querySelector("[data-hero-skill-nodes]");
+  const retained = new Set();
+  for (let nodeIndex = 0; nodeIndex < skills.nodes.length; nodeIndex += 1) {
+    const node = skills.nodes[nodeIndex];
+    retained.add(node.id);
+    let button = [...nodes.querySelectorAll("button")]
+      .find((candidate) => candidate.dataset.heroSkillId === node.id);
+    if (!button) {
+      button = document.createElement("button");
+      button.type = "button";
+      button.dataset.heroSkillId = node.id;
+      button.addEventListener("click", () => {
+        const result = dispatchGameCommand(game, {
+          schemaVersion: 6,
+          type: "unlockHeroSkill",
+          heroId: button.dataset.heroId,
+          skillId: button.dataset.heroSkillId
+        });
+        report(result);
+        updateHeroSkillTree(game.getRenderSnapshot());
+      });
+      button.addEventListener("touchend", (event) => {
+        event.preventDefault();
+        button.click();
+      }, { passive: false });
+    }
+    button.dataset.heroId = unit.id;
+    button.disabled = !skills.managementAvailable || !node.unlockable;
+    button.textContent = (node.unlocked ? "Unlocked: " : "Unlock: ")
+      + node.label + " (" + node.cost + ")";
+    button.title = node.description;
+    if (nodes.children[nodeIndex] !== button) {
+      nodes.insertBefore(button, nodes.children[nodeIndex] ?? null);
+    }
+  }
+  for (const button of [...nodes.querySelectorAll("button")]) {
+    if (!retained.has(button.dataset.heroSkillId)) button.remove();
+  }
+  if (panelCreated) panel.scrollIntoView({ block: "nearest" });
 }
 
 function updateCampaignRun() {
@@ -3123,6 +3280,7 @@ function finishStory() {
 function updateHud(snap) {
   updateAbilityBar(snap);
   updateHeroActionBar(snap);
+  updateHeroSkillTree(snap);
   updateTargetMode(snap);
   updateRogueliteStatus(snap);
   if (snap.outcome === "victory" && !victoryRewarded) {

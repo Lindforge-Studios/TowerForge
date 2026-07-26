@@ -34,6 +34,7 @@
 | R5.1B — deterministic hero movement | Завершён; code + constructor sign-off; ADR Accepted | Heroes v2, own movement profiles, exact GameCommand/Journal v4, checkpoint/replay и Canvas/Phaser input без navigation activation |
 | R5.2A — hero durability | Завершён; code + constructor sign-off; ADR Accepted | Heroes v3, exact HP/optional shield, shared resolver, optional snapshot/checkpoint state, guarded authoring и legacy v1/v2 paths |
 | R5.3A — targeted hero ability | Завершён; code + constructor sign-off; ADR Accepted | Heroes v4, bounded mana regeneration, один enemy-targeted damage spell, cooldown, GameCommand/Journal v5 и nested checkpoint v3 |
+| R5.4A — battle-local hero skill tree | Завершён; code + constructor sign-off; ADR Accepted | Heroes v5 nullable tree, GameCommand/Journal v6, authoritative snapshot v5, nested checkpoint v4 без CampaignRun/Profile carry |
 | R5–R8 | Запланированы | Каждый срез закрывает engine, Studio, AI/MCP, renderers/player, docs и два независимых sign-off |
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Поставленные версии `combat`, `reactions`, `navigation` и `elevation` уже прошли полные вертикальные срезы. Остальные модули Mechanics Hub остаются planned, а preview/apply отклоняют их включение без записи.
@@ -258,6 +259,27 @@ enable/edit/preview/save/reload/disable/re-enable и PWA/single-file/web-package
 engine/build, validate, sim, balance, maps, web build и plugin build/validate/smoke прошли. Контракт:
 [ADR 0040](adr/0040-opt-in-targeted-hero-ability.md); fixture:
 `docs/examples/opt-in-hero-roster/mechanics-targeted-ability.json`.
+
+R5.4A — отдельный opt-in срез дерева навыков. `heroes` v5 требует
+nullable `skillTree`: `null` сохраняет snapshot v4/checkpoint v3, а non-null DAG владеет
+battle-local points и модификаторами только hero ability damage. Exact `GameCommandV6
+unlockHeroSkill` доступен в setup/чистом non-final interwave; само дерево не
+создаёт обязательную паузу. Snapshot v5 остаётся единственным источником
+points/availability/unlockability, а nested checkpoint v4 проверяет exact accounting,
+dependency order и retained event chain. `CampaignRunV1`, `PlayerProfileV3` и outer checkpoint v1
+не меняются; каждый battle начинает дерево заново.
+
+Исходный engine/content RED дал 19 ожидаемых падений при 2 baseline PASS; surface
+RED — 28 при 82 baseline PASS и два целевых Playwright RED. Code verifier добавил
+отдельные RED для overflow, precondition order, UTF-8 modifier IDs, hostile checkpoint chains,
+defeated unlockability и запрета renderer пересчитывать gameplay. Финальный Vitest прошёл
+2 186/2 186 тестов в 196 файлах, Playwright — 96/96; focused surface contracts — 106/106,
+verifier engine/content/renderer — 39/39, package acceptance для PWA/single-file/web/`.tdpack` —
+1/1. Typecheck, engine/build, validate, sim, balance, maps и plugin build/validate/smoke прошли.
+Независимые Code Verifier и Constructor Integration Verifier выдали PASS без открытых P0–P3.
+Контракт:
+[ADR 0041](adr/0041-opt-in-battle-local-hero-skill-tree.md); fixture:
+`docs/examples/opt-in-hero-roster/mechanics-skill-tree.json`.
 
 ### R6 — TowerScript DX 2.0
 

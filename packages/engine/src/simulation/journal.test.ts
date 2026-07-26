@@ -301,7 +301,7 @@ describe("GameCommandJournalV1", () => {
     const invalidInputs: unknown[] = [
       null,
       {},
-      { schemaVersion: 6, type: "startWave" },
+      { schemaVersion: 7, type: "startWave" },
       { schemaVersion: 1, type: "futureCommand" },
       { schemaVersion: 1, type: "startWave", timestamp: 123 },
       { schemaVersion: 1, type: "tick", units: Number.NaN },
@@ -849,7 +849,7 @@ describe("decodeGameCommandJournal", () => {
   it("rejects a future journal header before reading entries or executing commands", () => {
     const { content, journal } = validJournal();
     let entryReads = 0;
-    const future = { ...journal, schemaVersion: 6 } as Record<string, unknown>;
+    const future = { ...journal, schemaVersion: 7 } as Record<string, unknown>;
     Object.defineProperty(future, "entries", {
       enumerable: true,
       get() {
