@@ -2555,6 +2555,15 @@ class PlayScene extends Phaser.Scene {
       seenHeroes.add(hero.id);
       const point = projectHeroPresentationPoint(hero, (coord) => this.center(coord, g));
       if (!point) continue;
+      const passiveAura = hero.passiveAura;
+      if (passiveAura?.active) {
+        this.entG.lineStyle(Math.max(2, g.r * 0.08), 0x7ae8d6, 0.55);
+        this.entG.strokeCircle(point.x, point.y, Math.max(g.r * 0.72, passiveAura.radius * g.r));
+        for (const towerId of passiveAura.affectedTowerIds) {
+          const towerPoint = towerPositions.get(towerId);
+          if (towerPoint) this.entG.strokeCircle(towerPoint.x, towerPoint.y, g.r * 0.62);
+        }
+      }
       const heroBindings = ownDataValue(ownDataValue(content.visuals, "bindings"), "heroes");
       const spriteId = ownDataValue(heroBindings, hero.definitionId);
       const texture = this.spriteTexture(spriteId);

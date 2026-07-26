@@ -198,6 +198,21 @@ scheduling. Its state resets with the battle and is not exported through Campaig
 Definitions with `skillTree:null`, v1–v4, disabled/unselected, and future v6 paths retain their
 previous or fail-closed behavior. See [ADR 0041](adr/0041-opt-in-battle-local-hero-skill-tree.md).
 
+For R5.5A, use the inert `basic_passive_hero_aura` recipe or
+`docs/examples/opt-in-hero-roster/mechanics-passive-aura.json`. Heroes v6 requires nullable
+`passiveAura` on every definition. An explicit v5→v6 edit atomically materializes
+`passiveAura:null` for every definition in every existing Heroes profile inside the preview
+candidate. Read, validation, and build never migrate content; preview never mutates project source,
+and only the guarded apply writes the validated module-wide promotion. Then use the ordinary
+`describe -> capabilities -> recipe -> preview -> guarded apply -> validate` transaction.
+
+The engine owns aura membership and modifier resolution. Consume `snapshot.heroes` v6
+`passiveAura.active` and `affectedTowerIds`; do not calculate radius, liveness, or affected towers
+in Studio, renderers, or player code. The aura affects only immediate live-tower damage packets.
+It adds no command, event, pause, persistent profile/run state, navigation, blocking, logistics, or
+TowerScript surface. A null aura retains snapshot v4/v5 and nested checkpoint v3/v4. See
+[ADR 0042](adr/0042-opt-in-passive-hero-damage-aura.md).
+
 Combat v1 accepts only `shields`. A target definition requires positive bounded `capacity` and may add `{ ratePerUnit, delayAfterDamage }` regeneration. Tower shields require a tower with `maxHp`. At runtime shield state is keyed by entity instance ID and appears only under active `snapshot.combat`; Canvas and Phaser consume the same presentation projection. A copyable v1 reference is under `docs/examples/opt-in-basic-shields/`.
 
 Combat v2 retains shields and adds `damageTypes`, `armorTypes`, and `armorAssignments.enemies`. Every assigned enemy requires an existing armor type, and any non-empty assignment set requires a declared `physical` damage type because an untyped packet falls back to `physical`. Multipliers are finite numbers from `0` through `1,000,000`; `0` is a valid immunity, an absent explicit/default multiplier means `1`, and per-enemy `resistances` apply after the matrix. The fixed order is `source modifiers → armor matrix → entity resistance → legacy pierce_only → shield → HP`. `armor_piercing` bypasses only legacy `pierce_only`, not the matrix.

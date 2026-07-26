@@ -183,10 +183,11 @@ describe("R5.1A static heroes v1 authoring contract", () => {
       .HEROES_MECHANICS_SCHEMA!;
     const limits = (Engine as unknown as { HEROES_LIMITS?: unknown }).HEROES_LIMITS;
     expect(limits).toEqual(HEROES_LIMITS_V1);
-    expect(currentSchema.schemaVersion).toBe(5);
-    expect(currentSchema.supportedModuleSchemaVersions).toEqual([1, 2, 3, 4, 5]);
-    const { 5: version5, ...legacyVersions } = currentSchema.versions;
-    const { 5: snapshotVersion5, ...legacySnapshotVersions } = currentSchema.runtimeSnapshot.versions;
+    expect(currentSchema.schemaVersion).toBe(6);
+    expect(currentSchema.supportedModuleSchemaVersions).toEqual([1, 2, 3, 4, 5, 6]);
+    const { 5: version5, 6: _version6, ...legacyVersions } = currentSchema.versions;
+    const { 5: snapshotVersion5, 6: _snapshotVersion6, ...legacySnapshotVersions } =
+      currentSchema.runtimeSnapshot.versions;
     expect(version5).toEqual({
       ...legacyVersions[4],
       definition: {
@@ -469,7 +470,7 @@ describe("R5.1A static heroes v1 authoring contract", () => {
       { profiles: { heroes: "field_commander" } }
     ).heroes).toMatchObject({ available: true, active: false, reason: "module_disabled" });
     expect(Engine.resolveCapabilitySet(
-      heroesInput({ moduleSchemaVersion: 6 }).mechanics!,
+      heroesInput({ moduleSchemaVersion: 7 }).mechanics!,
       { profiles: { heroes: "field_commander" } }
     ).heroes).toMatchObject({ available: true, active: false, reason: "module_version_unsupported" });
     expect(Engine.resolveCapabilitySet(
@@ -574,7 +575,7 @@ describe("R5.1A static heroes v1 authoring contract", () => {
   });
 
   it("rejects future versions and accessor/prototype-backed authored values without invoking them", () => {
-    expect(validate({ enabled: false, moduleSchemaVersion: 6 }).ok).toBe(false);
+    expect(validate({ enabled: false, moduleSchemaVersion: 7 }).ok).toBe(false);
     let calls = 0;
     const hostileDefinition = Object.defineProperty({}, "label", {
       enumerable: true,
@@ -668,7 +669,7 @@ describe("R5.1B heroes v2 movement authoring contract (RED)", () => {
     const registry = createGameContentRegistry(v2Input());
     expect(validateGameContentRegistry(registry)).toEqual({ ok: true, issues: [] });
     expect(registry.mechanics.modules).not.toHaveProperty("navigation");
-    expect(Engine.HEROES_MECHANICS_SCHEMA.supportedModuleSchemaVersions).toEqual([1, 2, 3, 4, 5]);
+    expect(Engine.HEROES_MECHANICS_SCHEMA.supportedModuleSchemaVersions).toEqual([1, 2, 3, 4, 5, 6]);
     expect((Engine as unknown as {
       normalizeHeroesProfileV2?: (input: unknown) => unknown;
     }).normalizeHeroesProfileV2?.(movingProfile())).toEqual(movingProfile());
@@ -720,9 +721,9 @@ describe("R5.1B heroes v2 movement authoring contract (RED)", () => {
     ))).toBe(true);
   });
 
-  it("treats v6 as future while preserving v1 validation", () => {
+  it("treats v7 as future while preserving v1 validation", () => {
     const future = v2Input();
-    (future.mechanics!.modules.heroes as unknown as { schemaVersion: number }).schemaVersion = 6;
+    (future.mechanics!.modules.heroes as unknown as { schemaVersion: number }).schemaVersion = 7;
     expect(validateGameContentRegistry(createGameContentRegistry(future)).ok).toBe(false);
     expect(validate().ok).toBe(true);
   });

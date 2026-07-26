@@ -594,6 +594,30 @@ TowerScript hero scope, or cross-battle carry is added. See
 [ADR 0041](adr/0041-opt-in-battle-local-hero-skill-tree.md) and
 `docs/examples/opt-in-hero-roster/mechanics-skill-tree.json`.
 
+### R5.5A passive hero damage aura
+
+Heroes v6 retains every v5 field and adds required nullable `passiveAura`, independently of the
+nullable skill tree. A non-null closed aura contains an ID, label, integer topology radius, and
+one-to-four typed `tower_damage` modifier effects. The engine evaluates membership from the living
+hero's authoritative `currentCoord` and tower anchors. Only immediate packets from live affected
+towers receive the effects at the common `spatial` stage; DoT, status, hero/mission abilities,
+range, fire rate, and adjacent mechanics are unchanged.
+
+Snapshot v6 appears only for a non-null selected aura. It contains the v4 base, `skills` as the v5
+projection or literal null, and authoritative aura activity plus binary-sorted affected tower IDs.
+Renderers validate and display that set without recomputing gameplay. Aura state is derived from
+already checkpointed hero/tower/outcome data, so nested checkpoint v3/v4 remains unchanged. Null
+aura definitions keep literal snapshot v4/v5 behavior.
+
+The shared finite-damage preflight follows canonical meta → run → spatial ordering and covers
+direct construction, campaign preparation/loadout, artifact socket preflight, and checkpoint
+restore. It is capability-aware and exits for no-aura projects, preserving old Roguelite timing.
+Mechanics Hub performs explicit all-definition v5→v6 null promotion; MCP guide v26 and the inert
+`basic_passive_hero_aura` recipe use guarded preview/apply. GameCommand/Journal v6, events, outer
+checkpoint v1, project v3, PlayerProfile v3, CampaignRun v1, and TowerScript v6 do not change. See
+[ADR 0042](adr/0042-opt-in-passive-hero-damage-aura.md) and
+`docs/examples/opt-in-hero-roster/mechanics-passive-aura.json`.
+
 ## Done Criteria For Constructor Changes
 
 - Engine changes pass `npm run typecheck`.

@@ -71,13 +71,13 @@ const MECHANICS_MODULES = [
   { id: "physics", title: "Physics", description: "Bounded push/pull displacement, immunities, and explicit fall hazards." },
   { id: "terraforming", title: "Terraforming", description: "Transactional terrain transitions and bounded elevation edits authored as an independent opt-in profile." },
   { id: "roguelite", title: "Rogue-lite", description: "Synergies, artifacts, draft choices, and campaign runs." },
-  { id: "heroes", title: "Heroes", description: "Optional opt-in hero roster spawning at the core; v2 adds movement, v3 durability, v4 one targeted ability, and v5 a nullable battle-local skill tree." },
+  { id: "heroes", title: "Heroes", description: "Optional opt-in hero roster spawning at the core; v2 adds movement, v3 durability, v4 one targeted ability, v5 a nullable battle-local skill tree, and v6 a passive tower aura." },
   { id: "logistics", title: "Logistics", description: "Power grids, inventories, ammunition, and production." },
   { id: "director", title: "AI Director", description: "Deterministic adaptation and generative Studio hooks." },
   { id: "scriptingDx", title: "TowerScript DX", description: "Visual graphs, structured traces, and step debugging." },
   { id: "multiplayer", title: "Multiplayer", description: "Deterministic matches, replay, and local transport." }
 ];
-const HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4, 5]);
+const HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4, 5, 6]);
 const REACTION_RECIPE_IDS = new Set(["elemental_shatter", "wet_chain_shock", "poison_combustion"]);
 const ELEVATION_RECIPE_IDS = new Set([
   "basic_authored_elevation",
@@ -1037,6 +1037,9 @@ function mechanicsEffectiveModuleSchemaVersion() {
       .some((definition) => definition?.mana !== undefined || definition?.activeAbility !== undefined);
     const hasSkillTree = Object.values(MechanicsUI.draft?.definitions ?? {})
       .some((definition) => definition?.skillTree !== undefined);
+    const hasPassiveAura = Object.values(MechanicsUI.draft?.definitions ?? {})
+      .some((definition) => definition?.passiveAura !== undefined);
+    if (hasPassiveAura) return Math.max(authoredVersion, 6);
     if (hasSkillTree) return Math.max(authoredVersion, 5);
     if (hasActiveAbility) return Math.max(authoredVersion, 4);
     if (hasDurability) return Math.max(authoredVersion, 3);
@@ -1177,7 +1180,7 @@ function loadMechanicsProfile() {
   MechanicsUI.profileId = profileId;
   MechanicsUI.loadedProfileId = profileId;
   const authoredVersion = MechanicsUI.capabilities?.[MechanicsUI.selectedModuleId]?.moduleSchemaVersion;
-  MechanicsUI.moduleSchemaVersion = [1, 2, 3, 4, 5].includes(authoredVersion)
+  MechanicsUI.moduleSchemaVersion = [1, 2, 3, 4, 5, 6].includes(authoredVersion)
     ? authoredVersion
     : mechanicsProjectModuleVersion();
   MechanicsUI.draft = MechanicsUI.selectedModuleId === "navigation"
@@ -1204,8 +1207,8 @@ function nextMechanicsProfileId(suggestedId) {
 
 async function newMechanicsProfile() {
   try {
-    if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 5) {
-      throw new Error("Future heroes schemaVersion 6+ modules are read-only in this Studio version.");
+    if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 6) {
+      throw new Error("Future heroes schemaVersion 7+ modules are read-only in this Studio version.");
     }
     await loadMechanicsRecipe();
     const selectedRecipeId = $("mechanics-recipe-select")?.value || MechanicsUI.recipeId;
@@ -2776,10 +2779,11 @@ function renderHeroesMechanicsEditor() {
   const editorVersion = Math.max(projectVersion, Number.isInteger(MechanicsUI.moduleSchemaVersion) ? MechanicsUI.moduleSchemaVersion : 1);
   const supportedVersion = HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS.includes(editorVersion)
     && descriptor?.supportedModuleSchemaVersions?.includes(editorVersion) !== false;
-  const movementEnabled = editorVersion >= 2 && editorVersion <= 5;
-  const durabilityEnabled = editorVersion >= 3 && editorVersion <= 5;
-  const abilityEnabled = editorVersion >= 4 && editorVersion <= 5;
-  const skillTreeVisible = editorVersion >= 4 && editorVersion <= 5;
+  const movementEnabled = editorVersion >= 2 && editorVersion <= 6;
+  const durabilityEnabled = editorVersion >= 3 && editorVersion <= 6;
+  const abilityEnabled = editorVersion >= 4 && editorVersion <= 6;
+  const skillTreeVisible = editorVersion >= 4 && editorVersion <= 6;
+  const passiveAuraVisible = editorVersion >= 5 && editorVersion <= 6;
   const durabilityDescriptor = descriptor?.versions?.[3]?.durability;
   const shieldDescriptor = descriptor?.versions?.[3]?.shield;
   const manaDescriptor = descriptor?.versions?.[4]?.mana;
@@ -2789,7 +2793,7 @@ function renderHeroesMechanicsEditor() {
     notice.classList.toggle("hidden", supportedVersion);
     notice.textContent = supportedVersion
       ? ""
-      : "Future heroes schemaVersion 6+ is preserved losslessly and read-only by this Studio version.";
+      : "Future heroes schemaVersion 7+ is preserved losslessly and read-only by this Studio version.";
   }
 
   const definitions = MechanicsUI.draft.definitions ?? {};
@@ -2844,6 +2848,23 @@ function renderHeroesMechanicsEditor() {
           <button type="button" class="btn btn-danger" data-remove-hero-skill ${supportedVersion ? "" : "disabled"}>Remove skill</button>
         </div>`;
       }).join("");
+      const passiveAura = definition?.passiveAura && typeof definition.passiveAura === "object"
+        ? definition.passiveAura
+        : null;
+      const effects = Array.isArray(passiveAura?.effects) ? passiveAura.effects : [];
+      const passiveAuraEffectRows = effects.map((effect, effectIndex) => {
+        const operation = effect?.modifier?.operation ?? "additive_ratio";
+        return `<div class="mechanics-definition-row" data-hero-passive-aura-effect-row data-hero-passive-aura-effect-index="${effectIndex}">
+          <span>Scope: tower_damage</span><span>Target: damage</span>
+          <label>Operation<select data-hero-passive-aura-effect-operation ${supportedVersion ? "" : "disabled"}>
+            <option value="flat" ${operation === "flat" ? "selected" : ""}>flat</option>
+            <option value="additive_ratio" ${operation === "additive_ratio" ? "selected" : ""}>additive_ratio</option>
+            <option value="multiplier" ${operation === "multiplier" ? "selected" : ""}>multiplier</option>
+          </select></label>
+          <label>Value<input data-hero-passive-aura-effect-value type="number" step="any" value="${esc(effect?.modifier?.value ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+          <button type="button" class="btn btn-danger" data-remove-hero-passive-aura-effect ${supportedVersion && effects.length > 1 ? "" : "disabled"}>Remove effect</button>
+        </div>`;
+      }).join("");
       const movementProfileOptions = [
         ...(typeof authoredMovementProfileId === "string" && !movementProfileIds.includes(authoredMovementProfileId)
           ? [{ id: authoredMovementProfileId, missing: true }] : []),
@@ -2875,12 +2896,91 @@ function renderHeroesMechanicsEditor() {
         <div class="mechanics-definition-rows">${skillRows}</div>
         <button type="button" class="btn btn-outline" data-add-hero-skill ${supportedVersion && skillNodes.length < 32 ? "" : "disabled"}>+ Add skill</button>` : ""}
       </fieldset>` : ""}
+      ${passiveAuraVisible ? `<fieldset class="mechanics-heroes-section">
+        <label><input data-hero-passive-aura-enabled type="checkbox" ${passiveAura ? "checked" : ""} ${supportedVersion ? "" : "disabled"}> Passive tower damage aura (Heroes v6)</label>
+        ${passiveAura ? `<label>Aura ID<input data-hero-passive-aura-id type="text" value="${esc(passiveAura.id ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+        <label>Aura label<input data-hero-passive-aura-label type="text" value="${esc(passiveAura.label ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+        <label>Radius<input data-hero-passive-aura-radius type="number" min="0" step="1" value="${esc(passiveAura.radius ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+        <div class="mechanics-definition-rows">${passiveAuraEffectRows}</div>
+        <button type="button" class="btn btn-outline" data-add-hero-passive-aura-effect ${supportedVersion && effects.length < 4 ? "" : "disabled"}>+ Add effect</button>` : ""}
+      </fieldset>` : ""}
       <button type="button" class="btn btn-danger" data-remove-hero ${supportedVersion && entries.length > 1 ? "" : "disabled"}>Remove</button>
     </div>`;
     }).join("");
     rows.querySelectorAll("[data-hero-definition-id]").forEach((row) => {
       const heroId = row.dataset.heroDefinitionId;
       const definition = ownDataValue(MechanicsUI.draft.definitions, heroId);
+      row.querySelector("[data-hero-passive-aura-enabled]")?.addEventListener("change", (event) => {
+        for (const candidate of Object.values(MechanicsUI.draft.definitions)) {
+          if (candidate.passiveAura === undefined) candidate.passiveAura = null;
+        }
+        definition.passiveAura = event.target.checked
+          ? (definition.passiveAura && typeof definition.passiveAura === "object"
+              ? definition.passiveAura
+              : {
+                  id: "command_link", label: "Command Link", radius: 3,
+                  effects: [{
+                    kind: "modifier", scope: "tower_damage",
+                    modifier: { target: "damage", operation: "additive_ratio", value: 0.2 }
+                  }]
+                })
+          : null;
+        MechanicsUI.moduleSchemaVersion = 6;
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      });
+      row.querySelector("[data-hero-passive-aura-id]")?.addEventListener("input", (event) => {
+        definition.passiveAura.id = String(event.target.value ?? "");
+        MechanicsUI.moduleSchemaVersion = 6;
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-passive-aura-label]")?.addEventListener("input", (event) => {
+        definition.passiveAura.label = String(event.target.value ?? "");
+        MechanicsUI.moduleSchemaVersion = 6;
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-passive-aura-radius]")?.addEventListener("input", (event) => {
+        definition.passiveAura.radius = Number(event.target.value);
+        MechanicsUI.moduleSchemaVersion = 6;
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelectorAll("[data-hero-passive-aura-effect-row]").forEach((effectRow) => {
+        const effectIndex = Number(effectRow.dataset.heroPassiveAuraEffectIndex);
+        const effect = definition.passiveAura?.effects?.[effectIndex];
+        if (!effect) return;
+        effectRow.querySelector("[data-hero-passive-aura-effect-operation]")?.addEventListener("change", (event) => {
+          effect.modifier.operation = event.target.value;
+          MechanicsUI.moduleSchemaVersion = 6;
+          MechanicsUI.preview = null;
+          renderMechanicsPreviewResult();
+        });
+        effectRow.querySelector("[data-hero-passive-aura-effect-value]")?.addEventListener("input", (event) => {
+          effect.modifier.value = Number(event.target.value);
+          MechanicsUI.moduleSchemaVersion = 6;
+          MechanicsUI.preview = null;
+          renderMechanicsPreviewResult();
+        });
+        effectRow.querySelector("[data-remove-hero-passive-aura-effect]")?.addEventListener("click", () => {
+          if (!Array.isArray(definition.passiveAura?.effects) || definition.passiveAura.effects.length <= 1) return;
+          definition.passiveAura.effects.splice(effectIndex, 1);
+          MechanicsUI.moduleSchemaVersion = 6;
+          MechanicsUI.preview = null;
+          renderMechanicsHub();
+        });
+      });
+      row.querySelector("[data-add-hero-passive-aura-effect]")?.addEventListener("click", () => {
+        if (!Array.isArray(definition.passiveAura?.effects) || definition.passiveAura.effects.length >= 4) return;
+        definition.passiveAura.effects.push({
+          kind: "modifier", scope: "tower_damage",
+          modifier: { target: "damage", operation: "flat", value: 1 }
+        });
+        MechanicsUI.moduleSchemaVersion = 6;
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      });
       const movementProfileSelect = row.querySelector("[data-hero-movement-profile-definition-id]");
       if (movementProfileSelect) {
         movementProfileSelect.value = definition?.movement?.movementProfileId ?? "";
@@ -3170,7 +3270,8 @@ function renderHeroesMechanicsEditor() {
             id: "arc_bolt", label: "Arc Bolt", target: "enemy",
             manaCost: 20, cooldown: 3, range: 6, damage: 30
           },
-          ...(editorVersion === 5 ? { skillTree: null } : {})
+          ...(editorVersion >= 5 ? { skillTree: null } : {}),
+          ...(editorVersion === 6 ? { passiveAura: null } : {})
         } : {})
       });
       MechanicsUI.preview = null;
@@ -4256,8 +4357,8 @@ function renderMechanicsPreviewResult() {
 }
 
 function mechanicsRequest(enabled) {
-  if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 5) {
-    throw new Error("Future heroes schemaVersion 6+ modules are read-only in this Studio version.");
+  if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 6) {
+    throw new Error("Future heroes schemaVersion 7+ modules are read-only in this Studio version.");
   }
   if (MechanicsUI.selectedModuleId === "roguelite" && mechanicsProjectModuleVersion() > 4) {
     throw new Error("Future roguelite schemaVersion 5+ modules are read-only in this Studio version.");
@@ -4521,7 +4622,7 @@ function renderMechanicsHub() {
     mechanicsProjectModuleVersion() <= 4
     && !hasUnsupportedRogueliteCampaignMarker(MechanicsUI.draft)
   );
-  const supportedHeroesVersion = MechanicsUI.selectedModuleId !== "heroes" || mechanicsProjectModuleVersion() <= 5;
+  const supportedHeroesVersion = MechanicsUI.selectedModuleId !== "heroes" || mechanicsProjectModuleVersion() <= 6;
   const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion
     && supportedRogueliteVersion && supportedHeroesVersion && !busy;
   const dirtyWriteGuard = Boolean(S.dirty);

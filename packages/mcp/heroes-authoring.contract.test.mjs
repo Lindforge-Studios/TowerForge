@@ -43,11 +43,11 @@ describe("R5.1A MCP/AI static hero authoring", () => {
       heroes: {
         authoring: {
           moduleId: "heroes",
-          schemaVersion: 5,
-          supportedModuleSchemaVersions: [1, 2, 3, 4, 5],
+          schemaVersion: 6,
+          supportedModuleSchemaVersions: [1, 2, 3, 4, 5, 6],
           limits: { definitions: 32, idUtf8Bytes: 128, labelUtf8Bytes: 128 }
         },
-        snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2, 3, 4, 5] },
+        snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2, 3, 4, 5, 6] },
         events: {
           heroShieldChanged: {
             requiredFields: ["heroId", "previous", "current", "capacity", "cause", "amount"],
@@ -230,8 +230,8 @@ describe("R5.1B MCP/AI deterministic hero movement", () => {
     expect(described.heroes).toMatchObject({
       authoring: {
         moduleId: "heroes",
-        schemaVersion: 5,
-        supportedModuleSchemaVersions: [1, 2, 3, 4, 5],
+        schemaVersion: 6,
+        supportedModuleSchemaVersions: [1, 2, 3, 4, 5, 6],
         versions: {
           2: {
             movementProfile: {
@@ -248,7 +248,7 @@ describe("R5.1B MCP/AI deterministic hero movement", () => {
           }
         }
       },
-      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2, 3, 4, 5] },
+      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2, 3, 4, 5, 6] },
       commands: {
         schemaVersion: 6,
         moveHero: {
@@ -404,8 +404,8 @@ describe("R5.2A MCP/AI durable hero authoring", () => {
     const described = await callTool("describe_schema", { domain: "heroes" }, {});
     expect(described.heroes).toMatchObject({
       authoring: {
-        schemaVersion: 5,
-        supportedModuleSchemaVersions: [1, 2, 3, 4, 5],
+        schemaVersion: 6,
+        supportedModuleSchemaVersions: [1, 2, 3, 4, 5, 6],
         versions: {
           3: {
             durability: {
@@ -420,7 +420,7 @@ describe("R5.2A MCP/AI durable hero authoring", () => {
           }
         }
       },
-      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2, 3, 4, 5] }
+      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2, 3, 4, 5, 6] }
     });
 
     const projectDir = fixture();
@@ -491,8 +491,8 @@ describe("R5.3A MCP/AI targeted hero ability authoring", () => {
     const described = await callTool("describe_schema", { domain: "heroes" }, {});
     expect(described.heroes).toMatchObject({
       authoring: {
-        schemaVersion: 5,
-        supportedModuleSchemaVersions: [1, 2, 3, 4, 5],
+        schemaVersion: 6,
+        supportedModuleSchemaVersions: [1, 2, 3, 4, 5, 6],
         versions: {
           4: {
             definition: {
@@ -517,7 +517,7 @@ describe("R5.3A MCP/AI targeted hero ability authoring", () => {
       snapshot: {
         field: "heroes",
         optional: true,
-        supportedSchemaVersions: [1, 2, 3, 4, 5],
+        supportedSchemaVersions: [1, 2, 3, 4, 5, 6],
         versions: {
           4: {
             unitFields: [
@@ -643,8 +643,8 @@ describe("R5.4A MCP/AI battle-local hero skill-tree authoring", () => {
     const described = await callTool("describe_schema", { domain: "heroes" }, {});
     expect(described.heroes).toMatchObject({
       authoring: {
-        schemaVersion: 5,
-        supportedModuleSchemaVersions: [1, 2, 3, 4, 5],
+        schemaVersion: 6,
+        supportedModuleSchemaVersions: [1, 2, 3, 4, 5, 6],
         versions: {
           5: {
             definition: {
@@ -690,7 +690,7 @@ describe("R5.4A MCP/AI battle-local hero skill-tree authoring", () => {
       snapshot: {
         field: "heroes",
         optional: true,
-        supportedSchemaVersions: [1, 2, 3, 4, 5],
+        supportedSchemaVersions: [1, 2, 3, 4, 5, 6],
         versions: {
           5: {
             unitFields: [
@@ -799,8 +799,8 @@ describe("R5.4A MCP/AI battle-local hero skill-tree authoring", () => {
     expect(stale).toMatchObject({ code: "conflict" });
   });
 
-  it("publishes guide v25 with the guarded tree flow and authoritative v6 runtime contract", () => {
-    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(25);
+  it("publishes guide v26 with the guarded tree flow and authoritative v6 command contract", () => {
+    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(26);
     expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/Heroes v5[\s\S]*skillTree[\s\S]*basic_hero_skill_tree/i);
     expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(
       /get_capabilities[\s\S]*get_recipe[\s\S]*preview_mechanics_module[\s\S]*apply_mechanics_module[\s\S]*ifRevision/i
@@ -825,6 +825,240 @@ describe("R5.4A MCP/AI battle-local hero skill-tree authoring", () => {
     expect(skill).toMatch(/heroSkillPointsGranted[\s\S]*heroSkillUnlocked/i);
     expect(skill).toMatch(/battle[- ]local[\s\S]*(?:reset|no carry|does not carry|campaign)/i);
     expect(skill).not.toMatch(/no (?:multiple abilities, )?skill trees/i);
+  });
+});
+
+describe("R5.5A MCP/AI passive hero damage-aura authoring", () => {
+  it("describes exact heroes v6 authoring and authoritative snapshot without adding runtime actions", async () => {
+    const described = await callTool("describe_schema", { domain: "heroes" }, {});
+    expect(described.heroes).toMatchObject({
+      authoring: {
+        schemaVersion: 6,
+        supportedModuleSchemaVersions: [1, 2, 3, 4, 5, 6],
+        versions: {
+          6: {
+            definition: {
+              requiredFields: [
+                "label", "spawn", "movement", "durability", "mana", "activeAbility",
+                "skillTree", "passiveAura"
+              ],
+              optionalFields: [],
+              additionalProperties: false
+            },
+            passiveAura: {
+              nullable: true,
+              requiredFields: ["id", "label", "radius", "effects"],
+              optionalFields: [],
+              additionalProperties: false
+            },
+            passiveAuraEffect: {
+              requiredFields: ["kind", "scope", "modifier"],
+              optionalFields: [],
+              additionalProperties: false,
+              kindValues: ["modifier"],
+              scopeValues: ["tower_damage"]
+            },
+            passiveAuraModifier: {
+              requiredFields: ["target", "operation", "value"],
+              optionalFields: [],
+              additionalProperties: false,
+              targetValues: ["damage"],
+              operationValues: ["flat", "additive_ratio", "multiplier"]
+            }
+          }
+        }
+      },
+      snapshot: {
+        field: "heroes",
+        optional: true,
+        supportedSchemaVersions: [1, 2, 3, 4, 5, 6],
+        versions: {
+          6: {
+            unitFields: [
+              "id", "definitionId", "label", "coord", "movement", "durability", "mana",
+              "activeAbility", "skills", "passiveAura"
+            ],
+            skillsNullable: true,
+            passiveAuraFields: ["id", "label", "radius", "active", "affectedTowerIds"]
+          }
+        }
+      },
+      commands: { schemaVersion: 6 }
+    });
+    expect(described.heroes.commands).not.toHaveProperty("toggleHeroAura");
+    expect(described.heroes.events).not.toHaveProperty("heroAuraChanged");
+    expect(described.heroes).not.toHaveProperty("towerScript");
+    expect(TOOLS.map((tool) => tool.name)).not.toContain("analyze_heroes");
+  });
+
+  it("runs the inert v6 recipe through preview, guarded apply, validation, and stale rejection", async () => {
+    const projectDir = fixture();
+    const materialized = await callTool("get_recipe", {
+      projectDir,
+      collection: "mechanics",
+      recipeId: "basic_passive_hero_aura"
+    }, {});
+    expect(materialized.recipe).toMatchObject({
+      id: "basic_passive_hero_aura",
+      moduleId: "heroes",
+      moduleSchemaVersion: 6,
+      entity: {
+        moduleId: "heroes",
+        moduleSchemaVersion: 6,
+        missionId: "tutorial_01",
+        profileId: "basic_passive_hero_aura",
+        profile: {
+          definitions: {
+            commander: {
+              skillTree: null,
+              passiveAura: {
+                radius: expect.any(Number),
+                effects: [{
+                  kind: "modifier",
+                  scope: "tower_damage",
+                  modifier: { target: "damage" }
+                }]
+              }
+            }
+          }
+        }
+      }
+    });
+    expect(materialized.recipe.entity).not.toHaveProperty("enabled");
+
+    const request = { projectDir, ...materialized.recipe.entity, enabled: true };
+    const preview = await callTool("preview_mechanics_module", request, {});
+    expect(preview).toMatchObject({
+      ok: true,
+      dryRun: true,
+      revision: materialized.revision,
+      validation: { ok: true, issues: [] },
+      candidate: { mechanics: { modules: { heroes: { schemaVersion: 6, enabled: true } } } }
+    });
+    for (const adjacent of ["navigation", "elevation", "combat", "roguelite", "logistics"]) {
+      expect(preview.candidate.mechanics.modules[adjacent]).toBeUndefined();
+    }
+    const applied = await callTool("apply_mechanics_module", {
+      ...request,
+      ifRevision: preview.revision
+    }, {});
+    expect(applied).toMatchObject({ ok: true, previousRevision: preview.revision });
+    expect(await callTool("validate_project", { projectDir }, {})).toMatchObject({ ok: true });
+
+    const stale = await rejection(callTool("apply_mechanics_module", {
+      ...request,
+      ifRevision: preview.revision
+    }, {}));
+    expect(stale).toMatchObject({ code: "conflict" });
+  }, 30_000);
+
+  it("uses the shared guarded transaction to promote every existing v5 profile atomically", async () => {
+    const projectDir = fixture();
+    const mechanicsPath = path.join(projectDir, "content", "mechanics.json");
+    const balancePath = path.join(projectDir, "content", "balance.json");
+    const movementProfiles = {
+      ground: {
+        label: "Ground", terrainMode: "respect_walkable",
+        towerOccupancy: "blocked", defaultTerrainCost: 1000
+      }
+    };
+    const definition = (label) => ({
+      label, spawn: "core",
+      movement: { movementProfileId: "ground", speed: 1 },
+      durability: { maxHp: 100, shield: null },
+      mana: { max: 100, starting: 60, regenerationPerUnit: 5 },
+      activeAbility: {
+        id: "arc_bolt", label: "Arc Bolt", target: "enemy",
+        manaCost: 20, cooldown: 3, range: 6, damage: 30
+      },
+      skillTree: null
+    });
+    const alpha = {
+      selectedHeroId: "commander",
+      definitions: { commander: definition("Alpha") },
+      movementProfiles
+    };
+    const beta = {
+      selectedHeroId: "warden",
+      definitions: { warden: definition("Beta") },
+      movementProfiles
+    };
+    fs.writeFileSync(mechanicsPath, `${JSON.stringify({
+      schemaVersion: 1,
+      modules: { heroes: { schemaVersion: 5, enabled: true, profiles: { alpha, beta } } }
+    }, null, 2)}\n`, "utf8");
+    const balance = JSON.parse(fs.readFileSync(balancePath, "utf8"));
+    balance.missions.tutorial_01.mechanics = balance.missions.tutorial_01.mechanics ?? {};
+    balance.missions.tutorial_01.mechanics.profiles = {
+      ...(balance.missions.tutorial_01.mechanics.profiles ?? {}), heroes: "alpha"
+    };
+    fs.writeFileSync(balancePath, `${JSON.stringify(balance, null, 2)}\n`, "utf8");
+
+    const selected = structuredClone(alpha);
+    selected.definitions.commander.passiveAura = {
+      id: "command_link", label: "Command Link", radius: 3,
+      effects: [{
+        kind: "modifier", scope: "tower_damage",
+        modifier: { target: "damage", operation: "additive_ratio", value: 0.2 }
+      }]
+    };
+    const request = {
+      projectDir, moduleId: "heroes", moduleSchemaVersion: 6,
+      missionId: "tutorial_01", enabled: true, profileId: "alpha", profile: selected
+    };
+    const preview = await callTool("preview_mechanics_module", request, {});
+    expect(preview).toMatchObject({
+      ok: true,
+      dryRun: true,
+      candidate: {
+        mechanics: {
+          modules: {
+            heroes: {
+              schemaVersion: 6,
+              profiles: { beta: { definitions: { warden: { passiveAura: null } } } }
+            }
+          }
+        }
+      }
+    });
+    expect(preview.candidate.mechanics.modules.heroes.profiles.beta).toEqual({
+      ...beta,
+      definitions: { warden: { ...beta.definitions.warden, passiveAura: null } }
+    });
+
+    const applied = await callTool("apply_mechanics_module", {
+      ...request,
+      ifRevision: preview.revision
+    }, {});
+    expect(applied).toMatchObject({ ok: true, written: true, previousRevision: preview.revision });
+    expect(await callTool("validate_project", { projectDir }, {})).toMatchObject({ ok: true });
+  }, 30_000);
+
+  it("publishes guide v26 with explicit null promotion and authoritative aura membership", () => {
+    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(26);
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(
+      /Heroes v6[\s\S]*passiveAura[\s\S]*basic_passive_hero_aura/i
+    );
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(
+      /v5[\s\S]*(?:promot|upgrade)[\s\S]*every definition[\s\S]*passiveAura\s*:\s*null/i
+    );
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(
+      /affectedTowerIds[\s\S]*(?:authoritative|engine)[\s\S]*(?:never|do not)[\s\S]*(?:recompute|derive)/i
+    );
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/no (?:new )?(?:command|event)|adds no (?:gameplay )?command/i);
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/CampaignRun[\s\S]*(?:no carry|does not carry|not persisted)/i);
+  });
+
+  it("keeps the public Codex skill aligned with the complete v6 AI contract", () => {
+    const skill = fs.readFileSync(PLUGIN_SKILL, "utf8");
+    expect(skill).toMatch(/Heroes v6[\s\S]*passiveAura/i);
+    expect(skill).toMatch(/passiveAura\s*:\s*null[\s\S]*(?:opt-out|preserve|legacy)/i);
+    expect(skill).toMatch(
+      /basic_passive_hero_aura[\s\S]*preview_mechanics_module[\s\S]*apply_mechanics_module[\s\S]*ifRevision/i
+    );
+    expect(skill).toMatch(/affectedTowerIds[\s\S]*(?:authoritative|engine)/i);
+    expect(skill).toMatch(/(?:no command|adds no command|does not add a command)/i);
+    expect(skill).not.toMatch(/(?:dispatch|send).{0,80}(?:aura|toggle)/i);
   });
 });
 

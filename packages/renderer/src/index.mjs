@@ -142,7 +142,10 @@ export class TowerForgeCanvasRenderer {
     if (this.focusCoord) this.drawFocusCell(this.focusCoord, geom);
     for (const tower of snapshot.towers ?? []) this.drawTower(tower, snapshot, geom);
     const heroPresentation = projectHeroesPresentation(snapshot);
-    for (const hero of heroPresentation.units) this.drawHero(hero, geom);
+    for (const hero of heroPresentation.units) {
+      this.drawPassiveHeroAura(hero, towerPositions, geom);
+      this.drawHero(hero, geom);
+    }
     for (const enemy of snapshot.enemies ?? []) this.drawEnemy(enemy, snapshot, geom);
     this.drawEffects(geom);
 
@@ -704,6 +707,29 @@ export class TowerForgeCanvasRenderer {
       this.ctx.lineTo(p.x + radius, p.y + radius);
       this.ctx.moveTo(p.x + radius, p.y - radius);
       this.ctx.lineTo(p.x - radius, p.y + radius);
+      this.ctx.stroke();
+    }
+    this.ctx.restore();
+  }
+
+  drawPassiveHeroAura(hero, towerPositions, geom) {
+    const passiveAura = hero.passiveAura;
+    if (!passiveAura?.active) return;
+    const heroPoint = projectHeroPresentationPoint(hero, (coord) => this.center(coord, geom));
+    if (!heroPoint) return;
+    this.ctx.save();
+    this.ctx.strokeStyle = "rgba(122, 232, 214, .55)";
+    this.ctx.lineWidth = Math.max(1.5, geom.r * 0.08);
+    this.ctx.setLineDash([Math.max(3, geom.r * 0.18), Math.max(2, geom.r * 0.12)]);
+    this.ctx.beginPath();
+    this.ctx.arc(heroPoint.x, heroPoint.y, Math.max(geom.r * 0.72, passiveAura.radius * geom.r), 0, Math.PI * 2);
+    this.ctx.stroke();
+    this.ctx.setLineDash([]);
+    for (const towerId of passiveAura.affectedTowerIds) {
+      const towerPoint = towerPositions.get(towerId);
+      if (!towerPoint) continue;
+      this.ctx.beginPath();
+      this.ctx.arc(towerPoint.x, towerPoint.y, geom.r * 0.62, 0, Math.PI * 2);
       this.ctx.stroke();
     }
     this.ctx.restore();

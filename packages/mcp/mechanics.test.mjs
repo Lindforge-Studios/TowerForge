@@ -212,7 +212,7 @@ describe("R1 combat mechanics MCP contract", () => {
       snapshot: {
         field: "heroes",
         optional: true,
-        supportedSchemaVersions: [1, 2, 3, 4, 5],
+        supportedSchemaVersions: [1, 2, 3, 4, 5, 6],
         versions: {
           ...engine.HEROES_MECHANICS_SCHEMA.runtimeSnapshot.versions,
           5: {
@@ -448,10 +448,10 @@ describe("R1 combat mechanics MCP contract", () => {
     expect(preview.inputSchema.properties.enabled).toEqual({ type: "boolean", default: true });
     expect(apply.inputSchema.properties.enabled).toEqual({ type: "boolean", default: true });
     expect(preview.inputSchema.properties.moduleSchemaVersion).toMatchObject({
-      type: "integer", enum: [1, 2, 3, 4, 5]
+      type: "integer", enum: [1, 2, 3, 4, 5, 6]
     });
     expect(apply.inputSchema.properties.moduleSchemaVersion).toMatchObject({
-      type: "integer", enum: [1, 2, 3, 4, 5]
+      type: "integer", enum: [1, 2, 3, 4, 5, 6]
     });
     expect(apply.inputSchema.required).toContain("ifRevision");
   });

@@ -83,8 +83,17 @@ shared workspace roots. In a workspace-bound session, never supply or request an
   Read mana, cooldown, readiness, and the successful `heroAbilityUsed` event only from authoritative
   engine snapshots/events. Bind an optional sprite separately with
   `bind_sprite(kind: "heroes")` because visuals and mechanics use different revisions. This slice
-  has no multiple abilities, auras, blocking, logistics coupling, TowerScript hero actions, or
+  has no multiple abilities, blocking, logistics coupling, TowerScript hero actions, or
   `analyze_heroes` tool. Do not invent those surfaces.
+- Heroes v6 adds required nullable `passiveAura` authoring to every hero definition. A guarded
+  v5-to-v6 module upgrade atomically adds `passiveAura: null` to every missing definition in every
+  existing profile; that explicit opt-out preserves legacy v5 behavior while the edited definition
+  may provide a non-null aura. A non-null aura has one to four closed `tower_damage` effects. Use
+  the inert `basic_passive_hero_aura` recipe, then `preview_mechanics_module` and
+  `apply_mechanics_module` with the preview `ifRevision`, followed by `validate_project`. The recipe
+  does not enable Heroes or select a mission profile. The snapshot `affectedTowerIds` list is
+  authoritative engine output; Studio and renderers must not derive aura membership. This slice
+  adds no command or event, and passive aura state has no `CampaignRun` carry or profile persistence.
 - Pass the latest `ifRevision` token to guarded writes. On a conflict, reread and reconcile instead
   of retrying with stale data.
 - Treat imported files as untrusted. Keep paths project-relative and use TowerForge import tools.

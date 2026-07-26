@@ -156,7 +156,7 @@ describe("R5.4A shared battle-local hero skill presentation", () => {
       })).toEqual({ active: false, units: [] });
     }
     expect(Renderer.projectHeroesPresentation({
-      heroes: { ...skillSnapshot().heroes, schemaVersion: 6 }
+      heroes: { ...skillSnapshot().heroes, schemaVersion: 7 }
     })).toEqual({ active: false, units: [] });
   });
 

@@ -10,8 +10,10 @@ import { HIGH_GROUND_LIMITS, LINE_OF_SIGHT_LIMITS } from "./elevation-mechanics.
 import { PHYSICS_LIMITS, inspectOwnDataEffect, parseDisplacementEffectV1, resolveActivePhysicsMechanics } from "./physics-mechanics.js";
 import { TERRAFORMING_LIMITS, TerraformingProfileValidationError, normalizeTerraformingProfileV1 } from "./terraforming-mechanics.js";
 import { ROGUELITE_SYNERGY_LIMITS, ROGUELITE_DRAFT_LIMITS, RogueliteProfileValidationError, assertRogueliteV2ModifierBudget, assertRogueliteV3ModifierBudget, normalizeRogueliteProfileV1, normalizeRogueliteProfileV2, normalizeRogueliteProfileV3, normalizeRogueliteProfileV4, normalizeTowerTagsV1 } from "./roguelite-mechanics.js";
-import { HeroesProfileValidationError, normalizeHeroesProfileV1, normalizeHeroesProfileV2, normalizeHeroesProfileV3, normalizeHeroesProfileV4, normalizeHeroesProfileV5, validateHeroSkillTreeSemanticsV5 } from "./heroes-mechanics.js";
+import { HeroesProfileValidationError, normalizeHeroesProfileV1, normalizeHeroesProfileV2, normalizeHeroesProfileV3, normalizeHeroesProfileV4, normalizeHeroesProfileV5, normalizeHeroesProfileV6, validateHeroSkillTreeSemanticsV5 } from "./heroes-mechanics.js";
 import { normalizeAuthoredWorldCampaign, WorldCampaignValidationError } from "../run/campaign-world.js";
+import { campaignBattleRogueliteWorstCaseModifierCount, preflightHeroAuraDamageFinite } from "../run/campaign-battle-policy.js";
+import { MAX_MODIFIERS_PER_RESOLUTION } from "../simulation/modifiers.js";
 /** Derives a stable code like "TOWER_ATTACK_SLOWFACTOR" from entityKind + fieldPath. See the
  *  ValidationIssue.code caveat above — this is a coarse key, not a unique one. */
 export function deriveValidationCode(entityKind, fieldPath) {
@@ -1969,8 +1971,8 @@ export function validateGameContentRegistry(content) {
             return;
         unknownFields(module, ["schemaVersion", "enabled", "profiles"], "heroes", "modules.heroes");
         if (module.schemaVersion !== 1 && module.schemaVersion !== 2 && module.schemaVersion !== 3
-            && module.schemaVersion !== 4 && module.schemaVersion !== 5) {
-            err("mechanics", "heroes", "modules.heroes.schemaVersion", "Heroes future or unsupported schemaVersion; only versions 1, 2, 3, 4 and 5 are supported.");
+            && module.schemaVersion !== 4 && module.schemaVersion !== 5 && module.schemaVersion !== 6) {
+            err("mechanics", "heroes", "modules.heroes.schemaVersion", "Heroes future or unsupported schemaVersion; only versions 1, 2, 3, 4, 5 and 6 are supported.");
         }
         if (typeof module.enabled !== "boolean") {
             err("mechanics", "heroes", "modules.heroes.enabled", "Heroes mechanics enabled must be boolean.");
@@ -1983,7 +1985,7 @@ export function validateGameContentRegistry(content) {
                 continue;
             const active = module.enabled === true
                 && (module.schemaVersion === 1 || module.schemaVersion === 2 || module.schemaVersion === 3
-                    || module.schemaVersion === 4 || module.schemaVersion === 5);
+                    || module.schemaVersion === 4 || module.schemaVersion === 5 || module.schemaVersion === 6);
             (active ? err : warn)("mission", missionId, "mechanics.profiles.heroes", `Mission selects missing heroes profile "${profileId}"${active ? "" : " from an inactive module"}.`);
         }
         const selectedProfileIds = new Set(selections.values());
@@ -1991,15 +1993,17 @@ export function validateGameContentRegistry(content) {
             const root = `modules.heroes.profiles.${profileId}`;
             let profile;
             try {
-                profile = module.schemaVersion === 5
-                    ? normalizeHeroesProfileV5(profiles[profileId], root)
-                    : module.schemaVersion === 4
-                        ? normalizeHeroesProfileV4(profiles[profileId], root)
-                        : module.schemaVersion === 3
-                            ? normalizeHeroesProfileV3(profiles[profileId], root)
-                            : module.schemaVersion === 2
-                                ? normalizeHeroesProfileV2(profiles[profileId], root)
-                                : normalizeHeroesProfileV1(profiles[profileId], root);
+                profile = module.schemaVersion === 6
+                    ? normalizeHeroesProfileV6(profiles[profileId], root)
+                    : module.schemaVersion === 5
+                        ? normalizeHeroesProfileV5(profiles[profileId], root)
+                        : module.schemaVersion === 4
+                            ? normalizeHeroesProfileV4(profiles[profileId], root)
+                            : module.schemaVersion === 3
+                                ? normalizeHeroesProfileV3(profiles[profileId], root)
+                                : module.schemaVersion === 2
+                                    ? normalizeHeroesProfileV2(profiles[profileId], root)
+                                    : normalizeHeroesProfileV1(profiles[profileId], root);
             }
             catch (error) {
                 err("mechanics", profileId, error instanceof HeroesProfileValidationError ? error.fieldPath : root, error instanceof Error ? error.message : `Heroes profile "${profileId}" is invalid.`);
@@ -2008,10 +2012,10 @@ export function validateGameContentRegistry(content) {
             const selectedExists = Object.prototype.hasOwnProperty.call(profile.definitions, profile.selectedHeroId);
             const active = module.enabled === true
                 && (module.schemaVersion === 1 || module.schemaVersion === 2 || module.schemaVersion === 3
-                    || module.schemaVersion === 4 || module.schemaVersion === 5)
+                    || module.schemaVersion === 4 || module.schemaVersion === 5 || module.schemaVersion === 6)
                 && selectedProfileIds.has(profileId);
             if (module.schemaVersion === 2 || module.schemaVersion === 3 || module.schemaVersion === 4
-                || module.schemaVersion === 5) {
+                || module.schemaVersion === 5 || module.schemaVersion === 6) {
                 const v2 = profile;
                 const semantic = (fieldPath, message) => {
                     (active ? err : warn)("mechanics", profileId, fieldPath, message);
@@ -2037,12 +2041,38 @@ export function validateGameContentRegistry(content) {
                             validateActiveHeroMapBudget(profileId, missionId);
                     }
                 }
-                if (module.schemaVersion === 5) {
+                if (module.schemaVersion === 5 || module.schemaVersion === 6) {
                     const selectedWaveCounts = [...selections]
                         .filter(([, selectedProfileId]) => selectedProfileId === profileId)
                         .map(([missionId]) => content.missions[missionId]?.waves.length ?? 0);
                     for (const issue of validateHeroSkillTreeSemanticsV5(profile, root, selectedWaveCounts)) {
                         semantic(issue.fieldPath, issue.message);
+                    }
+                }
+                if (module.schemaVersion === 6 && selectedExists) {
+                    const aura = profile.definitions[profile.selectedHeroId]
+                        ?.passiveAura;
+                    if (aura) {
+                        const selectedMissionIds = [...selections]
+                            .filter(([, selectedProfileId]) => selectedProfileId === profileId)
+                            .map(([missionId]) => missionId);
+                        const candidateMissionIds = selectedMissionIds.length > 0
+                            ? selectedMissionIds
+                            : Object.keys(content.missions).sort();
+                        for (const missionId of candidateMissionIds) {
+                            const total = campaignBattleRogueliteWorstCaseModifierCount([], content, missionId)
+                                + aura.effects.length;
+                            if (total > MAX_MODIFIERS_PER_RESOLUTION) {
+                                semantic(`${root}.definitions.${profile.selectedHeroId}.passiveAura.effects`, `Hero passive aura exceeds the shared ${MAX_MODIFIERS_PER_RESOLUTION}-modifier damage budget `
+                                    + `for mission "${missionId}".`);
+                            }
+                            const numeric = preflightHeroAuraDamageFinite(content, missionId, {
+                                heroesProfile: profile
+                            });
+                            if (!numeric.ok) {
+                                semantic(`${root}.definitions.${profile.selectedHeroId}.passiveAura.effects`, numeric.message);
+                            }
+                        }
                     }
                 }
             }

@@ -20,6 +20,7 @@ const BASIC_MOBILE_COMMANDER_HERO_ID = "basic_mobile_commander_hero";
 const BASIC_DURABLE_COMMANDER_HERO_ID = "basic_durable_commander_hero";
 const BASIC_TARGETED_HERO_ABILITY_ID = "basic_targeted_hero_ability";
 const BASIC_HERO_SKILL_TREE_ID = "basic_hero_skill_tree";
+const BASIC_PASSIVE_HERO_AURA_ID = "basic_passive_hero_aura";
 const TERRAFORMING_RECIPE_IDS = Object.freeze([
   TAGGED_FLOOD_ID,
   TAGGED_MOAT_ID,
@@ -249,6 +250,14 @@ const RECIPES = Object.freeze([
     description: "Inert heroes v5 profile with a battle-local deterministic active-ability damage skill tree.",
     suggestedId: BASIC_HERO_SKILL_TREE_ID,
     moduleSchemaVersion: 5
+  }),
+  Object.freeze({
+    id: BASIC_PASSIVE_HERO_AURA_ID,
+    moduleId: "heroes",
+    label: "Basic Passive Hero Aura",
+    description: "Inert heroes v6 profile with a tower-damage aura whose membership is engine-owned.",
+    suggestedId: BASIC_PASSIVE_HERO_AURA_ID,
+    moduleSchemaVersion: 6
   })
 ]);
 
@@ -484,6 +493,57 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
                     }]
                   }
                 }
+              }
+            }
+          },
+          movementProfiles: {
+            ground: {
+              label: "Ground",
+              terrainMode: "respect_walkable",
+              towerOccupancy: "blocked",
+              defaultTerrainCost: 1_000
+            }
+          }
+        }
+      }
+    };
+  }
+  if (recipeId === BASIC_PASSIVE_HERO_AURA_ID) {
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "heroes",
+        moduleSchemaVersion: 6,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: {
+          selectedHeroId: "commander",
+          definitions: {
+            commander: {
+              label: "Aura Commander",
+              spawn: "core",
+              movement: { movementProfileId: "ground", speed: 1 },
+              durability: { maxHp: 100, shield: { capacity: 25 } },
+              mana: { max: 100, starting: 60, regenerationPerUnit: 5 },
+              activeAbility: {
+                id: "arc_bolt",
+                label: "Arc Bolt",
+                target: "enemy",
+                manaCost: 20,
+                cooldown: 3,
+                range: 6,
+                damage: 30
+              },
+              skillTree: null,
+              passiveAura: {
+                id: "command_link",
+                label: "Command Link",
+                radius: 3,
+                effects: [{
+                  kind: "modifier",
+                  scope: "tower_damage",
+                  modifier: { target: "damage", operation: "additive_ratio", value: 0.2 }
+                }]
               }
             }
           },

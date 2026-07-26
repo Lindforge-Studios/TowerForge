@@ -28,7 +28,8 @@ describe("R5.1A generated Canvas/Phaser static hero foundation", () => {
 
     expect(phaser).toMatch(/projectHeroesPresentation/);
     expect(phaser).toMatch(/projectHeroesPresentation\s*\(\s*(?:snap|presentationSnapshot)\s*\)/);
-    expect(phaser).toMatch(/\.units[\s\S]{0,500}(?:definitionId|bindings\?\.heroes|spriteTexture)/);
+    expect(phaser).toMatch(/for\s*\(const\s+hero\s+of\s+heroPresentation\.units\)/);
+    expect(phaser).toMatch(/hero\.definitionId/);
     expect(phaser).toMatch(/(?:definitionId|id)[\s\S]{0,300}(?:fillCircle|add\.image|sprite)/);
   });
 

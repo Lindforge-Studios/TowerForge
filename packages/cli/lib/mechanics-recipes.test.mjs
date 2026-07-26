@@ -286,6 +286,54 @@ describe("R5.4A battle-local hero skill-tree recipe", () => {
   });
 });
 
+describe("R5.5A passive hero damage-aura recipe", () => {
+  it("materializes one inert heroes v6 aura without activating adjacent mechanics", () => {
+    expect(listMechanicsRecipes().map((recipe) => recipe.id)).toContain("basic_passive_hero_aura");
+
+    const recipe = materializeMechanicsRecipe("basic_passive_hero_aura", context);
+    expect(recipe).toMatchObject({
+      id: "basic_passive_hero_aura",
+      moduleId: "heroes",
+      moduleSchemaVersion: 6,
+      entity: {
+        moduleId: "heroes",
+        moduleSchemaVersion: 6,
+        missionId: "mission_b",
+        profileId: "basic_passive_hero_aura",
+        profile: {
+          selectedHeroId: "commander",
+          definitions: {
+            commander: {
+              label: expect.any(String),
+              spawn: "core",
+              skillTree: null,
+              passiveAura: {
+                id: expect.any(String),
+                label: expect.any(String),
+                radius: expect.any(Number),
+                effects: [{
+                  kind: "modifier",
+                  scope: "tower_damage",
+                  modifier: {
+                    target: "damage",
+                    operation: expect.stringMatching(/^(flat|additive_ratio|multiplier)$/),
+                    value: expect.any(Number)
+                  }
+                }]
+              }
+            }
+          }
+        }
+      }
+    });
+    expect(recipe.entity).not.toHaveProperty("enabled");
+    for (const adjacent of ["navigation", "elevation", "combat", "roguelite", "logistics", "scripts", "visuals"]) {
+      expect(recipe.entity).not.toHaveProperty(adjacent);
+      expect(recipe.entity.profile).not.toHaveProperty(adjacent);
+    }
+  });
+});
+
 describe("R1.5 reaction mechanics recipes", () => {
   it("materializes directional Fire/Ice Shatter with explicit combat prerequisites", () => {
     expect(listMechanicsRecipes().map((recipe) => recipe.id)).toContain("elemental_shatter");

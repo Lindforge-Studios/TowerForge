@@ -556,7 +556,204 @@ test.describe("R5.1A Studio static heroes lifecycle", () => {
     }
   });
 
-  test("enables, edits, reloads, disables, re-enables, and preserves future v6 read-only", async ({ page }) => {
+  test("promotes every v5 definition and preserves the full v6 passive-aura lifecycle", async ({ page }) => {
+    test.setTimeout(120_000);
+    const balancePath = path.join(projectDir, "content", "balance.json");
+    const mechanicsPath = path.join(projectDir, "content", "mechanics.json");
+    const originalBalanceBytes = fs.readFileSync(balancePath, "utf8");
+    const originalMechanicsBytes = fs.existsSync(mechanicsPath) ? fs.readFileSync(mechanicsPath, "utf8") : null;
+    try {
+      await openStudio(page, studioUrl);
+      await openHeroesMechanics(page);
+      await page.locator("#mechanics-recipe-select").selectOption("basic_hero_skill_tree");
+      await page.locator("#btn-mechanics-new-profile").click();
+      await page.locator("#btn-mechanics-add-hero").click();
+      await page.locator('[data-hero-definition-id="hero_2"] [data-hero-label]').fill("Warden");
+      await page.locator("#btn-mechanics-enable").click();
+      await expect.poll(() => readHeroesState(projectDir)).toMatchObject({
+        moduleSchemaVersion: 5,
+        enabled: true,
+        selectedProfileId: "basic_hero_skill_tree"
+      });
+
+      await page.reload();
+      await openHeroesMechanics(page);
+      const commander = page.locator('[data-hero-definition-id="commander"]');
+      const warden = page.locator('[data-hero-definition-id="hero_2"]');
+      await expect(commander.locator("[data-hero-passive-aura-enabled]")).not.toBeChecked();
+      await commander.locator("[data-hero-passive-aura-enabled]").check();
+      await expect(warden.locator("[data-hero-passive-aura-enabled]")).not.toBeChecked();
+      await commander.locator("[data-hero-passive-aura-id]").fill("field_command");
+      await commander.locator("[data-hero-passive-aura-label]").fill("Field Command");
+      await commander.locator("[data-hero-passive-aura-radius]").fill("4");
+
+      const effects = commander.locator("[data-hero-passive-aura-effect-row]");
+      await expect(effects).toHaveCount(1);
+      for (let count = 1; count < 4; count += 1) {
+        await commander.locator("[data-add-hero-passive-aura-effect]").click();
+        await expect(effects).toHaveCount(count + 1);
+      }
+      await expect(commander.locator("[data-add-hero-passive-aura-effect]")).toBeDisabled();
+      const authoredEffects = [
+        ["additive_ratio", "0.25"],
+        ["flat", "2"],
+        ["multiplier", "1.1"],
+        ["flat", "4"]
+      ];
+      for (const [index, [operation, value]] of authoredEffects.entries()) {
+        await effects.nth(index).locator("[data-hero-passive-aura-effect-operation]").selectOption(operation);
+        await effects.nth(index).locator("[data-hero-passive-aura-effect-value]").fill(value);
+      }
+      await effects.nth(3).locator("[data-remove-hero-passive-aura-effect]").click();
+      await expect(effects).toHaveCount(3);
+      await commander.locator("[data-add-hero-passive-aura-effect]").click();
+      await expect(effects).toHaveCount(4);
+      await effects.nth(3).locator("[data-hero-passive-aura-effect-value]").fill("4");
+
+      const beforeInvalidPreview = readHeroesState(projectDir);
+      await commander.locator("[data-hero-passive-aura-radius]").fill("65537");
+      await page.locator("#btn-mechanics-preview").click();
+      await expect(page.locator("#mechanics-preview-result")).toContainText(/radius|65.?536|range|maximum/i);
+      await expect(page.locator("#mechanics-preview-result")).not.toContainText('"ok": true');
+      expect(readHeroesState(projectDir)).toEqual(beforeInvalidPreview);
+
+      await commander.locator("[data-hero-passive-aura-radius]").fill("4");
+      await page.locator("#btn-mechanics-preview").click();
+      await expect(page.locator("#mechanics-preview-result")).toContainText('"ok": true');
+      expect(readHeroesState(projectDir)).toEqual(beforeInvalidPreview);
+      await page.locator("#btn-mechanics-save").click();
+      await expect.poll(() => readHeroesState(projectDir)).toMatchObject({
+        moduleSchemaVersion: 6,
+        enabled: true,
+        selectedProfileId: "basic_hero_skill_tree",
+        profile: {
+          definitions: {
+            commander: {
+              passiveAura: {
+                id: "field_command",
+                label: "Field Command",
+                radius: 4,
+                effects: [
+                  { kind: "modifier", scope: "tower_damage", modifier: { target: "damage", operation: "additive_ratio", value: 0.25 } },
+                  { kind: "modifier", scope: "tower_damage", modifier: { target: "damage", operation: "flat", value: 2 } },
+                  { kind: "modifier", scope: "tower_damage", modifier: { target: "damage", operation: "multiplier", value: 1.1 } },
+                  { kind: "modifier", scope: "tower_damage", modifier: { target: "damage", operation: "flat", value: 4 } }
+                ]
+              }
+            },
+            hero_2: { passiveAura: null }
+          }
+        }
+      });
+
+      await page.reload();
+      await openHeroesMechanics(page);
+      await expect(page.locator('[data-hero-definition-id="commander"] [data-hero-passive-aura-label]'))
+        .toHaveValue("Field Command");
+      await expect(page.locator('[data-hero-definition-id="commander"] [data-hero-passive-aura-effect-row]'))
+        .toHaveCount(4);
+      const preservedProfile = structuredClone(readHeroesState(projectDir).profile);
+      page.once("dialog", (dialog) => dialog.accept());
+      await page.locator("#btn-mechanics-disable").click();
+      await expect.poll(() => readHeroesState(projectDir)).toMatchObject({
+        enabled: false,
+        selectedProfileId: "basic_hero_skill_tree",
+        profile: preservedProfile
+      });
+      await page.locator("#btn-mechanics-enable").click();
+      await expect.poll(() => readHeroesState(projectDir)).toMatchObject({
+        enabled: true,
+        selectedProfileId: "basic_hero_skill_tree",
+        profile: preservedProfile
+      });
+    } finally {
+      fs.writeFileSync(balancePath, originalBalanceBytes, "utf8");
+      if (originalMechanicsBytes === null) fs.rmSync(mechanicsPath, { force: true });
+      else fs.writeFileSync(mechanicsPath, originalMechanicsBytes, "utf8");
+    }
+  });
+
+  test("promotes every existing v5 profile through one Studio v6 save", async ({ page }) => {
+    test.setTimeout(120_000);
+    const balancePath = path.join(projectDir, "content", "balance.json");
+    const mechanicsPath = path.join(projectDir, "content", "mechanics.json");
+    const originalBalanceBytes = fs.readFileSync(balancePath, "utf8");
+    const originalMechanicsBytes = fs.existsSync(mechanicsPath) ? fs.readFileSync(mechanicsPath, "utf8") : null;
+    const definition = (label) => ({
+      label, spawn: "core",
+      movement: { movementProfileId: "ground", speed: 1 },
+      durability: { maxHp: 100, shield: null },
+      mana: { max: 100, starting: 60, regenerationPerUnit: 5 },
+      activeAbility: {
+        id: "arc_bolt", label: "Arc Bolt", target: "enemy",
+        manaCost: 20, cooldown: 3, range: 6, damage: 30
+      },
+      skillTree: null
+    });
+    const movementProfiles = {
+      ground: {
+        label: "Ground", terrainMode: "respect_walkable",
+        towerOccupancy: "blocked", defaultTerrainCost: 1000
+      }
+    };
+    const beta = {
+      selectedHeroId: "warden",
+      definitions: { warden: definition("Beta Warden") },
+      movementProfiles
+    };
+    try {
+      const balance = JSON.parse(originalBalanceBytes);
+      balance.missions.tutorial_01.mechanics = balance.missions.tutorial_01.mechanics ?? {};
+      balance.missions.tutorial_01.mechanics.profiles = {
+        ...(balance.missions.tutorial_01.mechanics.profiles ?? {}), heroes: "alpha"
+      };
+      fs.writeFileSync(balancePath, `${JSON.stringify(balance, null, 2)}\n`, "utf8");
+      fs.writeFileSync(mechanicsPath, `${JSON.stringify({
+        schemaVersion: 1,
+        modules: {
+          heroes: {
+            schemaVersion: 5,
+            enabled: true,
+            profiles: {
+              alpha: {
+                selectedHeroId: "commander",
+                definitions: { commander: definition("Alpha Commander") },
+                movementProfiles
+              },
+              beta
+            }
+          }
+        }
+      }, null, 2)}\n`, "utf8");
+
+      await openStudio(page, studioUrl);
+      await openHeroesMechanics(page);
+      const commander = page.locator('[data-hero-definition-id="commander"]');
+      await commander.locator("[data-hero-passive-aura-enabled]").check();
+      await page.locator("#btn-mechanics-save").click();
+      await expect.poll(() => {
+        const mechanics = JSON.parse(fs.readFileSync(mechanicsPath, "utf8"));
+        return mechanics.modules.heroes;
+      }).toMatchObject({
+        schemaVersion: 6,
+        profiles: {
+          alpha: { definitions: { commander: { passiveAura: expect.any(Object) } } },
+          beta: { definitions: { warden: { passiveAura: null } } }
+        }
+      });
+      const persisted = JSON.parse(fs.readFileSync(mechanicsPath, "utf8"));
+      expect(persisted.modules.heroes.profiles.beta).toEqual({
+        ...beta,
+        definitions: { warden: { ...beta.definitions.warden, passiveAura: null } }
+      });
+    } finally {
+      fs.writeFileSync(balancePath, originalBalanceBytes, "utf8");
+      if (originalMechanicsBytes === null) fs.rmSync(mechanicsPath, { force: true });
+      else fs.writeFileSync(mechanicsPath, originalMechanicsBytes, "utf8");
+    }
+  });
+
+  test("enables, edits, reloads, disables, re-enables, and preserves future v7 read-only", async ({ page }) => {
     test.setTimeout(120_000);
     const browserErrors = captureBrowserErrors(page);
     await openStudio(page, studioUrl);
@@ -633,8 +830,8 @@ test.describe("R5.1A Studio static heroes lifecycle", () => {
 
     const mechanicsPath = path.join(projectDir, "content", "mechanics.json");
     const future = readJson(mechanicsPath);
-    future.modules.heroes.schemaVersion = 6;
-    future.modules.heroes.futureModuleRule = { preserve: ["exact", 6] };
+    future.modules.heroes.schemaVersion = 7;
+    future.modules.heroes.futureModuleRule = { preserve: ["exact", 7] };
     future.modules.heroes.profiles.basic_commander_hero.futureProfileRule = { preserve: true };
     writeJson(mechanicsPath, future);
     const futureBytes = fs.readFileSync(mechanicsPath, "utf8");
@@ -679,6 +876,7 @@ test.describe("R5.1A generated-player static hero presentation", () => {
       buildDurableHeroPlayerFixture(tempRoot, combination);
       buildAbilityHeroPlayerFixture(tempRoot, combination);
       buildSkillHeroPlayerFixture(tempRoot, combination);
+      buildPassiveAuraHeroPlayerFixture(tempRoot, combination);
     }
     buildLegacyPlayerFixture(tempRoot);
     port = await freeHttpPort();
@@ -686,7 +884,7 @@ test.describe("R5.1A generated-player static hero presentation", () => {
       const relative = decodeURIComponent(new URL(request.url, `http://127.0.0.1:${port}`).pathname)
         .replace(/^\/+/, "");
       const [mode, grid, renderer, ...parts] = relative.split("/");
-      if (!(["active", "mobile", "durable", "ability", "skill", "legacy"].includes(mode)
+      if (!(["active", "mobile", "durable", "ability", "skill", "aura", "legacy"].includes(mode)
         && ["hex", "square"].includes(grid)
         && ["canvas", "phaser"].includes(renderer))) return respond404(response);
       const fixture = mode === "legacy"
@@ -1043,6 +1241,66 @@ test.describe("R5.1A generated-player static hero presentation", () => {
       });
     }
   }
+
+  for (const { grid, renderer } of combinations) {
+    test(`presents authoritative v6 aura membership through build, sell, and defeat on ${grid}/${renderer}`, async ({ page }) => {
+      test.setTimeout(120_000);
+      const browserErrors = captureBrowserErrors(page);
+      await page.goto(playerUrl(port, "aura", grid, renderer));
+      await waitForPlayerBoot(page);
+
+      const initial = await inspectPlayer(page);
+      expect(initial.heroes).toMatchObject({
+        schemaVersion: 6,
+        units: [{
+          id: "commander",
+          definitionId: "commander",
+          skills: null,
+          passiveAura: {
+            id: "command_link",
+            label: "Command Link",
+            radius: 65_536,
+            active: true,
+            affectedTowerIds: []
+          }
+        }]
+      });
+      await expect(page.getByRole("button", { name: /command link/i })).toHaveCount(0);
+
+      const buildPoint = await page.evaluate(() => {
+        const snapshot = window.__towerforgeInspect();
+        const tile = snapshot.tiles.find((candidate) => candidate.terrain === "buildable" && !candidate.occupiedBy);
+        return window.__towerforgeTilePoint({ q: tile.q, r: tile.r });
+      });
+      await page.mouse.click(buildPoint.x, buildPoint.y);
+      await expect.poll(async () => (await inspectPlayer(page)).towers.length, {
+        message: `${grid}/${renderer} must place an ordinary tower`, timeout: 10_000
+      }).toBe(1);
+      const placed = (await inspectPlayer(page)).towers[0];
+      await expect.poll(async () => (
+        (await inspectPlayer(page)).heroes?.units?.[0]?.passiveAura?.affectedTowerIds
+      )).toEqual([placed.id]);
+
+      await page.locator("#sell-mode").click();
+      const towerPoint = await page.evaluate((coord) => window.__towerforgeTilePoint(coord), placed.coord);
+      await page.mouse.click(towerPoint.x, towerPoint.y);
+      await expect.poll(async () => (await inspectPlayer(page)).towers.length).toBe(0);
+      await expect.poll(async () => (
+        (await inspectPlayer(page)).heroes?.units?.[0]?.passiveAura?.affectedTowerIds
+      )).toEqual([]);
+
+      await page.locator("#start-wave").click();
+      await expect.poll(async () => (
+        (await inspectPlayer(page)).heroes?.units?.[0]?.durability?.defeated
+      ), {
+        message: `${grid}/${renderer} enemy towerAttack must defeat the aura hero`, timeout: 20_000
+      }).toBe(true);
+      await expect.poll(async () => (
+        (await inspectPlayer(page)).heroes?.units?.[0]?.passiveAura
+      )).toMatchObject({ active: false, affectedTowerIds: [] });
+      expect(browserErrors()).toEqual([]);
+    });
+  }
 });
 
 function buildHeroPlayerFixture(root, { grid, renderer, visual }) {
@@ -1300,6 +1558,73 @@ function buildSkillHeroPlayerFixture(root, { grid, renderer }) {
                       }]
                     }
                   }
+                }
+              }
+            },
+            movementProfiles: {
+              ground: {
+                label: "Ground",
+                terrainMode: "respect_walkable",
+                towerOccupancy: "blocked",
+                defaultTerrainCost: 1_000
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+  buildPlayer(projectDir, renderer, "heroes");
+}
+
+function buildPassiveAuraHeroPlayerFixture(root, { grid, renderer }) {
+  const name = `hero_aura_${grid}_${renderer}`;
+  const { projectDir } = createProject({ name, parentDir: root, templateName: "classic", gridKind: grid });
+  const manifestPath = path.join(projectDir, "project.json");
+  const manifest = readJson(manifestPath);
+  manifest.schemaVersion = 3;
+  writeJson(manifestPath, manifest);
+
+  const balancePath = path.join(projectDir, "content", "balance.json");
+  const balance = readJson(balancePath);
+  const missionId = balance.defaultMissionId ?? Object.keys(balance.missions)[0];
+  balance.missions[missionId].mechanics = { profiles: { heroes: "aura_commanders" } };
+  for (const enemy of Object.values(balance.enemies)) {
+    enemy.maxHp = Math.max(enemy.maxHp, 1_000);
+    enemy.speed = 0.01;
+    enemy.towerAttack = { interval: 0.05, damage: 100, range: 100 };
+  }
+  writeJson(balancePath, balance);
+  writeJson(path.join(projectDir, "content", "mechanics.json"), {
+    schemaVersion: 1,
+    modules: {
+      heroes: {
+        schemaVersion: 6,
+        enabled: true,
+        profiles: {
+          aura_commanders: {
+            selectedHeroId: "commander",
+            definitions: {
+              commander: {
+                label: "Aura Commander",
+                spawn: "core",
+                movement: { movementProfileId: "ground", speed: 2 },
+                durability: { maxHp: 100, shield: { capacity: 25 } },
+                mana: { max: 100, starting: 100, regenerationPerUnit: 5 },
+                activeAbility: {
+                  id: "arc_bolt", label: "Arc Bolt", target: "enemy", manaCost: 20,
+                  cooldown: 3, range: 65_536, damage: 30
+                },
+                skillTree: null,
+                passiveAura: {
+                  id: "command_link",
+                  label: "Command Link",
+                  radius: 65_536,
+                  effects: [{
+                    kind: "modifier",
+                    scope: "tower_damage",
+                    modifier: { target: "damage", operation: "additive_ratio", value: 0.2 }
+                  }]
                 }
               }
             },

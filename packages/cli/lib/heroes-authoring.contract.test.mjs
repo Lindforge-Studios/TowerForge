@@ -410,3 +410,255 @@ describe("R5.4A CLI battle-local hero skill-tree authoring", () => {
     expect(transactionBytes(projectDir)).toEqual(before);
   }, 15_000);
 });
+
+describe("R5.5A CLI passive hero damage-aura authoring", () => {
+  const abilityDefinition = (passiveAura) => ({
+    label: "Commander",
+    spawn: "core",
+    movement: { movementProfileId: "ground", speed: 1 },
+    durability: { maxHp: 100, shield: { capacity: 25 } },
+    mana: { max: 100, starting: 60, regenerationPerUnit: 5 },
+    activeAbility: {
+      id: "arc_bolt", label: "Arc Bolt", target: "enemy",
+      manaCost: 20, cooldown: 3, range: 6, damage: 30
+    },
+    skillTree: null,
+    passiveAura
+  });
+  const movementProfiles = {
+    ground: {
+      label: "Ground", terrainMode: "respect_walkable",
+      towerOccupancy: "blocked", defaultTerrainCost: 1000
+    }
+  };
+  const aura = {
+    id: "command_link",
+    label: "Command Link",
+    radius: 3,
+    effects: [{
+      kind: "modifier",
+      scope: "tower_damage",
+      modifier: { target: "damage", operation: "additive_ratio", value: 0.2 }
+    }]
+  };
+  const v5Definition = (label, skillTree = null) => {
+    const { passiveAura: _passiveAura, ...definition } = abilityDefinition(null);
+    return { ...definition, label, skillTree };
+  };
+  const seedV5Profiles = (projectDir) => {
+    const mechanicsPath = path.join(projectDir, "content", "mechanics.json");
+    const balancePath = path.join(projectDir, "content", "balance.json");
+    const balance = JSON.parse(fs.readFileSync(balancePath, "utf8"));
+    const mission = balance.missions.tutorial_01;
+    mission.mechanics = mission.mechanics ?? {};
+    mission.mechanics.profiles = { ...(mission.mechanics.profiles ?? {}), heroes: "alpha" };
+    const profiles = {
+      alpha: {
+        selectedHeroId: "commander",
+        definitions: {
+          commander: v5Definition("Alpha Commander"),
+          sentinel: v5Definition("Alpha Sentinel")
+        },
+        movementProfiles
+      },
+      beta: {
+        selectedHeroId: "warden",
+        definitions: {
+          warden: v5Definition("Beta Warden", {
+            points: { starting: 1, perInterwave: 0 },
+            nodes: {
+              focus: {
+                label: "Focus", description: "Preserved beta tree.", cost: 1, requires: [],
+                effects: [{
+                  kind: "modifier", scope: "hero_ability_damage",
+                  modifier: { target: "damage", operation: "flat", value: 3 }
+                }]
+              }
+            }
+          })
+        },
+        movementProfiles
+      }
+    };
+    fs.writeFileSync(mechanicsPath, `${JSON.stringify({
+      schemaVersion: 1,
+      modules: { heroes: { schemaVersion: 5, enabled: true, profiles } }
+    }, null, 2)}\n`, "utf8");
+    fs.writeFileSync(balancePath, `${JSON.stringify(balance, null, 2)}\n`, "utf8");
+    return profiles;
+  };
+
+  it("previews, guardedly applies, and rereads an explicit multi-definition v5-to-v6 promotion", async () => {
+    const projectDir = fixture();
+    const before = transactionBytes(projectDir);
+    const authored = request({
+      moduleSchemaVersion: 6,
+      profileId: "aura_commanders",
+      profile: {
+        selectedHeroId: "commander",
+        definitions: {
+          commander: abilityDefinition(aura),
+          warden: { ...abilityDefinition(null), label: "Warden" }
+        },
+        movementProfiles
+      }
+    });
+
+    const preview = await previewMechanicsModule(projectDir, authored);
+    expect(preview).toMatchObject({
+      ok: true,
+      dryRun: true,
+      validation: { ok: true, issues: [] },
+      candidate: {
+        mechanics: {
+          modules: {
+            heroes: {
+              schemaVersion: 6,
+              enabled: true,
+              profiles: {
+                aura_commanders: {
+                  definitions: {
+                    commander: { passiveAura: aura },
+                    warden: { passiveAura: null }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+    expect(transactionBytes(projectDir)).toEqual(before);
+
+    const applied = await applyMechanicsModule(projectDir, {
+      ...authored,
+      ifRevision: preview.revision
+    });
+    expect(applied).toMatchObject({ ok: true, written: true, previousRevision: preview.revision });
+    const reread = await inspectMechanicsAuthoring(projectDir, { missionId: "tutorial_01" });
+    expect(reread.heroes).toMatchObject({
+      enabled: true,
+      moduleSchemaVersion: 6,
+      selectedProfileId: "aura_commanders",
+      selectedProfile: authored.profile
+    });
+    expect(reread.capabilities.navigation.active).toBe(false);
+    expect(reread.capabilities.elevation.active).toBe(false);
+  }, 30_000);
+
+  it("atomically promotes every existing v5 profile when one selected profile upgrades to v6", async () => {
+    const projectDir = fixture();
+    const originalProfiles = seedV5Profiles(projectDir);
+    const selectedProfile = structuredClone(originalProfiles.alpha);
+    selectedProfile.definitions.commander.passiveAura = structuredClone(aura);
+    selectedProfile.definitions.sentinel.passiveAura = null;
+    const upgrade = request({
+      moduleSchemaVersion: 6,
+      profileId: "alpha",
+      profile: selectedProfile
+    });
+
+    const before = transactionBytes(projectDir);
+    const preview = await previewMechanicsModule(projectDir, upgrade);
+    expect(preview).toMatchObject({
+      ok: true,
+      dryRun: true,
+      candidate: {
+        mechanics: {
+          modules: {
+            heroes: {
+              schemaVersion: 6,
+              profiles: {
+                alpha: { definitions: { commander: { passiveAura: aura }, sentinel: { passiveAura: null } } },
+                beta: { definitions: { warden: { passiveAura: null } } }
+              }
+            }
+          }
+        }
+      }
+    });
+    expect(preview.candidate.mechanics.modules.heroes.profiles.beta).toEqual({
+      ...originalProfiles.beta,
+      definitions: {
+        warden: { ...originalProfiles.beta.definitions.warden, passiveAura: null }
+      }
+    });
+    expect(transactionBytes(projectDir)).toEqual(before);
+
+    const applied = await applyMechanicsModule(projectDir, { ...upgrade, ifRevision: preview.revision });
+    expect(applied).toMatchObject({ ok: true, written: true, previousRevision: preview.revision });
+    expect(JSON.parse(fs.readFileSync(path.join(projectDir, "content", "mechanics.json"), "utf8")))
+      .toEqual(preview.candidate.mechanics);
+  }, 30_000);
+
+  it("keeps multi-profile promotion atomic for invalid selected data and future modules", async () => {
+    const projectDir = fixture();
+    const originalProfiles = seedV5Profiles(projectDir);
+    const selectedProfile = structuredClone(originalProfiles.alpha);
+    selectedProfile.definitions.commander.passiveAura = { ...structuredClone(aura), radius: 65_537 };
+    selectedProfile.definitions.sentinel.passiveAura = null;
+    const before = transactionBytes(projectDir);
+
+    const invalid = await previewMechanicsModule(projectDir, request({
+      moduleSchemaVersion: 6,
+      profileId: "alpha",
+      profile: selectedProfile
+    }));
+    expect(invalid.ok).toBe(false);
+    expect(invalid.validation.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ severity: "error", fieldPath: expect.stringMatching(/passiveAura|radius/i) })
+    ]));
+    expect(transactionBytes(projectDir)).toEqual(before);
+
+    const mechanicsPath = path.join(projectDir, "content", "mechanics.json");
+    const future = JSON.parse(fs.readFileSync(mechanicsPath, "utf8"));
+    future.modules.heroes.schemaVersion = 7;
+    fs.writeFileSync(mechanicsPath, `${JSON.stringify(future, null, 2)}\n`, "utf8");
+    const futureBefore = transactionBytes(projectDir);
+    const rejected = await previewMechanicsModule(projectDir, request({
+      moduleSchemaVersion: 6,
+      profileId: "alpha",
+      profile: selectedProfile
+    }));
+    expect(rejected.ok).toBe(false);
+    expect(rejected.validation.issues).toContainEqual(expect.objectContaining({
+      code: "module_version_unsupported",
+      fieldPath: expect.stringMatching(/heroes.*schemaVersion/i)
+    }));
+    expect(transactionBytes(projectDir)).toEqual(futureBefore);
+  }, 30_000);
+
+  it("rejects omitted promotion nulls and malformed aura values without writing", async () => {
+    const projectDir = fixture();
+    const before = transactionBytes(projectDir);
+    const missingNull = request({
+      moduleSchemaVersion: 6,
+      profileId: "missing_null",
+      profile: {
+        selectedHeroId: "commander",
+        definitions: {
+          commander: abilityDefinition(aura),
+          warden: { ...abilityDefinition(null), label: "Warden" }
+        },
+        movementProfiles
+      }
+    });
+    delete missingNull.profile.definitions.warden.passiveAura;
+
+    const missingPreview = await previewMechanicsModule(projectDir, missingNull);
+    expect(missingPreview.ok).toBe(false);
+    expect(missingPreview.validation.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ severity: "error", fieldPath: expect.stringMatching(/warden.*passiveAura/i) })
+    ]));
+
+    const malformed = structuredClone(missingNull);
+    malformed.profile.definitions.warden.passiveAura = structuredClone(aura);
+    malformed.profile.definitions.warden.passiveAura.effects[0].scope = "hero_ability_damage";
+    const malformedPreview = await previewMechanicsModule(projectDir, malformed);
+    expect(malformedPreview.ok).toBe(false);
+    expect(malformedPreview.validation.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ severity: "error", fieldPath: expect.stringMatching(/passiveAura|scope/i) })
+    ]));
+    expect(transactionBytes(projectDir)).toEqual(before);
+  }, 20_000);
+});

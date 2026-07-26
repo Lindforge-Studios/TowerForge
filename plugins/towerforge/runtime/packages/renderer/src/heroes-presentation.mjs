@@ -9,6 +9,8 @@ const MAX_SKILL_POINTS = 65_536;
 const MAX_SKILL_NODES = 32;
 const MAX_SKILL_REQUIREMENTS = 8;
 const MAX_DESCRIPTION_BYTES = 512;
+// An authoritative aura can cover every cell in the engine's maximum active map.
+const MAX_AURA_TOWER_IDS = 65_536;
 
 const INACTIVE = Object.freeze({ active: false, units: Object.freeze([]) });
 
@@ -162,10 +164,8 @@ function activeAbility(value, projectedMana, projectedDurability) {
   if (!id || !label || record.target !== "enemy" || manaCost === null || cooldown === null
     || cooldownRemaining === null || range === null || damage === null
     || typeof record.ready !== "boolean") return null;
-  const expectedReady = !projectedDurability.defeated
-    && projectedMana.current >= manaCost
-    && cooldownRemaining === 0;
-  if (record.ready !== expectedReady) return null;
+  if (record.ready && (projectedDurability.defeated
+    || projectedMana.current < manaCost || cooldownRemaining > 0)) return null;
   return Object.freeze({
     id, label, target: "enemy", manaCost, cooldown, cooldownRemaining, range, damage,
     ready: record.ready
@@ -243,6 +243,35 @@ function skills(value) {
   });
 }
 
+function passiveAura(value) {
+  const record = exactRecord(value, ["id", "label", "radius", "active", "affectedTowerIds"]);
+  if (!record || typeof record.active !== "boolean") return null;
+  const id = boundedText(record.id, MAX_ID_BYTES);
+  const label = boundedText(record.label, MAX_LABEL_BYTES);
+  const radius = Number.isSafeInteger(record.radius)
+    && record.radius >= 0 && record.radius <= MAX_ABILITY_RANGE
+    ? record.radius
+    : null;
+  const sourceIds = denseArray(record.affectedTowerIds, MAX_AURA_TOWER_IDS);
+  if (!id || !label || radius === null || !sourceIds) return null;
+  const affectedTowerIds = [];
+  let previous = null;
+  for (const value of sourceIds) {
+    const towerId = boundedText(value, MAX_ID_BYTES);
+    if (!towerId || (previous !== null && previous >= towerId)) return null;
+    affectedTowerIds.push(towerId);
+    previous = towerId;
+  }
+  if (!record.active && affectedTowerIds.length > 0) return null;
+  return Object.freeze({
+    id,
+    label,
+    radius,
+    active: record.active,
+    affectedTowerIds: Object.freeze(affectedTowerIds)
+  });
+}
+
 /**
  * Project only the authoritative optional engine snapshot. Invalid/future/untrusted shapes fail
  * closed to the same inactive sentinel; renderers never reconstruct a hero from mechanics data.
@@ -253,7 +282,7 @@ export function projectHeroesPresentation(snapshot) {
   const section = exactRecord(value, ["schemaVersion", "units"]);
   if (!section || (section.schemaVersion !== 1 && section.schemaVersion !== 2
     && section.schemaVersion !== 3 && section.schemaVersion !== 4
-    && section.schemaVersion !== 5)) return INACTIVE;
+    && section.schemaVersion !== 5 && section.schemaVersion !== 6)) return INACTIVE;
   const authoredUnits = denseArray(section.units, MAX_UNITS);
   if (!authoredUnits || authoredUnits.length !== 1) return INACTIVE;
   const units = [];
@@ -268,7 +297,12 @@ export function projectHeroesPresentation(snapshot) {
           ? ["id", "definitionId", "label", "coord", "movement", "durability"]
           : section.schemaVersion === 4
             ? ["id", "definitionId", "label", "coord", "movement", "durability", "mana", "activeAbility"]
-            : ["id", "definitionId", "label", "coord", "movement", "durability", "mana", "activeAbility", "skills"]);
+            : section.schemaVersion === 5
+              ? ["id", "definitionId", "label", "coord", "movement", "durability", "mana", "activeAbility", "skills"]
+              : [
+                  "id", "definitionId", "label", "coord", "movement", "durability", "mana",
+                  "activeAbility", "skills", "passiveAura"
+                ]);
     if (!unit) return INACTIVE;
     const id = boundedText(unit.id, MAX_ID_BYTES);
     const definitionId = boundedText(unit.definitionId, MAX_ID_BYTES);
@@ -308,8 +342,21 @@ export function projectHeroesPresentation(snapshot) {
       }));
       continue;
     }
-    const projectedSkills = skills(unit.skills);
-    if (!projectedSkills) return INACTIVE;
+    const projectedSkills = section.schemaVersion === 6 && unit.skills === null
+      ? null
+      : skills(unit.skills);
+    if (unit.skills !== null && !projectedSkills) return INACTIVE;
+    if (section.schemaVersion === 5 && !projectedSkills) return INACTIVE;
+    if (section.schemaVersion === 6) {
+      const projectedAura = passiveAura(unit.passiveAura);
+      if (!projectedAura || (projectedAura.active && projectedDurability.defeated)) return INACTIVE;
+      units.push(Object.freeze({
+        id, definitionId, label, coord, movement: projectedMovement, durability: projectedDurability,
+        mana: projectedMana, activeAbility: projectedAbility, skills: projectedSkills,
+        passiveAura: projectedAura
+      }));
+      continue;
+    }
     units.push(Object.freeze({
       id, definitionId, label, coord, movement: projectedMovement, durability: projectedDurability,
       mana: projectedMana, activeAbility: projectedAbility, skills: projectedSkills

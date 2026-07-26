@@ -80,6 +80,7 @@ export declare class TowerDefenseGame {
     private readonly activeTerraformingMechanics;
     private readonly activeRogueliteMechanics;
     private readonly activeHeroesMechanics;
+    private readonly activeHeroPassiveAura;
     private readonly heroesSnapshotV1;
     private heroStateV2;
     private heroMovementField;
@@ -301,6 +302,9 @@ export declare class TowerDefenseGame {
     private activeHeroesV2;
     private heroSkillManagementAvailable;
     private heroAbilitySkillModifiers;
+    private heroPassiveAuraActive;
+    private heroPassiveAuraAffectedTowerIds;
+    private heroPassiveAuraModifiersForTower;
     private buildHeroMovementField;
     private stabilizeHeroMovement;
     private moveHeroUnit;

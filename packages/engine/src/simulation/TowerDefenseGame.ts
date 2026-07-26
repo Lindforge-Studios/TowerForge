@@ -40,16 +40,22 @@ import {
   type RogueliteDraftDefinitionV3
 } from "../content/roguelite-mechanics.js";
 import {
+  activeHeroAuraModifierReserve,
+  heroPassiveAuraModifierIdV6,
   heroSkillModifierIdV5,
   resolveActiveHeroesMechanics,
   type ActiveHeroesMechanics,
   type ActiveHeroesMechanicsV2,
   type ActiveHeroesMechanicsV3,
   type ActiveHeroesMechanicsV4,
-  type ActiveHeroesMechanicsV5
+  type ActiveHeroesMechanicsV5,
+  type ActiveHeroesMechanicsV6
 } from "../content/heroes-mechanics.js";
 import { CAMPAIGN_RUN_LIMITS } from "../run/campaign-run.js";
-import { campaignBattleWorstCaseModifierCount } from "../run/campaign-battle-policy.js";
+import {
+  campaignBattleWorstCaseModifierCount,
+  preflightHeroAuraDamageFinite
+} from "../run/campaign-battle-policy.js";
 import { evaluateTowerScriptExpression } from "../scripting/expression.js";
 import {
   TOWER_SCRIPT_EVENTS,
@@ -349,6 +355,7 @@ interface TowerScriptExecutionContext {
 }
 
 const INVALID_SHIELD_RESTORE_MESSAGE = "TowerScript action is invalid for the current shield target.";
+const EMPTY_FROZEN_ARRAY: readonly never[] = Object.freeze([]);
 
 class TowerScriptInvalidActionError extends Error {
   constructor(message = INVALID_SHIELD_RESTORE_MESSAGE) {
@@ -756,6 +763,8 @@ function normalizeCampaignBattleLoadout(
   if (campaignBattleWorstCaseModifierCount(deck, content, missionId) > MAX_MODIFIERS_PER_RESOLUTION) {
     throw new Error("Campaign battle loadout exceeds the shared modifier budget.");
   }
+  const numericPreflight = preflightHeroAuraDamageFinite(content, missionId, { deck });
+  if (!numericPreflight.ok) throw new Error(numericPreflight.message);
   return Object.freeze({ schemaVersion: 1, launchId, nodeId, maxNewArtifactInstances, deck, artifacts });
 }
 
@@ -821,6 +830,11 @@ export class TowerDefenseGame {
   private readonly activeTerraformingMechanics: ActiveTerraformingMechanicsV1 | undefined;
   private readonly activeRogueliteMechanics: ActiveRogueliteMechanics | undefined;
   private readonly activeHeroesMechanics: ActiveHeroesMechanics | undefined;
+  private readonly activeHeroPassiveAura: Readonly<{
+    definitionId: string;
+    aura: NonNullable<ActiveHeroesMechanicsV6["definitions"][string]["passiveAura"]>;
+    modifiers: readonly ModifierSpec[];
+  }> | undefined;
   private readonly heroesSnapshotV1: GameSnapshot["heroes"];
   private heroStateV2: HeroRuntimeStateV2 | undefined;
   private heroMovementField: NavigationFieldResult | undefined;
@@ -932,6 +946,34 @@ export class TowerDefenseGame {
     this.activeTerraformingMechanics = resolveActiveTerraformingMechanics(this.content, missionId);
     this.activeRogueliteMechanics = resolveActiveRogueliteMechanics(this.content, missionId);
     this.activeHeroesMechanics = resolveActiveHeroesMechanics(this.content, missionId);
+    const passiveAuraDefinition = this.activeHeroesMechanics?.schemaVersion === 6
+      ? this.activeHeroesMechanics.definitions[this.activeHeroesMechanics.selectedHeroId]
+      : undefined;
+    const passiveAura = passiveAuraDefinition?.passiveAura ?? undefined;
+    this.activeHeroPassiveAura = passiveAura === undefined || passiveAura === null
+      ? undefined
+      : Object.freeze({
+          definitionId: this.activeHeroesMechanics!.selectedHeroId,
+          aura: passiveAura,
+          modifiers: Object.freeze(passiveAura.effects.map((effect, effectIndex) => Object.freeze({
+            id: heroPassiveAuraModifierIdV6(
+              this.activeHeroesMechanics!.selectedHeroId,
+              passiveAura.id,
+              effectIndex
+            ),
+            target: effect.modifier.target,
+            stage: "spatial" as const,
+            operation: effect.modifier.operation,
+            value: effect.modifier.value
+          })))
+        });
+    if (activeHeroAuraModifierReserve(this.content, missionId) > 0) {
+      if (campaignBattleWorstCaseModifierCount([], this.content, missionId) > MAX_MODIFIERS_PER_RESOLUTION) {
+        throw new Error("Active mission mechanics exceed the shared modifier budget.");
+      }
+      const numericPreflight = preflightHeroAuraDamageFinite(this.content, missionId);
+      if (!numericPreflight.ok) throw new Error(numericPreflight.message);
+    }
     if (this.activeHeroesMechanics?.schemaVersion === 1) {
       const definition = this.activeHeroesMechanics.definitions[this.activeHeroesMechanics.selectedHeroId]!;
       const coord = Object.freeze({ q: this.map.coreCoord.q, r: this.map.coreCoord.r });
@@ -950,16 +992,19 @@ export class TowerDefenseGame {
     if (this.activeHeroesMechanics?.schemaVersion === 2
       || this.activeHeroesMechanics?.schemaVersion === 3
       || this.activeHeroesMechanics?.schemaVersion === 4
-      || this.activeHeroesMechanics?.schemaVersion === 5) {
+      || this.activeHeroesMechanics?.schemaVersion === 5
+      || this.activeHeroesMechanics?.schemaVersion === 6) {
       const durability = this.activeHeroesMechanics.schemaVersion === 3
         ? this.activeHeroesMechanics.definitions[this.activeHeroesMechanics.selectedHeroId]!.durability
         : this.activeHeroesMechanics.schemaVersion === 4 || this.activeHeroesMechanics.schemaVersion === 5
+          || this.activeHeroesMechanics.schemaVersion === 6
           ? this.activeHeroesMechanics.definitions[this.activeHeroesMechanics.selectedHeroId]!.durability
           : undefined;
       const mana = this.activeHeroesMechanics.schemaVersion === 4 || this.activeHeroesMechanics.schemaVersion === 5
+        || this.activeHeroesMechanics.schemaVersion === 6
         ? this.activeHeroesMechanics.definitions[this.activeHeroesMechanics.selectedHeroId]!.mana
         : undefined;
-      const skillTree = this.activeHeroesMechanics.schemaVersion === 5
+      const skillTree = this.activeHeroesMechanics.schemaVersion === 5 || this.activeHeroesMechanics.schemaVersion === 6
         ? this.activeHeroesMechanics.definitions[this.activeHeroesMechanics.selectedHeroId]!.skillTree
         : null;
       this.heroStateV2 = {
@@ -1108,16 +1153,19 @@ export class TowerDefenseGame {
     if (this.activeHeroesMechanics?.schemaVersion === 2
       || this.activeHeroesMechanics?.schemaVersion === 3
       || this.activeHeroesMechanics?.schemaVersion === 4
-      || this.activeHeroesMechanics?.schemaVersion === 5) {
+      || this.activeHeroesMechanics?.schemaVersion === 5
+      || this.activeHeroesMechanics?.schemaVersion === 6) {
       const durability = this.activeHeroesMechanics.schemaVersion === 3
         ? this.activeHeroesMechanics.definitions[this.activeHeroesMechanics.selectedHeroId]!.durability
         : this.activeHeroesMechanics.schemaVersion === 4 || this.activeHeroesMechanics.schemaVersion === 5
+          || this.activeHeroesMechanics.schemaVersion === 6
           ? this.activeHeroesMechanics.definitions[this.activeHeroesMechanics.selectedHeroId]!.durability
           : undefined;
       const mana = this.activeHeroesMechanics.schemaVersion === 4 || this.activeHeroesMechanics.schemaVersion === 5
+        || this.activeHeroesMechanics.schemaVersion === 6
         ? this.activeHeroesMechanics.definitions[this.activeHeroesMechanics.selectedHeroId]!.mana
         : undefined;
-      const skillTree = this.activeHeroesMechanics.schemaVersion === 5
+      const skillTree = this.activeHeroesMechanics.schemaVersion === 5 || this.activeHeroesMechanics.schemaVersion === 6
         ? this.activeHeroesMechanics.definitions[this.activeHeroesMechanics.selectedHeroId]!.skillTree
         : null;
       this.heroStateV2 = {
@@ -1483,6 +1531,7 @@ export class TowerDefenseGame {
       + existingModifierCount
       + definition.modifiers.length
       + ROGUELITE_DAMAGE_MODIFIER_RESERVE.total
+      + activeHeroAuraModifierReserve(this.content, this.mission.id)
       > MAX_MODIFIERS_PER_RESOLUTION
     ) {
       return this.fail("Artifact modifier budget is exceeded.", "reason.artifactModifierBudgetExceeded");
@@ -1997,7 +2046,7 @@ export class TowerDefenseGame {
     }
     const profile = this.activeHeroesMechanics;
     const state = this.heroStateV2;
-    if ((profile?.schemaVersion !== 4 && profile?.schemaVersion !== 5) || !state) {
+    if ((profile?.schemaVersion !== 4 && profile?.schemaVersion !== 5 && profile?.schemaVersion !== 6) || !state) {
       return this.fail("Hero ability is not active.", "reason.heroAbilityUnavailable");
     }
     if (heroId !== state.definitionId) {
@@ -2029,7 +2078,7 @@ export class TowerDefenseGame {
       target,
       definition.activeAbility.damage,
       { kind: "ability", abilityId: definition.activeAbility.id },
-      profile.schemaVersion === 5
+      profile.schemaVersion === 5 || profile.schemaVersion === 6
         ? { modifiers: this.heroAbilitySkillModifiers(profile, state) }
         : undefined
     );
@@ -2062,7 +2111,7 @@ export class TowerDefenseGame {
     }
     const profile = this.activeHeroesMechanics;
     const state = this.heroStateV2;
-    if (profile?.schemaVersion !== 5 || !state) {
+    if ((profile?.schemaVersion !== 5 && profile?.schemaVersion !== 6) || !state) {
       return this.fail("Hero skill tree is unavailable.", "reason.heroSkillTreeUnavailable");
     }
     const definition = profile.definitions[state.definitionId];
@@ -3465,7 +3514,7 @@ export class TowerDefenseGame {
     const draft = this.buildDraftCheckpointState();
     const heroes = this.heroStateV2 === undefined
       ? undefined
-      : this.activeHeroesMechanics?.schemaVersion === 5
+      : (this.activeHeroesMechanics?.schemaVersion === 5 || this.activeHeroesMechanics?.schemaVersion === 6)
         && this.activeHeroesMechanics.definitions[this.heroStateV2.definitionId]?.skillTree !== null
         ? {
             schemaVersion: 4 as const,
@@ -3484,7 +3533,7 @@ export class TowerDefenseGame {
             }
           }
       : this.activeHeroesMechanics?.schemaVersion === 4
-        || (this.activeHeroesMechanics?.schemaVersion === 5
+        || ((this.activeHeroesMechanics?.schemaVersion === 5 || this.activeHeroesMechanics?.schemaVersion === 6)
           && this.activeHeroesMechanics.definitions[this.heroStateV2.definitionId]?.skillTree === null)
         ? {
             schemaVersion: 3 as const,
@@ -3724,7 +3773,8 @@ export class TowerDefenseGame {
     const requiresHeroesCheckpoint = checkpointHeroes?.schemaVersion === 2
       || checkpointHeroes?.schemaVersion === 3
       || checkpointHeroes?.schemaVersion === 4
-      || checkpointHeroes?.schemaVersion === 5;
+      || checkpointHeroes?.schemaVersion === 5
+      || checkpointHeroes?.schemaVersion === 6;
     const hasHeroesCheckpoint = Object.prototype.hasOwnProperty.call(descriptors, "heroes");
     if (requiresHeroesCheckpoint && !hasHeroesCheckpoint) {
       throw new Error("Game checkpoint hero state is required for active moving heroes.");
@@ -3864,6 +3914,10 @@ export class TowerDefenseGame {
         campaignBattleWorstCaseModifierCount(campaignBattleState.deck, content, identity.missionId)
         > MAX_MODIFIERS_PER_RESOLUTION
       ) throw new Error("Game checkpoint campaign loadout exceeds the shared modifier budget.");
+      const numericPreflight = preflightHeroAuraDamageFinite(content, identity.missionId, {
+        deck: campaignBattleState.deck
+      });
+      if (!numericPreflight.ok) throw new Error(numericPreflight.message);
     }
 
     let campaignArtifactInventoryCount = 0;
@@ -4474,6 +4528,7 @@ export class TowerDefenseGame {
           synergyWorstCase
           + artifactModifierCount
           + ROGUELITE_DAMAGE_MODIFIER_RESERVE.total
+          + activeHeroAuraModifierReserve(content, identity.missionId)
           > MAX_MODIFIERS_PER_RESOLUTION
         ) {
           throw new Error("Game checkpoint artifact socket modifier budget is exceeded.");
@@ -5086,7 +5141,7 @@ export class TowerDefenseGame {
       }
       if (type === "heroShieldChanged" || type === "heroAttacked" || type === "heroDefeated") {
         if (checkpointHeroes?.schemaVersion !== 3 && checkpointHeroes?.schemaVersion !== 4
-          && checkpointHeroes?.schemaVersion !== 5) {
+          && checkpointHeroes?.schemaVersion !== 5 && checkpointHeroes?.schemaVersion !== 6) {
           throw new Error("Game checkpoint hero event requires active hero durability.");
         }
         const selectedHeroId = checkpointHeroes.selectedHeroId;
@@ -5142,24 +5197,27 @@ export class TowerDefenseGame {
             "heroes",
             ["schemaVersion", "unit"]
           );
-          const skillTree = checkpointHeroes.schemaVersion === 5
+          const skillTree = checkpointHeroes.schemaVersion === 5 || checkpointHeroes.schemaVersion === 6
             ? checkpointHeroes.definitions[selectedHeroId]!.skillTree
             : null;
-          const expectedDurabilityCheckpointVersion = checkpointHeroes.schemaVersion === 5 && skillTree !== null
+          const expectedDurabilityCheckpointVersion = (checkpointHeroes.schemaVersion === 5
+            || checkpointHeroes.schemaVersion === 6) && skillTree !== null
             ? 4
-            : checkpointHeroes.schemaVersion === 4 || checkpointHeroes.schemaVersion === 5 ? 3 : 2;
+            : checkpointHeroes.schemaVersion === 4 || checkpointHeroes.schemaVersion === 5
+              || checkpointHeroes.schemaVersion === 6 ? 3 : 2;
           if (checkpointDataField(heroesState, "schemaVersion", "heroes") !== expectedDurabilityCheckpointVersion) {
             throw new Error("Game checkpoint hero defeat event requires durable hero state.");
           }
           const heroUnit = closed(
             checkpointDataField(heroesState, "unit", "heroes"),
             "hero unit",
-            checkpointHeroes.schemaVersion === 5 && skillTree !== null
+            (checkpointHeroes.schemaVersion === 5 || checkpointHeroes.schemaVersion === 6) && skillTree !== null
               ? [
                   "definitionId", "currentCoord", "targetCoord", "nextCoord", "edgeProgress", "hp", "shieldCurrent",
                   "mana", "abilityCooldownRemaining", "skillPoints", "unlockedSkillIds"
                 ]
               : checkpointHeroes.schemaVersion === 4 || checkpointHeroes.schemaVersion === 5
+                || checkpointHeroes.schemaVersion === 6
               ? [
                   "definitionId", "currentCoord", "targetCoord", "nextCoord", "edgeProgress", "hp", "shieldCurrent",
                   "mana", "abilityCooldownRemaining"
@@ -5178,7 +5236,8 @@ export class TowerDefenseGame {
         }
       }
       if (type === "heroAbilityUsed") {
-        if (checkpointHeroes?.schemaVersion !== 4 && checkpointHeroes?.schemaVersion !== 5) {
+        if (checkpointHeroes?.schemaVersion !== 4 && checkpointHeroes?.schemaVersion !== 5
+          && checkpointHeroes?.schemaVersion !== 6) {
           throw new Error("Game checkpoint hero ability event requires active hero abilities.");
         }
         const selectedHeroId = checkpointHeroes.selectedHeroId;
@@ -5235,7 +5294,7 @@ export class TowerDefenseGame {
         };
       }
       if (type === "heroSkillUnlocked" || type === "heroSkillPointsGranted") {
-        if (checkpointHeroes?.schemaVersion !== 5) {
+        if (checkpointHeroes?.schemaVersion !== 5 && checkpointHeroes?.schemaVersion !== 6) {
           throw new Error("Game checkpoint hero skill event requires active heroes v5.");
         }
         const selectedHeroId = checkpointHeroes.selectedHeroId;
@@ -5526,7 +5585,7 @@ export class TowerDefenseGame {
         "hero authoritative unlocked skill ids",
         true
       );
-      const tree = checkpointHeroes?.schemaVersion === 5
+      const tree = checkpointHeroes?.schemaVersion === 5 || checkpointHeroes?.schemaVersion === 6
         ? checkpointHeroes.definitions[checkpointHeroes.selectedHeroId]!.skillTree
         : null;
       if (!tree) {
@@ -5582,14 +5641,17 @@ export class TowerDefenseGame {
     if (hasHeroesCheckpoint && (checkpointHeroes?.schemaVersion === 2
       || checkpointHeroes?.schemaVersion === 3
       || checkpointHeroes?.schemaVersion === 4
-      || checkpointHeroes?.schemaVersion === 5)) {
+      || checkpointHeroes?.schemaVersion === 5
+      || checkpointHeroes?.schemaVersion === 6)) {
       const heroes = closed(state.heroes, "heroes", ["schemaVersion", "unit"]);
-      const heroSkillTree = checkpointHeroes.schemaVersion === 5
+      const heroSkillTree = checkpointHeroes.schemaVersion === 5 || checkpointHeroes.schemaVersion === 6
         ? checkpointHeroes.definitions[checkpointHeroes.selectedHeroId]!.skillTree
         : null;
-      const expectedHeroCheckpointVersion = checkpointHeroes.schemaVersion === 5 && heroSkillTree !== null
+      const expectedHeroCheckpointVersion = (checkpointHeroes.schemaVersion === 5
+        || checkpointHeroes.schemaVersion === 6) && heroSkillTree !== null
         ? 4
         : checkpointHeroes.schemaVersion === 4 || checkpointHeroes.schemaVersion === 5
+          || checkpointHeroes.schemaVersion === 6
           ? 3
         : checkpointHeroes.schemaVersion === 3 ? 2 : 1;
       if (checkpointDataField(heroes, "schemaVersion", "heroes") !== expectedHeroCheckpointVersion) {
@@ -5598,12 +5660,13 @@ export class TowerDefenseGame {
       const unit = closed(
         checkpointDataField(heroes, "unit", "heroes"),
         "hero unit",
-        checkpointHeroes.schemaVersion === 5 && heroSkillTree !== null
+        (checkpointHeroes.schemaVersion === 5 || checkpointHeroes.schemaVersion === 6) && heroSkillTree !== null
           ? [
               "definitionId", "currentCoord", "targetCoord", "nextCoord", "edgeProgress", "hp", "shieldCurrent",
               "mana", "abilityCooldownRemaining", "skillPoints", "unlockedSkillIds"
             ]
           : checkpointHeroes.schemaVersion === 4 || checkpointHeroes.schemaVersion === 5
+            || checkpointHeroes.schemaVersion === 6
           ? [
               "definitionId", "currentCoord", "targetCoord", "nextCoord", "edgeProgress", "hp", "shieldCurrent",
               "mana", "abilityCooldownRemaining"
@@ -5637,7 +5700,7 @@ export class TowerDefenseGame {
       let heroHp: number | undefined;
       let heroShieldCurrent: number | undefined;
       if (checkpointHeroes.schemaVersion === 3 || checkpointHeroes.schemaVersion === 4
-        || checkpointHeroes.schemaVersion === 5) {
+        || checkpointHeroes.schemaVersion === 5 || checkpointHeroes.schemaVersion === 6) {
         const durability = checkpointHeroes.definitions[definitionId]!.durability;
         heroHp = finite(checkpointDataField(unit, "hp", "hero unit"), "hero hp", 0, durability.maxHp);
         heroShieldCurrent = finite(
@@ -5650,7 +5713,8 @@ export class TowerDefenseGame {
           throw new Error("Game checkpoint hero durability state violates shield-first damage ordering.");
         }
       }
-      if (checkpointHeroes.schemaVersion === 4 || checkpointHeroes.schemaVersion === 5) {
+      if (checkpointHeroes.schemaVersion === 4 || checkpointHeroes.schemaVersion === 5
+        || checkpointHeroes.schemaVersion === 6) {
         const activeDefinition = checkpointHeroes.definitions[definitionId]!;
         finite(checkpointDataField(unit, "mana", "hero unit"), "hero mana", 0, activeDefinition.mana.max);
         finite(
@@ -5660,7 +5724,8 @@ export class TowerDefenseGame {
           activeDefinition.activeAbility.cooldown
         );
       }
-      if (checkpointHeroes.schemaVersion === 5 && heroSkillTree !== null) {
+      if ((checkpointHeroes.schemaVersion === 5 || checkpointHeroes.schemaVersion === 6)
+        && heroSkillTree !== null) {
         const skillPoints = integer(
           checkpointDataField(unit, "skillPoints", "hero unit"),
           "hero skill points",
@@ -6251,7 +6316,8 @@ export class TowerDefenseGame {
       (this.activeHeroesMechanics?.schemaVersion === 2
         || this.activeHeroesMechanics?.schemaVersion === 3
         || this.activeHeroesMechanics?.schemaVersion === 4
-        || this.activeHeroesMechanics?.schemaVersion === 5)
+        || this.activeHeroesMechanics?.schemaVersion === 5
+        || this.activeHeroesMechanics?.schemaVersion === 6)
       && state.heroes
     ) {
       this.heroStateV2 = {
@@ -6299,12 +6365,98 @@ export class TowerDefenseGame {
       ? buildTerraformingSnapshot(this.pendingTerraformExpiryGroups)
       : undefined;
     const roguelite = this.currentRogueliteSnapshot();
-    const heroes: GameSnapshot["heroes"] = this.activeHeroesMechanics?.schemaVersion === 5
+    const heroes: GameSnapshot["heroes"] = this.activeHeroesMechanics?.schemaVersion === 6
+      && this.heroStateV2
+      && this.activeHeroesMechanics.definitions[this.heroStateV2.definitionId]!.passiveAura !== null
+      ? (() => {
+          const state = this.heroStateV2!;
+          const definition = (this.activeHeroesMechanics as ActiveHeroesMechanicsV6).definitions[state.definitionId]!;
+          const tree = definition.skillTree;
+          const unlocked = state.unlockedSkillIds ?? new Set<string>();
+          const managementAvailable = this.heroSkillManagementAvailable();
+          const skills = tree === null
+            ? null
+            : Object.freeze({
+                availablePoints: state.skillPoints ?? 0,
+                startingPoints: tree.points.starting,
+                pointsPerInterwave: tree.points.perInterwave,
+                maximumEarnablePoints: tree.points.starting
+                  + tree.points.perInterwave * Math.max(0, this.mission.waves.length - 1),
+                managementAvailable,
+                nodes: Object.freeze(Object.entries(tree.nodes).map(([skillId, node]) => {
+                  const missingRequirementIds = node.requires.filter((requiredId) => !unlocked.has(requiredId));
+                  const isUnlocked = unlocked.has(skillId);
+                  return Object.freeze({
+                    id: skillId,
+                    label: node.label,
+                    description: node.description,
+                    cost: node.cost,
+                    requiresSkillIds: Object.freeze([...node.requires]),
+                    missingRequirementIds: Object.freeze(missingRequirementIds),
+                    unlocked: isUnlocked,
+                    unlockable: !isUnlocked
+                      && managementAvailable
+                      && (state.hp ?? 0) > 0
+                      && missingRequirementIds.length === 0
+                      && (state.skillPoints ?? 0) >= node.cost
+                  });
+                }))
+              });
+          const auraActive = this.heroPassiveAuraActive();
+          return Object.freeze({
+            schemaVersion: 6 as const,
+            units: Object.freeze([Object.freeze({
+              id: state.definitionId,
+              definitionId: state.definitionId,
+              label: definition.label,
+              coord: Object.freeze({ ...state.currentCoord }),
+              movement: Object.freeze({
+                targetCoord: state.targetCoord === null ? null : Object.freeze({ ...state.targetCoord }),
+                nextCoord: state.nextCoord === null ? null : Object.freeze({ ...state.nextCoord }),
+                edgeProgress: state.edgeProgress
+              }),
+              durability: Object.freeze({
+                hp: state.hp ?? 0,
+                maxHp: definition.durability.maxHp,
+                shield: definition.durability.shield === null
+                  ? null
+                  : Object.freeze({
+                      current: state.shieldCurrent ?? 0,
+                      capacity: definition.durability.shield.capacity
+                    }),
+                defeated: (state.hp ?? 0) <= 0
+              }),
+              mana: Object.freeze({
+                current: state.mana ?? 0,
+                max: definition.mana.max,
+                regenerationPerUnit: definition.mana.regenerationPerUnit
+              }),
+              activeAbility: Object.freeze({
+                ...definition.activeAbility,
+                cooldownRemaining: state.abilityCooldownRemaining ?? 0,
+                ready: (state.hp ?? 0) > 0
+                  && this.outcome === "playing"
+                  && (state.mana ?? 0) >= definition.activeAbility.manaCost
+                  && (state.abilityCooldownRemaining ?? 0) <= 0
+              }),
+              skills,
+              passiveAura: Object.freeze({
+                id: definition.passiveAura!.id,
+                label: definition.passiveAura!.label,
+                radius: definition.passiveAura!.radius,
+                active: auraActive,
+                affectedTowerIds: auraActive ? this.heroPassiveAuraAffectedTowerIds() : Object.freeze([])
+              })
+            })])
+          });
+        })()
+      : (this.activeHeroesMechanics?.schemaVersion === 5 || this.activeHeroesMechanics?.schemaVersion === 6)
       && this.heroStateV2
       && this.activeHeroesMechanics.definitions[this.heroStateV2.definitionId]!.skillTree !== null
       ? (() => {
           const state = this.heroStateV2!;
           const definition = this.activeHeroesMechanics!.schemaVersion === 5
+            || this.activeHeroesMechanics!.schemaVersion === 6
             ? this.activeHeroesMechanics.definitions[state.definitionId]!
             : undefined;
           const tree = definition!.skillTree!;
@@ -6376,7 +6528,7 @@ export class TowerDefenseGame {
           });
         })()
       : (this.activeHeroesMechanics?.schemaVersion === 4
-        || (this.activeHeroesMechanics?.schemaVersion === 5
+        || ((this.activeHeroesMechanics?.schemaVersion === 5 || this.activeHeroesMechanics?.schemaVersion === 6)
           && this.activeHeroesMechanics.definitions[this.heroStateV2?.definitionId ?? ""]?.skillTree === null))
         && this.heroStateV2
       ? Object.freeze({
@@ -8302,11 +8454,13 @@ export class TowerDefenseGame {
     | ActiveHeroesMechanicsV3
     | ActiveHeroesMechanicsV4
     | ActiveHeroesMechanicsV5
+    | ActiveHeroesMechanicsV6
     | undefined {
     return this.activeHeroesMechanics?.schemaVersion === 2
       || this.activeHeroesMechanics?.schemaVersion === 3
       || this.activeHeroesMechanics?.schemaVersion === 4
       || this.activeHeroesMechanics?.schemaVersion === 5
+      || this.activeHeroesMechanics?.schemaVersion === 6
       ? this.activeHeroesMechanics
       : undefined;
   }
@@ -8321,7 +8475,7 @@ export class TowerDefenseGame {
   }
 
   private heroAbilitySkillModifiers(
-    profile: ActiveHeroesMechanicsV5,
+    profile: ActiveHeroesMechanicsV5 | ActiveHeroesMechanicsV6,
     state: HeroRuntimeStateV2
   ): readonly ModifierSpec[] {
     const tree = profile.definitions[state.definitionId]?.skillTree;
@@ -8344,8 +8498,43 @@ export class TowerDefenseGame {
     return Object.freeze(modifiers);
   }
 
+  private heroPassiveAuraActive(): boolean {
+    const cached = this.activeHeroPassiveAura;
+    const state = this.heroStateV2;
+    return cached !== undefined
+      && state !== undefined
+      && state.definitionId === cached.definitionId
+      && this.outcome === "playing"
+      && (state.hp ?? 0) > 0;
+  }
+
+  private heroPassiveAuraAffectedTowerIds(): readonly string[] {
+    const cached = this.activeHeroPassiveAura;
+    if (!cached) return EMPTY_FROZEN_ARRAY;
+    const state = this.heroStateV2;
+    if (!state || !this.heroPassiveAuraActive()) return EMPTY_FROZEN_ARRAY;
+    return Object.freeze(this.towers
+      .filter((tower) => (tower.hp === undefined || tower.hp > 0)
+        && this.map.distance(state.currentCoord, tower.coord) <= cached.aura.radius)
+      .map((tower) => tower.id)
+      .sort(compareBinary));
+  }
+
+  private heroPassiveAuraModifiersForTower(tower: TowerState): readonly ModifierSpec[] {
+    const cached = this.activeHeroPassiveAura;
+    if (!cached) return EMPTY_FROZEN_ARRAY;
+    const state = this.heroStateV2;
+    if (!state || !this.heroPassiveAuraActive()
+      || (tower.hp !== undefined && tower.hp <= 0)
+      || this.map.distance(state.currentCoord, tower.coord) > cached.aura.radius) {
+      return EMPTY_FROZEN_ARRAY;
+    }
+    return cached.modifiers;
+  }
+
   private buildHeroMovementField(
-    profile: ActiveHeroesMechanicsV2 | ActiveHeroesMechanicsV3 | ActiveHeroesMechanicsV4 | ActiveHeroesMechanicsV5,
+    profile: ActiveHeroesMechanicsV2 | ActiveHeroesMechanicsV3 | ActiveHeroesMechanicsV4
+      | ActiveHeroesMechanicsV5 | ActiveHeroesMechanicsV6,
     target: Readonly<HexCoord>
   ): NavigationFieldResult {
     const definition = profile.definitions[profile.selectedHeroId]!;
@@ -8448,7 +8637,8 @@ export class TowerDefenseGame {
   private updateHeroAbility(delta: number): void {
     const profile = this.activeHeroesMechanics;
     const state = this.heroStateV2;
-    if ((profile?.schemaVersion !== 4 && profile?.schemaVersion !== 5) || !state || (state.hp ?? 0) <= 0) return;
+    if ((profile?.schemaVersion !== 4 && profile?.schemaVersion !== 5 && profile?.schemaVersion !== 6)
+      || !state || (state.hp ?? 0) <= 0) return;
     const definition = profile.definitions[state.definitionId];
     if (!definition) return;
     state.mana = Math.min(
@@ -9364,7 +9554,8 @@ export class TowerDefenseGame {
   private updateEnemyTowerAttacks(delta: number): void {
     const durableHero = (this.activeHeroesMechanics?.schemaVersion === 3
       || this.activeHeroesMechanics?.schemaVersion === 4
-      || this.activeHeroesMechanics?.schemaVersion === 5)
+      || this.activeHeroesMechanics?.schemaVersion === 5
+      || this.activeHeroesMechanics?.schemaVersion === 6)
       && this.heroStateV2
       && (this.heroStateV2.hp ?? 0) > 0
       ? this.heroStateV2
@@ -9394,7 +9585,8 @@ export class TowerDefenseGame {
         const dist = this.map.distance(center, tower.coord);
         const stableV3Tie = (this.activeHeroesMechanics?.schemaVersion === 3
           || this.activeHeroesMechanics?.schemaVersion === 4
-          || this.activeHeroesMechanics?.schemaVersion === 5)
+          || this.activeHeroesMechanics?.schemaVersion === 5
+          || this.activeHeroesMechanics?.schemaVersion === 6)
           && dist === best
           && target !== null
           && tower.id < target.id;
@@ -10365,7 +10557,8 @@ export class TowerDefenseGame {
     if (resolvedDamage.finalAmount > 0 && mutableTarget.kind === "hero") {
       const definition = (this.activeHeroesMechanics?.schemaVersion === 3
         || this.activeHeroesMechanics?.schemaVersion === 4
-        || this.activeHeroesMechanics?.schemaVersion === 5)
+        || this.activeHeroesMechanics?.schemaVersion === 5
+        || this.activeHeroesMechanics?.schemaVersion === 6)
         ? this.activeHeroesMechanics.definitions[mutableTarget.hero.definitionId]
         : undefined;
       if (definition?.durability.shield) {
@@ -10711,6 +10904,7 @@ export class TowerDefenseGame {
           value: damageBonusBasisPoints / 10_000
         });
       }
+      modifiers.push(...this.heroPassiveAuraModifiersForTower(sourceTower));
     }
     if (options.aoe && this.isEnemyInSunlight(enemy)) {
       const sunlightMultiplier = this.mission.sunlight?.aoeDamageMultiplier ?? 1;
@@ -11492,7 +11686,8 @@ export class TowerDefenseGame {
       this.addResources(interest);
       this.clearedWaveCount += 1;
       this.lastEvents.push({ type: "waveCleared", waveIndex, income, interest });
-      const heroDefinition = this.activeHeroesMechanics?.schemaVersion === 5 && this.heroStateV2
+      const heroDefinition = (this.activeHeroesMechanics?.schemaVersion === 5
+        || this.activeHeroesMechanics?.schemaVersion === 6) && this.heroStateV2
         ? this.activeHeroesMechanics.definitions[this.heroStateV2.definitionId]
         : undefined;
       const tree = heroDefinition?.skillTree;

@@ -80,7 +80,7 @@ function input(
         schemaVersion: 1,
         modules: {
           heroes: {
-            schemaVersion: (activation === "future" ? 6 : 1) as 1,
+            schemaVersion: (activation === "future" ? 7 : 1) as 1,
             enabled: activation !== "disabled",
             profiles: {
               commanders: { selectedHeroId: "commander", definitions }

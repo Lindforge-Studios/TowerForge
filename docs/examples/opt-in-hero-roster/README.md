@@ -126,3 +126,26 @@ tree, while `CampaignRunV1` and `PlayerProfileV3` remain unchanged. V5 definitio
 `skillTree:null` keep snapshot v4 and nested checkpoint v3; absent, disabled, unselected, and v1–v4
 paths have no skill panel or state. See
 [ADR 0041](../../adr/0041-opt-in-battle-local-hero-skill-tree.md).
+
+## Optional passive tower-damage aura (R5.5A)
+
+Use `mechanics-passive-aura.json` to opt into Heroes v6, or stage the inert
+`basic_passive_hero_aura` recipe through the guarded preview/apply flow. Every v6 definition keeps
+the complete v5 shape and adds required nullable `passiveAura`; use `null` for explicit opt-out.
+When explicitly promoting a v5 module, the authoring transaction writes `passiveAura:null` on
+every definition in every existing Heroes profile before adding an aura to the selected hero.
+Loading never migrates content. Preview builds that atomic v6 candidate without mutating project
+source; only guarded apply writes it.
+
+The bundled aura uses one allowlisted `tower_damage` modifier at the common `spatial` stage. The
+engine applies its one-to-four effects only to immediate damage from live placed towers whose
+anchor is within the authored topology radius of the living hero's authoritative `currentCoord`.
+DoT, status damage, hero and mission abilities, range, fire rate, logistics, blocking, and
+TowerScript are unchanged.
+
+Only a non-null selected aura publishes snapshot v6. Read `active` and the binary-sorted
+`affectedTowerIds` from that snapshot; renderers must not recompute distance or membership. If the
+independent skill tree is null, snapshot v6 contains `skills:null` and the nested checkpoint stays
+v3. An active tree keeps checkpoint v4. A null aura retains the earlier snapshot v4/v5 shapes.
+No command, event, journal, profile, or CampaignRun version changes. See
+[ADR 0042](../../adr/0042-opt-in-passive-hero-damage-aura.md).

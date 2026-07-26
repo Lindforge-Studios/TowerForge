@@ -35,6 +35,7 @@
 | R5.2A — hero durability | Завершён; code + constructor sign-off; ADR Accepted | Heroes v3, exact HP/optional shield, shared resolver, optional snapshot/checkpoint state, guarded authoring и legacy v1/v2 paths |
 | R5.3A — targeted hero ability | Завершён; code + constructor sign-off; ADR Accepted | Heroes v4, bounded mana regeneration, один enemy-targeted damage spell, cooldown, GameCommand/Journal v5 и nested checkpoint v3 |
 | R5.4A — battle-local hero skill tree | Завершён; code + constructor sign-off; ADR Accepted | Heroes v5 nullable tree, GameCommand/Journal v6, authoritative snapshot v5, nested checkpoint v4 без CampaignRun/Profile carry |
+| R5.5A — passive hero damage aura | Завершён; code + constructor sign-off; ADR Accepted | Heroes v6 nullable aura, authoritative topology membership и tower-only `spatial` modifiers без нового command/event/checkpoint state |
 | R5–R8 | Запланированы | Каждый срез закрывает engine, Studio, AI/MCP, renderers/player, docs и два независимых sign-off |
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Поставленные версии `combat`, `reactions`, `navigation` и `elevation` уже прошли полные вертикальные срезы. Остальные модули Mechanics Hub остаются planned, а preview/apply отклоняют их включение без записи.
@@ -280,6 +281,32 @@ verifier engine/content/renderer — 39/39, package acceptance для PWA/single
 Контракт:
 [ADR 0041](adr/0041-opt-in-battle-local-hero-skill-tree.md); fixture:
 `docs/examples/opt-in-hero-roster/mechanics-skill-tree.json`.
+
+R5.5A завершён как самостоятельный opt-in TDD-срез. `heroes` v6 добавляет required nullable
+`passiveAura`, независимую от nullable `skillTree`. Ненулевая аура публикует authoritative snapshot v6 с
+бинарно отсортированными `affectedTowerIds`; membership считает только engine
+по topology distance от authoritative `currentCoord`. Аура добавляет 1–4 engine-owned
+`spatial` modifier только к immediate tower damage и не влияет на DoT, status,
+range/fire-rate, hero/mission abilities или другие источники.
+
+Аура не требует дерева навыков: active v6 с tree `null` публикует snapshot v6
+с `skills:null`, но продолжает использовать nested checkpoint v3; аура + tree используют
+тот же checkpoint v4. Аура `null` сохраняет буквальные snapshot v4/v5 и не
+добавляет runtime-работу. `GameCommandV6`, journal v6, outer checkpoint v1,
+CampaignRun/Profile и TowerScript не меняются; нового aura event нет. Blocking,
+Dynamic Navigation, logistics и TowerScript hero surface остаются отдельными срезами.
+
+Начальный engine/content RED дал 35 ожидаемых падений при 2 baseline PASS; surface RED —
+31 падение при 91 baseline PASS. Независимый code verifier добавил отдельные RED для
+промежуточного и cross-source numeric overflow, zero-allocation legacy path, terminal renderer
+state, impossible-true fail-close и module-wide multi-profile v5→v6 promotion. Финальный Vitest
+прошёл 2 257/2 257 тестов в 201 файле, Playwright — 102/102. Constructor acceptance отдельно
+подтвердил полный heroes Studio/player lifecycle 55/55, AI/MCP/CLI/renderer/build/package
+контракты 154/154, Canvas/Phaser × hex/square, PWA/single-file/web/`.tdpack` и legacy paths.
+Typecheck, engine/build, validate, sim, balance, maps и plugin build/validate/smoke прошли.
+Независимые Code Verifier и Constructor Integration Verifier выдали PASS без открытых P0–P3.
+Контракт: [ADR 0042](adr/0042-opt-in-passive-hero-damage-aura.md); fixture:
+`docs/examples/opt-in-hero-roster/mechanics-passive-aura.json`.
 
 ### R6 — TowerScript DX 2.0
 

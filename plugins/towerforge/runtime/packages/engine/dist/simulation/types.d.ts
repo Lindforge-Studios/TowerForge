@@ -1070,7 +1070,22 @@ export interface HeroesSnapshotV5 {
     readonly schemaVersion: 5;
     readonly units: readonly HeroUnitStateV5[];
 }
-export type HeroesSnapshot = HeroesSnapshotV1 | HeroesSnapshotV2 | HeroesSnapshotV3 | HeroesSnapshotV4 | HeroesSnapshotV5;
+export interface HeroPassiveAuraStateSnapshotV6 {
+    readonly id: string;
+    readonly label: string;
+    readonly radius: number;
+    readonly active: boolean;
+    readonly affectedTowerIds: readonly string[];
+}
+export interface HeroUnitStateV6 extends HeroUnitStateV4 {
+    readonly skills: HeroSkillsStateSnapshotV5 | null;
+    readonly passiveAura: HeroPassiveAuraStateSnapshotV6;
+}
+export interface HeroesSnapshotV6 {
+    readonly schemaVersion: 6;
+    readonly units: readonly HeroUnitStateV6[];
+}
+export type HeroesSnapshot = HeroesSnapshotV1 | HeroesSnapshotV2 | HeroesSnapshotV3 | HeroesSnapshotV4 | HeroesSnapshotV5 | HeroesSnapshotV6;
 export interface GameSnapshot {
     /** Canonical authored map identity for presentation and renderer adapters. */
     mapId: string;

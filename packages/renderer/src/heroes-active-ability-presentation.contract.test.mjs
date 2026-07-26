@@ -69,7 +69,7 @@ describe("R5.3A shared hero active-ability presentation", () => {
       { activeAbility: { ...abilitySnapshot().heroes.units[0].activeAbility, cooldownRemaining: 4 } },
       { activeAbility: { ...abilitySnapshot().heroes.units[0].activeAbility, manaCost: 0 } },
       { activeAbility: { ...abilitySnapshot().heroes.units[0].activeAbility, range: 1.5 } },
-      { activeAbility: { ...abilitySnapshot().heroes.units[0].activeAbility, ready: false } },
+      { activeAbility: { ...abilitySnapshot().heroes.units[0].activeAbility, ready: "invalid" } },
       { activeAbility: { ...abilitySnapshot().heroes.units[0].activeAbility, extra: true } },
       { mana: { current: 40, max: 100, regenerationPerUnit: 5, extra: true } }
     ]) {
@@ -78,9 +78,29 @@ describe("R5.3A shared hero active-ability presentation", () => {
     }
   });
 
-  it("treats v6 as future and retains v1-v4 compatibility", () => {
+  for (const [condition, overrides] of [
+    ["defeated hero", {
+      durability: { hp: 0, maxHp: 100, shield: { current: 0, capacity: 20 }, defeated: true }
+    }],
+    ["insufficient mana", {
+      mana: { current: 5, max: 100, regenerationPerUnit: 5 }
+    }],
+    ["remaining cooldown", {
+      activeAbility: {
+        ...abilitySnapshot().heroes.units[0].activeAbility,
+        cooldownRemaining: 1
+      }
+    }]
+  ]) {
+    it(`rejects impossible ready:true for ${condition}`, () => {
+      expect(Renderer.projectHeroesPresentation(abilitySnapshot(overrides)))
+        .toEqual({ active: false, units: [] });
+    });
+  }
+
+  it("treats v7 as future and retains v1-v4 compatibility", () => {
     expect(Renderer.projectHeroesPresentation({
-      heroes: { ...abilitySnapshot().heroes, schemaVersion: 6 }
+      heroes: { ...abilitySnapshot().heroes, schemaVersion: 7 }
     })).toEqual({ active: false, units: [] });
     expect(Renderer.projectHeroesPresentation({
       heroes: {

@@ -26,6 +26,17 @@ export const HERO_SKILL_TREE_LIMITS = Object.freeze({
   points: 65_536
 });
 
+/** Closed budgets for the independently optional v6 passive tower-damage aura. */
+export const HERO_PASSIVE_AURA_LIMITS = Object.freeze({
+  radius: NAVIGATION_LIMITS.activeMapCells,
+  effectsPerAura: 4,
+  flatAbsoluteValue: 1_000_000_000_000,
+  additiveRatioMinimum: -1,
+  additiveRatioMaximum: 1_000,
+  multiplierMinimum: 0,
+  multiplierMaximum: 1_000
+});
+
 const HERO_ABILITY_COOLDOWN_MAX = 86_400;
 
 export interface HeroUnitDefinitionV1 {
@@ -164,12 +175,45 @@ export interface ActiveHeroesMechanicsV5 extends HeroesProfileV5 {
   readonly profileId: string;
 }
 
+export interface HeroPassiveAuraModifierEffectV6 {
+  readonly kind: "modifier";
+  readonly scope: "tower_damage";
+  readonly modifier: {
+    readonly target: "damage";
+    readonly operation: ModifierOperation;
+    readonly value: number;
+  };
+}
+
+export interface HeroPassiveAuraDefinitionV6 {
+  readonly id: string;
+  readonly label: string;
+  readonly radius: number;
+  readonly effects: readonly HeroPassiveAuraModifierEffectV6[];
+}
+
+export interface HeroUnitDefinitionV6 extends HeroUnitDefinitionV5 {
+  readonly passiveAura: HeroPassiveAuraDefinitionV6 | null;
+}
+
+export interface HeroesProfileV6 {
+  readonly selectedHeroId: string;
+  readonly definitions: Readonly<Record<string, HeroUnitDefinitionV6>>;
+  readonly movementProfiles: Readonly<Record<string, MovementProfileV1>>;
+}
+
+export interface ActiveHeroesMechanicsV6 extends HeroesProfileV6 {
+  readonly schemaVersion: 6;
+  readonly profileId: string;
+}
+
 export type ActiveHeroesMechanics =
   | ActiveHeroesMechanicsV1
   | ActiveHeroesMechanicsV2
   | ActiveHeroesMechanicsV3
   | ActiveHeroesMechanicsV4
-  | ActiveHeroesMechanicsV5;
+  | ActiveHeroesMechanicsV5
+  | ActiveHeroesMechanicsV6;
 
 const PROFILE_SCHEMA = Object.freeze({
   requiredFields: Object.freeze(["selectedHeroId", "definitions"] as const),
@@ -242,6 +286,54 @@ const DEFINITION_SCHEMA_V5 = Object.freeze({
   spawnValues: Object.freeze(["core"] as const)
 });
 
+const DEFINITION_SCHEMA_V6 = Object.freeze({
+  requiredFields: Object.freeze([
+    "label", "spawn", "movement", "durability", "mana", "activeAbility", "skillTree", "passiveAura"
+  ] as const),
+  optionalFields: Object.freeze([] as const),
+  additionalProperties: false,
+  spawnValues: Object.freeze(["core"] as const)
+});
+
+const PASSIVE_AURA_SCHEMA_V6 = Object.freeze({
+  nullable: true,
+  requiredFields: Object.freeze(["id", "label", "radius", "effects"] as const),
+  optionalFields: Object.freeze([] as const),
+  additionalProperties: false,
+  radius: Object.freeze({ integer: true, minimum: 0, maximum: HERO_PASSIVE_AURA_LIMITS.radius }),
+  effects: Object.freeze({ minimumItems: 1, maximumItems: HERO_PASSIVE_AURA_LIMITS.effectsPerAura })
+});
+
+const PASSIVE_AURA_EFFECT_SCHEMA_V6 = Object.freeze({
+  requiredFields: Object.freeze(["kind", "scope", "modifier"] as const),
+  optionalFields: Object.freeze([] as const),
+  additionalProperties: false,
+  kindValues: Object.freeze(["modifier"] as const),
+  scopeValues: Object.freeze(["tower_damage"] as const)
+});
+
+const PASSIVE_AURA_MODIFIER_SCHEMA_V6 = Object.freeze({
+  requiredFields: Object.freeze(["target", "operation", "value"] as const),
+  optionalFields: Object.freeze([] as const),
+  additionalProperties: false,
+  targetValues: Object.freeze(["damage"] as const),
+  operationValues: Object.freeze(["flat", "additive_ratio", "multiplier"] as const),
+  valueByOperation: Object.freeze({
+    flat: Object.freeze({
+      minimum: -HERO_PASSIVE_AURA_LIMITS.flatAbsoluteValue,
+      maximum: HERO_PASSIVE_AURA_LIMITS.flatAbsoluteValue
+    }),
+    additive_ratio: Object.freeze({
+      minimum: HERO_PASSIVE_AURA_LIMITS.additiveRatioMinimum,
+      maximum: HERO_PASSIVE_AURA_LIMITS.additiveRatioMaximum
+    }),
+    multiplier: Object.freeze({
+      minimum: HERO_PASSIVE_AURA_LIMITS.multiplierMinimum,
+      maximum: HERO_PASSIVE_AURA_LIMITS.multiplierMaximum
+    })
+  })
+});
+
 const SKILL_TREE_SCHEMA_V5 = Object.freeze({
   nullable: true,
   requiredFields: Object.freeze(["points", "nodes"] as const),
@@ -302,9 +394,9 @@ const ACTIVE_ABILITY_SCHEMA_V4 = Object.freeze({
 
 /** Capability-aware authoring descriptor shared by Studio and MCP. */
 export const HEROES_MECHANICS_SCHEMA = Object.freeze({
-  schemaVersion: 5,
+  schemaVersion: 6,
   moduleId: "heroes" as const,
-  supportedModuleSchemaVersions: Object.freeze([1, 2, 3, 4, 5] as const),
+  supportedModuleSchemaVersions: Object.freeze([1, 2, 3, 4, 5, 6] as const),
   profile: PROFILE_SCHEMA,
   definition: DEFINITION_SCHEMA,
   versions: Object.freeze({
@@ -347,12 +439,30 @@ export const HEROES_MECHANICS_SCHEMA = Object.freeze({
       skillNode: SKILL_NODE_SCHEMA_V5,
       skillEffect: SKILL_EFFECT_SCHEMA_V5,
       skillModifier: SKILL_MODIFIER_SCHEMA_V5
+    }),
+    6: Object.freeze({
+      profile: PROFILE_SCHEMA_V2,
+      definition: DEFINITION_SCHEMA_V6,
+      movement: MOVEMENT_SCHEMA_V2,
+      movementProfile: MOVEMENT_PROFILE_V1_SCHEMA,
+      durability: DURABILITY_SCHEMA_V3,
+      shield: SHIELD_SCHEMA_V3,
+      mana: MANA_SCHEMA_V4,
+      activeAbility: ACTIVE_ABILITY_SCHEMA_V4,
+      skillTree: SKILL_TREE_SCHEMA_V5,
+      skillPoints: SKILL_POINTS_SCHEMA_V5,
+      skillNode: SKILL_NODE_SCHEMA_V5,
+      skillEffect: SKILL_EFFECT_SCHEMA_V5,
+      skillModifier: SKILL_MODIFIER_SCHEMA_V5,
+      passiveAura: PASSIVE_AURA_SCHEMA_V6,
+      passiveAuraEffect: PASSIVE_AURA_EFFECT_SCHEMA_V6,
+      passiveAuraModifier: PASSIVE_AURA_MODIFIER_SCHEMA_V6
     })
   }),
   limits: HEROES_LIMITS,
   runtimeSnapshot: Object.freeze({
     path: "snapshot.heroes",
-    schemaVersions: Object.freeze([1, 2, 3, 4, 5] as const),
+    schemaVersions: Object.freeze([1, 2, 3, 4, 5, 6] as const),
     optionalUnlessActive: true,
     versions: Object.freeze({
       1: Object.freeze({ unitFields: Object.freeze(["id", "definitionId", "label", "coord"] as const) }),
@@ -390,6 +500,20 @@ export const HEROES_MECHANICS_SCHEMA = Object.freeze({
           "availablePoints", "startingPoints", "pointsPerInterwave", "maximumEarnablePoints",
           "managementAvailable", "nodes"
         ] as const)
+      }),
+      6: Object.freeze({
+        unitFields: Object.freeze([
+          "id", "definitionId", "label", "coord", "movement", "durability", "mana", "activeAbility",
+          "skills", "passiveAura"
+        ] as const),
+        movementFields: Object.freeze(["targetCoord", "nextCoord", "edgeProgress"] as const),
+        durabilityFields: Object.freeze(["hp", "maxHp", "shield", "defeated"] as const),
+        manaFields: Object.freeze(["current", "max", "regenerationPerUnit"] as const),
+        activeAbilityFields: Object.freeze([
+          "id", "label", "target", "manaCost", "cooldown", "cooldownRemaining", "range", "damage", "ready"
+        ] as const),
+        skillsNullable: true,
+        passiveAuraFields: Object.freeze(["id", "label", "radius", "active", "affectedTowerIds"] as const)
       })
     })
   })
@@ -419,6 +543,16 @@ function utf8ByteLength(value: string): number {
 /** Stable collision-safe runtime id for one authored skill modifier. */
 export function heroSkillModifierIdV5(skillId: string, effectIndex: number): string {
   return `heroes:skill:${utf8ByteLength(skillId)}:${skillId}:effect:${effectIndex}`;
+}
+
+/** Stable collision-safe runtime id for one selected hero aura modifier. */
+export function heroPassiveAuraModifierIdV6(
+  heroDefinitionId: string,
+  auraId: string,
+  effectIndex: number
+): string {
+  return `heroes:aura:hero:${utf8ByteLength(heroDefinitionId)}:${heroDefinitionId}`
+    + `:aura:${utf8ByteLength(auraId)}:${auraId}:effect:${String(effectIndex).padStart(2, "0")}`;
 }
 
 function dataRecord(value: unknown, fieldPath: string, label: string): Record<string, unknown> {
@@ -1065,6 +1199,147 @@ export function normalizeHeroesProfileV5(input: unknown, root = "profile"): Hero
   });
 }
 
+/** Normalize the closed nullable R5.5A passive tower-damage aura profile. */
+export function normalizeHeroesProfileV6(input: unknown, root = "profile"): HeroesProfileV6 {
+  const profile = dataRecord(input, root, "Heroes profile");
+  exactFields(profile, PROFILE_SCHEMA_V2.requiredFields, root, "Heroes profile");
+  const rawDefinitions = dataRecord(profile.definitions, `${root}.definitions`, "Heroes definitions");
+  const legacyDefinitions: Record<string, unknown> = {};
+  for (const heroId of Object.keys(rawDefinitions).sort(compareBinary)) {
+    const definitionRoot = `${root}.definitions.${heroId}`;
+    const rawDefinition = dataRecord(rawDefinitions[heroId], definitionRoot, `Hero definition "${heroId}"`);
+    exactFields(rawDefinition, DEFINITION_SCHEMA_V6.requiredFields, definitionRoot, `Hero definition "${heroId}"`);
+    Object.defineProperty(legacyDefinitions, heroId, {
+      value: {
+        label: rawDefinition.label,
+        spawn: rawDefinition.spawn,
+        movement: rawDefinition.movement,
+        durability: rawDefinition.durability,
+        mana: rawDefinition.mana,
+        activeAbility: rawDefinition.activeAbility,
+        skillTree: rawDefinition.skillTree
+      },
+      enumerable: true
+    });
+  }
+  const skillProfile = normalizeHeroesProfileV5({
+    selectedHeroId: profile.selectedHeroId,
+    definitions: legacyDefinitions,
+    movementProfiles: profile.movementProfiles
+  }, root);
+  const definitions: Record<string, HeroUnitDefinitionV6> = {};
+  for (const heroId of Object.keys(skillProfile.definitions).sort(compareBinary)) {
+    const definitionRoot = `${root}.definitions.${heroId}`;
+    const rawDefinition = dataRecord(rawDefinitions[heroId], definitionRoot, `Hero definition "${heroId}"`);
+    let passiveAura: HeroPassiveAuraDefinitionV6 | null = null;
+    if (rawDefinition.passiveAura !== null) {
+      const auraRoot = `${definitionRoot}.passiveAura`;
+      const rawAura = dataRecord(rawDefinition.passiveAura, auraRoot, `Hero passive aura "${heroId}"`);
+      exactFields(rawAura, PASSIVE_AURA_SCHEMA_V6.requiredFields, auraRoot, `Hero passive aura "${heroId}"`);
+      const id = boundedText(rawAura.id, HEROES_LIMITS.idUtf8Bytes, `${auraRoot}.id`, "Required hero passive aura id");
+      const label = boundedText(
+        rawAura.label,
+        HEROES_LIMITS.labelUtf8Bytes,
+        `${auraRoot}.label`,
+        "Required hero passive aura label"
+      );
+      const radius = boundedInteger(
+        rawAura.radius,
+        0,
+        HERO_PASSIVE_AURA_LIMITS.radius,
+        `${auraRoot}.radius`,
+        "Hero passive aura radius"
+      );
+      const rawEffects = dataArray(rawAura.effects, `${auraRoot}.effects`, `Hero passive aura effects "${heroId}"`);
+      if (rawEffects.length < 1 || rawEffects.length > HERO_PASSIVE_AURA_LIMITS.effectsPerAura) {
+        throw new HeroesProfileValidationError(
+          `${auraRoot}.effects`,
+          `Hero passive aura effects must contain 1..${HERO_PASSIVE_AURA_LIMITS.effectsPerAura} entries; `
+            + `the maximum is ${HERO_PASSIVE_AURA_LIMITS.effectsPerAura}.`
+        );
+      }
+      const effects = rawEffects.map((rawEffect, effectIndex): HeroPassiveAuraModifierEffectV6 => {
+        const effectRoot = `${auraRoot}.effects[${effectIndex}]`;
+        const effect = dataRecord(rawEffect, effectRoot, `Hero passive aura effect "${heroId}"`);
+        exactFields(effect, PASSIVE_AURA_EFFECT_SCHEMA_V6.requiredFields, effectRoot, `Hero passive aura effect "${heroId}"`);
+        if (effect.kind !== "modifier") {
+          throw new HeroesProfileValidationError(
+            `${effectRoot}.kind`,
+            "Hero passive aura effect kind is unsupported; it must be modifier."
+          );
+        }
+        if (effect.scope !== "tower_damage") {
+          throw new HeroesProfileValidationError(
+            `${effectRoot}.scope`,
+            "Hero passive aura modifier scope must be tower_damage."
+          );
+        }
+        const modifierRoot = `${effectRoot}.modifier`;
+        const rawModifier = dataRecord(effect.modifier, modifierRoot, `Hero passive aura modifier "${heroId}"`);
+        exactFields(
+          rawModifier,
+          PASSIVE_AURA_MODIFIER_SCHEMA_V6.requiredFields,
+          modifierRoot,
+          `Hero passive aura modifier "${heroId}"`
+        );
+        if (rawModifier.target !== "damage") {
+          throw new HeroesProfileValidationError(`${modifierRoot}.target`, "Hero passive aura target must be damage.");
+        }
+        const operation = rawModifier.operation;
+        if (operation !== "flat" && operation !== "additive_ratio" && operation !== "multiplier") {
+          throw new HeroesProfileValidationError(`${modifierRoot}.operation`, "Hero passive aura operation is unsupported.");
+        }
+        const value = rawModifier.value;
+        if (typeof value !== "number" || !Number.isFinite(value)) {
+          throw new HeroesProfileValidationError(`${modifierRoot}.value`, "Hero passive aura modifier value must be finite.");
+        }
+        const valid = operation === "flat"
+          ? Math.abs(value) <= HERO_PASSIVE_AURA_LIMITS.flatAbsoluteValue
+          : operation === "additive_ratio"
+            ? value >= HERO_PASSIVE_AURA_LIMITS.additiveRatioMinimum
+              && value <= HERO_PASSIVE_AURA_LIMITS.additiveRatioMaximum
+            : value >= HERO_PASSIVE_AURA_LIMITS.multiplierMinimum
+              && value <= HERO_PASSIVE_AURA_LIMITS.multiplierMaximum;
+        if (!valid) {
+          throw new HeroesProfileValidationError(
+            `${modifierRoot}.value`,
+            `Hero passive aura ${operation} value exceeds the supported damage modifier range.`
+          );
+        }
+        return Object.freeze({
+          kind: "modifier" as const,
+          scope: "tower_damage" as const,
+          modifier: Object.freeze({
+            target: "damage" as const,
+            operation,
+            value: Object.is(value, -0) ? 0 : value
+          })
+        });
+      });
+      passiveAura = Object.freeze({ id, label, radius, effects: Object.freeze(effects) });
+    }
+    Object.defineProperty(definitions, heroId, {
+      value: Object.freeze({ ...skillProfile.definitions[heroId]!, passiveAura }),
+      enumerable: true
+    });
+  }
+  return Object.freeze({
+    selectedHeroId: skillProfile.selectedHeroId,
+    definitions: Object.freeze(definitions),
+    movementProfiles: skillProfile.movementProfiles
+  });
+}
+
+/** Reserve only the modifiers of the selected, non-null active v6 aura. */
+export function activeHeroAuraModifierReserve(
+  content: GameContentRegistry,
+  missionId: string
+): number {
+  const active = resolveActiveHeroesMechanics(content, missionId);
+  if (active?.schemaVersion !== 6) return 0;
+  return active.definitions[active.selectedHeroId]?.passiveAura?.effects.length ?? 0;
+}
+
 export interface HeroSkillTreeSemanticIssueV5 {
   readonly fieldPath: string;
   readonly message: string;
@@ -1187,12 +1462,13 @@ export function resolveActiveHeroesMechanics(
   if (!capability?.active || capability.profileId === undefined) return undefined;
   const module = ownData(ownData(content.mechanics, "modules"), "heroes");
   const schemaVersion = ownData(module, "schemaVersion");
-  if ((schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3 && schemaVersion !== 4 && schemaVersion !== 5)
+  if ((schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3 && schemaVersion !== 4
+    && schemaVersion !== 5 && schemaVersion !== 6)
     || ownData(module, "enabled") !== true) {
     return undefined;
   }
   const profile = ownData(ownData(module, "profiles"), capability.profileId);
-  let normalized: HeroesProfileV1 | HeroesProfileV2 | HeroesProfileV3 | HeroesProfileV4 | HeroesProfileV5;
+  let normalized: HeroesProfileV1 | HeroesProfileV2 | HeroesProfileV3 | HeroesProfileV4 | HeroesProfileV5 | HeroesProfileV6;
   try {
     normalized = schemaVersion === 1
       ? normalizeHeroesProfileV1(profile, `modules.heroes.profiles.${capability.profileId}`)
@@ -1202,31 +1478,41 @@ export function resolveActiveHeroesMechanics(
           ? normalizeHeroesProfileV3(profile, `modules.heroes.profiles.${capability.profileId}`)
           : schemaVersion === 4
             ? normalizeHeroesProfileV4(profile, `modules.heroes.profiles.${capability.profileId}`)
-            : normalizeHeroesProfileV5(profile, `modules.heroes.profiles.${capability.profileId}`);
+            : schemaVersion === 5
+              ? normalizeHeroesProfileV5(profile, `modules.heroes.profiles.${capability.profileId}`)
+              : normalizeHeroesProfileV6(profile, `modules.heroes.profiles.${capability.profileId}`);
   } catch {
     return undefined;
   }
   if (!Object.prototype.hasOwnProperty.call(normalized.definitions, normalized.selectedHeroId)) return undefined;
-  if (schemaVersion === 2 || schemaVersion === 3 || schemaVersion === 4 || schemaVersion === 5) {
-    const moving = normalized as HeroesProfileV2 | HeroesProfileV3 | HeroesProfileV4 | HeroesProfileV5;
+  if (schemaVersion === 2 || schemaVersion === 3 || schemaVersion === 4 || schemaVersion === 5 || schemaVersion === 6) {
+    const moving = normalized as HeroesProfileV2 | HeroesProfileV3 | HeroesProfileV4 | HeroesProfileV5 | HeroesProfileV6;
     const definition = moving.definitions[moving.selectedHeroId];
     if (!definition || !Object.prototype.hasOwnProperty.call(moving.movementProfiles, definition.movement.movementProfileId)) {
       return undefined;
     }
-    if (schemaVersion === 5) {
-      const v5 = moving as HeroesProfileV5;
+    if (schemaVersion === 5 || schemaVersion === 6) {
+      const v5 = moving as HeroesProfileV5 | HeroesProfileV6;
       if (validateHeroSkillTreeSemanticsV5(
         v5,
         `modules.heroes.profiles.${capability.profileId}`,
         [content.missions[missionId]?.waves.length ?? 0]
       ).length > 0) return undefined;
-      return Object.freeze({
-        schemaVersion: 5 as const,
-        profileId: capability.profileId,
-        selectedHeroId: v5.selectedHeroId,
-        definitions: v5.definitions,
-        movementProfiles: v5.movementProfiles
-      });
+      return schemaVersion === 5
+        ? Object.freeze({
+            schemaVersion: 5 as const,
+            profileId: capability.profileId,
+            selectedHeroId: v5.selectedHeroId,
+            definitions: (v5 as HeroesProfileV5).definitions,
+            movementProfiles: v5.movementProfiles
+          })
+        : Object.freeze({
+            schemaVersion: 6 as const,
+            profileId: capability.profileId,
+            selectedHeroId: v5.selectedHeroId,
+            definitions: (v5 as HeroesProfileV6).definitions,
+            movementProfiles: v5.movementProfiles
+          });
     }
     return schemaVersion === 2
       ? Object.freeze({
