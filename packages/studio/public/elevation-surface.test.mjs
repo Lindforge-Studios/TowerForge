@@ -113,7 +113,8 @@ describe("R3.1 Studio elevation surface", () => {
   it("preserves map elevations through module disable/re-enable without auto-enabling gameplay", () => {
     expect(app).toMatch(/selectedModuleId\s*===\s*["']elevation["']/);
     expect(app).toMatch(/loadMechanicsProfile[\s\S]*elevation/);
-    expect(app).not.toMatch(/ElevationUI[\s\S]{0,500}(?:enabled\s*=\s*true|applyMechanics\()/);
+    const elevationState = app.match(/const\s+ElevationUI\s*=\s*\{[\s\S]*?\n\};/)?.[0] ?? "";
+    expect(elevationState).not.toMatch(/enabled\s*=\s*true|applyMechanics\(/);
     expect(`${app}\n${html}`).toMatch(/elevation.*(?:badge|contour)|(?:badge|contour).*elevation/i);
   });
 

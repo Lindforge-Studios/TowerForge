@@ -104,7 +104,7 @@ export interface CombatMechanicsProfile {
 }
 export type MechanicsProfileDefinition = Readonly<Record<string, unknown>>;
 export interface MechanicsModuleDefinition {
-    schemaVersion: 1 | 2 | 3;
+    schemaVersion: 1 | 2 | 3 | 4;
     enabled: boolean;
     profiles: Readonly<Record<string, MechanicsProfileDefinition>>;
 }

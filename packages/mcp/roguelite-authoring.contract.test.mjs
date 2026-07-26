@@ -41,7 +41,7 @@ describe("R4.1A/R4.2E roguelite MCP and AI authoring contract", () => {
     const capabilities = await callTool("get_capabilities", { projectDir, missionId: "tutorial_01" }, {});
 
     expect(roguelite).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       requestedDomain: "roguelite",
       roguelite: {
         authoring: engine.ROGUELITE_MECHANICS_SCHEMA,
@@ -79,7 +79,7 @@ describe("R4.1A/R4.2E roguelite MCP and AI authoring contract", () => {
     const roguelite = await callTool("describe_schema", { domain: "roguelite" }, {});
 
     expect(roguelite).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       requestedDomain: "roguelite",
       roguelite: {
         authoring: engine.ROGUELITE_MECHANICS_SCHEMA,
@@ -95,9 +95,12 @@ describe("R4.1A/R4.2E roguelite MCP and AI authoring contract", () => {
       }
     });
     expect(roguelite.roguelite.authoring).toMatchObject({
-      schemaVersion: 3,
-      supportedModuleSchemaVersions: [1, 2, 3],
-      profileVersions: { 3: { requiredFields: ["synergies"], optionalFields: ["artifacts", "draft"] } }
+      schemaVersion: 4,
+      supportedModuleSchemaVersions: [1, 2, 3, 4],
+      profileVersions: {
+        3: { requiredFields: ["synergies"], optionalFields: ["artifacts", "draft"] },
+        4: { requiredFields: ["synergies"], optionalFields: ["artifacts", "draft", "campaign"] }
+      }
     });
     expect(TOOLS.map((tool) => tool.name)).not.toContain("apply_roguelite_draft");
     for (const toolName of ["preview_mechanics_module", "apply_mechanics_module"]) {

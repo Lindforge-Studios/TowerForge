@@ -431,6 +431,30 @@ starter and all absent/disabled/unselected/no-draft paths remain unchanged. See
 [ADR 0033](adr/0033-opt-in-deterministic-wave-draft.md) and the fixture
 `docs/examples/opt-in-wave-draft/`.
 
+R4.4A extends the authored module to `roguelite` v4 without changing its battle snapshot,
+checkpoint, command, journal, or replay contracts. The new optional profile marker
+`campaign: {schemaVersion:1}` activates only with an authored `worldMap.campaign` DAG and matching
+mission selections. Battle, elite, and boss nodes reference missions; merchant and event nodes are
+visible structural waypoints whose gameplay remains a later slice. The pure engine validates and
+binary-normalizes the bounded graph, while a read-only legacy projection maps existing mission
+nodes to battle nodes without writing or activating anything.
+
+`CampaignRunV1.nodeId` now has content-aware semantics as the last completed node. Explicit APIs
+validate the run, expose entry/direct-successor choices, and record one battle victory into separate
+immutable run and profile results. Campaign coordination lives above individual
+`TowerDefenseGame` instances. Studio and MCP share one guarded project/world-map/balance/mechanics
+transaction; Canvas and Phaser use the engine codec for explicit import/export and do not persist a
+run automatically. See [ADR 0034](adr/0034-opt-in-campaign-graph-and-run-lifecycle.md) and
+`docs/examples/opt-in-campaign-run/`.
+
+Campaign authoring publishes one exact closed graph schema to Studio and MCP. Its four-file write
+transaction binds the project and content parent identities by real path, device, and inode before
+staging and rechecks them before every ownership read, replace, rollback, and cleanup; a concurrent
+symlink swap therefore fails before any content write can escape the project. Content-aware run
+operations detach an untrusted `CampaignRunV1` exactly once and use that frozen value throughout
+validation, availability, and victory reduction. R4.4A acceptance is 1,938/1,938 Vitest and 44/44
+Playwright tests, all required build/plugin gates, and independent code plus constructor sign-off.
+
 ## Done Criteria For Constructor Changes
 
 - Engine changes pass `npm run typecheck`.

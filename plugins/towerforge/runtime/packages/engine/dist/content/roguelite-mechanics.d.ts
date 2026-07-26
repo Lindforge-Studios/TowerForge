@@ -60,12 +60,12 @@ export declare const ROGUELITE_DAMAGE_MODIFIER_RESERVE: Readonly<{
 }>;
 /** Capability-aware descriptor shared by validation, Studio, and MCP. */
 export declare const ROGUELITE_MECHANICS_SCHEMA: Readonly<{
-    schemaVersion: 3;
+    schemaVersion: 4;
     moduleId: "roguelite";
-    supportedModuleSchemaVersions: readonly [1, 2, 3];
+    supportedModuleSchemaVersions: readonly [1, 2, 3, 4];
     profile: Readonly<{
         requiredFields: readonly ["synergies"];
-        optionalFields: readonly ["artifacts", "draft"];
+        optionalFields: readonly ["artifacts", "draft", "campaign"];
         additionalProperties: false;
     }>;
     profileVersions: Readonly<{
@@ -82,6 +82,11 @@ export declare const ROGUELITE_MECHANICS_SCHEMA: Readonly<{
         3: Readonly<{
             requiredFields: readonly ["synergies"];
             optionalFields: readonly ["artifacts", "draft"];
+            additionalProperties: false;
+        }>;
+        4: Readonly<{
+            requiredFields: readonly ["synergies"];
+            optionalFields: readonly ["artifacts", "draft", "campaign"];
             additionalProperties: false;
         }>;
     }>;
@@ -165,6 +170,34 @@ export declare const ROGUELITE_MECHANICS_SCHEMA: Readonly<{
         }>;
         offerSize: 3;
         sampling: "weighted_without_replacement";
+    }>;
+    campaign: Readonly<{
+        requiredFields: readonly ["schemaVersion"];
+        optionalFields: readonly [];
+        additionalProperties: false;
+        supportedSchemaVersions: readonly [1];
+        graph: Readonly<{
+            schemaVersion: 1;
+            root: Readonly<{
+                requiredFields: readonly ["schemaVersion", "rogueliteProfileId", "entryNodeIds", "nodes"];
+                optionalFields: readonly [];
+                additionalProperties: false;
+            }>;
+            nodeVariants: Readonly<{
+                battle: Readonly<{
+                    types: readonly ["battle", "elite", "boss"];
+                    requiredFields: readonly ["id", "type", "missionId", "regionId", "x", "y", "difficulty", "nextNodeIds"];
+                    optionalFields: readonly [];
+                    additionalProperties: false;
+                }>;
+                structural: Readonly<{
+                    types: readonly ["merchant", "event"];
+                    requiredFields: readonly ["id", "type", "label", "regionId", "x", "y", "difficulty", "nextNodeIds"];
+                    optionalFields: readonly [];
+                    additionalProperties: false;
+                }>;
+            }>;
+        }>;
     }>;
     limits: Readonly<{
         synergies: Readonly<{
@@ -319,6 +352,12 @@ export interface RogueliteMechanicsProfileV3 extends RogueliteMechanicsProfileV1
     readonly artifacts?: RogueliteArtifactsDefinitionV2;
     readonly draft?: RogueliteDraftDefinitionV3;
 }
+export interface RogueliteCampaignMarkerV1 {
+    readonly schemaVersion: 1;
+}
+export interface RogueliteMechanicsProfileV4 extends RogueliteMechanicsProfileV3 {
+    readonly campaign?: RogueliteCampaignMarkerV1;
+}
 export interface ActiveRogueliteMechanicsV1 extends RogueliteMechanicsProfileV1 {
     readonly schemaVersion: 1;
     readonly profileId: string;
@@ -337,7 +376,12 @@ export interface ActiveRogueliteMechanicsV3 extends RogueliteMechanicsProfileV3 
     readonly profileId: string;
     readonly towerTagsByTypeId: Readonly<Record<string, readonly string[]>>;
 }
-export type ActiveRogueliteMechanics = ActiveRogueliteMechanicsV1 | ActiveRogueliteMechanicsV2 | ActiveRogueliteMechanicsV3;
+export interface ActiveRogueliteMechanicsV4 extends RogueliteMechanicsProfileV4 {
+    readonly schemaVersion: 4;
+    readonly profileId: string;
+    readonly towerTagsByTypeId: Readonly<Record<string, readonly string[]>>;
+}
+export type ActiveRogueliteMechanics = ActiveRogueliteMechanicsV1 | ActiveRogueliteMechanicsV2 | ActiveRogueliteMechanicsV3 | ActiveRogueliteMechanicsV4;
 export declare function rogueliteSynergyWorstCaseModifierCount(synergies: Readonly<Record<string, SynergyDefinitionV1>>): number;
 export declare function assertRogueliteV2ModifierBudget(profile: RogueliteMechanicsProfileV2): void;
 /** Guard the shared resolver against the worst authored v3 run stack for one mission. */
@@ -358,6 +402,8 @@ export declare function normalizeRogueliteProfileV2(value: unknown): RogueliteMe
 export declare function normalizeRogueliteDraftV3(value: unknown): RogueliteDraftDefinitionV3;
 /** Validate and detach an exact closed roguelite v3 profile. */
 export declare function normalizeRogueliteProfileV3(value: unknown): RogueliteMechanicsProfileV3;
+/** Validate and detach the exact closed roguelite v4 profile and its inert campaign marker. */
+export declare function normalizeRogueliteProfileV4(value: unknown): RogueliteMechanicsProfileV4;
 /** Resolve a detached profile only when the mission genuinely activates a supported roguelite version. */
 export declare function resolveActiveRogueliteMechanics(content: GameContentRegistry, missionId: string): ActiveRogueliteMechanics | undefined;
 export interface DerivedRogueliteSynergyStateV1 {

@@ -45,11 +45,44 @@ export interface WorldMissionNode {
   unlockRequiresMissionIds: string[];
 }
 
+export type WorldCampaignNodeType = "battle" | "elite" | "merchant" | "event" | "boss";
+
+export interface WorldCampaignNodeBaseV1 {
+  readonly id: string;
+  readonly type: WorldCampaignNodeType;
+  readonly regionId: string;
+  readonly x: number;
+  readonly y: number;
+  readonly difficulty: 1 | 2 | 3 | 4 | 5;
+  readonly nextNodeIds: readonly string[];
+}
+
+export interface WorldCampaignBattleNodeV1 extends WorldCampaignNodeBaseV1 {
+  readonly type: "battle" | "elite" | "boss";
+  readonly missionId: string;
+}
+
+export interface WorldCampaignStructuralNodeV1 extends WorldCampaignNodeBaseV1 {
+  readonly type: "merchant" | "event";
+  readonly label: string;
+}
+
+export type WorldCampaignNodeV1 = WorldCampaignBattleNodeV1 | WorldCampaignStructuralNodeV1;
+
+/** Optional authored graph. Its absence preserves the legacy mission-node campaign unchanged. */
+export interface WorldCampaignDefinitionV1 {
+  readonly schemaVersion: 1;
+  readonly rogueliteProfileId: string;
+  readonly entryNodeIds: readonly string[];
+  readonly nodes: readonly WorldCampaignNodeV1[];
+}
+
 export interface WorldMapCatalog {
   width: number;
   height: number;
   regions: WorldRegionDefinition[];
   missionNodes: WorldMissionNode[];
+  campaign?: WorldCampaignDefinitionV1;
 }
 
 export interface GameBalanceConstants {

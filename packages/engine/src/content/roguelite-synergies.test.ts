@@ -130,7 +130,7 @@ function rogueliteInput(
         schemaVersion: 1,
         modules: {
           roguelite: {
-            schemaVersion: mode === "future" ? 4 : 1,
+            schemaVersion: mode === "future" ? 5 : 1,
             enabled: mode !== "disabled",
             profiles: { core: profile }
           }
@@ -183,20 +183,50 @@ describe("R4.1A roguelite v1 schema and capability", () => {
       "modifier",
       "artifacts",
       "draft",
+      "campaign",
       "limits",
       "runtimeSnapshot"
     ]);
     expect(schema).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       moduleId: "roguelite",
-      supportedModuleSchemaVersions: [1, 2, 3],
+      supportedModuleSchemaVersions: [1, 2, 3, 4],
       profile: {
-        requiredFields: ["synergies"], optionalFields: ["artifacts", "draft"], additionalProperties: false
+        requiredFields: ["synergies"], optionalFields: ["artifacts", "draft", "campaign"], additionalProperties: false
       },
       profileVersions: {
         1: { requiredFields: ["synergies"], optionalFields: [], additionalProperties: false },
         2: { requiredFields: ["synergies", "artifacts"], optionalFields: [], additionalProperties: false },
-        3: { requiredFields: ["synergies"], optionalFields: ["artifacts", "draft"], additionalProperties: false }
+        3: { requiredFields: ["synergies"], optionalFields: ["artifacts", "draft"], additionalProperties: false },
+        4: { requiredFields: ["synergies"], optionalFields: ["artifacts", "draft", "campaign"], additionalProperties: false }
+      },
+      campaign: {
+        requiredFields: ["schemaVersion"],
+        optionalFields: [],
+        additionalProperties: false,
+        supportedSchemaVersions: [1],
+        graph: {
+          schemaVersion: 1,
+          root: {
+            requiredFields: ["schemaVersion", "rogueliteProfileId", "entryNodeIds", "nodes"],
+            optionalFields: [],
+            additionalProperties: false
+          },
+          nodeVariants: {
+            battle: {
+              types: ["battle", "elite", "boss"],
+              requiredFields: ["id", "type", "missionId", "regionId", "x", "y", "difficulty", "nextNodeIds"],
+              optionalFields: [],
+              additionalProperties: false
+            },
+            structural: {
+              types: ["merchant", "event"],
+              requiredFields: ["id", "type", "label", "regionId", "x", "y", "difficulty", "nextNodeIds"],
+              optionalFields: [],
+              additionalProperties: false
+            }
+          }
+        }
       },
       towerTags: { field: "tags", optional: true, itemType: "string", uniqueItems: true },
       synergy: {

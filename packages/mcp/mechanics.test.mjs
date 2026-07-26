@@ -149,8 +149,18 @@ describe("R1 combat mechanics MCP contract", () => {
       snapshot: { field: "terraforming", optional: true, supportedSchemaVersions: [1] },
       events: ["terrainChanged", "elevationChanged"]
     };
+    const campaignInputSchema = TOOLS.find((tool) => tool.name === "preview_campaign")
+      ?.inputSchema?.properties?.campaign;
+    expect(campaignInputSchema).toBeTruthy();
     const rogueliteSurface = {
       authoring: engine.ROGUELITE_MECHANICS_SCHEMA,
+      campaign: {
+        schemaVersion: 1,
+        nodeTypes: engine.WORLD_CAMPAIGN_SCHEMA.nodeTypes,
+        limits: engine.WORLD_CAMPAIGN_SCHEMA.limits,
+        graph: engine.ROGUELITE_MECHANICS_SCHEMA.campaign.graph,
+        inputSchema: campaignInputSchema
+      },
       snapshot: { field: "roguelite", optional: true, supportedSchemaVersions: [1, 2, 3, 4] },
       events: ["artifactDropped", "artifactSocketed", "artifactUnsocketed"],
       commands: {
@@ -342,10 +352,10 @@ describe("R1 combat mechanics MCP contract", () => {
     expect(preview.inputSchema.properties.enabled).toEqual({ type: "boolean", default: true });
     expect(apply.inputSchema.properties.enabled).toEqual({ type: "boolean", default: true });
     expect(preview.inputSchema.properties.moduleSchemaVersion).toMatchObject({
-      type: "integer", enum: [1, 2, 3]
+      type: "integer", enum: [1, 2, 3, 4]
     });
     expect(apply.inputSchema.properties.moduleSchemaVersion).toMatchObject({
-      type: "integer", enum: [1, 2, 3]
+      type: "integer", enum: [1, 2, 3, 4]
     });
     expect(apply.inputSchema.required).toContain("ifRevision");
   });

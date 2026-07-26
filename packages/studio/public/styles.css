@@ -170,6 +170,9 @@ html[data-sidebar="collapsed"] .sidebar-toggle-expand { display: block; }
 .mechanics-roguelite-synergy-row .mechanics-roguelite-tier-lines { grid-column: 1 / -1; }
 .mechanics-roguelite-synergy-row textarea { width: 100%; min-height: 88px; resize: vertical; }
 .mechanics-roguelite-section [data-role="artifact-json"] { width: 100%; min-height: 150px; resize: vertical; }
+#mechanics-roguelite-campaign-editor { display: grid; gap: 12px; }
+#mechanics-roguelite-campaign-editor > label { display: grid; gap: 6px; }
+#mechanics-roguelite-campaign-json { width: 100%; min-height: 260px; resize: vertical; }
 .mechanics-profile-controls { display: flex; align-items: end; justify-content: flex-end; gap: 7px; flex-wrap: wrap; }
 .mechanics-profile-controls label { min-width: 180px; }
 .mechanics-shield-section { margin-top: 17px; }

@@ -160,12 +160,13 @@ describe("R4.3A roguelite v3 wave-draft authoring contract", () => {
     } | undefined;
 
     expect(descriptor).toMatchObject({
-      schemaVersion: 3,
-      supportedModuleSchemaVersions: [1, 2, 3],
+      schemaVersion: 4,
+      supportedModuleSchemaVersions: [1, 2, 3, 4],
       profileVersions: {
         1: { requiredFields: ["synergies"], optionalFields: [], additionalProperties: false },
         2: { requiredFields: ["synergies", "artifacts"], optionalFields: [], additionalProperties: false },
-        3: { requiredFields: ["synergies"], optionalFields: ["artifacts", "draft"], additionalProperties: false }
+        3: { requiredFields: ["synergies"], optionalFields: ["artifacts", "draft"], additionalProperties: false },
+        4: { requiredFields: ["synergies"], optionalFields: ["artifacts", "draft", "campaign"], additionalProperties: false }
       },
       draft: {
         requiredFields: ["definitions", "pools", "defaultPoolId"],
@@ -339,7 +340,7 @@ describe("R4.3A roguelite v3 wave-draft authoring contract", () => {
     )), issueText(result)).toBe(true);
   });
 
-  it("treats future v4 profiles as opaque while keeping malformed reserved v3 semantic", () => {
+  it("treats future v5 profiles as opaque while keeping malformed reserved v3 semantic", () => {
     const futureProfile = {
       future: Object.defineProperty({}, "trap", {
         enumerable: true,
@@ -348,7 +349,7 @@ describe("R4.3A roguelite v3 wave-draft authoring contract", () => {
         }
       })
     };
-    const futureRegistry = createGameContentRegistry(input({ schemaVersion: 4, profile: futureProfile }));
+    const futureRegistry = createGameContentRegistry(input({ schemaVersion: 5, profile: futureProfile }));
     const future = validateGameContentRegistry(futureRegistry);
     expect(futureRegistry.missions.draft?.capabilities.roguelite).toMatchObject({
       active: false,

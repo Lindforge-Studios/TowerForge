@@ -156,7 +156,7 @@ describe("R3.4b C5A MCP and AI terraforming authoring contract", () => {
     const mechanics = await callTool("describe_schema", { domain: "mechanics" }, {});
 
     expect(terraforming).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       requestedDomain: "terraforming",
       terraforming: {
         authoring: engine.TERRAFORMING_MECHANICS_SCHEMA,

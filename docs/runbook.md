@@ -43,7 +43,7 @@ The template/grid/renderer conformance gate is part of `npm run test` and `npm r
 
 ## Opt-In Mechanics
 
-Open **Mechanics** in Studio to use the isolated Mechanics Hub. Pick a mission and switch between combat, reactions, navigation, elevation, physics, terraforming, and rogue-lite mechanics. Combat profiles edit shields, the v2 damage/armor matrix, or v3 marks; reactions v1 profiles edit exposures, predicates, and bounded effects; navigation v1 profiles choose `authored_routes` or `dynamic_flow`, movement profiles, costs, occupancy policies, and optional enemy assignments; physics v1 profiles edit only immunity lists and fall-hazard tag selectors; terraforming v1 profiles edit authored terrain-tag transitions and an optional elevation policy; roguelite v1 profiles edit tower tags and global damage synergy tiers, while v2 adds isolated JSON editors for artifact definitions, typed tower slots, and boss loot tables. Preview before apply. Apply uses the revision returned by preview and atomically updates `project.json`, `content/mechanics.json`, and the mission selection with validation, backup, and rollback; a roguelite transaction also owns the explicit tower-tag arrays in `content/balance.json`. Disable preserves the authored profile and module version but restores the lower-capability runtime path; re-enable selects it again. The ordinary tower, enemy, map, mission, and TowerScript forms remain unchanged.
+Open **Mechanics** in Studio to use the isolated Mechanics Hub. Pick a mission and switch between combat, reactions, navigation, elevation, physics, terraforming, and rogue-lite mechanics. Combat profiles edit shields, the v2 damage/armor matrix, or v3 marks; reactions v1 profiles edit exposures, predicates, and bounded effects; navigation v1 profiles choose `authored_routes` or `dynamic_flow`; physics v1 profiles edit immunity and fall-hazard selectors; terraforming v1 profiles edit transitions and elevation policy; roguelite v1 profiles edit synergies, v2 adds artifacts, v3 adds optional draft, and v4 adds an independent optional campaign marker. Preview before apply. The ordinary mechanics transaction updates `project.json`, `content/mechanics.json`, and mission selections with validation, backup, and rollback; its rogue-lite form also owns tower-tag arrays. Campaign graph authoring uses the narrower four-file transaction described below. Disable preserves authored data and restores the lower-capability runtime path. Ordinary tower, enemy, map, mission, and TowerScript forms remain unchanged.
 
 In Playtest, the dynamic-navigation overlay analyzes all cells when the viewport contains at most 4,096 tiles. On a larger viewport it shows a deterministic focus window around the most recent pointer or keyboard interaction coordinate and reports `analyzed/total` partial coverage; move focus near the area you want to inspect. The overlay is advisory: every click still runs authoritative `canPlaceTower` preflight and `placeTower`, so a cell outside the current window cannot bypass last-path validation.
 
@@ -92,6 +92,24 @@ fresh prep timer. Checkpoint and journal replay must reproduce the same offer an
 `draft`, disabling/unselecting the module, or using v1/v2 removes the draft RNG, checkpoint section,
 pause, and UI without affecting artifacts or synergies. Use `docs/examples/opt-in-wave-draft/` as the
 copyable fixture; see [ADR 0033](adr/0033-opt-in-deterministic-wave-draft.md).
+
+For R4.4A use the dedicated flow `describe_schema({domain:"roguelite"}) → get_campaign →
+preview_campaign → apply_campaign` with the preview revision → `validate_project`. Enabling upgrades
+the selected rogue-lite profile to v4 without changing its synergies, artifacts, or draft; adds the
+exact `campaign:{schemaVersion:1}` marker; writes the bounded `worldMap.campaign` graph; and selects
+the profile for every mission-backed campaign node. Its revision covers `project.json`,
+`content/world-map.json`, `content/balance.json`, and `content/mechanics.json`. A stale write changes
+nothing, and a post-write failure rolls back every transaction-owned file. Disabling removes only
+the marker while preserving the graph and other rogue-lite mechanics for later re-enable.
+
+A fresh run has `CampaignRunV1.nodeId = null`; after a recorded battle, elite, or boss victory the
+field identifies that completed node and its direct successors become available. Merchant/event
+nodes are visible but intentionally return `node_type_not_implemented` until R4.4B. Import and
+export run JSON explicitly in Canvas or Phaser. The player never copies it into persistent profile
+storage, a battle checkpoint, or a command journal. Without the v4 marker and matching graph the
+campaign controls remain hidden and legacy mission navigation is unchanged. Use
+`docs/examples/opt-in-campaign-run/`; see
+[ADR 0034](adr/0034-opt-in-campaign-graph-and-run-lifecycle.md).
 
 Combat v1 accepts only `shields`. A target definition requires positive bounded `capacity` and may add `{ ratePerUnit, delayAfterDamage }` regeneration. Tower shields require a tower with `maxHp`. At runtime shield state is keyed by entity instance ID and appears only under active `snapshot.combat`; Canvas and Phaser consume the same presentation projection. A copyable v1 reference is under `docs/examples/opt-in-basic-shields/`.
 

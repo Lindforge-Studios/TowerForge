@@ -68,6 +68,18 @@ const REQUIRED_PROFILE_V1_FIELDS = Object.freeze(["synergies"] as const);
 const REQUIRED_PROFILE_V2_FIELDS = Object.freeze(["synergies", "artifacts"] as const);
 const REQUIRED_PROFILE_V3_FIELDS = Object.freeze(["synergies"] as const);
 const OPTIONAL_PROFILE_V3_FIELDS = Object.freeze(["artifacts", "draft"] as const);
+const REQUIRED_PROFILE_V4_FIELDS = Object.freeze(["synergies"] as const);
+const OPTIONAL_PROFILE_V4_FIELDS = Object.freeze(["artifacts", "draft", "campaign"] as const);
+const REQUIRED_CAMPAIGN_MARKER_FIELDS = Object.freeze(["schemaVersion"] as const);
+const REQUIRED_CAMPAIGN_ROOT_FIELDS = Object.freeze([
+  "schemaVersion", "rogueliteProfileId", "entryNodeIds", "nodes"
+] as const);
+const REQUIRED_CAMPAIGN_BATTLE_NODE_FIELDS = Object.freeze([
+  "id", "type", "missionId", "regionId", "x", "y", "difficulty", "nextNodeIds"
+] as const);
+const REQUIRED_CAMPAIGN_STRUCTURAL_NODE_FIELDS = Object.freeze([
+  "id", "type", "label", "regionId", "x", "y", "difficulty", "nextNodeIds"
+] as const);
 const REQUIRED_SYNERGY_FIELDS = Object.freeze(["label", "tag", "tiers"] as const);
 const OPTIONAL_SYNERGY_FIELDS = Object.freeze(["tierMode"] as const);
 const REQUIRED_TIER_FIELDS = Object.freeze(["requiredCount", "modifiers"] as const);
@@ -86,12 +98,12 @@ const REQUIRED_DRAFT_POOL_ENTRY_FIELDS = Object.freeze(["cardId", "weight"] as c
 
 /** Capability-aware descriptor shared by validation, Studio, and MCP. */
 export const ROGUELITE_MECHANICS_SCHEMA = Object.freeze({
-  schemaVersion: 3,
+  schemaVersion: 4,
   moduleId: "roguelite" as const,
-  supportedModuleSchemaVersions: Object.freeze([1, 2, 3] as const),
+  supportedModuleSchemaVersions: Object.freeze([1, 2, 3, 4] as const),
   profile: Object.freeze({
-    requiredFields: REQUIRED_PROFILE_V3_FIELDS,
-    optionalFields: OPTIONAL_PROFILE_V3_FIELDS,
+    requiredFields: REQUIRED_PROFILE_V4_FIELDS,
+    optionalFields: OPTIONAL_PROFILE_V4_FIELDS,
     additionalProperties: false
   }),
   profileVersions: Object.freeze({
@@ -108,6 +120,11 @@ export const ROGUELITE_MECHANICS_SCHEMA = Object.freeze({
     3: Object.freeze({
       requiredFields: REQUIRED_PROFILE_V3_FIELDS,
       optionalFields: OPTIONAL_PROFILE_V3_FIELDS,
+      additionalProperties: false
+    }),
+    4: Object.freeze({
+      requiredFields: REQUIRED_PROFILE_V4_FIELDS,
+      optionalFields: OPTIONAL_PROFILE_V4_FIELDS,
       additionalProperties: false
     })
   }),
@@ -191,6 +208,34 @@ export const ROGUELITE_MECHANICS_SCHEMA = Object.freeze({
     }),
     offerSize: ROGUELITE_DRAFT_LIMITS.offerSize,
     sampling: "weighted_without_replacement" as const
+  }),
+  campaign: Object.freeze({
+    requiredFields: REQUIRED_CAMPAIGN_MARKER_FIELDS,
+    optionalFields: Object.freeze([] as const),
+    additionalProperties: false,
+    supportedSchemaVersions: Object.freeze([1] as const),
+    graph: Object.freeze({
+      schemaVersion: 1,
+      root: Object.freeze({
+        requiredFields: REQUIRED_CAMPAIGN_ROOT_FIELDS,
+        optionalFields: Object.freeze([] as const),
+        additionalProperties: false
+      }),
+      nodeVariants: Object.freeze({
+        battle: Object.freeze({
+          types: Object.freeze(["battle", "elite", "boss"] as const),
+          requiredFields: REQUIRED_CAMPAIGN_BATTLE_NODE_FIELDS,
+          optionalFields: Object.freeze([] as const),
+          additionalProperties: false
+        }),
+        structural: Object.freeze({
+          types: Object.freeze(["merchant", "event"] as const),
+          requiredFields: REQUIRED_CAMPAIGN_STRUCTURAL_NODE_FIELDS,
+          optionalFields: Object.freeze([] as const),
+          additionalProperties: false
+        })
+      })
+    })
   }),
   limits: Object.freeze({
     synergies: ROGUELITE_SYNERGY_LIMITS,
@@ -310,6 +355,14 @@ export interface RogueliteMechanicsProfileV3 extends RogueliteMechanicsProfileV1
   readonly draft?: RogueliteDraftDefinitionV3;
 }
 
+export interface RogueliteCampaignMarkerV1 {
+  readonly schemaVersion: 1;
+}
+
+export interface RogueliteMechanicsProfileV4 extends RogueliteMechanicsProfileV3 {
+  readonly campaign?: RogueliteCampaignMarkerV1;
+}
+
 export interface ActiveRogueliteMechanicsV1 extends RogueliteMechanicsProfileV1 {
   readonly schemaVersion: 1;
   readonly profileId: string;
@@ -331,10 +384,17 @@ export interface ActiveRogueliteMechanicsV3 extends RogueliteMechanicsProfileV3 
   readonly towerTagsByTypeId: Readonly<Record<string, readonly string[]>>;
 }
 
+export interface ActiveRogueliteMechanicsV4 extends RogueliteMechanicsProfileV4 {
+  readonly schemaVersion: 4;
+  readonly profileId: string;
+  readonly towerTagsByTypeId: Readonly<Record<string, readonly string[]>>;
+}
+
 export type ActiveRogueliteMechanics =
   | ActiveRogueliteMechanicsV1
   | ActiveRogueliteMechanicsV2
-  | ActiveRogueliteMechanicsV3;
+  | ActiveRogueliteMechanicsV3
+  | ActiveRogueliteMechanicsV4;
 
 export function rogueliteSynergyWorstCaseModifierCount(
   synergies: Readonly<Record<string, SynergyDefinitionV1>>
@@ -1146,6 +1206,42 @@ export function normalizeRogueliteProfileV3(value: unknown): RogueliteMechanicsP
   });
 }
 
+/** Validate and detach the exact closed roguelite v4 profile and its inert campaign marker. */
+export function normalizeRogueliteProfileV4(value: unknown): RogueliteMechanicsProfileV4 {
+  const profile = inspectRecord(value, "profile", "Roguelite profile");
+  rejectUnknownFields(
+    profile,
+    [...REQUIRED_PROFILE_V4_FIELDS, ...OPTIONAL_PROFILE_V4_FIELDS],
+    "profile",
+    "Roguelite profile"
+  );
+  requireFields(profile, REQUIRED_PROFILE_V4_FIELDS, "profile", "Roguelite profile");
+  const base = normalizeRogueliteProfileV3({
+    synergies: profile.synergies,
+    ...(Object.prototype.hasOwnProperty.call(profile, "artifacts") ? { artifacts: profile.artifacts } : {}),
+    ...(Object.prototype.hasOwnProperty.call(profile, "draft") ? { draft: profile.draft } : {})
+  });
+  let campaign: RogueliteCampaignMarkerV1 | undefined;
+  if (Object.prototype.hasOwnProperty.call(profile, "campaign")) {
+    const marker = inspectRecord(profile.campaign, "profile.campaign", "Roguelite campaign marker");
+    rejectUnknownFields(marker, REQUIRED_CAMPAIGN_MARKER_FIELDS, "profile.campaign", "Roguelite campaign marker");
+    requireFields(marker, REQUIRED_CAMPAIGN_MARKER_FIELDS, "profile.campaign", "Roguelite campaign marker");
+    if (marker.schemaVersion !== 1) {
+      throw new RogueliteProfileValidationError(
+        "profile.campaign.schemaVersion",
+        "Roguelite campaign marker supports schema version 1 only."
+      );
+    }
+    campaign = Object.freeze({ schemaVersion: 1 as const });
+  }
+  return Object.freeze({
+    synergies: base.synergies,
+    ...(base.artifacts === undefined ? {} : { artifacts: base.artifacts }),
+    ...(base.draft === undefined ? {} : { draft: base.draft }),
+    ...(campaign === undefined ? {} : { campaign })
+  });
+}
+
 function hasValidDraftReferences(
   draft: RogueliteDraftDefinitionV3,
   content: GameContentRegistry,
@@ -1198,7 +1294,7 @@ export function resolveActiveRogueliteMechanics(
       "module",
       "Roguelite mechanics module"
     );
-    if ((module.schemaVersion !== 1 && module.schemaVersion !== 2 && module.schemaVersion !== 3)
+    if ((module.schemaVersion !== 1 && module.schemaVersion !== 2 && module.schemaVersion !== 3 && module.schemaVersion !== 4)
       || module.enabled !== true) return undefined;
     rejectUnknownFields(module, ["schemaVersion", "enabled", "profiles"], "module", "Roguelite mechanics module");
     const profiles = inspectRecord(module.profiles, "module.profiles", "Roguelite mechanics profiles");
@@ -1223,18 +1319,21 @@ export function resolveActiveRogueliteMechanics(
         towerTagsByTypeId
       });
     }
-    const profile = normalizeRogueliteProfileV3(ownData(profiles, capability.profileId));
+    const profile = module.schemaVersion === 4
+      ? normalizeRogueliteProfileV4(ownData(profiles, capability.profileId))
+      : normalizeRogueliteProfileV3(ownData(profiles, capability.profileId));
     if (profile.artifacts) assertRogueliteV2ModifierBudget({ synergies: profile.synergies, artifacts: profile.artifacts });
     if (profile.draft && !hasValidDraftReferences(profile.draft, content, towerTagsByTypeId)) return undefined;
     assertRogueliteV3ModifierBudget(profile, content, missionId);
     return Object.freeze({
-      schemaVersion: 3 as const,
+      schemaVersion: module.schemaVersion,
       profileId: capability.profileId,
       synergies: profile.synergies,
       ...(profile.artifacts === undefined ? {} : { artifacts: profile.artifacts }),
       ...(profile.draft === undefined ? {} : { draft: profile.draft }),
+      ...("campaign" in profile && profile.campaign !== undefined ? { campaign: profile.campaign } : {}),
       towerTagsByTypeId
-    });
+    }) as ActiveRogueliteMechanicsV3 | ActiveRogueliteMechanicsV4;
   } catch {
     return undefined;
   }

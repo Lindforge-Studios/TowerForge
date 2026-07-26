@@ -16,7 +16,7 @@ import {
 } from "../index.js";
 import { TowerDefenseGame } from "./TowerDefenseGame.js";
 
-type DraftMode = "absent" | "disabled" | "v1" | "v2" | "v3_no_draft" | "active";
+type DraftMode = "absent" | "disabled" | "v1" | "v2" | "v3_no_draft" | "active" | "v4";
 
 interface DraftOfferSnapshotFixture {
   offerId: string;
@@ -108,7 +108,14 @@ function profile(mode: DraftMode, reverse = false): Record<string, unknown> {
       artifacts: { definitions: {}, towerSlots: {}, bossLootTables: {} }
     };
   }
-  if (mode === "active") return { synergies: {}, draft: draftBlock(reverse) };
+  if (mode === "active" || mode === "v4") return {
+    synergies: {},
+    draft: draftBlock(reverse),
+    ...(mode === "v4" ? {
+      artifacts: { definitions: {}, towerSlots: {}, bossLootTables: {} },
+      campaign: { schemaVersion: 1 }
+    } : {})
+  };
   return { synergies: {} };
 }
 
@@ -188,7 +195,7 @@ function runtimeInput(mode: DraftMode = "active", reverse = false): GameContentI
         schemaVersion: 1,
         modules: {
           roguelite: {
-            schemaVersion: mode === "v1" ? 1 : mode === "v2" ? 2 : 3,
+            schemaVersion: mode === "v1" ? 1 : mode === "v2" ? 2 : mode === "v4" ? 4 : 3,
             enabled: mode !== "disabled",
             profiles: { run: profile(mode, reverse) }
           }
@@ -300,6 +307,18 @@ void exactChooseCommand;
 void journalV3Version;
 
 describe("R4.3B deterministic interwave draft runtime", () => {
+  it("keeps the v3 draft runtime and snapshot/checkpoint versions under a v4 campaign profile", () => {
+    const subject = game("v4", "v4-draft-seed");
+    expect(subject.getSnapshot().roguelite).toMatchObject({
+      schemaVersion: 4,
+      draft: { pendingOffer: null, selections: [] },
+      artifacts: { inventory: [], towerSlots: [] }
+    });
+    expect(draftCheckpoint(subject)).toMatchObject({ schemaVersion: 1, pendingOffer: null, selections: [] });
+    expect(subject.createCheckpoint().state.artifacts).toMatchObject({ schemaVersion: 1, inventory: [] });
+    expect(clearFirstWave(subject).options).toHaveLength(3);
+  });
+
   it("keeps absent/v1/v2/v3-without-draft paths free of draft state and keeps draft-only free of artifacts", () => {
     for (const mode of ["absent", "disabled", "v1", "v2", "v3_no_draft"] as const) {
       const subject = game(mode);

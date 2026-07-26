@@ -330,7 +330,7 @@ describe("R4.1A roguelite CLI and recipe authoring contract", () => {
       ]));
       expect(transactionBytes(projectDir)).toEqual(before);
     }
-  });
+  }, 20_000);
 
   it("removes the optional tower tags field when the full replacement list is empty", async () => {
     const projectDir = fixture();

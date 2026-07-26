@@ -29,7 +29,7 @@ describe("R4.1A/R4.2E/R4.3 Mechanics Hub rogue-lite surface contract", () => {
     expect(app).toContain('$("mechanics-roguelite-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "roguelite")');
   });
 
-  it("authors v3 wave draft independently from optional v2 artifacts and preserves future v4 read-only", () => {
+  it("authors v3 wave draft independently from optional v2 artifacts inside v4 and preserves future v5 read-only", () => {
     for (const marker of [
       "mechanics-roguelite-draft-card-rows",
       "mechanics-roguelite-draft-pool-rows",
@@ -39,8 +39,9 @@ describe("R4.1A/R4.2E/R4.3 Mechanics Hub rogue-lite surface contract", () => {
     expect(app).toMatch(/normalizeRogueliteDraft|normalizeRogueliteMechanicsDraft[\s\S]*draft/);
     expect(app).toMatch(/renderRogueliteDraft|renderRogueliteMechanicsEditor[\s\S]*draft/);
     expect(app).toMatch(/MechanicsUI\.draft\?\.draft[\s\S]*Math\.max\([^)]*3|draft[\s\S]*moduleSchemaVersion\s*=\s*3/);
-    expect(app).toMatch(/mechanicsProjectModuleVersion\(\)\s*<=\s*3|\[1,\s*2,\s*3\][\s\S]*mechanicsProjectModuleVersion/);
-    expect(app).toMatch(/future roguelite|schemaVersion 4|v4[\s\S]*read-only/i);
+    expect(app).toMatch(/mechanicsProjectModuleVersion\(\)\s*<=\s*4|\[1,\s*2,\s*3,\s*4\][\s\S]*mechanicsProjectModuleVersion/);
+    expect(app).toMatch(/future roguelite|schemaVersion 5|v5[\s\S]*read-only/i);
+    expect(app).toMatch(/ownDataValue\(source,\s*["']campaign["']\)[\s\S]*draft\.campaign\s*=\s*deep\(campaign\)/);
     expect(app).toMatch(/draft[\s\S]*definitions[\s\S]*pools[\s\S]*defaultPoolId/i);
   });
 

@@ -34,6 +34,7 @@ export * from "./content/validate.js";
 export * from "./content/schema-descriptor.js";
 export * from "./profile/player-profile.js";
 export * from "./run/campaign-run.js";
+export * from "./run/campaign-world.js";
 export * from "./scripting/types.js";
 export * from "./scripting/schema-descriptor.js";
 export * from "./scripting/expression.js";

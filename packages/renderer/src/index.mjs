@@ -25,6 +25,7 @@ export * from "./elevation-presentation.mjs";
 export * from "./physics-presentation.mjs";
 export * from "./terraforming-presentation.mjs";
 export * from "./roguelite-presentation.mjs";
+export * from "./campaign-presentation.mjs";
 
 // Max canvas backbuffer area (pixels). Above this, high-DPR mobile GPUs stall or OOM. ~1.35M px
 // ≈ 1600x844 — plenty for a hex playfield while keeping cheap Android devices stable.

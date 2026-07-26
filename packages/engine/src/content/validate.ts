@@ -38,8 +38,13 @@ import {
   normalizeRogueliteProfileV1,
   normalizeRogueliteProfileV2,
   normalizeRogueliteProfileV3,
+  normalizeRogueliteProfileV4,
   normalizeTowerTagsV1
 } from "./roguelite-mechanics.js";
+import {
+  normalizeAuthoredWorldCampaignV1,
+  WorldCampaignValidationError
+} from "../run/campaign-world.js";
 
 /**
  * `code` is a STABLE, machine-branchable identifier — derived automatically from
@@ -2775,9 +2780,10 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
         err("mechanics", "roguelite", `modules.roguelite.${key}`, `Roguelite module is closed; unknown field "${key}".`);
       }
     }
-    const supportedVersion = module.schemaVersion === 1 || module.schemaVersion === 2 || module.schemaVersion === 3;
+    const supportedVersion = module.schemaVersion === 1 || module.schemaVersion === 2
+      || module.schemaVersion === 3 || module.schemaVersion === 4;
     if (!supportedVersion) {
-      err("mechanics", "roguelite", "modules.roguelite.schemaVersion", "Roguelite future or unsupported schemaVersion; only versions 1, 2, and 3 are supported.");
+      err("mechanics", "roguelite", "modules.roguelite.schemaVersion", "Roguelite future or unsupported schemaVersion; only versions 1, 2, 3, and 4 are supported.");
     }
     if (typeof module.enabled !== "boolean") {
       err("mechanics", "roguelite", "modules.roguelite.enabled", "Roguelite mechanics enabled must be boolean.");
@@ -2802,10 +2808,13 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
       let profile:
         | ReturnType<typeof normalizeRogueliteProfileV1>
         | ReturnType<typeof normalizeRogueliteProfileV2>
-        | ReturnType<typeof normalizeRogueliteProfileV3>;
+        | ReturnType<typeof normalizeRogueliteProfileV3>
+        | ReturnType<typeof normalizeRogueliteProfileV4>;
       try {
-        profile = module.schemaVersion === 3
-          ? normalizeRogueliteProfileV3(profiles[profileId])
+        profile = module.schemaVersion === 4
+          ? normalizeRogueliteProfileV4(profiles[profileId])
+          : module.schemaVersion === 3
+            ? normalizeRogueliteProfileV3(profiles[profileId])
           : module.schemaVersion === 2
             ? normalizeRogueliteProfileV2(profiles[profileId])
             : normalizeRogueliteProfileV1(profiles[profileId]);
@@ -2969,7 +2978,7 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
           });
         }
       }
-      if (module.schemaVersion === 3) {
+      if (module.schemaVersion === 3 || module.schemaVersion === 4) {
         for (const missionId of activeMissionIds) {
           const mission = content.missions[missionId];
           if (draft && mission && Math.max(0, mission.waves.length - 1) > ROGUELITE_DRAFT_LIMITS.selections) {
@@ -4212,6 +4221,98 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
   for (const missionId of reqByMission.keys()) {
     if (!reachable.has(missionId)) {
       err("worldMap", missionId, "unlockRequiresMissionIds", `Mission "${missionId}" can never be unlocked (an unlock requirement is itself locked — check for a cycle or a missing starting mission).`);
+    }
+  }
+
+  let campaignDescriptor: PropertyDescriptor | undefined;
+  try {
+    campaignDescriptor = Object.getOwnPropertyDescriptor(content.worldMap, "campaign");
+  } catch {
+    err("worldMap", "campaign", "campaign", "World campaign could not be inspected safely.");
+  }
+  if (campaignDescriptor && (!campaignDescriptor.enumerable || !("value" in campaignDescriptor))) {
+    err("worldMap", "campaign", "campaign", "World campaign must be enumerable own data.");
+  } else if (campaignDescriptor && "value" in campaignDescriptor && campaignDescriptor.value !== undefined) {
+    try {
+      const campaign = normalizeAuthoredWorldCampaignV1(campaignDescriptor.value);
+      let active = false;
+      try {
+        const modules = Object.getOwnPropertyDescriptor(content.mechanics, "modules");
+        const roguelite = modules?.enumerable && "value" in modules
+          ? Object.getOwnPropertyDescriptor(modules.value as object, "roguelite")
+          : undefined;
+        const module = roguelite?.enumerable && "value" in roguelite
+          ? roguelite.value as Record<string, unknown>
+          : undefined;
+        const moduleSchemaVersion = module
+          ? Object.getOwnPropertyDescriptor(module, "schemaVersion")
+          : undefined;
+        const moduleEnabled = module
+          ? Object.getOwnPropertyDescriptor(module, "enabled")
+          : undefined;
+        const profiles = module
+          ? Object.getOwnPropertyDescriptor(module, "profiles")
+          : undefined;
+        const profile = profiles?.enumerable && "value" in profiles
+          ? Object.getOwnPropertyDescriptor(profiles.value as object, campaign.rogueliteProfileId!)
+          : undefined;
+        const marker = profile?.enumerable && "value" in profile
+          ? Object.getOwnPropertyDescriptor(profile.value as object, "campaign")
+          : undefined;
+        const markerVersion = marker?.enumerable && "value" in marker
+          ? Object.getOwnPropertyDescriptor(marker.value as object, "schemaVersion")
+          : undefined;
+        const selectedByMission = Object.keys(content.missions).some((missionId) => (
+          content.missions[missionId]?.mechanics?.profiles?.roguelite === campaign.rogueliteProfileId
+        ));
+        active = moduleSchemaVersion?.enumerable === true
+          && "value" in moduleSchemaVersion
+          && moduleSchemaVersion.value === 4
+          && moduleEnabled?.enumerable === true
+          && "value" in moduleEnabled
+          && moduleEnabled.value === true
+          && markerVersion?.enumerable === true
+          && "value" in markerVersion
+          && markerVersion.value === 1
+          && selectedByMission;
+      } catch {
+        active = false;
+      }
+      const semantic = active ? err : warn;
+      for (const node of campaign.nodes) {
+        if (!regionIds.has(node.regionId)) {
+          semantic(
+            "worldMap",
+            "campaign",
+            `campaign.nodes.${node.id}.regionId`,
+            `Campaign node "${node.id}" references unknown region "${node.regionId}"${active ? "" : " in this inactive campaign"}.`
+          );
+        }
+        if (!("missionId" in node)) continue;
+        const mission = content.missions[node.missionId];
+        if (!mission) {
+          semantic(
+            "worldMap",
+            "campaign",
+            `campaign.nodes.${node.id}.missionId`,
+            `Campaign node "${node.id}" references unknown mission "${node.missionId}"${active ? "" : " in this inactive campaign"}.`
+          );
+        } else if (mission.mechanics?.profiles?.roguelite !== campaign.rogueliteProfileId) {
+          semantic(
+            "worldMap",
+            "campaign",
+            `campaign.nodes.${node.id}.missionId`,
+            `Campaign mission "${node.missionId}" does not select roguelite profile "${campaign.rogueliteProfileId}"${active ? "" : " in this inactive campaign"}.`
+          );
+        }
+      }
+    } catch (error) {
+      err(
+        "worldMap",
+        "campaign",
+        error instanceof WorldCampaignValidationError ? error.fieldPath.replace(/^worldMap\./, "") : "campaign",
+        error instanceof Error ? error.message : "World campaign is invalid."
+      );
     }
   }
 

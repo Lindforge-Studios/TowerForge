@@ -48,6 +48,12 @@ import {
   previewMechanicsModule
 } from "../cli/lib/mechanics-authoring.mjs";
 import {
+  CAMPAIGN_GRAPH_INPUT_SCHEMA,
+  applyCampaignAuthoring,
+  inspectCampaignAuthoring,
+  previewCampaignAuthoring
+} from "../cli/lib/campaign-authoring.mjs";
+import {
   applyMapElevations,
   mapElevationAuthoringRevision,
   previewMapElevations
@@ -269,7 +275,6 @@ const ROGUELITE_TOWER_TAGS_SCHEMA = Object.freeze({
   }),
   description: "Optional exact tower tag lists keyed by authored tower ID; valid only while enabling roguelite."
 });
-
 /** Tool definitions advertised over `tools/list`. */
 export const TOOLS = [
   {
@@ -340,6 +345,51 @@ export const TOOLS = [
         projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
         missionId: { type: "string", description: "Mission to inspect. Defaults to the project's default mission." }
       },
+      additionalProperties: false
+    }
+  },
+  {
+    name: "get_campaign",
+    description:
+      "Read the authored WorldCampaign v1 graph, its active roguelite v4 marker, and the exact four-file revision without writing or migrating the project.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." }
+      },
+      additionalProperties: false
+    }
+  },
+  {
+    name: "preview_campaign",
+    description:
+      "Preview an opt-in WorldCampaign v1 graph and roguelite v4 campaign marker across project, world map, balance mission selections, and mechanics without writing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
+        profileId: { type: "string", minLength: 1, maxLength: 128 },
+        campaign: CAMPAIGN_GRAPH_INPUT_SCHEMA,
+        enabled: { type: "boolean", default: true }
+      },
+      required: ["profileId"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "apply_campaign",
+    description:
+      "Guardedly apply an exact previewed campaign candidate through one validated four-file transaction with backup and rollback.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
+        profileId: { type: "string", minLength: 1, maxLength: 128 },
+        campaign: CAMPAIGN_GRAPH_INPUT_SCHEMA,
+        enabled: { type: "boolean", default: true },
+        ifRevision: IF_REVISION_PROPERTY
+      },
+      required: ["profileId", "ifRevision"],
       additionalProperties: false
     }
   },
@@ -500,7 +550,7 @@ export const TOOLS = [
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
         moduleId: { type: "string", description: "Engine-owned mechanics module id." },
-        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3], description: "Module contract version: navigation, physics, and terraforming support v1; roguelite supports v1 for synergies, v2 for artifact loot, and v3 for optional wave draft; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Omitted edits preserve an existing version and new modules default to v1." },
+        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3, 4], description: "Module contract version: navigation, physics, and terraforming support v1; roguelite supports v1 for synergies, v2 for artifact loot, v3 for optional wave draft, and v4 for an optional campaign marker; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Omitted edits preserve an existing version and new modules default to v1." },
         missionId: { type: "string", description: "Mission that would select the profile; defaults to the project's default mission." },
         profileId: { type: "string", description: "Profile id to preview." },
         profile: { type: "object", description: "Versioned module profile payload." },
@@ -522,7 +572,7 @@ export const TOOLS = [
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
         moduleId: { type: "string", description: "Engine-owned mechanics module id." },
-        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3], description: "Module contract version: navigation, physics, and terraforming support v1; roguelite supports v1 for synergies, v2 for artifact loot, and v3 for optional wave draft; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Upgrades are guarded and version downgrades are rejected." },
+        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3, 4], description: "Module contract version: navigation, physics, and terraforming support v1; roguelite supports v1 for synergies, v2 for artifact loot, v3 for optional wave draft, and v4 for an optional campaign marker; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Upgrades are guarded and version downgrades are rejected." },
         missionId: { type: "string", description: "Mission that would select the profile; defaults to the project's default mission." },
         profileId: { type: "string", description: "Profile id to enable." },
         profile: { type: "object", description: "Versioned module profile payload." },
@@ -1235,6 +1285,9 @@ const TOOL_RISK = {
   explain_validation: { riskClass: "read_only", sideEffect: "none" },
   get_project_summary: { riskClass: "read_only", sideEffect: "none" },
   get_capabilities: { riskClass: "read_only", sideEffect: "none" },
+  get_campaign: { riskClass: "read_only", sideEffect: "none" },
+  preview_campaign: { riskClass: "read_only", sideEffect: "none" },
+  apply_campaign: { riskClass: "write_local", sideEffect: "writes project.json, content/world-map.json, content/balance.json, and content/mechanics.json with revision guard, validation, backup, and rollback" },
   analyze_navigation: { riskClass: "compute_only", sideEffect: "builds engine dist if stale; writes no project files" },
   analyze_line_of_sight: { riskClass: "compute_only", sideEffect: "builds engine dist if stale; writes no project files" },
   preview_map_elevations: { riskClass: "read_only", sideEffect: "none" },
@@ -1361,6 +1414,13 @@ export async function callTool(name, args = {}, ctx = {}) {
     };
     const roguelite = {
       authoring: engine.ROGUELITE_MECHANICS_SCHEMA,
+      campaign: {
+        schemaVersion: 1,
+        nodeTypes: engine.WORLD_CAMPAIGN_SCHEMA.nodeTypes,
+        limits: engine.WORLD_CAMPAIGN_SCHEMA.limits,
+        graph: engine.ROGUELITE_MECHANICS_SCHEMA.campaign.graph,
+        inputSchema: CAMPAIGN_GRAPH_INPUT_SCHEMA
+      },
       snapshot: { field: "roguelite", optional: true, supportedSchemaVersions: [1, 2, 3, 4] },
       events: ["artifactDropped", "artifactSocketed", "artifactUnsocketed"],
       commands: {
@@ -1384,7 +1444,7 @@ export async function callTool(name, args = {}, ctx = {}) {
       }
     };
     return {
-      schemaVersion: 3,
+      schemaVersion: 4,
       agentGuideVersion: TOWERFORGE_AGENT_GUIDE_VERSION,
       requestedDomain: domain,
       availableDomains: SCHEMA_DOMAINS,
@@ -1605,6 +1665,18 @@ export async function callTool(name, args = {}, ctx = {}) {
       }
       return scrubMechanicsResult(result);
     }
+
+    case "get_campaign":
+      return scrubMechanicsResult(await inspectCampaignAuthoring(projectDir));
+
+    case "preview_campaign":
+      return unwrapCampaignAuthoringResult(await previewCampaignAuthoring(projectDir, campaignAuthoringRequest(args)));
+
+    case "apply_campaign":
+      if (typeof args.ifRevision !== "string" || args.ifRevision.length === 0) {
+        throw mechanicsToolError("revision_required", "apply_campaign requires ifRevision from a current preview_campaign result.");
+      }
+      return unwrapCampaignAuthoringResult(await applyCampaignAuthoring(projectDir, campaignAuthoringRequest(args)));
 
     case "analyze_navigation":
       return analyzeNavigation(projectDir, args);
@@ -2975,6 +3047,15 @@ function mechanicsAuthoringRequest(args) {
   ].filter(([, value]) => value !== undefined));
 }
 
+function campaignAuthoringRequest(args) {
+  return Object.fromEntries([
+    ["profileId", args.profileId],
+    ["campaign", args.campaign],
+    ["enabled", args.enabled ?? true],
+    ["ifRevision", args.ifRevision]
+  ].filter(([, value]) => value !== undefined));
+}
+
 function projectRecipeForMcp(recipe) {
   if (recipe?.moduleId === "terraforming") {
     return { ...recipe, parameterSchema: TERRAFORMING_RECIPE_PARAMETERS_SCHEMA };
@@ -3283,6 +3364,31 @@ function unwrapMechanicsAuthoringResult(result) {
       ? "Migrate the project to schema v2 before enabling optional mechanics."
       : issue?.message ?? "The mechanics candidate failed validation."
   );
+}
+
+function unwrapCampaignAuthoringResult(result) {
+  if (result?.ok) return scrubMechanicsResult(result);
+  if (result?.conflict) {
+    throw mechanicsToolError(
+      "conflict",
+      "The project changed after the campaign revision was read; call get_campaign and preview_campaign again."
+    );
+  }
+  const issue = result?.validation?.issues?.find((candidate) => candidate?.severity === "error")
+    ?? result?.validation?.issues?.[0];
+  const passthroughCodes = new Set([
+    "project_migration_required",
+    "project_version_unsupported",
+    "module_version_unsupported",
+    "campaign_required",
+    "campaign_profile_mismatch",
+    "revision_required",
+    "budget_exceeded",
+    "source_unsafe",
+    "invalid_request"
+  ]);
+  const code = passthroughCodes.has(issue?.code) ? issue.code : "validation";
+  throw mechanicsToolError(code, issue?.message ?? "The campaign candidate failed validation.");
 }
 
 function mechanicsToolError(code, message) {

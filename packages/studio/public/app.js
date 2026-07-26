@@ -112,6 +112,20 @@ const MechanicsUI = {
   terraformingRecipeLoading: false
 };
 
+// Campaign graph writes use their own four-file revision and never join the generic mechanics
+// draft/save transaction. CampaignRun documents themselves remain explicit portable files.
+const CampaignUI = {
+  loaded: false,
+  loading: false,
+  applying: false,
+  profileId: "campaign_run",
+  campaign: null,
+  source: "",
+  active: false,
+  preview: null,
+  error: null
+};
+
 // Map authoring has its own guarded revision cycle. It never mutates the mechanics profile draft
 // or the ordinary Studio project/save state.
 const ElevationUI = {
@@ -475,6 +489,9 @@ async function load() {
     S.scriptSource = "";
     S.scriptFileRevision = null;
     S.scriptOriginalId = null;
+    CampaignUI.loaded = false;
+    CampaignUI.preview = null;
+    CampaignUI.error = null;
     markDirty(false);
     historyInit();
     PT.dirty = true; // force playtest to rebuild from the freshly loaded project
@@ -742,6 +759,11 @@ function normalizeRogueliteMechanicsDraft(profile) {
   if (artifacts) draft.artifacts = artifacts;
   const waveDraft = normalizeRogueliteDraft(source?.draft);
   if (waveDraft) draft.draft = waveDraft;
+  const campaign = ownDataValue(source, "campaign");
+  if (campaign && typeof campaign === "object" && !Array.isArray(campaign)
+    && ownDataValue(campaign, "schemaVersion") === 1) {
+    draft.campaign = deep(campaign);
+  }
   return draft;
 }
 
@@ -1030,7 +1052,7 @@ function initializeMechanicsDraft() {
   const describedVersion = moduleView?.moduleSchemaVersion
     ?? capability?.moduleSchemaVersion
     ?? capability?.schemaVersion;
-  MechanicsUI.moduleSchemaVersion = [1, 2, 3].includes(describedVersion)
+  MechanicsUI.moduleSchemaVersion = [1, 2, 3, 4].includes(describedVersion)
     ? describedVersion
     : mechanicsProjectModuleVersion();
   MechanicsUI.loadedProfileId = selectedProfile && selectedProfileId ? selectedProfileId : null;
@@ -1111,7 +1133,7 @@ function loadMechanicsProfile() {
   MechanicsUI.profileId = profileId;
   MechanicsUI.loadedProfileId = profileId;
   const authoredVersion = MechanicsUI.capabilities?.[MechanicsUI.selectedModuleId]?.moduleSchemaVersion;
-  MechanicsUI.moduleSchemaVersion = [1, 2, 3].includes(authoredVersion)
+  MechanicsUI.moduleSchemaVersion = [1, 2, 3, 4].includes(authoredVersion)
     ? authoredVersion
     : mechanicsProjectModuleVersion();
   MechanicsUI.draft = MechanicsUI.selectedModuleId === "navigation"
@@ -1171,8 +1193,8 @@ async function newMechanicsProfile() {
 }
 
 async function materializeRogueliteRecipeDraft(recipe) {
-  if (mechanicsProjectModuleVersion() > 3) {
-    throw new Error("Future roguelite module versions are preserved read-only and cannot be materialized as v1/v2/v3.");
+  if (mechanicsProjectModuleVersion() > 4) {
+    throw new Error("Future roguelite module versions are preserved read-only and cannot be materialized as v1/v2/v3/v4.");
   }
   if (!recipe || !ROGUELITE_RECIPE_IDS.has(recipe.id)) {
     throw new Error("The selected roguelite recipe is unavailable.");
@@ -2735,7 +2757,7 @@ function rogueliteKnownTags() {
 
 function refreshRogueliteKnownTagControls() {
   const knownTags = rogueliteKnownTags();
-  const supportedVersion = mechanicsProjectModuleVersion() <= 3;
+  const supportedVersion = mechanicsProjectModuleVersion() <= 4;
   const synergies = MechanicsUI.draft?.synergies ?? {};
   $("mechanics-roguelite-synergy-rows")?.querySelectorAll("[data-synergy-id]").forEach((row) => {
     const definition = ownDataValue(synergies, row.dataset.synergyId);
@@ -2755,7 +2777,7 @@ function renderRogueliteMechanicsEditor() {
   if (MechanicsUI.selectedModuleId !== "roguelite" || !MechanicsUI.draft) return;
   MechanicsUI.draft = normalizeRogueliteMechanicsDraft(MechanicsUI.draft);
   const limits = mechanicsRogueliteLimits();
-  const supportedVersion = mechanicsProjectModuleVersion() <= 3;
+  const supportedVersion = mechanicsProjectModuleVersion() <= 4;
   const towerRows = $("mechanics-roguelite-tower-tag-rows");
   if (towerRows) {
     towerRows.innerHTML = Object.entries(S.project?.towers ?? {})
@@ -3564,6 +3586,138 @@ async function applyMapElevations() {
   }
 }
 
+function campaignRequest(enabled = true) {
+  const profileId = String($("mechanics-roguelite-campaign-profile-id")?.value ?? CampaignUI.profileId).trim();
+  if (!profileId) throw new Error("Campaign profile ID is required.");
+  const request = { profileId, enabled: Boolean(enabled) };
+  if (!request.enabled) return request;
+  const source = $("mechanics-roguelite-campaign-json")?.value ?? CampaignUI.source;
+  let campaign;
+  try {
+    campaign = JSON.parse(source);
+  } catch (error) {
+    throw new Error(`Campaign graph must be valid JSON: ${error.message}`);
+  }
+  return { ...request, campaign };
+}
+
+function renderCampaignAuthoring() {
+  const editor = $("mechanics-roguelite-campaign-editor");
+  if (!editor) return;
+  const profileInput = $("mechanics-roguelite-campaign-profile-id");
+  const jsonInput = $("mechanics-roguelite-campaign-json");
+  const output = $("campaign-preview-result");
+  const supportedVersion = mechanicsProjectModuleVersion() <= 4;
+  if (profileInput && document.activeElement !== profileInput) profileInput.value = CampaignUI.profileId;
+  if (jsonInput && document.activeElement !== jsonInput) {
+    if (jsonInput.value !== CampaignUI.source) jsonInput.value = CampaignUI.source;
+  }
+  if (output) {
+    output.classList.toggle("error", Boolean(CampaignUI.error));
+    output.textContent = CampaignUI.error
+      ? `${CampaignUI.error.code ? `${CampaignUI.error.code}: ` : ""}${CampaignUI.error.message}`
+      : CampaignUI.preview
+        ? JSON.stringify(CampaignUI.preview, null, 2)
+        : CampaignUI.loading
+          ? "Loading campaign authoring state…"
+          : CampaignUI.active
+            ? "Campaign is active. Preview before applying changes."
+            : "Campaign is opt-in and currently inactive.";
+  }
+  const busy = CampaignUI.loading || CampaignUI.applying;
+  const dirty = Boolean(S.dirty);
+  if (profileInput) profileInput.disabled = busy || !supportedVersion;
+  if (jsonInput) jsonInput.disabled = busy || !supportedVersion;
+  if ($("btn-campaign-preview")) $("btn-campaign-preview").disabled = busy || !supportedVersion;
+  if ($("btn-campaign-enable")) $("btn-campaign-enable").disabled = busy || dirty || !supportedVersion;
+  if ($("btn-campaign-disable")) $("btn-campaign-disable").disabled = busy || dirty || !CampaignUI.active || !supportedVersion;
+  if (profileInput) profileInput.oninput = () => {
+    CampaignUI.profileId = profileInput.value;
+    CampaignUI.preview = null;
+  };
+  if (jsonInput) jsonInput.oninput = () => {
+    CampaignUI.source = jsonInput.value;
+    CampaignUI.preview = null;
+    CampaignUI.error = null;
+  };
+  if ($("btn-campaign-preview")) $("btn-campaign-preview").onclick = () => void previewCampaign();
+  if ($("btn-campaign-enable")) $("btn-campaign-enable").onclick = () => void applyCampaign(true);
+  if ($("btn-campaign-disable")) $("btn-campaign-disable").onclick = () => {
+    if (window.confirm("Disable this campaign profile? The authored world map is preserved.")) void applyCampaign(false);
+  };
+}
+
+async function loadCampaignAuthoring() {
+  if (CampaignUI.loading) return;
+  CampaignUI.loading = true;
+  CampaignUI.error = null;
+  renderCampaignAuthoring();
+  try {
+    const response = await apiGet("/api/campaign");
+    CampaignUI.profileId = response.profileId ?? response.campaign?.rogueliteProfileId ?? CampaignUI.profileId;
+    CampaignUI.campaign = response.campaign ?? S.project?.worldMap?.campaign ?? {
+      schemaVersion: 1,
+      rogueliteProfileId: CampaignUI.profileId,
+      entryNodeIds: [],
+      nodes: []
+    };
+    CampaignUI.source = JSON.stringify(CampaignUI.campaign, null, 2);
+    CampaignUI.active = response.active === true;
+    CampaignUI.loaded = true;
+  } catch (error) {
+    CampaignUI.error = error;
+  } finally {
+    CampaignUI.loading = false;
+    renderCampaignAuthoring();
+  }
+}
+
+async function previewCampaign(requestOrEnabled = true) {
+  const requestSnapshot = requestOrEnabled && typeof requestOrEnabled === "object"
+    ? requestOrEnabled
+    : Object.freeze(campaignRequest(requestOrEnabled));
+  CampaignUI.error = null;
+  try {
+    CampaignUI.preview = await apiPost("/api/campaign/preview", requestSnapshot);
+    renderCampaignAuthoring();
+    return CampaignUI.preview;
+  } catch (error) {
+    CampaignUI.preview = null;
+    CampaignUI.error = error;
+    renderCampaignAuthoring();
+    return null;
+  }
+}
+
+async function applyCampaign(enabled) {
+  if (CampaignUI.applying) return;
+  if (S.dirty) return toast("Save or discard ordinary project edits before applying a campaign.", "err");
+  const requestSnapshot = Object.freeze(campaignRequest(enabled));
+  CampaignUI.applying = true;
+  renderCampaignAuthoring();
+  const preview = await previewCampaign(requestSnapshot);
+  if (!preview) {
+    CampaignUI.applying = false;
+    renderCampaignAuthoring();
+    return;
+  }
+  try {
+    await apiPost("/api/campaign/apply", { ...requestSnapshot, ifRevision: preview.revision });
+    recordActivity(enabled ? "Campaign applied" : "Campaign disabled", "ok", requestSnapshot.profileId);
+    MechanicsUI.capabilities = null;
+    CampaignUI.loaded = false;
+    CampaignUI.preview = null;
+    await load();
+  } catch (error) {
+    CampaignUI.error = error;
+    recordActivity("Campaign apply", "error", error.code ?? error.message);
+    toast(error.message, "err");
+  } finally {
+    CampaignUI.applying = false;
+    renderCampaignAuthoring();
+  }
+}
+
 function renderMechanicsPreviewResult() {
   const output = $("mechanics-preview-result");
   if (!output) return;
@@ -3579,8 +3733,8 @@ function renderMechanicsPreviewResult() {
 }
 
 function mechanicsRequest(enabled) {
-  if (MechanicsUI.selectedModuleId === "roguelite" && mechanicsProjectModuleVersion() > 3) {
-    throw new Error("Future roguelite schemaVersion 4 modules are read-only in this Studio version.");
+  if (MechanicsUI.selectedModuleId === "roguelite" && mechanicsProjectModuleVersion() > 4) {
+    throw new Error("Future roguelite schemaVersion 5+ modules are read-only in this Studio version.");
   }
   if (MechanicsUI.selectedModuleId === "terraforming" && mechanicsProjectModuleVersion() !== 1) {
     throw new Error("Future terraforming module versions are read-only in this Studio version.");
@@ -3823,6 +3977,8 @@ function renderMechanicsHub() {
       renderTerraformingMechanicsEditor();
     } else if (MechanicsUI.selectedModuleId === "roguelite") {
       renderRogueliteMechanicsEditor();
+      renderCampaignAuthoring();
+      if (!CampaignUI.loaded && !CampaignUI.loading) void loadCampaignAuthoring();
     }
     // Recipe prerequisites are shared authoring metadata. Keep them visible for every module,
     // including elevation recipes, instead of hiding them inside the reactions-only editor.
@@ -3830,7 +3986,7 @@ function renderMechanicsHub() {
   }
   const busy = MechanicsUI.loading || MechanicsUI.applying || MechanicsUI.terraformingRecipeLoading;
   const supportedTerraformingVersion = MechanicsUI.selectedModuleId !== "terraforming" || mechanicsProjectModuleVersion() === 1;
-  const supportedRogueliteVersion = MechanicsUI.selectedModuleId !== "roguelite" || mechanicsProjectModuleVersion() <= 3;
+  const supportedRogueliteVersion = MechanicsUI.selectedModuleId !== "roguelite" || mechanicsProjectModuleVersion() <= 4;
   const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion && supportedRogueliteVersion && !busy;
   const dirtyWriteGuard = Boolean(S.dirty);
   if ($("btn-mechanics-preview")) $("btn-mechanics-preview").disabled = !writable;

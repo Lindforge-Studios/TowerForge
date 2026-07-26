@@ -786,6 +786,26 @@
               <div id="mechanics-roguelite-draft-card-rows" class="mechanics-definition-rows"></div>
               <div id="mechanics-roguelite-draft-pool-rows" class="mechanics-definition-rows"></div>
             </div>
+            <div id="mechanics-roguelite-campaign-editor" class="mechanics-shield-section mechanics-roguelite-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Campaign Run map</h4>
+                  <p>Author an independent opt-in run graph. Supported node types: battle, elite, merchant, event, boss.</p>
+                </div>
+                <button id="btn-campaign-preview" class="btn btn-outline" type="button">Preview campaign</button>
+              </div>
+              <label>Rogue-lite profile ID
+                <input id="mechanics-roguelite-campaign-profile-id" type="text" autocomplete="off" spellcheck="false" placeholder="campaign_run">
+              </label>
+              <label>Campaign graph JSON
+                <textarea id="mechanics-roguelite-campaign-json" class="mono" spellcheck="false" rows="14" placeholder='{"schemaVersion":1,"rogueliteProfileId":"campaign_run","entryNodeIds":[],"nodes":[]}'></textarea>
+              </label>
+              <div class="mechanics-inline-actions">
+                <button id="btn-campaign-enable" class="btn btn-primary" type="button">Enable campaign</button>
+                <button id="btn-campaign-disable" class="btn btn-danger" type="button">Disable campaign</button>
+              </div>
+              <pre id="campaign-preview-result" class="mechanics-preview-result" aria-live="polite">Load or preview the campaign graph.</pre>
+            </div>
           </div>
           <div class="mechanics-actions">
             <button id="btn-mechanics-preview" class="btn btn-outline" type="button">Preview</button>

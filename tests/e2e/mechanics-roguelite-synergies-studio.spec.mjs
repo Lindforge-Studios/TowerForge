@@ -341,7 +341,7 @@ test.describe("R4.1A Studio rogue-lite synergy lifecycle", () => {
     expect(errors()).toEqual([]);
   });
 
-  test("keeps a future roguelite v4 module visible, byte-identical, and read-only", async ({ page }) => {
+  test("keeps a future roguelite v5 module visible, byte-identical, and read-only", async ({ page }) => {
     writeFutureRogueliteFixture(projectDir);
     const before = authoringBytes(projectDir);
     const errors = captureBrowserErrors(page);
@@ -501,7 +501,7 @@ function writeFutureRogueliteFixture(root) {
     schemaVersion: 1,
     modules: {
       roguelite: {
-        schemaVersion: 4,
+        schemaVersion: 5,
         enabled: true,
         profiles: {
           future_profile: {
