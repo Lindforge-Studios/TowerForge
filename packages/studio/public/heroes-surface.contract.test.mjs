@@ -19,7 +19,7 @@ function functionSource(source, name) {
 }
 
 describe("R5.1A Studio static heroes foundation surface", () => {
-  it("describes the Heroes card as an opt-in roster whose v2 adds movement only", () => {
+  it("describes the Heroes card as an opt-in roster with monotonic optional versions", () => {
     const match = app.match(/\{\s*id:\s*["']heroes["']\s*,\s*title:\s*["']Heroes["']\s*,\s*description:\s*["']([^"']+)["']\s*\}/);
     expect(match, "Heroes Mechanics Hub card copy must be explicit").not.toBeNull();
     const copy = match?.[1] ?? "";
@@ -27,7 +27,8 @@ describe("R5.1A Studio static heroes foundation surface", () => {
     expect(copy).toMatch(/roster/i);
     expect(copy).toMatch(/core/i);
     expect(copy).toMatch(/movement|move/i);
-    expect(copy).not.toMatch(/abilit|aura|skill\s*tree|command(?:er)?\s+units?/i);
+    expect(copy).toMatch(/abilit/i);
+    expect(copy).not.toMatch(/aura|skill\s*tree|command(?:er)?\s+units?/i);
   });
 
   it("keeps the exact roster editor isolated inside Mechanics Hub", () => {
@@ -56,7 +57,7 @@ describe("R5.1A Studio static heroes foundation surface", () => {
     const heroStart = hub.indexOf('id="mechanics-heroes-editor"');
     const heroEnd = hub.indexOf('id="mechanics-logistics-editor"', heroStart);
     const editor = hub.slice(heroStart, heroEnd > heroStart ? heroEnd : undefined);
-    expect(editor).not.toMatch(/mana|ability|skill|aura|blocking|TowerScript/i);
+    expect(editor).not.toMatch(/skill|aura|blocking|TowerScript/i);
   });
 
   it("keeps loaded profiles lossless and saves the whole profile via revision guard", () => {
@@ -79,7 +80,7 @@ describe("R5.1A Studio static heroes foundation surface", () => {
     expect(apply).toMatch(/await\s+load\(\)/);
   });
 
-  it("enables v1, preserves it across disable/re-enable, and keeps future v4 read-only", () => {
+  it("enables v1, preserves it across disable/re-enable, and keeps future v5 read-only", () => {
     const hub = functionSource(app, "renderMechanicsHub");
     const effectiveVersion = functionSource(app, "mechanicsEffectiveModuleSchemaVersion");
     const load = functionSource(app, "loadMechanicsProfile");
@@ -89,7 +90,7 @@ describe("R5.1A Studio static heroes foundation surface", () => {
     expect(hub).toMatch(/btn-mechanics-enable[\s\S]*applyMechanics\(true\)/);
     expect(effectiveVersion).toMatch(/heroes[\s\S]*(?:1|moduleSchemaVersion)/i);
     expect(load).toMatch(/normalizeHeroesMechanicsDraft/);
-    expect(app).toMatch(/heroes[\s\S]{0,500}(?:future|read-only|schemaVersion\s*4)/i);
+    expect(app).toMatch(/heroes[\s\S]{0,500}(?:future|read-only|schemaVersion\s*5)/i);
   });
 });
 
@@ -118,7 +119,7 @@ describe("R5.1B Studio hero movement authoring", () => {
     // V1 remains a complete opt-in static profile; the new controls are conditional on v2.
     const render = functionSource(app, "renderHeroesMechanicsEditor");
     expect(render).toMatch(/movementEnabled\s*=\s*editorVersion\s*>=\s*2/);
-    expect(app).toMatch(/HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS\s*=\s*Object\.freeze\(\[1,\s*2,\s*3\]\)/);
+    expect(app).toMatch(/HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS\s*=\s*Object\.freeze\(\[1,\s*2,\s*3,\s*4\]\)/);
   });
 
   it("round-trips exact nested movement and heroes-owned MovementProfileV1 records", () => {
@@ -142,13 +143,13 @@ describe("R5.1B Studio hero movement authoring", () => {
     expect(`${normalize}\n${render}`).not.toMatch(/navigation\.mode|dynamic_flow|enableNavigation/i);
   });
 
-  it("edits v1 and v2, while preserving future v4+ modules read-only", () => {
+  it("edits v1 and v2, while preserving future v5+ modules read-only", () => {
     const render = functionSource(app, "renderHeroesMechanicsEditor");
     const load = functionSource(app, "loadMechanicsProfile");
 
     expect(load).toMatch(/normalizeHeroesMechanicsDraft/);
-    expect(app).toMatch(/supportedModuleSchemaVersions[\s\S]{0,300}1[\s\S]{0,100}2[\s\S]{0,100}3|heroes[\s\S]{0,500}\[\s*1\s*,\s*2\s*,\s*3\s*\]/i);
-    expect(render).toMatch(/future[\s\S]{0,200}(?:4\+|schemaVersion\s*4)|read-only/i);
+    expect(app).toMatch(/supportedModuleSchemaVersions[\s\S]{0,300}1[\s\S]{0,100}2[\s\S]{0,100}3[\s\S]{0,100}4|heroes[\s\S]{0,500}\[\s*1\s*,\s*2\s*,\s*3\s*,\s*4\s*\]/i);
+    expect(render).toMatch(/future[\s\S]{0,200}(?:5\+|schemaVersion\s*5)|read-only/i);
     expect(app).not.toMatch(/future heroes schemaVersion 2\+/i);
   });
 });
@@ -165,7 +166,7 @@ describe("R5.2A Studio hero durability authoring", () => {
       expect(outside).not.toContain(marker);
     }
     const render = functionSource(app, "renderHeroesMechanicsEditor");
-    expect(render).toMatch(/durabilityEnabled\s*=\s*editorVersion\s*===\s*3/);
+    expect(render).toMatch(/durabilityEnabled\s*=\s*editorVersion\s*>=\s*3\s*&&\s*editorVersion\s*<=\s*4/);
     expect(render).toMatch(/durability/);
     expect(render).toMatch(/maxHp/);
     expect(render).toMatch(/shield/);
@@ -180,8 +181,54 @@ describe("R5.2A Studio hero durability authoring", () => {
 
     expect(normalize).toMatch(/return\s+deep\(source\)/);
     expect(normalize).not.toMatch(/maxHp\s*=|capacity\s*=|durability\s*=/);
-    expect(effectiveVersion).toMatch(/durability[\s\S]{0,120}3/);
+    expect(effectiveVersion).toMatch(/hasDurability[\s\S]{0,320}Math\.max\(authoredVersion,\s*3\)/);
     expect(request).toMatch(/profile\s*=\s*deep\(MechanicsUI\.draft\)/);
     expect(request).not.toMatch(/delete\s+profile\.(?:definitions|movementProfiles)/);
+  });
+});
+
+describe("R5.3A Studio targeted hero ability authoring", () => {
+  it("keeps exact v4 mana and one enemy-target ability inside Mechanics Hub", () => {
+    const hubStart = html.indexOf('<section id="tab-mechanics"');
+    const hubEnd = html.indexOf('<section id="tab-settings"', hubStart);
+    const hub = html.slice(hubStart, hubEnd);
+    const outside = `${html.slice(0, hubStart)}${html.slice(hubEnd)}`;
+    for (const marker of [
+      "data-hero-mana-max", "data-hero-mana-starting", "data-hero-mana-regeneration",
+      "data-hero-ability-id", "data-hero-ability-label", "data-hero-ability-target",
+      "data-hero-ability-mana-cost", "data-hero-ability-cooldown",
+      "data-hero-ability-range", "data-hero-ability-damage"
+    ]) {
+      expect(`${html}\n${app}`).toContain(marker);
+      expect(outside).not.toContain(marker);
+    }
+    const render = functionSource(app, "renderHeroesMechanicsEditor");
+    expect(render).toMatch(/abilityEnabled\s*=\s*editorVersion\s*===\s*4/);
+    expect(render).toMatch(/descriptor\?\.versions\?\.\[?4\]?/);
+    expect(render).toMatch(/target[\s\S]{0,160}enemy/i);
+  });
+
+  it("keeps v1-v3 behavior and preserves future v5 losslessly read-only", () => {
+    const normalize = functionSource(app, "normalizeHeroesMechanicsDraft");
+    const render = functionSource(app, "renderHeroesMechanicsEditor");
+    const request = functionSource(app, "mechanicsRequest");
+    expect(app).toMatch(/HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS\s*=\s*Object\.freeze\(\[1,\s*2,\s*3,\s*4\]\)/);
+    expect(render).toMatch(/movementEnabled\s*=\s*editorVersion\s*>=\s*2\s*&&\s*editorVersion\s*<=\s*4/);
+    expect(render).toMatch(/durabilityEnabled\s*=\s*editorVersion\s*>=\s*3\s*&&\s*editorVersion\s*<=\s*4/);
+    expect(app).toMatch(/Future heroes schemaVersion 5\+/);
+    expect(normalize).toMatch(/return\s+deep\(source\)/);
+    expect(request).toMatch(/profile\s*=\s*deep\(MechanicsUI\.draft\)/);
+  });
+
+  it("passes invalid visible numeric values to shared validation without silent repair", () => {
+    const render = functionSource(app, "renderHeroesMechanicsEditor");
+    for (const marker of [
+      "data-hero-mana-max", "data-hero-mana-starting", "data-hero-mana-regeneration",
+      "data-hero-ability-mana-cost", "data-hero-ability-cooldown",
+      "data-hero-ability-range", "data-hero-ability-damage"
+    ]) {
+      expect(render).toMatch(new RegExp(`${marker.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}[\\s\\S]{0,400}Number\\(event\\.target\\.value\\)`));
+    }
+    expect(render).not.toMatch(/data-hero-(?:mana|ability)[\s\S]{0,350}Number\.isFinite\([\s\S]{0,120}(?:>|>=)\s*0/);
   });
 });

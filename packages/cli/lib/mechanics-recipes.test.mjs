@@ -173,6 +173,59 @@ describe("R5.2A durable hero recipe", () => {
   });
 });
 
+describe("R5.3A targeted hero ability recipe", () => {
+  it("materializes one inert heroes v4 commander without adjacent mechanics writes", () => {
+    expect(listMechanicsRecipes().map((recipe) => recipe.id)).toContain("basic_targeted_hero_ability");
+
+    const recipe = materializeMechanicsRecipe("basic_targeted_hero_ability", context);
+    expect(recipe).toMatchObject({
+      id: "basic_targeted_hero_ability",
+      moduleId: "heroes",
+      moduleSchemaVersion: 4,
+      entity: {
+        moduleId: "heroes",
+        moduleSchemaVersion: 4,
+        missionId: "mission_b",
+        profileId: "basic_targeted_hero_ability",
+        profile: {
+          selectedHeroId: "commander",
+          definitions: {
+            commander: {
+              label: "Commander",
+              spawn: "core",
+              movement: { movementProfileId: "ground", speed: 1 },
+              durability: { maxHp: 100, shield: { capacity: 25 } },
+              mana: { max: 100, starting: 60, regenerationPerUnit: 5 },
+              activeAbility: {
+                id: "arc_bolt",
+                label: "Arc Bolt",
+                target: "enemy",
+                manaCost: 20,
+                cooldown: 3,
+                range: 6,
+                damage: 30
+              }
+            }
+          },
+          movementProfiles: {
+            ground: {
+              label: "Ground",
+              terrainMode: "respect_walkable",
+              towerOccupancy: "blocked",
+              defaultTerrainCost: 1000
+            }
+          }
+        }
+      }
+    });
+    expect(recipe.entity).not.toHaveProperty("enabled");
+    for (const adjacent of ["navigation", "combat", "logistics", "scripts", "visuals"]) {
+      expect(recipe.entity).not.toHaveProperty(adjacent);
+      expect(recipe.entity.profile).not.toHaveProperty(adjacent);
+    }
+  });
+});
+
 describe("R1.5 reaction mechanics recipes", () => {
   it("materializes directional Fire/Ice Shatter with explicit combat prerequisites", () => {
     expect(listMechanicsRecipes().map((recipe) => recipe.id)).toContain("elemental_shatter");

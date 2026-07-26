@@ -29,8 +29,8 @@ describe("R5.1B generated Canvas/Phaser hero controls", () => {
 
     expectExactMoveCommand(canvas);
     expectExactMoveCommand(phaser);
-    expect(canvas).toMatch(/selectedHeroId|selectedHero/);
-    expect(phaser).toMatch(/selectedHeroId|selectedHero/);
+    expect(canvas).toMatch(/targetingMode[\s\S]{0,180}heroMove/);
+    expect(phaser).toMatch(/targetingMode[\s\S]{0,180}heroMove/);
     for (const source of [canvas, phaser]) {
       expect(source).toMatch(/presentation\s*=\s*projectHeroesPresentation\s*\(\s*snapshot\s*\)/);
       expect(source).toMatch(/presentation\.active[\s\S]{0,160}presentation\.units\.every\s*\(\s*\(?hero\)?\s*=>\s*hero\.movement\s*\)/);
@@ -49,7 +49,7 @@ describe("R5.1B generated Canvas/Phaser hero controls", () => {
       expect(source).toMatch(/keydown/);
       expect(source).toMatch(/Enter/);
       expect(source).toMatch(/Escape/);
-      expect(source).toMatch(/selectedHero(?:Id)?\s*=\s*null/);
+      expect(source).toMatch(/setTargetingMode\s*\(\s*\{\s*kind\s*:\s*["']build["']/);
     }
     expect(buildSource.match(/hitTestHeroesPresentation/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
     expect(buildSource.match(/projectHeroPresentationPoint/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
@@ -60,8 +60,8 @@ describe("R5.1B generated Canvas/Phaser hero controls", () => {
     const phaser = functionSource(buildSource, "phaserPlayerTemplate");
 
     for (const source of [canvas, phaser]) {
-      expect(source).toMatch(/reset-run[\s\S]{0,500}selectedHero(?:Id)?\s*=\s*null/);
-      expect(source).toMatch(/missionSelect[\s\S]{0,900}selectedHero(?:Id)?\s*=\s*null/);
+      expect(source).toMatch(/reset-run[\s\S]{0,500}setTargetingMode\s*\(\s*\{\s*kind\s*:\s*["']build["']/);
+      expect(source).toMatch(/missionSelect[\s\S]{0,900}setTargetingMode\s*\(\s*\{\s*kind\s*:\s*["']build["']/);
       expect(source).not.toMatch(/snapshot\.selectedHero|game\.selectedHero/);
     }
   });

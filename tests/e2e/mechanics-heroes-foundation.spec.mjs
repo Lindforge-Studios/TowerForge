@@ -264,7 +264,97 @@ test.describe("R5.1A Studio static heroes lifecycle", () => {
     }
   });
 
-  test("enables, edits, reloads, disables, re-enables, and preserves future v4 read-only", async ({ page }) => {
+  test("enables, edits, saves, reloads, disables, and re-enables a v4 targeted hero ability", async ({ page }) => {
+    test.setTimeout(120_000);
+    const balancePath = path.join(projectDir, "content", "balance.json");
+    const mechanicsPath = path.join(projectDir, "content", "mechanics.json");
+    const originalBalanceBytes = fs.readFileSync(balancePath, "utf8");
+    const originalMechanicsBytes = fs.existsSync(mechanicsPath) ? fs.readFileSync(mechanicsPath, "utf8") : null;
+    try {
+      await openStudio(page, studioUrl);
+      await openHeroesMechanics(page);
+      await expect(page.locator('#mechanics-recipe-select option[value="basic_targeted_hero_ability"]'))
+        .toHaveCount(1);
+      await page.locator("#mechanics-recipe-select").selectOption("basic_targeted_hero_ability");
+      await page.locator("#btn-mechanics-new-profile").click();
+      await expect(page.locator("#mechanics-profile-id")).toHaveValue("basic_targeted_hero_ability");
+      const commander = page.locator('[data-hero-definition-id="commander"]');
+      await expect(commander.locator("[data-hero-mana-max]")).toHaveValue("100");
+      await expect(commander.locator("[data-hero-ability-id]")).toHaveValue("arc_bolt");
+      await commander.locator("[data-hero-mana-max]").fill("120");
+      await commander.locator("[data-hero-mana-starting]").fill("80");
+      await commander.locator("[data-hero-mana-regeneration]").fill("6");
+      await commander.locator("[data-hero-ability-label]").fill("Arc Lance");
+      await commander.locator("[data-hero-ability-mana-cost]").fill("25");
+      await commander.locator("[data-hero-ability-cooldown]").fill("4");
+      await commander.locator("[data-hero-ability-range]").fill("7");
+      await commander.locator("[data-hero-ability-damage]").fill("35");
+
+      const beforePreview = readHeroesState(projectDir);
+      await page.locator("#btn-mechanics-preview").click();
+      await expect(page.locator("#mechanics-preview-result")).toContainText('"ok": true');
+      expect(readHeroesState(projectDir)).toEqual(beforePreview);
+      await page.locator("#btn-mechanics-enable").click();
+      await expect.poll(() => readHeroesState(projectDir)).toMatchObject({
+        moduleSchemaVersion: 4,
+        enabled: true,
+        selectedProfileId: "basic_targeted_hero_ability",
+        profile: {
+          definitions: {
+            commander: {
+              mana: { max: 120, starting: 80, regenerationPerUnit: 6 },
+              activeAbility: {
+                id: "arc_bolt", label: "Arc Lance", target: "enemy",
+                manaCost: 25, cooldown: 4, range: 7, damage: 35
+              }
+            }
+          }
+        }
+      });
+
+      await page.reload();
+      await openHeroesMechanics(page);
+      const reloaded = page.locator('[data-hero-definition-id="commander"]');
+      await expect(reloaded.locator("[data-hero-ability-label]")).toHaveValue("Arc Lance");
+      const beforeInvalidPreview = readHeroesState(projectDir);
+      await reloaded.locator("[data-hero-ability-mana-cost]").fill("0");
+      await page.locator("#btn-mechanics-preview").click();
+      await expect(page.locator("#mechanics-preview-result")).toContainText(/manaCost|positive|greater|range/i);
+      await expect(page.locator("#mechanics-preview-result")).not.toContainText('"ok": true');
+      expect(readHeroesState(projectDir)).toEqual(beforeInvalidPreview);
+      await reloaded.locator("[data-hero-ability-mana-cost]").fill("25");
+      await reloaded.locator("[data-hero-ability-damage]").fill("42");
+      await page.locator("#btn-mechanics-save").click();
+      await expect.poll(() => (
+        readHeroesState(projectDir).profile?.definitions?.commander?.activeAbility?.damage
+      )).toBe(42);
+
+      await page.reload();
+      await openHeroesMechanics(page);
+      await expect(page.locator('[data-hero-definition-id="commander"] [data-hero-ability-damage]'))
+        .toHaveValue("42");
+      const preservedProfile = structuredClone(readHeroesState(projectDir).profile);
+      page.once("dialog", (dialog) => dialog.accept());
+      await page.locator("#btn-mechanics-disable").click();
+      await expect.poll(() => readHeroesState(projectDir)).toMatchObject({
+        enabled: false,
+        selectedProfileId: "basic_targeted_hero_ability",
+        profile: preservedProfile
+      });
+      await page.locator("#btn-mechanics-enable").click();
+      await expect.poll(() => readHeroesState(projectDir)).toMatchObject({
+        enabled: true,
+        selectedProfileId: "basic_targeted_hero_ability",
+        profile: preservedProfile
+      });
+    } finally {
+      fs.writeFileSync(balancePath, originalBalanceBytes, "utf8");
+      if (originalMechanicsBytes === null) fs.rmSync(mechanicsPath, { force: true });
+      else fs.writeFileSync(mechanicsPath, originalMechanicsBytes, "utf8");
+    }
+  });
+
+  test("enables, edits, reloads, disables, re-enables, and preserves future v5 read-only", async ({ page }) => {
     test.setTimeout(120_000);
     const browserErrors = captureBrowserErrors(page);
     await openStudio(page, studioUrl);
@@ -341,8 +431,8 @@ test.describe("R5.1A Studio static heroes lifecycle", () => {
 
     const mechanicsPath = path.join(projectDir, "content", "mechanics.json");
     const future = readJson(mechanicsPath);
-    future.modules.heroes.schemaVersion = 4;
-    future.modules.heroes.futureModuleRule = { preserve: ["exact", 4] };
+    future.modules.heroes.schemaVersion = 5;
+    future.modules.heroes.futureModuleRule = { preserve: ["exact", 5] };
     future.modules.heroes.profiles.basic_commander_hero.futureProfileRule = { preserve: true };
     writeJson(mechanicsPath, future);
     const futureBytes = fs.readFileSync(mechanicsPath, "utf8");
@@ -385,6 +475,7 @@ test.describe("R5.1A generated-player static hero presentation", () => {
       buildHeroPlayerFixture(tempRoot, combination);
       buildMobileHeroPlayerFixture(tempRoot, combination);
       buildDurableHeroPlayerFixture(tempRoot, combination);
+      buildAbilityHeroPlayerFixture(tempRoot, combination);
     }
     buildLegacyPlayerFixture(tempRoot);
     port = await freeHttpPort();
@@ -392,7 +483,7 @@ test.describe("R5.1A generated-player static hero presentation", () => {
       const relative = decodeURIComponent(new URL(request.url, `http://127.0.0.1:${port}`).pathname)
         .replace(/^\/+/, "");
       const [mode, grid, renderer, ...parts] = relative.split("/");
-      if (!(["active", "mobile", "durable", "legacy"].includes(mode)
+      if (!(["active", "mobile", "durable", "ability", "legacy"].includes(mode)
         && ["hex", "square"].includes(grid)
         && ["canvas", "phaser"].includes(renderer))) return respond404(response);
       const fixture = mode === "legacy"
@@ -484,6 +575,7 @@ test.describe("R5.1A generated-player static hero presentation", () => {
             movement: { targetCoord: null, nextCoord: null, edgeProgress: 0 }
           }]
         });
+        await expect(page.locator("#hero-action-bar")).toHaveCount(0);
 
         const target = initial.spawnCoord;
         expect(target).not.toEqual(initial.coreCoord);
@@ -537,6 +629,7 @@ test.describe("R5.1A generated-player static hero presentation", () => {
           }
         }]
       });
+      await expect(page.locator("#hero-action-bar")).toHaveCount(0);
       await expect.poll(
         () => countHeroDurabilityPixels(page, renderer, initial.coreCoord, "healthy"),
         { message: `${grid}/${renderer} must draw HP/shield cues`, timeout: 10_000 }
@@ -574,6 +667,97 @@ test.describe("R5.1A generated-player static hero presentation", () => {
       ).toBeGreaterThan(5);
       expect(browserErrors()).toEqual([]);
     });
+  }
+
+  for (const { grid, renderer } of combinations) {
+    for (const inputFamily of mobileInputFamilies) {
+    test(`targets an enemy with ${inputFamily} using the opt-in v4 hero ability on ${grid}/${renderer}`, async ({ page }) => {
+      test.setTimeout(120_000);
+      const browserErrors = captureBrowserErrors(page);
+      await page.goto(playerUrl(port, "ability", grid, renderer));
+      await waitForPlayerBoot(page);
+
+      const initial = await inspectPlayer(page);
+      expect(initial.heroes).toEqual({
+        schemaVersion: 4,
+        units: [{
+          id: "commander",
+          definitionId: "commander",
+          label: "Ability Sentinel",
+          coord: initial.coreCoord,
+          movement: { targetCoord: null, nextCoord: null, edgeProgress: 0 },
+          durability: {
+            hp: 100, maxHp: 100, shield: { current: 25, capacity: 25 }, defeated: false
+          },
+          mana: { current: 100, max: 100, regenerationPerUnit: 5 },
+          activeAbility: {
+            id: "arc_bolt", label: "Arc Bolt", target: "enemy", manaCost: 20,
+            cooldown: 3, cooldownRemaining: 0, range: 65_536, damage: 30, ready: true
+          }
+        }]
+      });
+      const heroBar = page.locator("#hero-action-bar");
+      const heroButton = heroBar.locator("button");
+      await expect(heroBar).toBeVisible();
+      await expect(heroBar).toHaveAttribute("data-mana-current", "100");
+      await expect(heroButton).toContainText("Arc Bolt [1]");
+      await expect(heroButton).toBeEnabled();
+
+      await page.locator("#start-wave").click();
+      await expect.poll(async () => (await inspectPlayer(page)).enemies.length, {
+        message: `${grid}/${renderer} must spawn a live ability target`, timeout: 15_000
+      }).toBeGreaterThan(0);
+      await page.locator("#speed").evaluate((element) => {
+        element.value = "0";
+        element.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+
+      // Mutually-exclusive targeting: arming a mission ability cancels the hero ability and vice versa.
+      await heroButton.click();
+      await expect(heroButton).toHaveClass(/armed/);
+      const missionAbility = page.locator('#ability-bar button[data-aid="path_water"]');
+      await missionAbility.click();
+      await expect(missionAbility).toHaveClass(/armed/);
+      await expect(heroButton).not.toHaveClass(/armed/);
+      await heroButton.click();
+      await expect(heroButton).toHaveClass(/armed/);
+      await expect(missionAbility).not.toHaveClass(/armed/);
+
+      const manaBeforeEmptyTarget = (await inspectPlayer(page)).heroes.units[0].mana.current;
+      const emptyPoint = await page.evaluate(() => window.__towerforgeTilePoint(window.__towerforgeInspect().coreCoord));
+      await page.mouse.click(emptyPoint.x, emptyPoint.y);
+      await expect(heroButton).toHaveClass(/armed/);
+      expect((await inspectPlayer(page)).heroes.units[0].mana.current).toBe(manaBeforeEmptyTarget);
+      await expect(page.locator("#message")).toContainText("live enemy");
+
+      if (inputFamily === "keyboard") {
+        await page.locator("#playfield").focus();
+        await page.keyboard.press("Escape");
+        await page.keyboard.press("Digit1");
+        await moveKeyboardCursorTo(page, initial.spawnCoord);
+        await page.keyboard.press("Enter");
+      } else {
+        const enemyPoint = await page.evaluate(() => {
+          const enemy = window.__towerforgeInspect().enemies[0];
+          return window.__towerforgeEnemyPoint(enemy.id);
+        });
+        if (inputFamily === "touch") await page.touchscreen.tap(enemyPoint.x, enemyPoint.y);
+        else await page.mouse.click(enemyPoint.x, enemyPoint.y);
+      }
+
+      await expect.poll(async () => (await inspectPlayer(page)).heroes.units[0], {
+        message: `${grid}/${renderer} ${inputFamily} must dispatch exact v5`, timeout: 10_000
+      }).toMatchObject({
+        mana: { current: 80, max: 100, regenerationPerUnit: 5 },
+        activeAbility: { cooldownRemaining: 3, ready: false }
+      });
+      await expect(heroBar).toHaveAttribute("data-mana-current", "80");
+      await expect(heroBar).toHaveAttribute("data-cooldown-remaining", "3");
+      await expect(heroButton).toBeDisabled();
+      await expect(heroButton).toContainText("(3)");
+      expect(browserErrors()).toEqual([]);
+    });
+    }
   }
 });
 
@@ -696,6 +880,65 @@ function buildDurableHeroPlayerFixture(root, { grid, renderer }) {
                 spawn: "core",
                 movement: { movementProfileId: "ground", speed: 20 },
                 durability: { maxHp: 100, shield: { capacity: 25 } }
+              }
+            },
+            movementProfiles: {
+              ground: {
+                label: "Ground",
+                terrainMode: "respect_walkable",
+                towerOccupancy: "blocked",
+                defaultTerrainCost: 1_000
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+  buildPlayer(projectDir, renderer, "heroes");
+}
+
+function buildAbilityHeroPlayerFixture(root, { grid, renderer }) {
+  const name = `hero_ability_${grid}_${renderer}`;
+  const { projectDir } = createProject({ name, parentDir: root, templateName: "classic", gridKind: grid });
+  const manifestPath = path.join(projectDir, "project.json");
+  const manifest = readJson(manifestPath);
+  manifest.schemaVersion = 3;
+  writeJson(manifestPath, manifest);
+
+  const balancePath = path.join(projectDir, "content", "balance.json");
+  const balance = readJson(balancePath);
+  const missionId = balance.defaultMissionId ?? Object.keys(balance.missions)[0];
+  balance.missions[missionId].mechanics = { profiles: { heroes: "ability_commanders" } };
+  balance.abilities.path_water = {
+    id: "path_water", label: "Water Path", cooldown: 60, duration: 20, radius: 3
+  };
+  balance.missions[missionId].abilityIds = ["path_water"];
+  for (const enemy of Object.values(balance.enemies)) {
+    enemy.maxHp = Math.max(enemy.maxHp, 1_000);
+    enemy.speed = 0.01;
+  }
+  writeJson(balancePath, balance);
+  writeJson(path.join(projectDir, "content", "mechanics.json"), {
+    schemaVersion: 1,
+    modules: {
+      heroes: {
+        schemaVersion: 4,
+        enabled: true,
+        profiles: {
+          ability_commanders: {
+            selectedHeroId: "commander",
+            definitions: {
+              commander: {
+                label: "Ability Sentinel",
+                spawn: "core",
+                movement: { movementProfileId: "ground", speed: 2 },
+                durability: { maxHp: 100, shield: { capacity: 25 } },
+                mana: { max: 100, starting: 100, regenerationPerUnit: 5 },
+                activeAbility: {
+                  id: "arc_bolt", label: "Arc Bolt", target: "enemy", manaCost: 20,
+                  cooldown: 3, range: 65_536, damage: 30
+                }
               }
             },
             movementProfiles: {

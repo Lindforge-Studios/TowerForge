@@ -204,6 +204,8 @@ export declare class TowerDefenseGame {
     getTowerIdAt(coord: HexCoord): string | undefined;
     /** Retarget the single opt-in v2 hero through a canonical shared flow field. */
     moveHero(heroId: string, target: HexCoord): ActionResult;
+    /** Use the single deterministic enemy-targeted ability authored by an active heroes v4 profile. */
+    useHeroAbility(heroId: string, abilityId: string, targetEnemyId: string): ActionResult;
     tick(deltaUnits: number): void;
     getSnapshot(): GameSnapshot;
     getRenderSnapshot(): GameSnapshot;
@@ -298,6 +300,7 @@ export declare class TowerDefenseGame {
     private buildHeroMovementField;
     private stabilizeHeroMovement;
     private moveHeroUnit;
+    private updateHeroAbility;
     private navigationField;
     private createEnemyNavigationState;
     private createDynamicChildEnemyState;
@@ -333,7 +336,7 @@ export declare class TowerDefenseGame {
     private applyHealAuras;
     /** Boss pattern: enemies with `towerDisrupt` periodically silence towers within radius. */
     private updateTowerDisruptions;
-    /** Boss pattern: enemies with `towerAttack` damage the nearest durable tower or opt-in v3 hero. */
+    /** Boss pattern: enemies with `towerAttack` damage the nearest durable tower or opt-in durable hero. */
     private updateEnemyTowerAttacks;
     private artifactManagementAvailability;
     private replaceArtifactSocket;

@@ -111,11 +111,7 @@ describe("R5.2A shared hero durability presentation", () => {
     }
   });
 
-  it("treats v4 as future and preserves the exact existing v1/v2 projections", () => {
-    expect(Renderer.projectHeroesPresentation({
-      heroes: { ...durableSnapshot().heroes, schemaVersion: 4 }
-    })).toEqual({ active: false, units: [] });
-
+  it("preserves the exact existing v1/v2 projections", () => {
     expect(Renderer.projectHeroesPresentation({
       heroes: {
         schemaVersion: 1,

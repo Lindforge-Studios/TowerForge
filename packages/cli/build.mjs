@@ -677,7 +677,7 @@ function playerTemplate() {
   validateCampaignRunAgainstContent
 } from "./engine/index.js";
 import { createPlayerProfileStore, derivePlayerProfileStorageKey } from "./player-runtime/index.mjs";
-import { createCanvasRenderer, hitTestHeroesPresentation, projectCampaignPresentation, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectRoguelitePresentation } from "./renderer/index.mjs";
+import { createCanvasRenderer, hitTestHeroesPresentation, projectCampaignPresentation, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectRoguelitePresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
 import { createAudioPlayer } from "./renderer/audio.mjs";
 import project from "./project-data.js";
 
@@ -708,10 +708,8 @@ let pendingCampaignBattle = false;
 const renderer = createCanvasRenderer({ canvas, content, theme: content.visuals?.theme?.renderer });
 let lastFrame = performance.now();
 let message = "Choose a tower, click a buildable tile, then start the wave.";
-let armedAbility = null;
-let sellMode = false;
+let targetingMode = { kind: "build" };
 let selectedTowerId = null;
-let selectedHeroId = null;
 let keyboardCoord = null;
 let navigationHoverCoord = null;
 let navigationOverlayPlacementState = null;
@@ -743,8 +741,8 @@ if ("serviceWorker" in navigator) {
 }
 $("start-wave").addEventListener("click", () => { audio.resume(); report(game.startNextWave()); });
 $("pause-run").addEventListener("click", () => setPaused(Number($("speed").value) > 0));
-$("sell-mode").addEventListener("click", () => setSellMode(!sellMode));
-$("reset-run").addEventListener("click", () => { game.reset(); victoryRewarded = false; selectedTowerId = null; selectedHeroId = null; initAbilityBar(); setSellMode(false); clearNavigationOverlay(); message = "Run reset."; });
+$("sell-mode").addEventListener("click", () => setSellMode(targetingMode.kind !== "sell"));
+$("reset-run").addEventListener("click", () => { game.reset(); victoryRewarded = false; selectedTowerId = null; setTargetingMode({ kind: "build" }); initAbilityBar(); clearNavigationOverlay(); message = "Run reset."; });
 $("reset-progress")?.addEventListener("click", resetPlayerProgress);
 $("speed").addEventListener("input", syncSpeedUi);
 $("snd").addEventListener("change", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
@@ -761,10 +759,11 @@ document.addEventListener("keydown", (event) => {
   if (tag === "BUTTON" || tag === "A" || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;
   if (event.code === "Space") { event.preventDefault(); setPaused(Number($("speed").value) > 0); return; }
   if (document.activeElement !== canvas) return;
+  if (event.code === "Digit1") { event.preventDefault(); armCurrentHeroAbility(); return; }
   const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
   if (moves[event.key]) { event.preventDefault(); moveKeyboardCursor(moves[event.key][0], moves[event.key][1]); }
-  else if (event.key === "Enter") { event.preventDefault(); const coord = ensureKeyboardCoord(); actAtCoord(coord, hitTestHeroAtCoord(coord)); }
-  else if (event.key === "Escape") { event.preventDefault(); selectedHeroId = null; setArmed(null); setSellMode(false); message = "Build action cancelled."; }
+  else if (event.key === "Enter") { event.preventDefault(); const coord = ensureKeyboardCoord(); actAtCoord(coord, hitTestHeroAtCoord(coord), hitTestHeroAbilityEnemyAtCoord(coord)); }
+  else if (event.key === "Escape") { event.preventDefault(); setTargetingMode({ kind: "build" }); message = "Build action cancelled."; }
 });
 syncSpeedUi();
 syncAudioSettings();
@@ -781,6 +780,15 @@ window.__towerforgeCampaignInspect = () => ({
 window.__towerforgeTilePoint = (coord) => {
   const snapshot = game.getRenderSnapshot();
   const point = renderer.center(coord, renderer.geometry(snapshot.tiles, snapshot.grid));
+  const rect = canvas.getBoundingClientRect();
+  return { x: rect.left + point.x * rect.width / canvas.width, y: rect.top + point.y * rect.height / canvas.height };
+};
+window.__towerforgeEnemyPoint = (enemyId) => {
+  const snapshot = game.getRenderSnapshot();
+  const enemy = snapshot.enemies.find((candidate) => candidate.id === enemyId);
+  if (!enemy) return null;
+  const geom = renderer.geometry(snapshot.tiles, snapshot.grid);
+  const point = renderer.enemyPoint(enemy, snapshot, geom);
   const rect = canvas.getBoundingClientRect();
   return { x: rect.left + point.x * rect.width / canvas.width, y: rect.top + point.y * rect.height / canvas.height };
 };
@@ -805,7 +813,7 @@ canvas.addEventListener("pointerdown", (event) => {
   if (!coord) return;
   window.__towerforgeLastPointerCoord = coord;
   syncKeyboardCursor(coord);
-  actAtCoord(coord, hitTestHeroAtPointer(event));
+  actAtCoord(coord, hitTestHeroAtPointer(event), hitTestHeroAbilityEnemyAtPointer(event));
 });
 
 function heroMovementPresentation() {
@@ -831,6 +839,34 @@ function hitTestHeroAtPointer(event) {
   const geom = renderer.geometry(source.snapshot.tiles, source.snapshot.grid);
   const point = { x: (event.clientX - rect.left) * canvas.width / rect.width, y: (event.clientY - rect.top) * canvas.height / rect.height };
   return hitTestHeroesPresentation(source.presentation, point, (candidate) => renderer.center(candidate, geom), geom.r * 0.7);
+}
+
+function hitTestHeroAbilityEnemyAtCoord(coord) {
+  if (targetingMode.kind !== "heroAbility" || !coord) return null;
+  const snapshot = game.getRenderSnapshot();
+  const geom = renderer.geometry(snapshot.tiles, snapshot.grid);
+  return selectHeroAbilityEnemy(
+    snapshot.enemies,
+    renderer.center(coord, geom),
+    (enemy) => renderer.enemyPoint(enemy, snapshot, geom)
+  );
+}
+
+function hitTestHeroAbilityEnemyAtPointer(event) {
+  if (targetingMode.kind !== "heroAbility") return null;
+  const snapshot = game.getRenderSnapshot();
+  const rect = canvas.getBoundingClientRect();
+  const geom = renderer.geometry(snapshot.tiles, snapshot.grid);
+  const point = {
+    x: (event.clientX - rect.left) * canvas.width / rect.width,
+    y: (event.clientY - rect.top) * canvas.height / rect.height
+  };
+  return selectHeroAbilityEnemy(
+    snapshot.enemies,
+    point,
+    (enemy) => renderer.enemyPoint(enemy, snapshot, geom),
+    geom.r * 0.62
+  );
 }
 
 function clearNavigationOverlay() {
@@ -889,7 +925,7 @@ function syncNavigationOverlaySnapshot(snapshot) {
 }
 
 function refreshNavigationOverlay(coord = navigationHoverCoord || keyboardCoord) {
-  if (!coord || !towerId || sellMode || armedAbility) {
+  if (!coord || !towerId || targetingMode.kind !== "build") {
     clearNavigationOverlay();
     return;
   }
@@ -911,26 +947,43 @@ function refreshNavigationOverlay(coord = navigationHoverCoord || keyboardCoord)
   if (blocked?.reasonKey === "reason.lastPathBlocked") message = "That tower would block the last path.";
 }
 
-function actAtCoord(coord, heroHitId = null) {
+function actAtCoord(coord, heroHitId = null, enemyHitId = null) {
   if (!coord) return;
-  if (sellMode) {
+  if (targetingMode.kind === "sell") {
     const towerAt = game.getTowerIdAt(coord);
     report(towerAt ? game.sellTower(towerAt) : { ok: false, reason: "Choose a tower tile." });
     if (towerAt === selectedTowerId) selectedTowerId = null;
     setSellMode(false);
     return;
   }
-  if (armedAbility) { report(game.useAbility(armedAbility, coord)); setArmed(null); return; }
-  if (selectedHeroId) {
+  if (targetingMode.kind === "missionAbility") {
+    report(game.useAbility(targetingMode.abilityId, coord));
+    setTargetingMode({ kind: "build" });
+    return;
+  }
+  if (targetingMode.kind === "heroAbility") {
+    if (!enemyHitId) { message = "Choose a live enemy target."; return; }
     const result = dispatchGameCommand(game, {
-      schemaVersion: 4, type: "moveHero", heroId: selectedHeroId,
+      schemaVersion: 5,
+      type: "useHeroAbility",
+      heroId: targetingMode.heroId,
+      abilityId: targetingMode.abilityId,
+      targetEnemyId: enemyHitId
+    });
+    report(result);
+    if (result.ok) setTargetingMode({ kind: "build" });
+    return;
+  }
+  if (targetingMode.kind === "heroMove") {
+    const result = dispatchGameCommand(game, {
+      schemaVersion: 4, type: "moveHero", heroId: targetingMode.heroId,
       target: { q: coord.q, r: coord.r }
     });
     report(result);
-    if (result.ok) selectedHeroId = null;
+    if (result.ok) setTargetingMode({ kind: "build" });
     return;
   }
-  if (heroHitId) { selectedHeroId = heroHitId; selectedTowerId = null; message = "Hero selected. Choose a destination."; return; }
+  if (heroHitId) { setTargetingMode({ kind: "heroMove", heroId: heroHitId }); selectedTowerId = null; message = "Hero selected. Choose a destination."; return; }
   const towerAt = game.getTowerIdAt(coord);
   if (towerAt) { selectedTowerId = towerAt; message = "Tower selected."; return; }
   if (!towerId) return;
@@ -974,10 +1027,8 @@ function createGame() {
 }
 
 function setSellMode(active) {
-  sellMode = Boolean(active);
-  $("sell-mode").setAttribute("aria-pressed", String(sellMode));
-  if (sellMode) { setArmed(null); message = "Click a tower to sell it."; }
-  if (sellMode) clearNavigationOverlay(); else refreshNavigationOverlay();
+  setTargetingMode(active ? { kind: "sell" } : { kind: "build" });
+  if (active) message = "Click a tower to sell it.";
 }
 
 function setPaused(paused) {
@@ -1028,7 +1079,7 @@ function initSelectors() {
     missionId = missionSelect.value;
     towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
     game = createGame();
-    selectedHeroId = null;
+    setTargetingMode({ kind: "build" });
     syncKeyboardCursor(null);
     clearNavigationOverlay();
     victoryRewarded = false;
@@ -1052,7 +1103,7 @@ function initDifficultySelector() {
     const result = choosePlayerDifficulty(select.value);
     if (!result.ok) { select.value = currentPlayerLaunchOptions().difficultyId; return; }
     game = createGame();
-    selectedHeroId = null;
+    setTargetingMode({ kind: "build" });
     clearNavigationOverlay();
     victoryRewarded = false;
     selectedTowerId = null;
@@ -1076,20 +1127,33 @@ function initTowerSelector() {
   towerSelect.onchange = () => { towerId = towerSelect.value; refreshNavigationOverlay(); };
 }
 
+function setTargetingMode(next) {
+  targetingMode = next;
+  $("sell-mode").setAttribute("aria-pressed", String(targetingMode.kind === "sell"));
+  for (const btn of document.querySelectorAll("#ability-bar button")) {
+    btn.classList.toggle("armed", targetingMode.kind === "missionAbility" && btn.dataset.aid === targetingMode.abilityId);
+  }
+  const heroButton = document.querySelector("#hero-action-bar button");
+  if (heroButton) heroButton.classList.toggle("armed", targetingMode.kind === "heroAbility");
+  if (targetingMode.kind === "build") refreshNavigationOverlay(); else clearNavigationOverlay();
+}
 function setArmed(id) {
-  armedAbility = id;
-  if (id) message = "Click the map to use " + ((game.getSnapshot().abilities[id] || {}).label || id) + ".";
-  if (id) clearNavigationOverlay(); else refreshNavigationOverlay();
-  for (const btn of document.querySelectorAll("#ability-bar button")) btn.classList.toggle("armed", btn.dataset.aid === id);
+  if (!id) { setTargetingMode({ kind: "build" }); return; }
+  setTargetingMode({ kind: "missionAbility", abilityId: id });
+  message = "Click the map to use " + ((game.getSnapshot().abilities[id] || {}).label || id) + ".";
 }
 function initAbilityBar() {
   const bar = $("ability-bar");
   if (!bar) return;
   const abilities = Object.values(game.getSnapshot().abilities || {});
   bar.innerHTML = abilities.map((a) => \`<button data-aid="\${escapeHtml(a.id)}" title="Radius \${a.radius}, cooldown \${a.cooldown}">\${escapeHtml(a.label || a.id)}</button>\`).join("");
-  armedAbility = null;
+  setTargetingMode({ kind: "build" });
   for (const btn of bar.querySelectorAll("button")) {
-    btn.onclick = () => { audio.resume(); setArmed(armedAbility === btn.dataset.aid ? null : btn.dataset.aid); };
+    btn.onclick = () => { audio.resume(); setArmed(
+      targetingMode.kind === "missionAbility" && targetingMode.abilityId === btn.dataset.aid
+        ? null
+        : btn.dataset.aid
+    ); };
   }
 }
 function updateAbilityBar(snap) {
@@ -1099,8 +1163,67 @@ function updateAbilityBar(snap) {
     btn.disabled = !ready;
     const cd = Math.ceil((a && a.cooldownRemaining) || 0);
     btn.textContent = ((a && a.label) || btn.dataset.aid) + (cd > 0 ? " (" + cd + ")" : "");
-    if (!ready && armedAbility === btn.dataset.aid) setArmed(null);
+    if (!ready && targetingMode.kind === "missionAbility" && targetingMode.abilityId === btn.dataset.aid) setArmed(null);
   }
+}
+
+function activeHeroAbilityUnit(snapshot = game.getRenderSnapshot()) {
+  const presentation = projectHeroesPresentation(snapshot);
+  const hero = presentation.active && presentation.units.length === 1
+    ? presentation.units[0]
+    : null;
+  return hero?.activeAbility && hero?.mana ? hero : null;
+}
+
+function armCurrentHeroAbility() {
+  const hero = activeHeroAbilityUnit();
+  if (!hero || !hero.activeAbility.ready) return;
+  setTargetingMode({ kind: "heroAbility", heroId: hero.id, abilityId: hero.activeAbility.id });
+  message = "Choose a live enemy for " + hero.activeAbility.label + ".";
+}
+
+function updateHeroActionBar(snap) {
+  const hero = activeHeroAbilityUnit(snap);
+  let bar = document.getElementById("hero-action-bar");
+  if (!hero) {
+    if (bar) bar.remove();
+    if (targetingMode.kind === "heroAbility") setTargetingMode({ kind: "build" });
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement("section");
+    bar.id = "hero-action-bar";
+    bar.className = "ability-bar hero-action-bar";
+    bar.setAttribute("aria-label", "Hero actions");
+    $("message").before(bar);
+  }
+  let button = bar.querySelector("button");
+  if (!button) {
+    button = document.createElement("button");
+    button.type = "button";
+    button.addEventListener("click", () => {
+      audio.resume();
+      if (targetingMode.kind === "heroAbility") setTargetingMode({ kind: "build" });
+      else armCurrentHeroAbility();
+    });
+    bar.append(button);
+  }
+  let status = bar.querySelector("span");
+  if (!status) { status = document.createElement("span"); bar.append(status); }
+  const ability = hero.activeAbility;
+  button.disabled = !ability.ready;
+  button.dataset.heroId = hero.id;
+  button.dataset.abilityId = ability.id;
+  button.classList.toggle("armed", targetingMode.kind === "heroAbility");
+  const cooldown = Math.ceil(ability.cooldownRemaining);
+  button.textContent = ability.label + " [1]" + (cooldown > 0 ? " (" + cooldown + ")" : "");
+  button.title = "Mana " + hero.mana.current + "/" + hero.mana.max + " · Cost " + ability.manaCost;
+  status.textContent = "Mana " + hero.mana.current + "/" + hero.mana.max
+    + " (+" + hero.mana.regenerationPerUnit + ")";
+  bar.dataset.manaCurrent = String(hero.mana.current);
+  bar.dataset.manaMax = String(hero.mana.max);
+  bar.dataset.cooldownRemaining = String(ability.cooldownRemaining);
+  if (!ability.ready && targetingMode.kind === "heroAbility") setTargetingMode({ kind: "build" });
 }
 
 function updateCampaignRun() {
@@ -1203,7 +1326,7 @@ function selectCampaignNode(nodeId) {
     return;
   }
   towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
-  selectedHeroId = null;
+  setTargetingMode({ kind: "build" });
   refreshMissionOptions();
   syncKeyboardCursor(null);
   clearNavigationOverlay();
@@ -1374,6 +1497,7 @@ function draw(snap, events) {
 
 function updateHud(snap) {
   updateAbilityBar(snap);
+  updateHeroActionBar(snap);
   updateTargetMode(snap);
   updateRogueliteStatus(snap);
   if (snap.outcome === "victory" && !victoryRewarded) {
@@ -1610,7 +1734,8 @@ import {
   projectTerraformingPresentation,
   resolveExposurePresentation,
   resolveMarkPresentation,
-  resolveShieldPresentation
+  resolveShieldPresentation,
+  selectHeroAbilityEnemy
 } from "./renderer/index.mjs";
 import { expandAutotileInvalidations, resolveAutotile } from "./renderer/autotile.mjs";
 import project from "./project-data.js";
@@ -1649,10 +1774,8 @@ let campaignRun = activeCampaign ? createCampaignRun("campaign") : null;
 let pendingCampaignNodeId = null;
 let pendingCampaignBattle = false;
 let message = "Choose a tower, click a buildable tile, then start the wave.";
-let armedAbility = null;
-let sellMode = false;
+let targetingMode = { kind: "build" };
 let selectedTowerId = null;
-let selectedHeroId = null;
 let keyboardCoord = null;
 let navigationHoverCoord = null;
 let navigationOverlay = projectNavigationPlacementCues(undefined);
@@ -1682,8 +1805,8 @@ setupCampaignRunControls();
 updateCampaignRun();
 $("start-wave").addEventListener("click", () => { audio.resume(); report(game.startNextWave()); });
 $("pause-run").addEventListener("click", () => setPaused(Number($("speed").value) > 0));
-$("sell-mode").addEventListener("click", () => setSellMode(!sellMode));
-$("reset-run").addEventListener("click", () => { game.reset(); victoryRewarded = false; selectedTowerId = null; selectedHeroId = null; initAbilityBar(); setSellMode(false); clearNavigationOverlay(); message = "Run reset."; });
+$("sell-mode").addEventListener("click", () => setSellMode(targetingMode.kind !== "sell"));
+$("reset-run").addEventListener("click", () => { game.reset(); victoryRewarded = false; selectedTowerId = null; setTargetingMode({ kind: "build" }); initAbilityBar(); clearNavigationOverlay(); message = "Run reset."; });
 $("reset-progress")?.addEventListener("click", resetPlayerProgress);
 $("speed").addEventListener("input", syncSpeedUi);
 $("snd").addEventListener("change", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
@@ -1700,10 +1823,11 @@ document.addEventListener("keydown", (event) => {
   if (tag === "BUTTON" || tag === "A" || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;
   if (event.code === "Space") { event.preventDefault(); setPaused(Number($("speed").value) > 0); return; }
   if (document.activeElement !== $("playfield")) return;
+  if (event.code === "Digit1") { event.preventDefault(); armCurrentHeroAbility(); return; }
   const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
   if (moves[event.key]) { event.preventDefault(); moveKeyboardCursor(moves[event.key][0], moves[event.key][1]); }
-  else if (event.key === "Enter") { event.preventDefault(); const coord = ensureKeyboardCoord(); actAtCoord(coord, hitTestHeroAtCoord(coord)); }
-  else if (event.key === "Escape") { event.preventDefault(); selectedHeroId = null; setArmed(null); setSellMode(false); message = "Build action cancelled."; }
+  else if (event.key === "Enter") { event.preventDefault(); const coord = ensureKeyboardCoord(); actAtCoord(coord, hitTestHeroAtCoord(coord), hitTestHeroAbilityEnemyAtCoord(coord)); }
+  else if (event.key === "Escape") { event.preventDefault(); setTargetingMode({ kind: "build" }); message = "Build action cancelled."; }
 });
 syncSpeedUi();
 syncAudioSettings();
@@ -1723,6 +1847,19 @@ function hitTestHeroAtCoord(coord) {
   const geom = scene.geometry(snapshot.tiles, snapshot.grid);
   const point = scene.center(coord, geom);
   return hitTestHeroesPresentation(presentation, point, (candidate) => scene.center(candidate, geom), geom.r * 0.7);
+}
+
+function hitTestHeroAbilityEnemyAtCoord(coord) {
+  if (targetingMode.kind !== "heroAbility" || !coord) return null;
+  const scene = typeof phaserGame === "undefined" ? null : phaserGame.scene.getScenes(true)[0];
+  if (!scene) return null;
+  const snapshot = game.getRenderSnapshot();
+  const geom = scene.geometry(snapshot.tiles, snapshot.grid);
+  return selectHeroAbilityEnemy(
+    snapshot.enemies,
+    scene.center(coord, geom),
+    (enemy) => scene.enemyPos(enemy, snapshot, geom)
+  );
 }
 
 function clearNavigationOverlay() {
@@ -1780,7 +1917,7 @@ function syncNavigationOverlaySnapshot(snapshot) {
 }
 
 function refreshNavigationOverlay(coord = navigationHoverCoord || keyboardCoord) {
-  if (!coord || !towerId || sellMode || armedAbility) {
+  if (!coord || !towerId || targetingMode.kind !== "build") {
     clearNavigationOverlay();
     return;
   }
@@ -1801,26 +1938,43 @@ function refreshNavigationOverlay(coord = navigationHoverCoord || keyboardCoord)
   if (blocked?.reasonKey === "reason.lastPathBlocked") message = "That tower would block the last path.";
 }
 
-function actAtCoord(coord, heroHitId = null) {
+function actAtCoord(coord, heroHitId = null, enemyHitId = null) {
   if (!coord) return;
-  if (sellMode) {
+  if (targetingMode.kind === "sell") {
     const towerAt = game.getTowerIdAt(coord);
     report(towerAt ? game.sellTower(towerAt) : { ok: false, reason: "Choose a tower tile." });
     if (towerAt === selectedTowerId) selectedTowerId = null;
     setSellMode(false);
     return;
   }
-  if (armedAbility) { report(game.useAbility(armedAbility, coord)); setArmed(null); return; }
-  if (selectedHeroId) {
+  if (targetingMode.kind === "missionAbility") {
+    report(game.useAbility(targetingMode.abilityId, coord));
+    setTargetingMode({ kind: "build" });
+    return;
+  }
+  if (targetingMode.kind === "heroAbility") {
+    if (!enemyHitId) { message = "Choose a live enemy target."; return; }
     const result = dispatchGameCommand(game, {
-      schemaVersion: 4, type: "moveHero", heroId: selectedHeroId,
+      schemaVersion: 5,
+      type: "useHeroAbility",
+      heroId: targetingMode.heroId,
+      abilityId: targetingMode.abilityId,
+      targetEnemyId: enemyHitId
+    });
+    report(result);
+    if (result.ok) setTargetingMode({ kind: "build" });
+    return;
+  }
+  if (targetingMode.kind === "heroMove") {
+    const result = dispatchGameCommand(game, {
+      schemaVersion: 4, type: "moveHero", heroId: targetingMode.heroId,
       target: { q: coord.q, r: coord.r }
     });
     report(result);
-    if (result.ok) selectedHeroId = null;
+    if (result.ok) setTargetingMode({ kind: "build" });
     return;
   }
-  if (heroHitId) { selectedHeroId = heroHitId; selectedTowerId = null; message = "Hero selected. Choose a destination."; return; }
+  if (heroHitId) { setTargetingMode({ kind: "heroMove", heroId: heroHitId }); selectedTowerId = null; message = "Hero selected. Choose a destination."; return; }
   const towerAt = game.getTowerIdAt(coord);
   if (towerAt) { selectedTowerId = towerAt; message = "Tower selected."; return; }
   if (!towerId) return;
@@ -1858,10 +2012,8 @@ function moveKeyboardCursor(dq, dr) {
 }
 
 function setSellMode(active) {
-  sellMode = Boolean(active);
-  $("sell-mode").setAttribute("aria-pressed", String(sellMode));
-  if (sellMode) { setArmed(null); message = "Click a tower to sell it."; }
-  if (sellMode) clearNavigationOverlay(); else refreshNavigationOverlay();
+  setTargetingMode(active ? { kind: "sell" } : { kind: "build" });
+  if (active) message = "Click a tower to sell it.";
 }
 
 function setPaused(paused) {
@@ -1932,7 +2084,7 @@ class PlayScene extends Phaser.Scene {
       if (!coord) return;
       window.__towerforgeLastPointerCoord = coord;
       syncKeyboardCursor(coord);
-      actAtCoord(coord, this.hitTestHero(point.x, point.y));
+      actAtCoord(coord, this.hitTestHero(point.x, point.y), this.hitTestAbilityEnemy(point.x, point.y));
     });
     this.input.on("pointermove", (p) => {
       const point = this.pointerScenePoint(p);
@@ -1964,6 +2116,17 @@ class PlayScene extends Phaser.Scene {
     if (!presentation.active || !presentation.units.every((hero) => hero.movement)) return null;
     const geom = this.geometry(snapshot.tiles, snapshot.grid);
     return hitTestHeroesPresentation(presentation, { x, y }, (coord) => this.center(coord, geom), geom.r * 0.7);
+  }
+  hitTestAbilityEnemy(x, y) {
+    if (targetingMode.kind !== "heroAbility") return null;
+    const snapshot = game.getRenderSnapshot();
+    const geom = this.geometry(snapshot.tiles, snapshot.grid);
+    return selectHeroAbilityEnemy(
+      snapshot.enemies,
+      { x, y },
+      (enemy) => this.enemyPos(enemy, snapshot, geom),
+      geom.r * 0.62
+    );
   }
   registerAtlasFrames() {
     for (const [spriteId, sprite] of Object.entries(content.visuals?.sprites || {})) {
@@ -2531,6 +2694,16 @@ window.__towerforgeTilePoint = (coord) => {
   const rect = phaserGame.canvas.getBoundingClientRect();
   return { x: rect.left + point.x * rect.width / scene.scale.width, y: rect.top + point.y * rect.height / scene.scale.height };
 };
+window.__towerforgeEnemyPoint = (enemyId) => {
+  const scene = phaserGame.scene.getScenes(true)[0];
+  if (!scene) return null;
+  const snapshot = game.getRenderSnapshot();
+  const enemy = snapshot.enemies.find((candidate) => candidate.id === enemyId);
+  if (!enemy) return null;
+  const point = scene.enemyPos(enemy, snapshot, scene.geometry(snapshot.tiles, snapshot.grid));
+  const rect = phaserGame.canvas.getBoundingClientRect();
+  return { x: rect.left + point.x * rect.width / scene.scale.width, y: rect.top + point.y * rect.height / scene.scale.height };
+};
 window.__towerforgePickPoint = (point) => {
   const scene = phaserGame.scene.getScenes(true)[0];
   if (!scene) return null;
@@ -2567,7 +2740,7 @@ function initSelectors() {
     missionId = missionSelect.value;
     towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
     game = createGame();
-    selectedHeroId = null;
+    setTargetingMode({ kind: "build" });
     syncKeyboardCursor(null);
     clearNavigationOverlay();
     victoryRewarded = false;
@@ -2591,7 +2764,7 @@ function initDifficultySelector() {
     const result = choosePlayerDifficulty(select.value);
     if (!result.ok) { select.value = currentPlayerLaunchOptions().difficultyId; return; }
     game = createGame();
-    selectedHeroId = null;
+    setTargetingMode({ kind: "build" });
     clearNavigationOverlay();
     victoryRewarded = false;
     selectedTowerId = null;
@@ -2614,20 +2787,33 @@ function initTowerSelector() {
   towerSelect.onchange = () => { towerId = towerSelect.value; refreshNavigationOverlay(); };
 }
 
+function setTargetingMode(next) {
+  targetingMode = next;
+  $("sell-mode").setAttribute("aria-pressed", String(targetingMode.kind === "sell"));
+  for (const btn of document.querySelectorAll("#ability-bar button")) {
+    btn.classList.toggle("armed", targetingMode.kind === "missionAbility" && btn.dataset.aid === targetingMode.abilityId);
+  }
+  const heroButton = document.querySelector("#hero-action-bar button");
+  if (heroButton) heroButton.classList.toggle("armed", targetingMode.kind === "heroAbility");
+  if (targetingMode.kind === "build") refreshNavigationOverlay(); else clearNavigationOverlay();
+}
 function setArmed(id) {
-  armedAbility = id;
-  if (id) message = "Click the map to use " + ((game.getSnapshot().abilities[id] || {}).label || id) + ".";
-  if (id) clearNavigationOverlay(); else refreshNavigationOverlay();
-  for (const btn of document.querySelectorAll("#ability-bar button")) btn.classList.toggle("armed", btn.dataset.aid === id);
+  if (!id) { setTargetingMode({ kind: "build" }); return; }
+  setTargetingMode({ kind: "missionAbility", abilityId: id });
+  message = "Click the map to use " + ((game.getSnapshot().abilities[id] || {}).label || id) + ".";
 }
 function initAbilityBar() {
   const bar = $("ability-bar");
   if (!bar) return;
   const abilities = Object.values(game.getSnapshot().abilities || {});
   bar.innerHTML = abilities.map((a) => \`<button data-aid="\${escapeHtml(a.id)}" title="Radius \${a.radius}, cooldown \${a.cooldown}">\${escapeHtml(a.label || a.id)}</button>\`).join("");
-  armedAbility = null;
+  setTargetingMode({ kind: "build" });
   for (const btn of bar.querySelectorAll("button")) {
-    btn.onclick = () => { audio.resume(); setArmed(armedAbility === btn.dataset.aid ? null : btn.dataset.aid); };
+    btn.onclick = () => { audio.resume(); setArmed(
+      targetingMode.kind === "missionAbility" && targetingMode.abilityId === btn.dataset.aid
+        ? null
+        : btn.dataset.aid
+    ); };
   }
 }
 function updateAbilityBar(snap) {
@@ -2637,8 +2823,67 @@ function updateAbilityBar(snap) {
     btn.disabled = !ready;
     const cd = Math.ceil((a && a.cooldownRemaining) || 0);
     btn.textContent = ((a && a.label) || btn.dataset.aid) + (cd > 0 ? " (" + cd + ")" : "");
-    if (!ready && armedAbility === btn.dataset.aid) setArmed(null);
+    if (!ready && targetingMode.kind === "missionAbility" && targetingMode.abilityId === btn.dataset.aid) setArmed(null);
   }
+}
+
+function activeHeroAbilityUnit(snapshot = game.getRenderSnapshot()) {
+  const presentation = projectHeroesPresentation(snapshot);
+  const hero = presentation.active && presentation.units.length === 1
+    ? presentation.units[0]
+    : null;
+  return hero?.activeAbility && hero?.mana ? hero : null;
+}
+
+function armCurrentHeroAbility() {
+  const hero = activeHeroAbilityUnit();
+  if (!hero || !hero.activeAbility.ready) return;
+  setTargetingMode({ kind: "heroAbility", heroId: hero.id, abilityId: hero.activeAbility.id });
+  message = "Choose a live enemy for " + hero.activeAbility.label + ".";
+}
+
+function updateHeroActionBar(snap) {
+  const hero = activeHeroAbilityUnit(snap);
+  let bar = document.getElementById("hero-action-bar");
+  if (!hero) {
+    if (bar) bar.remove();
+    if (targetingMode.kind === "heroAbility") setTargetingMode({ kind: "build" });
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement("section");
+    bar.id = "hero-action-bar";
+    bar.className = "ability-bar hero-action-bar";
+    bar.setAttribute("aria-label", "Hero actions");
+    $("message").before(bar);
+  }
+  let button = bar.querySelector("button");
+  if (!button) {
+    button = document.createElement("button");
+    button.type = "button";
+    button.addEventListener("click", () => {
+      audio.resume();
+      if (targetingMode.kind === "heroAbility") setTargetingMode({ kind: "build" });
+      else armCurrentHeroAbility();
+    });
+    bar.append(button);
+  }
+  let status = bar.querySelector("span");
+  if (!status) { status = document.createElement("span"); bar.append(status); }
+  const ability = hero.activeAbility;
+  button.disabled = !ability.ready;
+  button.dataset.heroId = hero.id;
+  button.dataset.abilityId = ability.id;
+  button.classList.toggle("armed", targetingMode.kind === "heroAbility");
+  const cooldown = Math.ceil(ability.cooldownRemaining);
+  button.textContent = ability.label + " [1]" + (cooldown > 0 ? " (" + cooldown + ")" : "");
+  button.title = "Mana " + hero.mana.current + "/" + hero.mana.max + " · Cost " + ability.manaCost;
+  status.textContent = "Mana " + hero.mana.current + "/" + hero.mana.max
+    + " (+" + hero.mana.regenerationPerUnit + ")";
+  bar.dataset.manaCurrent = String(hero.mana.current);
+  bar.dataset.manaMax = String(hero.mana.max);
+  bar.dataset.cooldownRemaining = String(ability.cooldownRemaining);
+  if (!ability.ready && targetingMode.kind === "heroAbility") setTargetingMode({ kind: "build" });
 }
 
 function updateCampaignRun() {
@@ -2741,7 +2986,7 @@ function selectCampaignNode(nodeId) {
     return;
   }
   towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
-  selectedHeroId = null;
+  setTargetingMode({ kind: "build" });
   refreshMissionOptions();
   syncKeyboardCursor(null);
   clearNavigationOverlay();
@@ -2877,6 +3122,7 @@ function finishStory() {
 
 function updateHud(snap) {
   updateAbilityBar(snap);
+  updateHeroActionBar(snap);
   updateTargetMode(snap);
   updateRogueliteStatus(snap);
   if (snap.outcome === "victory" && !victoryRewarded) {

@@ -71,13 +71,13 @@ const MECHANICS_MODULES = [
   { id: "physics", title: "Physics", description: "Bounded push/pull displacement, immunities, and explicit fall hazards." },
   { id: "terraforming", title: "Terraforming", description: "Transactional terrain transitions and bounded elevation edits authored as an independent opt-in profile." },
   { id: "roguelite", title: "Rogue-lite", description: "Synergies, artifacts, draft choices, and campaign runs." },
-  { id: "heroes", title: "Heroes", description: "Optional opt-in hero roster spawning at the core; v2 adds movement and v3 adds bounded HP and shields." },
+  { id: "heroes", title: "Heroes", description: "Optional opt-in hero roster spawning at the core; v2 adds movement, v3 durability, and v4 one targeted ability." },
   { id: "logistics", title: "Logistics", description: "Power grids, inventories, ammunition, and production." },
   { id: "director", title: "AI Director", description: "Deterministic adaptation and generative Studio hooks." },
   { id: "scriptingDx", title: "TowerScript DX", description: "Visual graphs, structured traces, and step debugging." },
   { id: "multiplayer", title: "Multiplayer", description: "Deterministic matches, replay, and local transport." }
 ];
-const HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS = Object.freeze([1, 2, 3]);
+const HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4]);
 const REACTION_RECIPE_IDS = new Set(["elemental_shatter", "wet_chain_shock", "poison_combustion"]);
 const ELEVATION_RECIPE_IDS = new Set([
   "basic_authored_elevation",
@@ -1033,6 +1033,9 @@ function mechanicsEffectiveModuleSchemaVersion() {
     );
     const hasDurability = Object.values(MechanicsUI.draft?.definitions ?? {})
       .some((definition) => definition?.durability !== undefined);
+    const hasActiveAbility = Object.values(MechanicsUI.draft?.definitions ?? {})
+      .some((definition) => definition?.mana !== undefined || definition?.activeAbility !== undefined);
+    if (hasActiveAbility) return Math.max(authoredVersion, 4);
     if (hasDurability) return Math.max(authoredVersion, 3);
     return MechanicsUI.draft?.movementProfiles ? Math.max(authoredVersion, 2) : authoredVersion;
   }
@@ -1198,8 +1201,8 @@ function nextMechanicsProfileId(suggestedId) {
 
 async function newMechanicsProfile() {
   try {
-    if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 3) {
-      throw new Error("Future heroes schemaVersion 4+ modules are read-only in this Studio version.");
+    if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 4) {
+      throw new Error("Future heroes schemaVersion 5+ modules are read-only in this Studio version.");
     }
     await loadMechanicsRecipe();
     const selectedRecipeId = $("mechanics-recipe-select")?.value || MechanicsUI.recipeId;
@@ -2770,16 +2773,19 @@ function renderHeroesMechanicsEditor() {
   const editorVersion = Math.max(projectVersion, Number.isInteger(MechanicsUI.moduleSchemaVersion) ? MechanicsUI.moduleSchemaVersion : 1);
   const supportedVersion = HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS.includes(editorVersion)
     && descriptor?.supportedModuleSchemaVersions?.includes(editorVersion) !== false;
-  const movementEnabled = editorVersion >= 2 && editorVersion <= 3;
-  const durabilityEnabled = editorVersion === 3;
+  const movementEnabled = editorVersion >= 2 && editorVersion <= 4;
+  const durabilityEnabled = editorVersion >= 3 && editorVersion <= 4;
+  const abilityEnabled = editorVersion === 4;
   const durabilityDescriptor = descriptor?.versions?.[3]?.durability;
   const shieldDescriptor = descriptor?.versions?.[3]?.shield;
+  const manaDescriptor = descriptor?.versions?.[4]?.mana;
+  const abilityDescriptor = descriptor?.versions?.[4]?.activeAbility;
   const notice = $("mechanics-heroes-read-only");
   if (notice) {
     notice.classList.toggle("hidden", supportedVersion);
     notice.textContent = supportedVersion
       ? ""
-      : "Future heroes schemaVersion 4+ is preserved losslessly and read-only by this Studio version.";
+      : "Future heroes schemaVersion 5+ is preserved losslessly and read-only by this Studio version.";
   }
 
   const definitions = MechanicsUI.draft.definitions ?? {};
@@ -2818,6 +2824,16 @@ function renderHeroesMechanicsEditor() {
       ${durabilityEnabled ? `<label>Max HP<input data-hero-max-hp type="number" min="0.000001"${mechanicsMaximumAttribute("max", durabilityDescriptor?.maxHp?.maximum)} value="${esc(definition?.durability?.maxHp ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
       <label><input data-hero-shield-enabled type="checkbox" ${definition?.durability?.shield === null ? "" : "checked"} ${supportedVersion ? "" : "disabled"}> Shield</label>
       <label>Shield capacity<input data-hero-shield-capacity type="number" min="0.000001"${mechanicsMaximumAttribute("max", shieldDescriptor?.capacity?.maximum)} value="${esc(definition?.durability?.shield?.capacity ?? "")}" ${supportedVersion && definition?.durability?.shield !== null ? "" : "disabled"}></label>` : ""}
+      ${abilityEnabled ? `<label>Max mana<input data-hero-mana-max type="number" min="0.000001"${mechanicsMaximumAttribute("max", manaDescriptor?.max?.maximum)} value="${esc(definition?.mana?.max ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+      <label>Starting mana<input data-hero-mana-starting type="number" min="0"${mechanicsMaximumAttribute("max", definition?.mana?.max)} value="${esc(definition?.mana?.starting ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+      <label>Mana regeneration<input data-hero-mana-regeneration type="number" min="0"${mechanicsMaximumAttribute("max", manaDescriptor?.regenerationPerUnit?.maximum)} value="${esc(definition?.mana?.regenerationPerUnit ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+      <label>Ability ID<input data-hero-ability-id type="text" autocomplete="off" spellcheck="false" maxlength="${esc(limits.idUtf8Bytes)}" value="${esc(definition?.activeAbility?.id ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+      <label>Ability label<input data-hero-ability-label type="text" autocomplete="off" maxlength="${esc(limits.labelUtf8Bytes)}" value="${esc(definition?.activeAbility?.label ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+      <label>Ability target<select data-hero-ability-target ${supportedVersion ? "" : "disabled"}><option value="enemy">Enemy</option></select></label>
+      <label>Mana cost<input data-hero-ability-mana-cost type="number" min="0.000001"${mechanicsMaximumAttribute("max", definition?.mana?.max)} value="${esc(definition?.activeAbility?.manaCost ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+      <label>Cooldown<input data-hero-ability-cooldown type="number" min="0"${mechanicsMaximumAttribute("max", abilityDescriptor?.cooldown?.maximum)} value="${esc(definition?.activeAbility?.cooldown ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+      <label>Range<input data-hero-ability-range type="number" min="0" step="1"${mechanicsMaximumAttribute("max", abilityDescriptor?.range?.maximum)} value="${esc(definition?.activeAbility?.range ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+      <label>Damage<input data-hero-ability-damage type="number" min="0.000001"${mechanicsMaximumAttribute("max", abilityDescriptor?.damage?.maximum)} value="${esc(definition?.activeAbility?.damage ?? "")}" ${supportedVersion ? "" : "disabled"}></label>` : ""}
       <button type="button" class="btn btn-danger" data-remove-hero ${supportedVersion && entries.length > 1 ? "" : "disabled"}>Remove</button>
     </div>`;
     }).join("");
@@ -2850,6 +2866,56 @@ function renderHeroesMechanicsEditor() {
       });
       row.querySelector("[data-hero-shield-capacity]")?.addEventListener("input", (event) => {
         if (definition.durability.shield) definition.durability.shield.capacity = Number(event.target.value);
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-mana-max]")?.addEventListener("input", (event) => {
+        definition.mana.max = Number(event.target.value);
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-mana-starting]")?.addEventListener("input", (event) => {
+        definition.mana.starting = Number(event.target.value);
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-mana-regeneration]")?.addEventListener("input", (event) => {
+        definition.mana.regenerationPerUnit = Number(event.target.value);
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-ability-id]")?.addEventListener("input", (event) => {
+        definition.activeAbility.id = String(event.target.value ?? "");
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-ability-label]")?.addEventListener("input", (event) => {
+        definition.activeAbility.label = String(event.target.value ?? "");
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-ability-target]")?.addEventListener("change", () => {
+        definition.activeAbility.target = "enemy";
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-ability-mana-cost]")?.addEventListener("input", (event) => {
+        definition.activeAbility.manaCost = Number(event.target.value);
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-ability-cooldown]")?.addEventListener("input", (event) => {
+        definition.activeAbility.cooldown = Number(event.target.value);
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-ability-range]")?.addEventListener("input", (event) => {
+        definition.activeAbility.range = Number(event.target.value);
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-ability-damage]")?.addEventListener("input", (event) => {
+        definition.activeAbility.damage = Number(event.target.value);
         MechanicsUI.preview = null;
         renderMechanicsPreviewResult();
       });
@@ -2903,7 +2969,14 @@ function renderHeroesMechanicsEditor() {
       defineOwnDataValue(MechanicsUI.draft.definitions, heroId, {
         label: "Commander", spawn: "core",
         ...(movementEnabled ? { movement: { movementProfileId: Object.keys(MechanicsUI.draft.movementProfiles ?? {}).sort()[0] ?? "ground", speed: 1 } } : {}),
-        ...(durabilityEnabled ? { durability: { maxHp: 100, shield: { capacity: 25 } } } : {})
+        ...(durabilityEnabled ? { durability: { maxHp: 100, shield: { capacity: 25 } } } : {}),
+        ...(abilityEnabled ? {
+          mana: { max: 100, starting: 60, regenerationPerUnit: 5 },
+          activeAbility: {
+            id: "arc_bolt", label: "Arc Bolt", target: "enemy",
+            manaCost: 20, cooldown: 3, range: 6, damage: 30
+          }
+        } : {})
       });
       MechanicsUI.preview = null;
       renderMechanicsHub();
@@ -3988,8 +4061,8 @@ function renderMechanicsPreviewResult() {
 }
 
 function mechanicsRequest(enabled) {
-  if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 3) {
-    throw new Error("Future heroes schemaVersion 4+ modules are read-only in this Studio version.");
+  if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 4) {
+    throw new Error("Future heroes schemaVersion 5+ modules are read-only in this Studio version.");
   }
   if (MechanicsUI.selectedModuleId === "roguelite" && mechanicsProjectModuleVersion() > 4) {
     throw new Error("Future roguelite schemaVersion 5+ modules are read-only in this Studio version.");
@@ -4253,7 +4326,7 @@ function renderMechanicsHub() {
     mechanicsProjectModuleVersion() <= 4
     && !hasUnsupportedRogueliteCampaignMarker(MechanicsUI.draft)
   );
-  const supportedHeroesVersion = MechanicsUI.selectedModuleId !== "heroes" || mechanicsProjectModuleVersion() <= 3;
+  const supportedHeroesVersion = MechanicsUI.selectedModuleId !== "heroes" || mechanicsProjectModuleVersion() <= 4;
   const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion
     && supportedRogueliteVersion && supportedHeroesVersion && !busy;
   const dirtyWriteGuard = Boolean(S.dirty);

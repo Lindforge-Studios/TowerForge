@@ -43,7 +43,8 @@ import {
   resolveActiveHeroesMechanics,
   type ActiveHeroesMechanics,
   type ActiveHeroesMechanicsV2,
-  type ActiveHeroesMechanicsV3
+  type ActiveHeroesMechanicsV3,
+  type ActiveHeroesMechanicsV4
 } from "../content/heroes-mechanics.js";
 import { CAMPAIGN_RUN_LIMITS } from "../run/campaign-run.js";
 import { campaignBattleWorstCaseModifierCount } from "../run/campaign-battle-policy.js";
@@ -780,6 +781,8 @@ interface HeroRuntimeStateV2 {
   edgeProgress: number;
   hp?: number;
   shieldCurrent?: number;
+  mana?: number;
+  abilityCooldownRemaining?: number;
 }
 
 export class TowerDefenseGame {
@@ -940,9 +943,16 @@ export class TowerDefenseGame {
     } else {
       this.heroesSnapshotV1 = undefined;
     }
-    if (this.activeHeroesMechanics?.schemaVersion === 2 || this.activeHeroesMechanics?.schemaVersion === 3) {
+    if (this.activeHeroesMechanics?.schemaVersion === 2
+      || this.activeHeroesMechanics?.schemaVersion === 3
+      || this.activeHeroesMechanics?.schemaVersion === 4) {
       const durability = this.activeHeroesMechanics.schemaVersion === 3
         ? this.activeHeroesMechanics.definitions[this.activeHeroesMechanics.selectedHeroId]!.durability
+        : this.activeHeroesMechanics.schemaVersion === 4
+          ? this.activeHeroesMechanics.definitions[this.activeHeroesMechanics.selectedHeroId]!.durability
+          : undefined;
+      const mana = this.activeHeroesMechanics.schemaVersion === 4
+        ? this.activeHeroesMechanics.definitions[this.activeHeroesMechanics.selectedHeroId]!.mana
         : undefined;
       this.heroStateV2 = {
         definitionId: this.activeHeroesMechanics.selectedHeroId,
@@ -953,7 +963,8 @@ export class TowerDefenseGame {
         ...(durability === undefined ? {} : {
           hp: durability.maxHp,
           shieldCurrent: durability.shield?.capacity ?? 0
-        })
+        }),
+        ...(mana === undefined ? {} : { mana: mana.starting, abilityCooldownRemaining: 0 })
       };
     }
     if (options.campaignBattle !== undefined) {
@@ -1082,9 +1093,16 @@ export class TowerDefenseGame {
 
     this.enemies = [];
     this.navigationEnemyFields?.clear();
-    if (this.activeHeroesMechanics?.schemaVersion === 2 || this.activeHeroesMechanics?.schemaVersion === 3) {
+    if (this.activeHeroesMechanics?.schemaVersion === 2
+      || this.activeHeroesMechanics?.schemaVersion === 3
+      || this.activeHeroesMechanics?.schemaVersion === 4) {
       const durability = this.activeHeroesMechanics.schemaVersion === 3
         ? this.activeHeroesMechanics.definitions[this.activeHeroesMechanics.selectedHeroId]!.durability
+        : this.activeHeroesMechanics.schemaVersion === 4
+          ? this.activeHeroesMechanics.definitions[this.activeHeroesMechanics.selectedHeroId]!.durability
+          : undefined;
+      const mana = this.activeHeroesMechanics.schemaVersion === 4
+        ? this.activeHeroesMechanics.definitions[this.activeHeroesMechanics.selectedHeroId]!.mana
         : undefined;
       this.heroStateV2 = {
         definitionId: this.activeHeroesMechanics.selectedHeroId,
@@ -1095,7 +1113,8 @@ export class TowerDefenseGame {
         ...(durability === undefined ? {} : {
           hp: durability.maxHp,
           shieldCurrent: durability.shield?.capacity ?? 0
-        })
+        }),
+        ...(mana === undefined ? {} : { mana: mana.starting, abilityCooldownRemaining: 0 })
       };
       this.heroMovementField = undefined;
       this.heroMovementDirty = false;
@@ -1917,7 +1936,7 @@ export class TowerDefenseGame {
     if (heroId !== state.definitionId) {
       return this.fail("Hero is unavailable.", "reason.heroUnavailable");
     }
-    if (profile.schemaVersion === 3 && (state.hp ?? 0) <= 0) {
+    if (profile.schemaVersion >= 3 && (state.hp ?? 0) <= 0) {
       return this.fail("Hero is defeated.", "reason.heroDefeated");
     }
     if (!this.map.isInside(target)) {
@@ -1951,6 +1970,68 @@ export class TowerDefenseGame {
     return { ok: true };
   }
 
+  /** Use the single deterministic enemy-targeted ability authored by an active heroes v4 profile. */
+  useHeroAbility(heroId: string, abilityId: string, targetEnemyId: string): ActionResult {
+    if (this.outcome !== "playing") {
+      return this.fail("Mission already ended.", "reason.missionEnded");
+    }
+    const profile = this.activeHeroesMechanics;
+    const state = this.heroStateV2;
+    if (profile?.schemaVersion !== 4 || !state) {
+      return this.fail("Hero ability is not active.", "reason.heroAbilityUnavailable");
+    }
+    if (heroId !== state.definitionId) {
+      return this.fail("Hero is unavailable.", "reason.heroUnavailable");
+    }
+    const definition = profile.definitions[state.definitionId];
+    if (!definition || abilityId !== definition.activeAbility.id) {
+      return this.fail("Hero ability is unavailable.", "reason.heroAbilityUnavailable");
+    }
+    if ((state.hp ?? 0) <= 0) {
+      return this.fail("Hero is defeated.", "reason.heroDefeated");
+    }
+    const target = this.enemies.find((enemy) => enemy.id === targetEnemyId && enemy.hp > 0);
+    if (!target) {
+      return this.fail("Hero ability target is unavailable.", "reason.heroAbilityTargetUnavailable");
+    }
+    if (this.map.distance(state.currentCoord, this.enemyCoord(target)) > definition.activeAbility.range) {
+      return this.fail("Hero ability target is out of range.", "reason.heroAbilityOutOfRange");
+    }
+    if ((state.mana ?? 0) < definition.activeAbility.manaCost) {
+      return this.fail("Hero has insufficient mana.", "reason.heroManaInsufficient");
+    }
+    if ((state.abilityCooldownRemaining ?? 0) > 0) {
+      return this.fail("Hero ability is recharging.", "reason.heroAbilityCooldown");
+    }
+
+    const previousMana = state.mana ?? 0;
+    const applied = this.applyResolvedEnemyDamage(
+      target,
+      definition.activeAbility.damage,
+      { kind: "ability", abilityId: definition.activeAbility.id }
+    );
+    state.mana = previousMana - definition.activeAbility.manaCost;
+    state.abilityCooldownRemaining = definition.activeAbility.cooldown;
+    this.lastEvents.push({
+      type: "heroAbilityUsed",
+      heroId: state.definitionId,
+      heroDefinitionId: state.definitionId,
+      abilityId: definition.activeAbility.id,
+      targetEnemyId: target.id,
+      targetEnemyTypeId: target.typeId,
+      previousMana,
+      currentMana: state.mana,
+      manaSpent: definition.activeAbility.manaCost,
+      cooldownApplied: definition.activeAbility.cooldown,
+      requestedDamage: definition.activeAbility.damage,
+      resolvedDamage: applied.resolution.finalAmount,
+      shieldAbsorbed: applied.shieldAbsorbed,
+      hpDamage: applied.hpDamage
+    });
+    this.finishScriptedAction();
+    return { ok: true };
+  }
+
   tick(deltaUnits: number): void {
     this.lastEvents = [];
     if (this.activePhysicsMechanics) this.displacementStepAttemptsThisTick = 0;
@@ -1965,6 +2046,7 @@ export class TowerDefenseGame {
     const delta = Math.max(0, Math.min(deltaUnits, 0.2));
     this.updateAbilities(delta);
     this.advanceNativeTerraformingExpiry(delta);
+    this.updateHeroAbility(delta);
     this.moveHeroUnit(delta);
 
     if (this.startedWaveCount > 0) {
@@ -3308,7 +3390,22 @@ export class TowerDefenseGame {
     const draft = this.buildDraftCheckpointState();
     const heroes = this.heroStateV2 === undefined
       ? undefined
-      : this.activeHeroesMechanics?.schemaVersion === 3
+      : this.activeHeroesMechanics?.schemaVersion === 4
+        ? {
+            schemaVersion: 3 as const,
+            unit: {
+              definitionId: this.heroStateV2.definitionId,
+              currentCoord: { ...this.heroStateV2.currentCoord },
+              targetCoord: this.heroStateV2.targetCoord === null ? null : { ...this.heroStateV2.targetCoord },
+              nextCoord: this.heroStateV2.nextCoord === null ? null : { ...this.heroStateV2.nextCoord },
+              edgeProgress: this.heroStateV2.edgeProgress,
+              hp: this.heroStateV2.hp ?? 0,
+              shieldCurrent: this.heroStateV2.shieldCurrent ?? 0,
+              mana: this.heroStateV2.mana ?? 0,
+              abilityCooldownRemaining: this.heroStateV2.abilityCooldownRemaining ?? 0
+            }
+          }
+        : this.activeHeroesMechanics?.schemaVersion === 3
         ? {
             schemaVersion: 2 as const,
             unit: {
@@ -3529,7 +3626,9 @@ export class TowerDefenseGame {
     if (hasDraftCheckpoint) checkpointDataField(descriptors, "draft", "Game checkpoint state");
     const hasCampaignBattleCheckpoint = Object.prototype.hasOwnProperty.call(descriptors, "campaignBattle");
     if (hasCampaignBattleCheckpoint) checkpointDataField(descriptors, "campaignBattle", "Game checkpoint state");
-    const requiresHeroesCheckpoint = checkpointHeroes?.schemaVersion === 2 || checkpointHeroes?.schemaVersion === 3;
+    const requiresHeroesCheckpoint = checkpointHeroes?.schemaVersion === 2
+      || checkpointHeroes?.schemaVersion === 3
+      || checkpointHeroes?.schemaVersion === 4;
     const hasHeroesCheckpoint = Object.prototype.hasOwnProperty.call(descriptors, "heroes");
     if (requiresHeroesCheckpoint && !hasHeroesCheckpoint) {
       throw new Error("Game checkpoint hero state is required for active moving heroes.");
@@ -4628,6 +4727,13 @@ export class TowerDefenseGame {
         required: ["type", "enemyId", "enemyTypeId", "heroId", "damage", "shieldAbsorbed", "hpDamage"]
       },
       heroDefeated: { required: ["type", "heroId", "heroDefinitionId", "enemyId"] },
+      heroAbilityUsed: {
+        required: [
+          "type", "heroId", "heroDefinitionId", "abilityId", "targetEnemyId", "targetEnemyTypeId",
+          "previousMana", "currentMana", "manaSpent", "cooldownApplied", "requestedDamage", "resolvedDamage",
+          "shieldAbsorbed", "hpDamage"
+        ]
+      },
       towerTargetModeChanged: { required: ["type", "towerId", "mode"] },
       enemyKilled: { required: ["type", "enemyId", "enemyTypeId", "coins", "resources"] },
       artifactDropped: {
@@ -4706,7 +4812,8 @@ export class TowerDefenseGame {
       "previous", "current", "capacity", "overflowDamage", "previousStacks", "currentStacks",
       "previousRemaining", "remaining"
       , "depth", "limit", "dropped", "requestedDistance", "movedDistance", "fromElevation", "toElevation",
-      "rollIndex", "shieldAbsorbed", "hpDamage"
+      "rollIndex", "shieldAbsorbed", "hpDamage", "previousMana", "currentMana", "manaSpent",
+      "cooldownApplied", "requestedDamage", "resolvedDamage"
     ]);
     const stringEventFields = new Set([
       "towerId", "towerTypeId", "enemyId", "enemyTypeId", "parentEnemyId", "parentEnemyTypeId", "healerEnemyId",
@@ -4719,6 +4826,12 @@ export class TowerDefenseGame {
     const coordEventFields = new Set(["coord", "from", "to", "center", "originCoord", "sourceCoord"]);
     const bagEventFields = new Set(["refund", "cost", "resources", "income", "interest"]);
     const stringArrayEventFields = new Set(["towerIds", "enemyIds", "scheduledTargetIds"]);
+    let retainedHeroAbilityState: Readonly<{
+      currentMana: number;
+      cooldownApplied: number;
+      manaMaximum: number;
+      cooldownMaximum: number;
+    }> | undefined;
     for (const value of array(state.lastEvents, "lastEvents")) {
       const base = checkpointObjectDescriptors(value, "Game checkpoint last event");
       const type = stringValue(checkpointDataField(base, "type", "last event"), "last event type");
@@ -4811,7 +4924,7 @@ export class TowerDefenseGame {
         const typeId = stringValue(checkpointDataField(event, "towerTypeId", type), `${type}.towerTypeId`);
         if (!own(content.towers, typeId)) throw new Error("Game checkpoint event references an unknown tower type.");
       }
-      if (own(event, "abilityId")) {
+      if (own(event, "abilityId") && type !== "heroAbilityUsed") {
         const abilityId = stringValue(checkpointDataField(event, "abilityId", type), `${type}.abilityId`);
         if (!abilityIds.has(abilityId)) throw new Error("Game checkpoint event references an unknown ability.");
       }
@@ -4862,8 +4975,8 @@ export class TowerDefenseGame {
         }
       }
       if (type === "heroShieldChanged" || type === "heroAttacked" || type === "heroDefeated") {
-        if (checkpointHeroes?.schemaVersion !== 3) {
-          throw new Error("Game checkpoint hero event requires active heroes v3 durability.");
+        if (checkpointHeroes?.schemaVersion !== 3 && checkpointHeroes?.schemaVersion !== 4) {
+          throw new Error("Game checkpoint hero event requires active hero durability.");
         }
         const selectedHeroId = checkpointHeroes.selectedHeroId;
         const durableDefinition = checkpointHeroes.definitions[selectedHeroId]!.durability;
@@ -4918,13 +5031,19 @@ export class TowerDefenseGame {
             "heroes",
             ["schemaVersion", "unit"]
           );
-          if (checkpointDataField(heroesState, "schemaVersion", "heroes") !== 2) {
+          const expectedDurabilityCheckpointVersion = checkpointHeroes.schemaVersion === 4 ? 3 : 2;
+          if (checkpointDataField(heroesState, "schemaVersion", "heroes") !== expectedDurabilityCheckpointVersion) {
             throw new Error("Game checkpoint hero defeat event requires durable hero state.");
           }
           const heroUnit = closed(
             checkpointDataField(heroesState, "unit", "heroes"),
             "hero unit",
-            ["definitionId", "currentCoord", "targetCoord", "nextCoord", "edgeProgress", "hp", "shieldCurrent"]
+            checkpointHeroes.schemaVersion === 4
+              ? [
+                  "definitionId", "currentCoord", "targetCoord", "nextCoord", "edgeProgress", "hp", "shieldCurrent",
+                  "mana", "abilityCooldownRemaining"
+                ]
+              : ["definitionId", "currentCoord", "targetCoord", "nextCoord", "edgeProgress", "hp", "shieldCurrent"]
           );
           const currentHp = finite(
             checkpointDataField(heroUnit, "hp", "hero unit"),
@@ -4936,6 +5055,63 @@ export class TowerDefenseGame {
             throw new Error("Game checkpoint hero defeat event requires zero hero HP.");
           }
         }
+      }
+      if (type === "heroAbilityUsed") {
+        if (checkpointHeroes?.schemaVersion !== 4) {
+          throw new Error("Game checkpoint hero ability event requires active heroes v4.");
+        }
+        const selectedHeroId = checkpointHeroes.selectedHeroId;
+        const definition = checkpointHeroes.definitions[selectedHeroId]!;
+        const heroId = stringValue(checkpointDataField(event, "heroId", type), `${type}.heroId`);
+        const definitionId = stringValue(
+          checkpointDataField(event, "heroDefinitionId", type),
+          `${type}.heroDefinitionId`
+        );
+        const abilityId = stringValue(checkpointDataField(event, "abilityId", type), `${type}.abilityId`);
+        const targetEnemyId = stringValue(
+          checkpointDataField(event, "targetEnemyId", type),
+          `${type}.targetEnemyId`
+        );
+        const targetEnemyTypeId = stringValue(
+          checkpointDataField(event, "targetEnemyTypeId", type),
+          `${type}.targetEnemyTypeId`
+        );
+        const targetEnemyState = state.enemies.find((enemy) => enemy.id === targetEnemyId);
+        if (heroId !== selectedHeroId || definitionId !== selectedHeroId || abilityId !== definition.activeAbility.id
+          || !targetEnemyState || targetEnemyState.typeId !== targetEnemyTypeId || !own(content.enemies, targetEnemyTypeId)) {
+          throw new Error("Game checkpoint hero ability event references unavailable authored state.");
+        }
+        const previousMana = finite(checkpointDataField(event, "previousMana", type), `${type}.previousMana`, 0, definition.mana.max);
+        const currentMana = finite(checkpointDataField(event, "currentMana", type), `${type}.currentMana`, 0, definition.mana.max);
+        const manaSpent = finite(checkpointDataField(event, "manaSpent", type), `${type}.manaSpent`, 0, definition.mana.max);
+        const cooldownApplied = finite(
+          checkpointDataField(event, "cooldownApplied", type),
+          `${type}.cooldownApplied`,
+          0,
+          definition.activeAbility.cooldown
+        );
+        const requestedDamage = finite(checkpointDataField(event, "requestedDamage", type), `${type}.requestedDamage`, 0);
+        const resolvedDamage = finite(checkpointDataField(event, "resolvedDamage", type), `${type}.resolvedDamage`, 0);
+        const shieldAbsorbed = finite(checkpointDataField(event, "shieldAbsorbed", type), `${type}.shieldAbsorbed`, 0);
+        const hpDamage = finite(checkpointDataField(event, "hpDamage", type), `${type}.hpDamage`, 0);
+        const nearlyEqual = (left: number, right: number): boolean => (
+          Math.abs(left - right) <= 1e-9 * Math.max(1, Math.abs(left), Math.abs(right))
+        );
+        if (!nearlyEqual(previousMana - currentMana, manaSpent) || manaSpent !== definition.activeAbility.manaCost
+          || cooldownApplied !== definition.activeAbility.cooldown || requestedDamage !== definition.activeAbility.damage
+          || !nearlyEqual(resolvedDamage, shieldAbsorbed + hpDamage)) {
+          throw new Error("Game checkpoint hero ability event arithmetic is invalid.");
+        }
+        if (retainedHeroAbilityState
+          && !nearlyEqual(previousMana, retainedHeroAbilityState.currentMana)) {
+          throw new Error("Game checkpoint retained hero ability event mana chain is invalid.");
+        }
+        retainedHeroAbilityState = {
+          currentMana,
+          cooldownApplied,
+          manaMaximum: definition.mana.max,
+          cooldownMaximum: definition.activeAbility.cooldown
+        };
       }
       if ((type === "enemyShieldChanged" || type === "towerShieldChanged")) {
         const cause = checkpointDataField(event, "cause", type);
@@ -5118,6 +5294,43 @@ export class TowerDefenseGame {
       }
       optionalRoute(event, `last event ${type}`);
     }
+    if (retainedHeroAbilityState) {
+      const heroesState = closed(
+        checkpointDataField(descriptors, "heroes", "Game checkpoint state"),
+        "heroes",
+        ["schemaVersion", "unit"]
+      );
+      if (checkpointDataField(heroesState, "schemaVersion", "heroes") !== 3) {
+        throw new Error("Game checkpoint hero ability event requires heroes state v3.");
+      }
+      const heroUnit = closed(
+        checkpointDataField(heroesState, "unit", "heroes"),
+        "hero unit",
+        [
+          "definitionId", "currentCoord", "targetCoord", "nextCoord", "edgeProgress", "hp", "shieldCurrent",
+          "mana", "abilityCooldownRemaining"
+        ]
+      );
+      const authoritativeMana = finite(
+        checkpointDataField(heroUnit, "mana", "hero unit"),
+        "hero mana",
+        0,
+        retainedHeroAbilityState.manaMaximum
+      );
+      const authoritativeCooldown = finite(
+        checkpointDataField(heroUnit, "abilityCooldownRemaining", "hero unit"),
+        "hero ability cooldown",
+        0,
+        retainedHeroAbilityState.cooldownMaximum
+      );
+      const nearlyEqual = (left: number, right: number): boolean => (
+        Math.abs(left - right) <= 1e-9 * Math.max(1, Math.abs(left), Math.abs(right))
+      );
+      if (!nearlyEqual(retainedHeroAbilityState.currentMana, authoritativeMana)
+        || !nearlyEqual(retainedHeroAbilityState.cooldownApplied, authoritativeCooldown)) {
+        throw new Error("Game checkpoint hero ability event does not match authoritative mana or cooldown state.");
+      }
+    }
     for (const value of array(state.runtimeTerrainOverrides, "runtimeTerrainOverrides")) {
       const override = closed(value, "terrain override", ["q", "r", "terrain", "source"], ["expiresIn"]);
       validCoord({
@@ -5143,17 +5356,26 @@ export class TowerDefenseGame {
       if (key === coordKey(mapDefinition.coreCoord)) return "core";
       return authoredTerrain.get(key) ?? mapDefinition.defaultTerrain;
     };
-    if (hasHeroesCheckpoint && (checkpointHeroes?.schemaVersion === 2 || checkpointHeroes?.schemaVersion === 3)) {
+    if (hasHeroesCheckpoint && (checkpointHeroes?.schemaVersion === 2
+      || checkpointHeroes?.schemaVersion === 3
+      || checkpointHeroes?.schemaVersion === 4)) {
       const heroes = closed(state.heroes, "heroes", ["schemaVersion", "unit"]);
-      const expectedHeroCheckpointVersion = checkpointHeroes.schemaVersion === 3 ? 2 : 1;
+      const expectedHeroCheckpointVersion = checkpointHeroes.schemaVersion === 4
+        ? 3
+        : checkpointHeroes.schemaVersion === 3 ? 2 : 1;
       if (checkpointDataField(heroes, "schemaVersion", "heroes") !== expectedHeroCheckpointVersion) {
         throw new Error("Game checkpoint hero state schema version is unsupported.");
       }
       const unit = closed(
         checkpointDataField(heroes, "unit", "heroes"),
         "hero unit",
-        checkpointHeroes.schemaVersion === 3
-          ? ["definitionId", "currentCoord", "targetCoord", "nextCoord", "edgeProgress", "hp", "shieldCurrent"]
+        checkpointHeroes.schemaVersion === 4
+          ? [
+              "definitionId", "currentCoord", "targetCoord", "nextCoord", "edgeProgress", "hp", "shieldCurrent",
+              "mana", "abilityCooldownRemaining"
+            ]
+          : checkpointHeroes.schemaVersion === 3
+            ? ["definitionId", "currentCoord", "targetCoord", "nextCoord", "edgeProgress", "hp", "shieldCurrent"]
           : ["definitionId", "currentCoord", "targetCoord", "nextCoord", "edgeProgress"]
       );
       const definitionId = stringValue(
@@ -5180,7 +5402,7 @@ export class TowerDefenseGame {
       );
       let heroHp: number | undefined;
       let heroShieldCurrent: number | undefined;
-      if (checkpointHeroes.schemaVersion === 3) {
+      if (checkpointHeroes.schemaVersion === 3 || checkpointHeroes.schemaVersion === 4) {
         const durability = checkpointHeroes.definitions[definitionId]!.durability;
         heroHp = finite(checkpointDataField(unit, "hp", "hero unit"), "hero hp", 0, durability.maxHp);
         heroShieldCurrent = finite(
@@ -5192,6 +5414,16 @@ export class TowerDefenseGame {
         if (heroHp < durability.maxHp && heroShieldCurrent > 0) {
           throw new Error("Game checkpoint hero durability state violates shield-first damage ordering.");
         }
+      }
+      if (checkpointHeroes.schemaVersion === 4) {
+        const activeDefinition = checkpointHeroes.definitions[definitionId]!;
+        finite(checkpointDataField(unit, "mana", "hero unit"), "hero mana", 0, activeDefinition.mana.max);
+        finite(
+          checkpointDataField(unit, "abilityCooldownRemaining", "hero unit"),
+          "hero ability cooldown",
+          0,
+          activeDefinition.activeAbility.cooldown
+        );
       }
       if (heroHp === 0 && (targetCoord !== null || nextCoord !== null || edgeProgress !== 0)) {
         throw new Error("Game checkpoint defeated hero must use canonical idle movement state.");
@@ -5740,7 +5972,9 @@ export class TowerDefenseGame {
     this.syncTemporaryWaterTiles();
     this.syncNavigationResolver();
     if (
-      (this.activeHeroesMechanics?.schemaVersion === 2 || this.activeHeroesMechanics?.schemaVersion === 3)
+      (this.activeHeroesMechanics?.schemaVersion === 2
+        || this.activeHeroesMechanics?.schemaVersion === 3
+        || this.activeHeroesMechanics?.schemaVersion === 4)
       && state.heroes
     ) {
       this.heroStateV2 = {
@@ -5749,9 +5983,13 @@ export class TowerDefenseGame {
         targetCoord: state.heroes.unit.targetCoord === null ? null : { ...state.heroes.unit.targetCoord },
         nextCoord: state.heroes.unit.nextCoord === null ? null : { ...state.heroes.unit.nextCoord },
         edgeProgress: state.heroes.unit.edgeProgress,
-        ...(state.heroes.schemaVersion === 2 ? {
+        ...(state.heroes.schemaVersion === 2 || state.heroes.schemaVersion === 3 ? {
           hp: state.heroes.unit.hp,
           shieldCurrent: state.heroes.unit.shieldCurrent
+        } : {}),
+        ...(state.heroes.schemaVersion === 3 ? {
+          mana: state.heroes.unit.mana,
+          abilityCooldownRemaining: state.heroes.unit.abilityCooldownRemaining
         } : {})
       };
       this.heroMovementField = this.heroStateV2.targetCoord === null
@@ -5779,7 +6017,50 @@ export class TowerDefenseGame {
       ? buildTerraformingSnapshot(this.pendingTerraformExpiryGroups)
       : undefined;
     const roguelite = this.currentRogueliteSnapshot();
-    const heroes: GameSnapshot["heroes"] = this.activeHeroesMechanics?.schemaVersion === 3 && this.heroStateV2
+    const heroes: GameSnapshot["heroes"] = this.activeHeroesMechanics?.schemaVersion === 4 && this.heroStateV2
+      ? Object.freeze({
+          schemaVersion: 4 as const,
+          units: Object.freeze([Object.freeze({
+            id: this.heroStateV2.definitionId,
+            definitionId: this.heroStateV2.definitionId,
+            label: this.activeHeroesMechanics.definitions[this.heroStateV2.definitionId]!.label,
+            coord: Object.freeze({ ...this.heroStateV2.currentCoord }),
+            movement: Object.freeze({
+              targetCoord: this.heroStateV2.targetCoord === null
+                ? null
+                : Object.freeze({ ...this.heroStateV2.targetCoord }),
+              nextCoord: this.heroStateV2.nextCoord === null
+                ? null
+                : Object.freeze({ ...this.heroStateV2.nextCoord }),
+              edgeProgress: this.heroStateV2.edgeProgress
+            }),
+            durability: Object.freeze({
+              hp: this.heroStateV2.hp ?? 0,
+              maxHp: this.activeHeroesMechanics.definitions[this.heroStateV2.definitionId]!.durability.maxHp,
+              shield: this.activeHeroesMechanics.definitions[this.heroStateV2.definitionId]!.durability.shield === null
+                ? null
+                : Object.freeze({
+                    current: this.heroStateV2.shieldCurrent ?? 0,
+                    capacity: this.activeHeroesMechanics.definitions[this.heroStateV2.definitionId]!.durability.shield!.capacity
+                  }),
+              defeated: (this.heroStateV2.hp ?? 0) <= 0
+            }),
+            mana: Object.freeze({
+              current: this.heroStateV2.mana ?? 0,
+              max: this.activeHeroesMechanics.definitions[this.heroStateV2.definitionId]!.mana.max,
+              regenerationPerUnit: this.activeHeroesMechanics.definitions[this.heroStateV2.definitionId]!.mana.regenerationPerUnit
+            }),
+            activeAbility: Object.freeze({
+              ...this.activeHeroesMechanics.definitions[this.heroStateV2.definitionId]!.activeAbility,
+              cooldownRemaining: this.heroStateV2.abilityCooldownRemaining ?? 0,
+              ready: (this.heroStateV2.hp ?? 0) > 0
+                && this.outcome === "playing"
+                && (this.heroStateV2.mana ?? 0) >= this.activeHeroesMechanics.definitions[this.heroStateV2.definitionId]!.activeAbility.manaCost
+                && (this.heroStateV2.abilityCooldownRemaining ?? 0) <= 0
+            })
+          })])
+        })
+      : this.activeHeroesMechanics?.schemaVersion === 3 && this.heroStateV2
       ? Object.freeze({
           schemaVersion: 3 as const,
           units: Object.freeze([Object.freeze({
@@ -7655,14 +7936,16 @@ export class TowerDefenseGame {
     return profile.enemyMovementProfiles?.[typeId] ?? profile.defaultMovementProfileId;
   }
 
-  private activeHeroesV2(): ActiveHeroesMechanicsV2 | ActiveHeroesMechanicsV3 | undefined {
-    return this.activeHeroesMechanics?.schemaVersion === 2 || this.activeHeroesMechanics?.schemaVersion === 3
+  private activeHeroesV2(): ActiveHeroesMechanicsV2 | ActiveHeroesMechanicsV3 | ActiveHeroesMechanicsV4 | undefined {
+    return this.activeHeroesMechanics?.schemaVersion === 2
+      || this.activeHeroesMechanics?.schemaVersion === 3
+      || this.activeHeroesMechanics?.schemaVersion === 4
       ? this.activeHeroesMechanics
       : undefined;
   }
 
   private buildHeroMovementField(
-    profile: ActiveHeroesMechanicsV2 | ActiveHeroesMechanicsV3,
+    profile: ActiveHeroesMechanicsV2 | ActiveHeroesMechanicsV3 | ActiveHeroesMechanicsV4,
     target: Readonly<HexCoord>
   ): NavigationFieldResult {
     const definition = profile.definitions[profile.selectedHeroId]!;
@@ -7718,7 +8001,7 @@ export class TowerDefenseGame {
     const profile = this.activeHeroesV2();
     const state = this.heroStateV2;
     if (!profile || !state) return;
-    if (profile.schemaVersion === 3 && (state.hp ?? 0) <= 0) return;
+    if (profile.schemaVersion >= 3 && (state.hp ?? 0) <= 0) return;
     this.stabilizeHeroMovement();
     if (state.targetCoord === null || !this.heroMovementField) return;
     const definition = profile.definitions[state.definitionId];
@@ -7760,6 +8043,19 @@ export class TowerDefenseGame {
       state.edgeProgress = 0;
       this.heroMovementField = undefined;
     }
+  }
+
+  private updateHeroAbility(delta: number): void {
+    const profile = this.activeHeroesMechanics;
+    const state = this.heroStateV2;
+    if (profile?.schemaVersion !== 4 || !state || (state.hp ?? 0) <= 0) return;
+    const definition = profile.definitions[state.definitionId];
+    if (!definition) return;
+    state.mana = Math.min(
+      definition.mana.max,
+      (state.mana ?? 0) + definition.mana.regenerationPerUnit * delta
+    );
+    state.abilityCooldownRemaining = Math.max(0, (state.abilityCooldownRemaining ?? 0) - delta);
   }
 
   private navigationField(movementProfileId: string, routeId: string): NavigationFieldResult {
@@ -8664,9 +8960,10 @@ export class TowerDefenseGame {
     }
   }
 
-  /** Boss pattern: enemies with `towerAttack` damage the nearest durable tower or opt-in v3 hero. */
+  /** Boss pattern: enemies with `towerAttack` damage the nearest durable tower or opt-in durable hero. */
   private updateEnemyTowerAttacks(delta: number): void {
-    const durableHero = this.activeHeroesMechanics?.schemaVersion === 3
+    const durableHero = (this.activeHeroesMechanics?.schemaVersion === 3
+      || this.activeHeroesMechanics?.schemaVersion === 4)
       && this.heroStateV2
       && (this.heroStateV2.hp ?? 0) > 0
       ? this.heroStateV2
@@ -8694,7 +8991,8 @@ export class TowerDefenseGame {
       for (const tower of this.towers) {
         if (typeof tower.hp !== "number" || tower.hp <= 0) continue; // indestructible or already downed this tick
         const dist = this.map.distance(center, tower.coord);
-        const stableV3Tie = this.activeHeroesMechanics?.schemaVersion === 3
+        const stableV3Tie = (this.activeHeroesMechanics?.schemaVersion === 3
+          || this.activeHeroesMechanics?.schemaVersion === 4)
           && dist === best
           && target !== null
           && tower.id < target.id;
@@ -9663,7 +9961,8 @@ export class TowerDefenseGame {
     let shieldAbsorbed = 0;
     let hpDamage = resolvedDamage.finalAmount;
     if (resolvedDamage.finalAmount > 0 && mutableTarget.kind === "hero") {
-      const definition = this.activeHeroesMechanics?.schemaVersion === 3
+      const definition = (this.activeHeroesMechanics?.schemaVersion === 3
+        || this.activeHeroesMechanics?.schemaVersion === 4)
         ? this.activeHeroesMechanics.definitions[mutableTarget.hero.definitionId]
         : undefined;
       if (definition?.durability.shield) {

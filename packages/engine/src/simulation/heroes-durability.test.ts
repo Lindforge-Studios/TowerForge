@@ -168,7 +168,7 @@ afterEach(() => vi.restoreAllMocks());
 describe("R5.2A heroes v3 durability authoring", () => {
   it("publishes a closed v3 schema and normalizes finite bounded HP and an optional capacity-only shield", () => {
     const schema = (Engine as unknown as { HEROES_MECHANICS_SCHEMA: Record<string, any> }).HEROES_MECHANICS_SCHEMA;
-    expect(schema.supportedModuleSchemaVersions).toEqual([1, 2, 3]);
+    expect(schema.supportedModuleSchemaVersions).toEqual([1, 2, 3, 4]);
     expect(schema.versions[3]).toMatchObject({
       definition: {
         requiredFields: ["label", "spawn", "movement", "durability"],
@@ -190,7 +190,7 @@ describe("R5.2A heroes v3 durability authoring", () => {
       }
     });
     expect(schema.runtimeSnapshot).toMatchObject({
-      schemaVersions: [1, 2, 3],
+      schemaVersions: [1, 2, 3, 4],
       versions: {
         3: {
           unitFields: ["id", "definitionId", "label", "coord", "movement", "durability"],

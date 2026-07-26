@@ -18,6 +18,7 @@ const BASIC_BOSS_ARTIFACT_LOOT_ID = "basic_boss_artifact_loot";
 const BASIC_COMMANDER_HERO_ID = "basic_commander_hero";
 const BASIC_MOBILE_COMMANDER_HERO_ID = "basic_mobile_commander_hero";
 const BASIC_DURABLE_COMMANDER_HERO_ID = "basic_durable_commander_hero";
+const BASIC_TARGETED_HERO_ABILITY_ID = "basic_targeted_hero_ability";
 const TERRAFORMING_RECIPE_IDS = Object.freeze([
   TAGGED_FLOOD_ID,
   TAGGED_MOAT_ID,
@@ -231,6 +232,14 @@ const RECIPES = Object.freeze([
     description: "Inert heroes v3 profile with deterministic movement, bounded HP, and an optional absorb-first shield.",
     suggestedId: BASIC_DURABLE_COMMANDER_HERO_ID,
     moduleSchemaVersion: 3
+  }),
+  Object.freeze({
+    id: BASIC_TARGETED_HERO_ABILITY_ID,
+    moduleId: "heroes",
+    label: "Basic Targeted Hero Ability",
+    description: "Inert heroes v4 profile with bounded mana and one deterministic enemy-targeted damage ability.",
+    suggestedId: BASIC_TARGETED_HERO_ABILITY_ID,
+    moduleSchemaVersion: 4
   })
 ]);
 
@@ -360,6 +369,46 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
               spawn: "core",
               movement: { movementProfileId: "ground", speed: 1 },
               durability: { maxHp: 100, shield: { capacity: 25 } }
+            }
+          },
+          movementProfiles: {
+            ground: {
+              label: "Ground",
+              terrainMode: "respect_walkable",
+              towerOccupancy: "blocked",
+              defaultTerrainCost: 1_000
+            }
+          }
+        }
+      }
+    };
+  }
+  if (recipeId === BASIC_TARGETED_HERO_ABILITY_ID) {
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "heroes",
+        moduleSchemaVersion: 4,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: {
+          selectedHeroId: "commander",
+          definitions: {
+            commander: {
+              label: "Commander",
+              spawn: "core",
+              movement: { movementProfileId: "ground", speed: 1 },
+              durability: { maxHp: 100, shield: { capacity: 25 } },
+              mana: { max: 100, starting: 60, regenerationPerUnit: 5 },
+              activeAbility: {
+                id: "arc_bolt",
+                label: "Arc Bolt",
+                target: "enemy",
+                manaCost: 20,
+                cooldown: 3,
+                range: 6,
+                damage: 30
+              }
             }
           },
           movementProfiles: {

@@ -10,7 +10,7 @@ import { HIGH_GROUND_LIMITS, LINE_OF_SIGHT_LIMITS } from "./elevation-mechanics.
 import { PHYSICS_LIMITS, inspectOwnDataEffect, parseDisplacementEffectV1, resolveActivePhysicsMechanics } from "./physics-mechanics.js";
 import { TERRAFORMING_LIMITS, TerraformingProfileValidationError, normalizeTerraformingProfileV1 } from "./terraforming-mechanics.js";
 import { ROGUELITE_SYNERGY_LIMITS, ROGUELITE_DRAFT_LIMITS, RogueliteProfileValidationError, assertRogueliteV2ModifierBudget, assertRogueliteV3ModifierBudget, normalizeRogueliteProfileV1, normalizeRogueliteProfileV2, normalizeRogueliteProfileV3, normalizeRogueliteProfileV4, normalizeTowerTagsV1 } from "./roguelite-mechanics.js";
-import { HeroesProfileValidationError, normalizeHeroesProfileV1, normalizeHeroesProfileV2, normalizeHeroesProfileV3 } from "./heroes-mechanics.js";
+import { HeroesProfileValidationError, normalizeHeroesProfileV1, normalizeHeroesProfileV2, normalizeHeroesProfileV3, normalizeHeroesProfileV4 } from "./heroes-mechanics.js";
 import { normalizeAuthoredWorldCampaign, WorldCampaignValidationError } from "../run/campaign-world.js";
 /** Derives a stable code like "TOWER_ATTACK_SLOWFACTOR" from entityKind + fieldPath. See the
  *  ValidationIssue.code caveat above — this is a coarse key, not a unique one. */
@@ -1968,8 +1968,8 @@ export function validateGameContentRegistry(content) {
         if (!module)
             return;
         unknownFields(module, ["schemaVersion", "enabled", "profiles"], "heroes", "modules.heroes");
-        if (module.schemaVersion !== 1 && module.schemaVersion !== 2 && module.schemaVersion !== 3) {
-            err("mechanics", "heroes", "modules.heroes.schemaVersion", "Heroes future or unsupported schemaVersion; only versions 1, 2 and 3 are supported.");
+        if (module.schemaVersion !== 1 && module.schemaVersion !== 2 && module.schemaVersion !== 3 && module.schemaVersion !== 4) {
+            err("mechanics", "heroes", "modules.heroes.schemaVersion", "Heroes future or unsupported schemaVersion; only versions 1, 2, 3 and 4 are supported.");
         }
         if (typeof module.enabled !== "boolean") {
             err("mechanics", "heroes", "modules.heroes.enabled", "Heroes mechanics enabled must be boolean.");
@@ -1981,7 +1981,7 @@ export function validateGameContentRegistry(content) {
             if (Object.prototype.hasOwnProperty.call(profiles, profileId))
                 continue;
             const active = module.enabled === true
-                && (module.schemaVersion === 1 || module.schemaVersion === 2 || module.schemaVersion === 3);
+                && (module.schemaVersion === 1 || module.schemaVersion === 2 || module.schemaVersion === 3 || module.schemaVersion === 4);
             (active ? err : warn)("mission", missionId, "mechanics.profiles.heroes", `Mission selects missing heroes profile "${profileId}"${active ? "" : " from an inactive module"}.`);
         }
         const selectedProfileIds = new Set(selections.values());
@@ -1989,11 +1989,13 @@ export function validateGameContentRegistry(content) {
             const root = `modules.heroes.profiles.${profileId}`;
             let profile;
             try {
-                profile = module.schemaVersion === 3
-                    ? normalizeHeroesProfileV3(profiles[profileId], root)
-                    : module.schemaVersion === 2
-                        ? normalizeHeroesProfileV2(profiles[profileId], root)
-                        : normalizeHeroesProfileV1(profiles[profileId], root);
+                profile = module.schemaVersion === 4
+                    ? normalizeHeroesProfileV4(profiles[profileId], root)
+                    : module.schemaVersion === 3
+                        ? normalizeHeroesProfileV3(profiles[profileId], root)
+                        : module.schemaVersion === 2
+                            ? normalizeHeroesProfileV2(profiles[profileId], root)
+                            : normalizeHeroesProfileV1(profiles[profileId], root);
             }
             catch (error) {
                 err("mechanics", profileId, error instanceof HeroesProfileValidationError ? error.fieldPath : root, error instanceof Error ? error.message : `Heroes profile "${profileId}" is invalid.`);
@@ -2001,9 +2003,9 @@ export function validateGameContentRegistry(content) {
             }
             const selectedExists = Object.prototype.hasOwnProperty.call(profile.definitions, profile.selectedHeroId);
             const active = module.enabled === true
-                && (module.schemaVersion === 1 || module.schemaVersion === 2 || module.schemaVersion === 3)
+                && (module.schemaVersion === 1 || module.schemaVersion === 2 || module.schemaVersion === 3 || module.schemaVersion === 4)
                 && selectedProfileIds.has(profileId);
-            if (module.schemaVersion === 2 || module.schemaVersion === 3) {
+            if (module.schemaVersion === 2 || module.schemaVersion === 3 || module.schemaVersion === 4) {
                 const v2 = profile;
                 const semantic = (fieldPath, message) => {
                     (active ? err : warn)("mechanics", profileId, fieldPath, message);

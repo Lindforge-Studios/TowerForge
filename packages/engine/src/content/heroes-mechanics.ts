@@ -15,6 +15,8 @@ export const HEROES_LIMITS = Object.freeze({
   labelUtf8Bytes: 128
 });
 
+const HERO_ABILITY_COOLDOWN_MAX = 86_400;
+
 export interface HeroUnitDefinitionV1 {
   readonly label: string;
   readonly spawn: "core";
@@ -76,10 +78,43 @@ export interface ActiveHeroesMechanicsV3 extends HeroesProfileV3 {
   readonly profileId: string;
 }
 
+export interface HeroManaDefinitionV4 {
+  readonly max: number;
+  readonly starting: number;
+  readonly regenerationPerUnit: number;
+}
+
+export interface HeroActiveAbilityDefinitionV4 {
+  readonly id: string;
+  readonly label: string;
+  readonly target: "enemy";
+  readonly manaCost: number;
+  readonly cooldown: number;
+  readonly range: number;
+  readonly damage: number;
+}
+
+export interface HeroUnitDefinitionV4 extends HeroUnitDefinitionV3 {
+  readonly mana: HeroManaDefinitionV4;
+  readonly activeAbility: HeroActiveAbilityDefinitionV4;
+}
+
+export interface HeroesProfileV4 {
+  readonly selectedHeroId: string;
+  readonly definitions: Readonly<Record<string, HeroUnitDefinitionV4>>;
+  readonly movementProfiles: Readonly<Record<string, MovementProfileV1>>;
+}
+
+export interface ActiveHeroesMechanicsV4 extends HeroesProfileV4 {
+  readonly schemaVersion: 4;
+  readonly profileId: string;
+}
+
 export type ActiveHeroesMechanics =
   | ActiveHeroesMechanicsV1
   | ActiveHeroesMechanicsV2
-  | ActiveHeroesMechanicsV3;
+  | ActiveHeroesMechanicsV3
+  | ActiveHeroesMechanicsV4;
 
 const PROFILE_SCHEMA = Object.freeze({
   requiredFields: Object.freeze(["selectedHeroId", "definitions"] as const),
@@ -136,11 +171,38 @@ const SHIELD_SCHEMA_V3 = Object.freeze({
   capacity: Object.freeze({ exclusiveMinimum: 0, maximum: SHIELD_LIMITS.capacity })
 });
 
+const DEFINITION_SCHEMA_V4 = Object.freeze({
+  requiredFields: Object.freeze(["label", "spawn", "movement", "durability", "mana", "activeAbility"] as const),
+  optionalFields: Object.freeze([] as const),
+  additionalProperties: false,
+  spawnValues: Object.freeze(["core"] as const)
+});
+
+const MANA_SCHEMA_V4 = Object.freeze({
+  requiredFields: Object.freeze(["max", "starting", "regenerationPerUnit"] as const),
+  optionalFields: Object.freeze([] as const),
+  additionalProperties: false,
+  max: Object.freeze({ exclusiveMinimum: 0, maximum: SHIELD_LIMITS.capacity }),
+  starting: Object.freeze({ minimum: 0, maximumFrom: "mana.max" }),
+  regenerationPerUnit: Object.freeze({ minimum: 0, maximum: SHIELD_LIMITS.capacity })
+});
+
+const ACTIVE_ABILITY_SCHEMA_V4 = Object.freeze({
+  requiredFields: Object.freeze(["id", "label", "target", "manaCost", "cooldown", "range", "damage"] as const),
+  optionalFields: Object.freeze([] as const),
+  additionalProperties: false,
+  targetValues: Object.freeze(["enemy"] as const),
+  manaCost: Object.freeze({ exclusiveMinimum: 0, maximumFrom: "mana.max" }),
+  cooldown: Object.freeze({ minimum: 0, maximum: HERO_ABILITY_COOLDOWN_MAX }),
+  range: Object.freeze({ integer: true, minimum: 0, maximum: NAVIGATION_LIMITS.activeMapCells }),
+  damage: Object.freeze({ exclusiveMinimum: 0, maximum: SHIELD_LIMITS.capacity })
+});
+
 /** Capability-aware authoring descriptor shared by Studio and MCP. */
 export const HEROES_MECHANICS_SCHEMA = Object.freeze({
-  schemaVersion: 3,
+  schemaVersion: 4,
   moduleId: "heroes" as const,
-  supportedModuleSchemaVersions: Object.freeze([1, 2, 3] as const),
+  supportedModuleSchemaVersions: Object.freeze([1, 2, 3, 4] as const),
   profile: PROFILE_SCHEMA,
   definition: DEFINITION_SCHEMA,
   versions: Object.freeze({
@@ -158,12 +220,22 @@ export const HEROES_MECHANICS_SCHEMA = Object.freeze({
       movementProfile: MOVEMENT_PROFILE_V1_SCHEMA,
       durability: DURABILITY_SCHEMA_V3,
       shield: SHIELD_SCHEMA_V3
+    }),
+    4: Object.freeze({
+      profile: PROFILE_SCHEMA_V2,
+      definition: DEFINITION_SCHEMA_V4,
+      movement: MOVEMENT_SCHEMA_V2,
+      movementProfile: MOVEMENT_PROFILE_V1_SCHEMA,
+      durability: DURABILITY_SCHEMA_V3,
+      shield: SHIELD_SCHEMA_V3,
+      mana: MANA_SCHEMA_V4,
+      activeAbility: ACTIVE_ABILITY_SCHEMA_V4
     })
   }),
   limits: HEROES_LIMITS,
   runtimeSnapshot: Object.freeze({
     path: "snapshot.heroes",
-    schemaVersions: Object.freeze([1, 2, 3] as const),
+    schemaVersions: Object.freeze([1, 2, 3, 4] as const),
     optionalUnlessActive: true,
     versions: Object.freeze({
       1: Object.freeze({ unitFields: Object.freeze(["id", "definitionId", "label", "coord"] as const) }),
@@ -175,6 +247,17 @@ export const HEROES_MECHANICS_SCHEMA = Object.freeze({
         unitFields: Object.freeze(["id", "definitionId", "label", "coord", "movement", "durability"] as const),
         movementFields: Object.freeze(["targetCoord", "nextCoord", "edgeProgress"] as const),
         durabilityFields: Object.freeze(["hp", "maxHp", "shield", "defeated"] as const)
+      }),
+      4: Object.freeze({
+        unitFields: Object.freeze([
+          "id", "definitionId", "label", "coord", "movement", "durability", "mana", "activeAbility"
+        ] as const),
+        movementFields: Object.freeze(["targetCoord", "nextCoord", "edgeProgress"] as const),
+        durabilityFields: Object.freeze(["hp", "maxHp", "shield", "defeated"] as const),
+        manaFields: Object.freeze(["current", "max", "regenerationPerUnit"] as const),
+        activeAbilityFields: Object.freeze([
+          "id", "label", "target", "manaCost", "cooldown", "cooldownRemaining", "range", "damage", "ready"
+        ] as const)
       })
     })
   })
@@ -547,6 +630,96 @@ export function normalizeHeroesProfileV3(input: unknown, root = "profile"): Hero
   });
 }
 
+/** Normalize the closed R5.3A single targeted active-ability profile. */
+export function normalizeHeroesProfileV4(input: unknown, root = "profile"): HeroesProfileV4 {
+  const profile = dataRecord(input, root, "Heroes profile");
+  exactFields(profile, PROFILE_SCHEMA_V2.requiredFields, root, "Heroes profile");
+  const rawDefinitions = dataRecord(profile.definitions, `${root}.definitions`, "Heroes definitions");
+  const legacyDefinitions: Record<string, unknown> = {};
+  for (const heroId of Object.keys(rawDefinitions).sort(compareBinary)) {
+    const definitionRoot = `${root}.definitions.${heroId}`;
+    const rawDefinition = dataRecord(rawDefinitions[heroId], definitionRoot, `Hero definition "${heroId}"`);
+    exactFields(rawDefinition, DEFINITION_SCHEMA_V4.requiredFields, definitionRoot, `Hero definition "${heroId}"`);
+    Object.defineProperty(legacyDefinitions, heroId, {
+      value: {
+        label: rawDefinition.label,
+        spawn: rawDefinition.spawn,
+        movement: rawDefinition.movement,
+        durability: rawDefinition.durability
+      },
+      enumerable: true
+    });
+  }
+  const durable = normalizeHeroesProfileV3({
+    selectedHeroId: profile.selectedHeroId,
+    definitions: legacyDefinitions,
+    movementProfiles: profile.movementProfiles
+  }, root);
+  const definitions: Record<string, HeroUnitDefinitionV4> = {};
+  for (const heroId of Object.keys(durable.definitions).sort(compareBinary)) {
+    const definitionRoot = `${root}.definitions.${heroId}`;
+    const rawDefinition = dataRecord(rawDefinitions[heroId], definitionRoot, `Hero definition "${heroId}"`);
+    const manaRoot = `${definitionRoot}.mana`;
+    const rawMana = dataRecord(rawDefinition.mana, manaRoot, `Hero mana "${heroId}"`);
+    exactFields(rawMana, MANA_SCHEMA_V4.requiredFields, manaRoot, `Hero mana "${heroId}"`);
+    const max = rawMana.max;
+    const starting = rawMana.starting;
+    const regenerationPerUnit = rawMana.regenerationPerUnit;
+    if (typeof max !== "number" || !Number.isFinite(max) || max <= 0 || max > SHIELD_LIMITS.capacity) {
+      throw new HeroesProfileValidationError(manaRoot + ".max", "Hero mana max must be finite and positive within the maximum range.");
+    }
+    if (typeof starting !== "number" || !Number.isFinite(starting) || starting < 0 || starting > max) {
+      throw new HeroesProfileValidationError(manaRoot + ".starting", "Hero starting mana must be finite inside the authored mana range.");
+    }
+    if (typeof regenerationPerUnit !== "number" || !Number.isFinite(regenerationPerUnit)
+      || regenerationPerUnit < 0 || regenerationPerUnit > SHIELD_LIMITS.capacity) {
+      throw new HeroesProfileValidationError(
+        manaRoot + ".regenerationPerUnit",
+        "Hero mana regeneration must be finite inside the supported range."
+      );
+    }
+    const abilityRoot = `${definitionRoot}.activeAbility`;
+    const rawAbility = dataRecord(rawDefinition.activeAbility, abilityRoot, `Hero active ability "${heroId}"`);
+    exactFields(rawAbility, ACTIVE_ABILITY_SCHEMA_V4.requiredFields, abilityRoot, `Hero active ability "${heroId}"`);
+    const id = boundedText(rawAbility.id, HEROES_LIMITS.idUtf8Bytes, abilityRoot + ".id", "Hero ability id");
+    const label = boundedText(rawAbility.label, HEROES_LIMITS.labelUtf8Bytes, abilityRoot + ".label", "Hero ability label");
+    if (rawAbility.target !== "enemy") {
+      throw new HeroesProfileValidationError(abilityRoot + ".target", "Hero active ability target field must be enemy.");
+    }
+    const manaCost = rawAbility.manaCost;
+    if (typeof manaCost !== "number" || !Number.isFinite(manaCost) || manaCost <= 0 || manaCost > max) {
+      throw new HeroesProfileValidationError(abilityRoot + ".manaCost", "Hero ability mana cost must be finite and positive inside the mana range.");
+    }
+    const cooldown = rawAbility.cooldown;
+    if (typeof cooldown !== "number" || !Number.isFinite(cooldown)
+      || cooldown < 0 || cooldown > HERO_ABILITY_COOLDOWN_MAX) {
+      throw new HeroesProfileValidationError(abilityRoot + ".cooldown", "Hero ability cooldown must be finite inside the supported range.");
+    }
+    const range = rawAbility.range;
+    if (typeof range !== "number" || !Number.isSafeInteger(range)
+      || range < 0 || range > NAVIGATION_LIMITS.activeMapCells) {
+      throw new HeroesProfileValidationError(abilityRoot + ".range", "Hero ability range must be an integer inside the supported range.");
+    }
+    const damage = rawAbility.damage;
+    if (typeof damage !== "number" || !Number.isFinite(damage) || damage <= 0 || damage > SHIELD_LIMITS.capacity) {
+      throw new HeroesProfileValidationError(abilityRoot + ".damage", "Hero ability damage must be finite and positive within the maximum range.");
+    }
+    Object.defineProperty(definitions, heroId, {
+      value: Object.freeze({
+        ...durable.definitions[heroId]!,
+        mana: Object.freeze({ max, starting, regenerationPerUnit }),
+        activeAbility: Object.freeze({ id, label, target: "enemy" as const, manaCost, cooldown, range, damage })
+      }),
+      enumerable: true
+    });
+  }
+  return Object.freeze({
+    selectedHeroId: durable.selectedHeroId,
+    definitions: Object.freeze(definitions),
+    movementProfiles: durable.movementProfiles
+  });
+}
+
 function ownData(value: unknown, key: string): unknown {
   if (value === null || typeof value !== "object") return undefined;
   try {
@@ -566,23 +739,26 @@ export function resolveActiveHeroesMechanics(
   if (!capability?.active || capability.profileId === undefined) return undefined;
   const module = ownData(ownData(content.mechanics, "modules"), "heroes");
   const schemaVersion = ownData(module, "schemaVersion");
-  if ((schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3) || ownData(module, "enabled") !== true) {
+  if ((schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3 && schemaVersion !== 4)
+    || ownData(module, "enabled") !== true) {
     return undefined;
   }
   const profile = ownData(ownData(module, "profiles"), capability.profileId);
-  let normalized: HeroesProfileV1 | HeroesProfileV2 | HeroesProfileV3;
+  let normalized: HeroesProfileV1 | HeroesProfileV2 | HeroesProfileV3 | HeroesProfileV4;
   try {
     normalized = schemaVersion === 1
       ? normalizeHeroesProfileV1(profile, `modules.heroes.profiles.${capability.profileId}`)
       : schemaVersion === 2
         ? normalizeHeroesProfileV2(profile, `modules.heroes.profiles.${capability.profileId}`)
-        : normalizeHeroesProfileV3(profile, `modules.heroes.profiles.${capability.profileId}`);
+        : schemaVersion === 3
+          ? normalizeHeroesProfileV3(profile, `modules.heroes.profiles.${capability.profileId}`)
+          : normalizeHeroesProfileV4(profile, `modules.heroes.profiles.${capability.profileId}`);
   } catch {
     return undefined;
   }
   if (!Object.prototype.hasOwnProperty.call(normalized.definitions, normalized.selectedHeroId)) return undefined;
-  if (schemaVersion === 2 || schemaVersion === 3) {
-    const moving = normalized as HeroesProfileV2 | HeroesProfileV3;
+  if (schemaVersion === 2 || schemaVersion === 3 || schemaVersion === 4) {
+    const moving = normalized as HeroesProfileV2 | HeroesProfileV3 | HeroesProfileV4;
     const definition = moving.definitions[moving.selectedHeroId];
     if (!definition || !Object.prototype.hasOwnProperty.call(moving.movementProfiles, definition.movement.movementProfileId)) {
       return undefined;
@@ -595,11 +771,19 @@ export function resolveActiveHeroesMechanics(
           definitions: (moving as HeroesProfileV2).definitions,
           movementProfiles: moving.movementProfiles
         })
-      : Object.freeze({
+      : schemaVersion === 3
+        ? Object.freeze({
           schemaVersion: 3 as const,
           profileId: capability.profileId,
           selectedHeroId: moving.selectedHeroId,
           definitions: (moving as HeroesProfileV3).definitions,
+          movementProfiles: moving.movementProfiles
+        })
+        : Object.freeze({
+          schemaVersion: 4 as const,
+          profileId: capability.profileId,
+          selectedHeroId: moving.selectedHeroId,
+          definitions: (moving as HeroesProfileV4).definitions,
           movementProfiles: moving.movementProfiles
         });
   }

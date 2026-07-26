@@ -91,3 +91,18 @@ the authoritative `defeated` state at zero HP. The optional runtime section is
 Do not reconstruct combat state from presentation cues. This slice adds no mana, abilities,
 healing, regeneration, revival, auras, blocking, or TowerScript hero actions. See
 [ADR 0039](../../adr/0039-opt-in-hero-durability.md).
+
+## Optional targeted ability (R5.3A)
+
+Use `mechanics-targeted-ability.json` to opt into Heroes v4. Each definition retains the complete
+v3 shape and adds exact `mana: {max,starting,regenerationPerUnit}` plus one exact inline
+`activeAbility`. The bundled `basic_targeted_hero_ability` recipe materializes the same bounded
+shape, but remains inert: it does not enable Heroes, select a mission, enable navigation or
+logistics, bind a sprite, or install TowerScript.
+
+At runtime, read mana, cooldown, range metadata, and readiness only from `snapshot.heroes` v4.
+Invoke the spell with exact `GameCommandV5 useHeroAbility` fields `heroId`, `abilityId`, and
+`targetEnemyId`; a successful cast emits `heroAbilityUsed`. The engine alone validates target
+liveness and range, spends mana, starts cooldown, and resolves damage. This slice has no multiple
+abilities, skills, auras, blocking, logistics coupling, or TowerScript hero actions. See
+[ADR 0040](../../adr/0040-opt-in-targeted-hero-ability.md).

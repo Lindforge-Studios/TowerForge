@@ -376,7 +376,7 @@ describe("replayGameCommandJournal", () => {
     const content = createContent();
     const { journal } = recordJournal(content, [PLACE]);
     let entryReads = 0;
-    const future = { ...journal, schemaVersion: 5 } as Record<string, unknown>;
+    const future = { ...journal, schemaVersion: 6 } as Record<string, unknown>;
     Object.defineProperty(future, "entries", {
       enumerable: true,
       get() {

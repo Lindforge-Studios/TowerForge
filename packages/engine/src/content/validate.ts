@@ -46,9 +46,11 @@ import {
   normalizeHeroesProfileV1,
   normalizeHeroesProfileV2,
   normalizeHeroesProfileV3,
+  normalizeHeroesProfileV4,
   type HeroesProfileV1,
   type HeroesProfileV2,
-  type HeroesProfileV3
+  type HeroesProfileV3,
+  type HeroesProfileV4
 } from "./heroes-mechanics.js";
 import {
   normalizeAuthoredWorldCampaign,
@@ -2662,12 +2664,12 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
     const module = inspect(modules.heroes, "heroes", "modules.heroes", "Heroes mechanics module");
     if (!module) return;
     unknownFields(module, ["schemaVersion", "enabled", "profiles"], "heroes", "modules.heroes");
-    if (module.schemaVersion !== 1 && module.schemaVersion !== 2 && module.schemaVersion !== 3) {
+    if (module.schemaVersion !== 1 && module.schemaVersion !== 2 && module.schemaVersion !== 3 && module.schemaVersion !== 4) {
       err(
         "mechanics",
         "heroes",
         "modules.heroes.schemaVersion",
-        "Heroes future or unsupported schemaVersion; only versions 1, 2 and 3 are supported."
+        "Heroes future or unsupported schemaVersion; only versions 1, 2, 3 and 4 are supported."
       );
     }
     if (typeof module.enabled !== "boolean") {
@@ -2678,7 +2680,7 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
     for (const [missionId, profileId] of selections) {
       if (Object.prototype.hasOwnProperty.call(profiles, profileId)) continue;
       const active = module.enabled === true
-        && (module.schemaVersion === 1 || module.schemaVersion === 2 || module.schemaVersion === 3);
+        && (module.schemaVersion === 1 || module.schemaVersion === 2 || module.schemaVersion === 3 || module.schemaVersion === 4);
       (active ? err : warn)(
         "mission",
         missionId,
@@ -2689,9 +2691,11 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
     const selectedProfileIds = new Set(selections.values());
     for (const profileId of Object.keys(profiles).sort()) {
       const root = `modules.heroes.profiles.${profileId}`;
-      let profile: HeroesProfileV1 | HeroesProfileV2 | HeroesProfileV3;
+      let profile: HeroesProfileV1 | HeroesProfileV2 | HeroesProfileV3 | HeroesProfileV4;
       try {
-        profile = module.schemaVersion === 3
+        profile = module.schemaVersion === 4
+          ? normalizeHeroesProfileV4(profiles[profileId], root)
+          : module.schemaVersion === 3
           ? normalizeHeroesProfileV3(profiles[profileId], root)
           : module.schemaVersion === 2
             ? normalizeHeroesProfileV2(profiles[profileId], root)
@@ -2707,10 +2711,10 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
       }
       const selectedExists = Object.prototype.hasOwnProperty.call(profile.definitions, profile.selectedHeroId);
       const active = module.enabled === true
-        && (module.schemaVersion === 1 || module.schemaVersion === 2 || module.schemaVersion === 3)
+        && (module.schemaVersion === 1 || module.schemaVersion === 2 || module.schemaVersion === 3 || module.schemaVersion === 4)
         && selectedProfileIds.has(profileId);
-      if (module.schemaVersion === 2 || module.schemaVersion === 3) {
-        const v2 = profile as HeroesProfileV2 | HeroesProfileV3;
+      if (module.schemaVersion === 2 || module.schemaVersion === 3 || module.schemaVersion === 4) {
+        const v2 = profile as HeroesProfileV2 | HeroesProfileV3 | HeroesProfileV4;
         const semantic = (fieldPath: string, message: string): void => {
           (active ? err : warn)("mechanics", profileId, fieldPath, message);
         };

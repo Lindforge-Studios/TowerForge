@@ -33,6 +33,7 @@
 | R5.1A — static hero roster foundation | Завершён; code + constructor sign-off; ADR Accepted | Opt-in `heroes` v1: bounded roster, один selected unit на core, optional snapshot и shared presentation без commands/checkpoint |
 | R5.1B — deterministic hero movement | Завершён; code + constructor sign-off; ADR Accepted | Heroes v2, own movement profiles, exact GameCommand/Journal v4, checkpoint/replay и Canvas/Phaser input без navigation activation |
 | R5.2A — hero durability | Завершён; code + constructor sign-off; ADR Accepted | Heroes v3, exact HP/optional shield, shared resolver, optional snapshot/checkpoint state, guarded authoring и legacy v1/v2 paths |
+| R5.3A — targeted hero ability | Завершён; code + constructor sign-off; ADR Accepted | Heroes v4, bounded mana regeneration, один enemy-targeted damage spell, cooldown, GameCommand/Journal v5 и nested checkpoint v3 |
 | R5–R8 | Запланированы | Каждый срез закрывает engine, Studio, AI/MCP, renderers/player, docs и два независимых sign-off |
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Поставленные версии `combat`, `reactions`, `navigation` и `elevation` уже прошли полные вертикальные срезы. Остальные модули Mechanics Hub остаются planned, а preview/apply отклоняют их включение без записи.
@@ -234,6 +235,29 @@ checkpoint-состояния shield/HP, forged hero events, точный MCP ev
 пути остались совместимыми. Typecheck, engine/build, validate, sim, balance, maps и plugin
 build/validate/smoke прошли. Code verifier и constructor-integration verifier выдали PASS без
 открытых P0–P3 findings.
+
+R5.3A принят 2026-07-26 как отдельный opt-in срез. `heroes` v4 сохраняет
+полный v3-контракт и добавляет bounded mana/regeneration плюс одну inline
+enemy-targeted damage ability. Exact `GameCommandV5 useHeroAbility` и journal v5 передают
+только authoritative IDs; engine атомарно проверяет outcome, defeat, target, range,
+mana и cooldown, а урон идёт через общий `DamageResolver`. Nested heroes checkpoint v3
+хранит mana/cooldown без изменения outer `GameCheckpointV1`.
+
+Исходный engine RED дал 13 ожидаемых падений из 66 focused contracts; authoring/player
+RED-волны — ещё 12 и 5. Независимый code verifier добавил test-first регрессии
+для ended-mission readiness, hostile event↔checkpoint mismatch и двух допустимых
+zero-cooldown cast до tick. Constructor verifier закрепил точный MCP stale-revision flow,
+Studio lifecycle, public skill и source↔plugin parity. Оба verifier выдали PASS без открытых
+P0–P3 findings.
+
+Финальный Vitest — 2 137/2 137 в 190 файлах. Playwright подтвердил все 81 сценарий:
+79 прошли в общем прогоне, два тяжёлых legacy single-file сценария, достигшие общего
+timeout под параллельной нагрузкой, отдельно прошли 1/1 каждый. Active v4 покрыт
+матрицей `Canvas/Phaser × hex/square × mouse/touch/keyboard` (12/12), полным Studio
+enable/edit/preview/save/reload/disable/re-enable и PWA/single-file/web-package/`.tdpack`. Typecheck,
+engine/build, validate, sim, balance, maps, web build и plugin build/validate/smoke прошли. Контракт:
+[ADR 0040](adr/0040-opt-in-targeted-hero-ability.md); fixture:
+`docs/examples/opt-in-hero-roster/mechanics-targeted-ability.json`.
 
 ### R6 — TowerScript DX 2.0
 

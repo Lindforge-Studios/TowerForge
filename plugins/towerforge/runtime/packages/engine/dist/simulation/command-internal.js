@@ -1,6 +1,6 @@
 import { TOWER_TARGET_MODES } from "./types.js";
-export const GAME_COMMAND_SCHEMA_VERSION = 4;
-export const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4]);
+export const GAME_COMMAND_SCHEMA_VERSION = 5;
+export const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4, 5]);
 const MAX_PAYLOAD_DEPTH = 32;
 const MAX_PAYLOAD_NODES = 4_096;
 const MAX_PAYLOAD_BYTES = 64 * 1_024;
@@ -174,7 +174,8 @@ export function parseGameCommand(input) {
         return undefined;
     const schemaVersion = fields.get("schemaVersion");
     const type = fields.get("type");
-    if ((schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3 && schemaVersion !== 4) || typeof type !== "string")
+    if ((schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3 && schemaVersion !== 4 && schemaVersion !== 5)
+        || typeof type !== "string")
         return undefined;
     if (type === "tick") {
         if (!hasClosedFields(fields, ["schemaVersion", "type", "units"]))
@@ -248,7 +249,7 @@ export function parseGameCommand(input) {
             return undefined;
         return { schemaVersion, type, signal, payload };
     }
-    if ((schemaVersion === 2 || schemaVersion === 3 || schemaVersion === 4) && (type === "socketArtifact" || type === "unsocketArtifact")) {
+    if (schemaVersion >= 2 && (type === "socketArtifact" || type === "unsocketArtifact")) {
         if (!hasClosedFields(fields, ["schemaVersion", "type", "artifactInstanceId", "towerId", "slotId"])) {
             return undefined;
         }
@@ -261,7 +262,7 @@ export function parseGameCommand(input) {
             return undefined;
         return { schemaVersion, type, artifactInstanceId, towerId, slotId };
     }
-    if ((schemaVersion === 3 || schemaVersion === 4) && type === "chooseDraftOption") {
+    if (schemaVersion >= 3 && type === "chooseDraftOption") {
         if (!hasClosedFields(fields, ["schemaVersion", "type", "offerId", "cardId"]))
             return undefined;
         const offerId = fields.get("offerId");
@@ -270,14 +271,25 @@ export function parseGameCommand(input) {
             return undefined;
         return { schemaVersion, type, offerId, cardId };
     }
-    if (schemaVersion === 4 && type === "moveHero") {
+    if (schemaVersion >= 4 && type === "moveHero") {
         if (!hasClosedFields(fields, ["schemaVersion", "type", "heroId", "target"]))
             return undefined;
         const heroId = fields.get("heroId");
         const target = parseCoord(fields.get("target"));
         if (!isBoundedCommandId(heroId) || !target)
             return undefined;
-        return { schemaVersion: 4, type, heroId, target };
+        return { schemaVersion, type, heroId, target };
+    }
+    if (schemaVersion === 5 && type === "useHeroAbility") {
+        if (!hasClosedFields(fields, ["schemaVersion", "type", "heroId", "abilityId", "targetEnemyId"]))
+            return undefined;
+        const heroId = fields.get("heroId");
+        const abilityId = fields.get("abilityId");
+        const targetEnemyId = fields.get("targetEnemyId");
+        if (!isBoundedCommandId(heroId) || !isBoundedCommandId(abilityId) || !isBoundedCommandId(targetEnemyId)) {
+            return undefined;
+        }
+        return { schemaVersion: 5, type, heroId, abilityId, targetEnemyId };
     }
     return undefined;
 }
@@ -311,5 +323,7 @@ export function executeParsedGameCommand(game, command) {
             return game.chooseDraftOption(command.offerId, command.cardId);
         case "moveHero":
             return game.moveHero(command.heroId, command.target);
+        case "useHeroAbility":
+            return game.useHeroAbility(command.heroId, command.abilityId, command.targetEnemyId);
     }
 }

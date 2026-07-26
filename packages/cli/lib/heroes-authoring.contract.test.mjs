@@ -221,3 +221,84 @@ describe("R5.2A CLI durable hero authoring", () => {
     expect(reread.capabilities.navigation.active).toBe(false);
   }, 15_000);
 });
+
+describe("R5.3A CLI targeted hero ability authoring", () => {
+  const activeHero = () => request({
+    moduleSchemaVersion: 4,
+    profileId: "active_commander",
+    profile: {
+      selectedHeroId: "commander",
+      definitions: {
+        commander: {
+          label: "Commander",
+          spawn: "core",
+          movement: { movementProfileId: "ground", speed: 1 },
+          durability: { maxHp: 100, shield: { capacity: 25 } },
+          mana: { max: 100, starting: 60, regenerationPerUnit: 5 },
+          activeAbility: {
+            id: "arc_bolt", label: "Arc Bolt", target: "enemy",
+            manaCost: 20, cooldown: 3, range: 6, damage: 30
+          }
+        }
+      },
+      movementProfiles: {
+        ground: {
+          label: "Ground", terrainMode: "respect_walkable",
+          towerOccupancy: "blocked", defaultTerrainCost: 1000
+        }
+      }
+    }
+  });
+
+  it("previews, guardedly applies, and rereads one exact v4 profile", async () => {
+    const projectDir = fixture();
+    const before = transactionBytes(projectDir);
+    const authored = activeHero();
+    const preview = await previewMechanicsModule(projectDir, authored);
+    expect(preview).toMatchObject({
+      ok: true,
+      dryRun: true,
+      validation: { ok: true, issues: [] },
+      candidate: {
+        mechanics: { modules: { heroes: { schemaVersion: 4, enabled: true } } },
+        balance: { missions: { tutorial_01: { mechanics: { profiles: { heroes: "active_commander" } } } } }
+      }
+    });
+    expect(transactionBytes(projectDir)).toEqual(before);
+    expect(preview.candidate.mechanics.modules.navigation).toBeUndefined();
+
+    const applied = await applyMechanicsModule(projectDir, { ...authored, ifRevision: preview.revision });
+    expect(applied).toMatchObject({ ok: true, written: true, previousRevision: preview.revision });
+    const reread = await inspectMechanicsAuthoring(projectDir, { missionId: "tutorial_01" });
+    expect(reread.heroes).toMatchObject({
+      enabled: true,
+      moduleSchemaVersion: 4,
+      selectedProfileId: "active_commander",
+      selectedProfile: authored.profile
+    });
+    expect(reread.capabilities.navigation.active).toBe(false);
+  }, 15_000);
+
+  it("rejects invalid visible-number equivalents without repairing or writing them", async () => {
+    const projectDir = fixture();
+    const before = transactionBytes(projectDir);
+    for (const mutate of [
+      (profile) => { profile.definitions.commander.mana.max = 0; },
+      (profile) => { profile.definitions.commander.mana.starting = 101; },
+      (profile) => { profile.definitions.commander.mana.regenerationPerUnit = -1; },
+      (profile) => { profile.definitions.commander.activeAbility.manaCost = 0; },
+      (profile) => { profile.definitions.commander.activeAbility.cooldown = -1; },
+      (profile) => { profile.definitions.commander.activeAbility.range = 1.5; },
+      (profile) => { profile.definitions.commander.activeAbility.damage = 0; }
+    ]) {
+      const malformed = activeHero();
+      mutate(malformed.profile);
+      const preview = await previewMechanicsModule(projectDir, malformed);
+      expect(preview.ok).toBe(false);
+      expect(preview.validation.issues).toEqual(expect.arrayContaining([
+        expect.objectContaining({ severity: "error", fieldPath: expect.stringMatching(/mana|activeAbility/i) })
+      ]));
+      expect(transactionBytes(projectDir)).toEqual(before);
+    }
+  }, 15_000);
+});

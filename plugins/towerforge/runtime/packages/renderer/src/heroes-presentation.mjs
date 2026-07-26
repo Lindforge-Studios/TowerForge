@@ -3,6 +3,8 @@ const MAX_ID_BYTES = 128;
 const MAX_LABEL_BYTES = 128;
 const MAX_COORDINATE = 1_000_000;
 const MAX_DURABILITY = 1_000_000_000_000;
+const MAX_ABILITY_COOLDOWN = 86_400;
+const MAX_ABILITY_RANGE = 65_536;
 
 const INACTIVE = Object.freeze({ active: false, units: Object.freeze([]) });
 
@@ -120,7 +122,50 @@ function durability(value) {
     if (capacity === null || current === null) return null;
     shield = Object.freeze({ current, capacity });
   }
+  if (hp < maxHp && shield !== null && shield.current > 0) return null;
   return Object.freeze({ hp, maxHp, shield, defeated: record.defeated });
+}
+
+function mana(value) {
+  const record = exactRecord(value, ["current", "max", "regenerationPerUnit"]);
+  if (!record) return null;
+  const max = boundedDurabilityNumber(record.max, Number.MIN_VALUE, MAX_DURABILITY);
+  const current = max === null ? null : boundedDurabilityNumber(record.current, 0, max);
+  const regenerationPerUnit = boundedDurabilityNumber(
+    record.regenerationPerUnit, 0, MAX_DURABILITY
+  );
+  if (max === null || current === null || regenerationPerUnit === null) return null;
+  return Object.freeze({ current, max, regenerationPerUnit });
+}
+
+function activeAbility(value, projectedMana, projectedDurability) {
+  const record = exactRecord(value, [
+    "id", "label", "target", "manaCost", "cooldown", "cooldownRemaining",
+    "range", "damage", "ready"
+  ]);
+  if (!record) return null;
+  const id = boundedText(record.id, MAX_ID_BYTES);
+  const label = boundedText(record.label, MAX_LABEL_BYTES);
+  const manaCost = boundedDurabilityNumber(record.manaCost, Number.MIN_VALUE, projectedMana.max);
+  const cooldown = boundedDurabilityNumber(record.cooldown, 0, MAX_ABILITY_COOLDOWN);
+  const cooldownRemaining = cooldown === null
+    ? null
+    : boundedDurabilityNumber(record.cooldownRemaining, 0, cooldown);
+  const range = Number.isSafeInteger(record.range) && record.range >= 0 && record.range <= MAX_ABILITY_RANGE
+    ? record.range
+    : null;
+  const damage = boundedDurabilityNumber(record.damage, Number.MIN_VALUE, MAX_DURABILITY);
+  if (!id || !label || record.target !== "enemy" || manaCost === null || cooldown === null
+    || cooldownRemaining === null || range === null || damage === null
+    || typeof record.ready !== "boolean") return null;
+  const expectedReady = !projectedDurability.defeated
+    && projectedMana.current >= manaCost
+    && cooldownRemaining === 0;
+  if (record.ready !== expectedReady) return null;
+  return Object.freeze({
+    id, label, target: "enemy", manaCost, cooldown, cooldownRemaining, range, damage,
+    ready: record.ready
+  });
 }
 
 /**
@@ -132,7 +177,7 @@ export function projectHeroesPresentation(snapshot) {
   if (value === undefined || value === null) return INACTIVE;
   const section = exactRecord(value, ["schemaVersion", "units"]);
   if (!section || (section.schemaVersion !== 1 && section.schemaVersion !== 2
-    && section.schemaVersion !== 3)) return INACTIVE;
+    && section.schemaVersion !== 3 && section.schemaVersion !== 4)) return INACTIVE;
   const authoredUnits = denseArray(section.units, MAX_UNITS);
   if (!authoredUnits || authoredUnits.length !== 1) return INACTIVE;
   const units = [];
@@ -143,7 +188,9 @@ export function projectHeroesPresentation(snapshot) {
       ? ["id", "definitionId", "label", "coord"]
       : section.schemaVersion === 2
         ? ["id", "definitionId", "label", "coord", "movement"]
-        : ["id", "definitionId", "label", "coord", "movement", "durability"]);
+        : section.schemaVersion === 3
+          ? ["id", "definitionId", "label", "coord", "movement", "durability"]
+          : ["id", "definitionId", "label", "coord", "movement", "durability", "mana", "activeAbility"]);
     if (!unit) return INACTIVE;
     const id = boundedText(unit.id, MAX_ID_BYTES);
     const definitionId = boundedText(unit.definitionId, MAX_ID_BYTES);
@@ -165,8 +212,20 @@ export function projectHeroesPresentation(snapshot) {
     }
     const projectedDurability = durability(unit.durability);
     if (!projectedDurability) return INACTIVE;
+    if (section.schemaVersion === 3) {
+      units.push(Object.freeze({
+        id, definitionId, label, coord, movement: projectedMovement, durability: projectedDurability
+      }));
+      continue;
+    }
+    const projectedMana = mana(unit.mana);
+    const projectedAbility = projectedMana
+      ? activeAbility(unit.activeAbility, projectedMana, projectedDurability)
+      : null;
+    if (!projectedMana || !projectedAbility) return INACTIVE;
     units.push(Object.freeze({
-      id, definitionId, label, coord, movement: projectedMovement, durability: projectedDurability
+      id, definitionId, label, coord, movement: projectedMovement, durability: projectedDurability,
+      mana: projectedMana, activeAbility: projectedAbility
     }));
   }
   return Object.freeze({ active: true, units: Object.freeze(units) });
@@ -210,4 +269,36 @@ export function hitTestHeroesPresentation(presentation, point, coordToPoint, rad
     if (dx * dx + dy * dy <= radius * radius) return hero.id;
   }
   return null;
+}
+
+/**
+ * Select a live authoritative enemy for presentation targeting. A finite radius performs a
+ * pointer hit-test; null selects the nearest live enemy for keyboard targeting. Equal distances
+ * use binary enemy id order so browser/locale/input ordering cannot affect the command envelope.
+ */
+export function selectHeroAbilityEnemy(enemies, point, enemyToPoint, radius = null) {
+  const authoredEnemies = denseArray(enemies, 16_384);
+  if (!authoredEnemies || !point || !Number.isFinite(point.x) || !Number.isFinite(point.y)
+    || typeof enemyToPoint !== "function"
+    || (radius !== null && (!Number.isFinite(radius) || radius < 0))) return null;
+  let best = null;
+  let bestDistanceSquared = Infinity;
+  for (const enemy of authoredEnemies) {
+    const id = boundedText(ownData(enemy, "id"), MAX_ID_BYTES);
+    const hp = ownData(enemy, "hp");
+    if (!id || typeof hp !== "number" || !Number.isFinite(hp) || hp <= 0) continue;
+    let projected;
+    try { projected = enemyToPoint(enemy); } catch { continue; }
+    if (!projected || !Number.isFinite(projected.x) || !Number.isFinite(projected.y)) continue;
+    const dx = projected.x - point.x;
+    const dy = projected.y - point.y;
+    const distanceSquared = dx * dx + dy * dy;
+    if (radius !== null && distanceSquared > radius * radius) continue;
+    if (distanceSquared < bestDistanceSquared
+      || (distanceSquared === bestDistanceSquared && (best === null || id < best))) {
+      best = id;
+      bestDistanceSquared = distanceSquared;
+    }
+  }
+  return best;
 }
