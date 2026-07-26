@@ -232,6 +232,23 @@ It adds no input, command, event, checkpoint field, campaign/profile state, logi
 TowerScript surface. A null value retains the literal v4/v5/v6 snapshot path. See
 [ADR 0043](adr/0043-opt-in-dynamic-hero-blocking.md).
 
+For R5.7A, define three distinct existing tower types, then stage the inert `basic_power_grid`
+recipe with exact `generatorTowerTypeId`, `relayTowerTypeId`, and fire-capable
+`consumerTowerTypeId` parameters, or copy `docs/examples/opt-in-logistics-power/mechanics.json`.
+The recipe does not create tower types, enable Logistics, select a mission, or add ammo/factory
+content. Follow `describe -> capabilities -> recipe -> preview -> guarded apply -> validate`, then
+merge the mission selection only after preview is valid. A stale revision, duplicate role, broken
+reference, passive consumer, future v2 module, or malformed candidate must remain a no-write result.
+
+At runtime, consume only `snapshot.logistics` v1 for components, links, coverage, and powered state.
+Do not solve the network in Studio or a renderer. Test Canvas and Phaser on the mission grid and
+confirm visible component supply, brownout, link, and coverage cues. Placement/movement/restore over
+4,096 participants, 1,024 nodes, or 65,536 links must fail before mutation. Removing the selection,
+disabling Logistics, or saving `power:null` must remove the snapshot and power UI and restore the
+literal infinite-supply legacy path. This slice adds no input, command, event, checkpoint field,
+profile/run state, TowerScript surface, ammo, inventory, production, or transfer graph. See
+[ADR 0044](adr/0044-opt-in-logistics-power-grid.md).
+
 Combat v1 accepts only `shields`. A target definition requires positive bounded `capacity` and may add `{ ratePerUnit, delayAfterDamage }` regeneration. Tower shields require a tower with `maxHp`. At runtime shield state is keyed by entity instance ID and appears only under active `snapshot.combat`; Canvas and Phaser consume the same presentation projection. A copyable v1 reference is under `docs/examples/opt-in-basic-shields/`.
 
 Combat v2 retains shields and adds `damageTypes`, `armorTypes`, and `armorAssignments.enemies`. Every assigned enemy requires an existing armor type, and any non-empty assignment set requires a declared `physical` damage type because an untyped packet falls back to `physical`. Multipliers are finite numbers from `0` through `1,000,000`; `0` is a valid immunity, an absent explicit/default multiplier means `1`, and per-enemy `resistances` apply after the matrix. The fixed order is `source modifiers → armor matrix → entity resistance → legacy pierce_only → shield → HP`. `armor_piercing` bypasses only legacy `pierce_only`, not the matrix.

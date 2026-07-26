@@ -28,6 +28,7 @@ export * from "./terraforming-presentation.mjs";
 export * from "./roguelite-presentation.mjs";
 export * from "./campaign-presentation.mjs";
 export * from "./heroes-presentation.mjs";
+export { projectLogisticsPresentation } from "./logistics-power-presentation.mjs";
 
 function ownDataValue(record, key) {
   if (record === null || typeof record !== "object") return undefined;

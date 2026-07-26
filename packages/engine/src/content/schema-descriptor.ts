@@ -13,6 +13,7 @@ export { ELEVATION_MECHANICS_SCHEMA } from "./elevation-mechanics.js";
 export { TERRAFORMING_MECHANICS_SCHEMA } from "./terraforming-mechanics.js";
 export { ROGUELITE_MECHANICS_SCHEMA } from "./roguelite-mechanics.js";
 export { HEROES_MECHANICS_SCHEMA } from "./heroes-mechanics.js";
+export { LOGISTICS_MECHANICS_SCHEMA } from "./logistics-mechanics.js";
 
 /**
  * A machine-readable description of the content schema's closed sets and per-shape field

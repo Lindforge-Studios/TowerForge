@@ -832,7 +832,44 @@
               </details>
             </div>
           </div>
-          <div id="mechanics-logistics-editor" class="hidden" hidden></div>
+          <div id="mechanics-logistics-editor" class="hidden">
+            <div id="mechanics-logistics-read-only" class="mechanics-notice warning hidden" role="status"></div>
+            <div class="mechanics-shield-section mechanics-logistics-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Power grid</h4>
+                  <p>Explicit generators, relay pylons, and consumers. Engine snapshots own links, coverage, allocation, and brownout.</p>
+                </div>
+                <label class="mechanics-navigation-overlay-toggle">
+                  <input id="mechanics-logistics-power-enabled" type="checkbox">
+                  <span>Include power in this profile</span>
+                </label>
+              </div>
+              <div class="mechanics-section-head">
+                <h4>Generators</h4>
+                <button id="btn-mechanics-add-logistics-generator" class="btn btn-outline" type="button">+ Add generator</button>
+              </div>
+              <div id="mechanics-logistics-generator-rows" class="mechanics-definition-rows"></div>
+              <div class="mechanics-section-head">
+                <h4>Relays / pylons</h4>
+                <button id="btn-mechanics-add-logistics-relay" class="btn btn-outline" type="button">+ Add relay</button>
+              </div>
+              <div id="mechanics-logistics-relay-rows" class="mechanics-definition-rows"></div>
+              <div class="mechanics-section-head">
+                <h4>Consumers and brownout priority</h4>
+                <button id="btn-mechanics-add-logistics-consumer" class="btn btn-outline" type="button">+ Add consumer</button>
+              </div>
+              <div id="mechanics-logistics-consumer-rows" class="mechanics-definition-rows"></div>
+            </div>
+            <div class="mechanics-shield-section mechanics-logistics-section">
+              <div class="mechanics-section-head"><div><h4>Basic power-grid recipe</h4><p>Choose three distinct existing tower types. The recipe remains inert until preview/apply.</p></div></div>
+              <div class="mechanics-logistics-recipe-fields">
+                <label>Generator tower<select id="mechanics-logistics-recipe-generator"></select></label>
+                <label>Relay tower<select id="mechanics-logistics-recipe-relay"></select></label>
+                <label>Consumer tower<select id="mechanics-logistics-recipe-consumer"></select></label>
+              </div>
+            </div>
+          </div>
           <div class="mechanics-actions">
             <button id="btn-mechanics-preview" class="btn btn-outline" type="button">Preview</button>
             <button id="btn-mechanics-enable" class="btn btn-primary" type="button">Enable for mission</button>
@@ -1031,6 +1068,7 @@
           <div id="pt-inspector" class="pt-inspector">Click Inspect, then choose a tower or enemy.</div>
           <div id="pt-wave-draft" class="pt-artifact-inventory" hidden></div>
           <div id="pt-artifact-inventory" class="pt-artifact-inventory" hidden></div>
+          <div id="pt-logistics-power" class="pt-artifact-inventory" hidden></div>
           <div class="form-section-title pt-debug-title">Event timeline</div>
           <div id="pt-event-timeline" class="pt-event-timeline"></div>
           <div class="form-section-title" style="margin-top:6px">Build (click tower, then a tile)</div>

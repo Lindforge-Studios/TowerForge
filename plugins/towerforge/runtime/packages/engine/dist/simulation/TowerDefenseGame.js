@@ -7,6 +7,7 @@ import { PHYSICS_LIMITS, inspectOwnDataEffect, parseDisplacementEffectV1, resolv
 import { TERRAFORMING_LIMITS, resolveActiveTerraformingMechanics } from "../content/terraforming-mechanics.js";
 import { ROGUELITE_ARTIFACT_INVENTORY_LIMIT, ROGUELITE_DAMAGE_MODIFIER_RESERVE, ROGUELITE_DRAFT_LIMITS, deriveRogueliteSynergyStateV1, rogueliteSynergyWorstCaseModifierCount, resolveActiveRogueliteMechanics } from "../content/roguelite-mechanics.js";
 import { activeHeroAuraModifierReserve, heroPassiveAuraModifierIdV6, heroSkillModifierIdV5, resolveActiveHeroesMechanics } from "../content/heroes-mechanics.js";
+import { resolveActiveLogisticsMechanics } from "../content/logistics-mechanics.js";
 import { CAMPAIGN_RUN_LIMITS } from "../run/campaign-run.js";
 import { campaignBattleWorstCaseModifierCount, preflightHeroAuraDamageFinite } from "../run/campaign-battle-policy.js";
 import { evaluateTowerScriptExpression } from "../scripting/expression.js";
@@ -33,6 +34,7 @@ import { planReactions } from "./reactions.js";
 import { TOWER_TARGET_MODES } from "./types.js";
 import { createGridTopology, normalizeGridDefinition } from "./topology.js";
 import { planTileDisplacement } from "./displacement.js";
+import { buildLogisticsPowerSnapshotV1, cloneLogisticsPowerSnapshotV1, isLiveLogisticsPowerTower, preflightLogisticsPowerMoveV1, preflightLogisticsPowerPlacementV1, preflightLogisticsPowerRemovalV1, preflightLogisticsPowerTopologyV1 } from "./logistics-power.js";
 function emptyDataRecord() {
     return Object.create(null);
 }
@@ -323,6 +325,7 @@ export class TowerDefenseGame {
     activeTerraformingMechanics;
     activeRogueliteMechanics;
     activeHeroesMechanics;
+    activeLogisticsPower;
     activeHeroPassiveAura;
     activeHeroBlocking;
     heroesSnapshotV1;
@@ -330,6 +333,15 @@ export class TowerDefenseGame {
     heroMovementField;
     heroMovementLookupCache = new NavigationFieldLookupCache();
     heroMovementDirty = false;
+    logisticsPowerSnapshotCache;
+    logisticsPoweredConsumerIds;
+    logisticsPowerDirty = false;
+    logisticsTopologyCounts = Object.freeze({
+        participants: 0,
+        nodes: 0,
+        undirectedEdges: 0
+    });
+    logisticsLiveParticipantIds = new Set();
     rogueliteSnapshot;
     rogueliteDamageModifiers = Object.freeze([]);
     artifactDamageModifiersByTowerId = new Map();
@@ -436,6 +448,8 @@ export class TowerDefenseGame {
         this.activeTerraformingMechanics = resolveActiveTerraformingMechanics(this.content, missionId);
         this.activeRogueliteMechanics = resolveActiveRogueliteMechanics(this.content, missionId);
         this.activeHeroesMechanics = resolveActiveHeroesMechanics(this.content, missionId);
+        this.activeLogisticsPower = resolveActiveLogisticsMechanics(this.content, missionId)?.power ?? undefined;
+        this.logisticsPowerDirty = this.activeLogisticsPower !== undefined;
         const passiveAuraDefinition = this.activeHeroesMechanics?.schemaVersion === 6
             || this.activeHeroesMechanics?.schemaVersion === 7
             ? this.activeHeroesMechanics.definitions[this.activeHeroesMechanics.selectedHeroId]
@@ -675,6 +689,11 @@ export class TowerDefenseGame {
             this.heroMovementDirty = false;
         }
         this.towers = [];
+        this.logisticsTopologyCounts = Object.freeze({ participants: 0, nodes: 0, undirectedEdges: 0 });
+        this.logisticsLiveParticipantIds.clear();
+        this.logisticsPowerSnapshotCache = undefined;
+        this.logisticsPoweredConsumerIds = undefined;
+        this.logisticsPowerDirty = this.activeLogisticsPower !== undefined;
         this.artifactInventory = this.campaignBattle
             ? this.campaignBattle.artifacts.map((entry) => ({ ...entry, socket: null }))
             : [];
@@ -753,7 +772,18 @@ export class TowerDefenseGame {
         if (!this.hasResources(type.cost)) {
             return this.fail(`Need ${this.formatCost(type.cost)}.`, "reason.needCost", this.costReasonParams(type.cost));
         }
-        return this.canOccupyTowerFootprint(typeId, coord);
+        const footprint = this.canOccupyTowerFootprint(typeId, coord);
+        if (!footprint.ok)
+            return footprint;
+        if (this.activeLogisticsPower) {
+            try {
+                preflightLogisticsPowerPlacementV1(this.activeLogisticsPower, this.towers, this.towerTypes, this.map, this.logisticsTopologyCounts, { id: `tower_${this.towerCounter + 1}`, typeId, coord });
+            }
+            catch (error) {
+                return this.fail(error instanceof Error ? error.message : "Logistics power topology limit exceeded.", "reason.noBuildSpace");
+            }
+        }
+        return { ok: true };
     }
     canPlaceTowerAnywhere(typeId) {
         const type = this.towerTypes[typeId];
@@ -797,7 +827,10 @@ export class TowerDefenseGame {
         if (!type) {
             return this.fail("Unknown tower type.", "reason.unknownTower");
         }
-        const towerId = `tower_${++this.towerCounter}`;
+        const towerId = `tower_${this.towerCounter + 1}`;
+        const logisticsCounts = this.activeLogisticsPower
+            ? preflightLogisticsPowerPlacementV1(this.activeLogisticsPower, this.towers, this.towerTypes, this.map, this.logisticsTopologyCounts, { id: towerId, typeId, coord })
+            : this.logisticsTopologyCounts;
         const attack = type.attack;
         const tower = {
             id: towerId,
@@ -815,8 +848,14 @@ export class TowerDefenseGame {
             investedResources: this.normalizeCost(type.cost),
             hp: typeof type.maxHp === "number" && type.maxHp > 0 ? type.maxHp : undefined
         };
+        this.towerCounter += 1;
         this.spendResources(type.cost);
         this.towers.push(tower);
+        if (this.isLogisticsParticipantType(typeId)) {
+            this.logisticsTopologyCounts = logisticsCounts;
+            this.logisticsLiveParticipantIds.add(towerId);
+            this.markLogisticsPowerDirty();
+        }
         this.rebuildRogueliteSynergies();
         this.initializeTowerShield(tower);
         this.map.setOccupied(tower.footprint, towerId);
@@ -852,6 +891,14 @@ export class TowerDefenseGame {
         if (this.towerTypes[tower.typeId]?.attack.kind === "support" && !this.dependentsKeepSupportAfterMove(tower.id, coord)) {
             return this.fail("Dependent towers would lose this support aura.", "reason.dependentsLoseAura");
         }
+        if (this.activeLogisticsPower) {
+            try {
+                preflightLogisticsPowerMoveV1(this.activeLogisticsPower, this.towers, this.towerTypes, this.map, this.logisticsTopologyCounts, towerId, coord);
+            }
+            catch (error) {
+                return this.fail(error instanceof Error ? error.message : "Logistics power topology limit exceeded.", "reason.noBuildSpace");
+            }
+        }
         return { ok: true };
     }
     moveTower(towerId, coord) {
@@ -869,12 +916,19 @@ export class TowerDefenseGame {
             return this.fail("Unknown tower type.", "reason.unknownTower");
         }
         const footprint = this.map.tilesWithin(coord, type.footprintRadius).map(({ q, r }) => ({ q, r }));
+        const logisticsCounts = this.activeLogisticsPower
+            ? preflightLogisticsPowerMoveV1(this.activeLogisticsPower, this.towers, this.towerTypes, this.map, this.logisticsTopologyCounts, towerId, coord)
+            : this.logisticsTopologyCounts;
         const moveTowerCost = this.content.constants.moveTowerCost;
         this.spendResources(moveTowerCost);
         this.map.clearOccupied(tower.id);
         tower.coord = this.cleanCoord(coord);
         tower.footprint = footprint;
         this.map.setOccupied(footprint, tower.id);
+        if (this.isLiveLogisticsParticipant(tower)) {
+            this.logisticsTopologyCounts = logisticsCounts;
+            this.markLogisticsPowerDirty();
+        }
         this.syncNavigationOccupancy();
         this.lastEvents.push({ type: "towerMoved", towerId, from, to: this.cleanCoord(coord), cost: this.cloneResources(moveTowerCost) });
         this.finishScriptedAction();
@@ -3549,6 +3603,10 @@ export class TowerDefenseGame {
         }
         if (towerCounter < maxTowerId)
             throw new Error("Game checkpoint tower counter is below a live tower id.");
+        const checkpointLogistics = resolveActiveLogisticsMechanics(content, identity.missionId)?.power;
+        if (checkpointLogistics) {
+            preflightLogisticsPowerTopologyV1(checkpointLogistics, state.towers, content.towers, topology);
+        }
         if (artifactSockets.length > 0) {
             if (!checkpointRoguelite?.artifacts) {
                 throw new Error("Game checkpoint artifact sockets require active roguelite artifacts.");
@@ -4902,6 +4960,9 @@ export class TowerDefenseGame {
             throw new Error("Game checkpoint signal depth is invalid.");
     }
     restoreCheckpointState(state, initialRng, currentRng) {
+        const logisticsCounts = this.activeLogisticsPower
+            ? preflightLogisticsPowerTopologyV1(this.activeLogisticsPower, state.towers, this.towerTypes, this.map)
+            : Object.freeze({ participants: 0, nodes: 0, undirectedEdges: 0 });
         this.coreHp = state.coreHp;
         this.resources = { ...state.resources };
         this.waveIndex = state.waveIndex;
@@ -5097,6 +5158,13 @@ export class TowerDefenseGame {
                 this.navigationEnemyFields.set(enemy.id, this.navigationField(enemy.navigation.movementProfileId, enemy.routeId));
             }
         }
+        this.logisticsTopologyCounts = logisticsCounts;
+        this.logisticsLiveParticipantIds = new Set(this.towers
+            .filter((tower) => this.isLiveLogisticsParticipant(tower))
+            .map((tower) => tower.id));
+        this.logisticsPowerSnapshotCache = undefined;
+        this.logisticsPoweredConsumerIds = undefined;
+        this.logisticsPowerDirty = this.activeLogisticsPower !== undefined;
     }
     buildSnapshot(copyStaticState) {
         const combat = this.buildCombatState();
@@ -5107,6 +5175,7 @@ export class TowerDefenseGame {
             ? buildTerraformingSnapshot(this.pendingTerraformExpiryGroups)
             : undefined;
         const roguelite = this.currentRogueliteSnapshot();
+        const logistics = this.currentLogisticsPowerSnapshot();
         const heroes = this.activeHeroesMechanics?.schemaVersion === 7
             && this.heroStateV2
             && this.activeHeroesMechanics.definitions[this.heroStateV2.definitionId].blocking !== null
@@ -5541,6 +5610,7 @@ export class TowerDefenseGame {
             ...(terraforming === undefined ? {} : { terraforming }),
             ...(roguelite === undefined ? {} : { roguelite }),
             ...(heroes === undefined ? {} : { heroes }),
+            ...(logistics === undefined ? {} : { logistics }),
             scriptState: {
                 values: this.cloneScriptValues(),
                 diagnostics: this.scriptDiagnostics.map((diagnostic) => ({ ...diagnostic }))
@@ -8283,12 +8353,58 @@ export class TowerDefenseGame {
             });
         }
     }
+    isLogisticsParticipantType(towerTypeId) {
+        const power = this.activeLogisticsPower;
+        return power !== undefined && (Object.prototype.hasOwnProperty.call(power.generators, towerTypeId)
+            || Object.prototype.hasOwnProperty.call(power.relays, towerTypeId)
+            || Object.prototype.hasOwnProperty.call(power.consumers, towerTypeId));
+    }
+    isLiveLogisticsParticipant(tower) {
+        return isLiveLogisticsPowerTower(tower) && this.isLogisticsParticipantType(tower.typeId);
+    }
+    markLogisticsPowerDirty() {
+        if (this.activeLogisticsPower)
+            this.logisticsPowerDirty = true;
+    }
+    ensureLogisticsPowerSnapshot() {
+        if (!this.activeLogisticsPower) {
+            throw new Error("Logistics power snapshot requested without an active power profile.");
+        }
+        if (!this.logisticsPowerSnapshotCache || this.logisticsPowerDirty) {
+            this.logisticsPowerSnapshotCache = buildLogisticsPowerSnapshotV1(this.activeLogisticsPower, this.towers, this.towerTypes, this.map);
+            this.logisticsPoweredConsumerIds = new Set(this.logisticsPowerSnapshotCache.power.consumers
+                .filter((consumer) => consumer.powered)
+                .map((consumer) => consumer.towerId));
+            this.logisticsPowerDirty = false;
+        }
+        return this.logisticsPowerSnapshotCache;
+    }
+    currentLogisticsPowerSnapshot() {
+        return this.activeLogisticsPower
+            ? cloneLogisticsPowerSnapshotV1(this.ensureLogisticsPowerSnapshot())
+            : undefined;
+    }
     destroyTower(towerId) {
         const index = this.towers.findIndex((tower) => tower.id === towerId);
         if (index < 0)
             return;
+        const tower = this.towers[index];
+        const wasCounted = this.logisticsLiveParticipantIds.has(towerId);
+        const topologyTowers = wasCounted
+            ? this.towers.map((candidate) => (this.logisticsLiveParticipantIds.has(candidate.id) && !isLiveLogisticsPowerTower(candidate)
+                ? { ...candidate, hp: undefined }
+                : candidate))
+            : this.towers;
+        const logisticsCounts = this.activeLogisticsPower
+            ? preflightLogisticsPowerRemovalV1(this.activeLogisticsPower, topologyTowers, this.towerTypes, this.map, this.logisticsTopologyCounts, towerId)
+            : this.logisticsTopologyCounts;
         this.map.clearOccupied(towerId); // free the footprint tiles for rebuilding
         this.towers.splice(index, 1);
+        if (wasCounted) {
+            this.logisticsTopologyCounts = logisticsCounts;
+            this.logisticsLiveParticipantIds.delete(towerId);
+            this.markLogisticsPowerDirty();
+        }
         this.rebuildRogueliteSynergies();
         delete this.towerShields[towerId];
         this.syncNavigationOccupancy();
@@ -8456,6 +8572,9 @@ export class TowerDefenseGame {
         return Object.freeze({ allowed: false, reasonKey: result.reasonKey });
     }
     updateTowers(delta) {
+        const poweredConsumers = this.activeLogisticsPower
+            ? (this.ensureLogisticsPowerSnapshot(), this.logisticsPoweredConsumerIds)
+            : undefined;
         for (const tower of this.towers) {
             const type = this.towerTypes[tower.typeId];
             if (!type) {
@@ -8465,6 +8584,9 @@ export class TowerDefenseGame {
                 tower.disabledFor = Math.max(0, tower.disabledFor - delta); // silenced by an enemy disrupt pulse
                 continue;
             }
+            if (poweredConsumers && Object.prototype.hasOwnProperty.call(this.activeLogisticsPower.consumers, tower.typeId)
+                && !poweredConsumers.has(tower.id))
+                continue;
             tower.cooldown -= delta;
             const fireRateMultiplier = this.towerFireRateMultiplier(tower);
             if (type.attack.kind === "single") {
@@ -9611,7 +9733,16 @@ export class TowerDefenseGame {
     }
     isInsideAnyPulse(enemy) {
         return (this.enemyTargetClass(enemy) === "ground" &&
-            this.towers.some((tower) => this.isPulseTower(tower) && this.enemyInTowerAcquisitionRange(tower, enemy)));
+            this.towers.some((tower) => (this.isPulseTower(tower)
+                && this.logisticsPulseFieldActive(tower)
+                && this.enemyInTowerAcquisitionRange(tower, enemy))));
+    }
+    logisticsPulseFieldActive(tower) {
+        const power = this.activeLogisticsPower;
+        if (!power || !Object.prototype.hasOwnProperty.call(power.consumers, tower.typeId))
+            return true;
+        this.ensureLogisticsPowerSnapshot();
+        return this.logisticsPoweredConsumerIds.has(tower.id);
     }
     isInsideSupportAura(sourceTypeId, coord) {
         const sourceType = this.towerTypes[sourceTypeId];

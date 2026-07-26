@@ -1041,6 +1041,44 @@ export type HeroesSnapshot =
   | HeroesSnapshotV6
   | HeroesSnapshotV7;
 
+export interface LogisticsPowerComponentSnapshotV1 {
+  readonly id: string;
+  readonly output: number;
+  readonly demand: number;
+  readonly allocated: number;
+  readonly nodeIds: readonly string[];
+  readonly consumerIds: readonly string[];
+}
+
+export interface LogisticsPowerNodeSnapshotV1 {
+  readonly towerId: string;
+  readonly towerTypeId: string;
+  readonly role: "generator" | "relay";
+  readonly componentId: string;
+  readonly output: number;
+  readonly linkTowerIds: readonly string[];
+  readonly coveredConsumerIds: readonly string[];
+}
+
+export interface LogisticsPowerConsumerSnapshotV1 {
+  readonly towerId: string;
+  readonly towerTypeId: string;
+  readonly demand: number;
+  readonly priority: number;
+  readonly nodeId: string | null;
+  readonly componentId: string | null;
+  readonly powered: boolean;
+}
+
+export interface LogisticsSnapshotV1 {
+  readonly schemaVersion: 1;
+  readonly power: {
+    readonly components: readonly LogisticsPowerComponentSnapshotV1[];
+    readonly nodes: readonly LogisticsPowerNodeSnapshotV1[];
+    readonly consumers: readonly LogisticsPowerConsumerSnapshotV1[];
+  };
+}
+
 export interface GameSnapshot {
   /** Canonical authored map identity for presentation and renderer adapters. */
   mapId: string;
@@ -1087,6 +1125,7 @@ export interface GameSnapshot {
   terraforming?: TerraformingSnapshotV1;
   roguelite?: RogueliteSnapshot;
   heroes?: HeroesSnapshot;
+  logistics?: LogisticsSnapshotV1;
   scriptState: import("../scripting/types.js").TowerScriptStateSnapshot;
   lastEvents: GameEvent[];
 }

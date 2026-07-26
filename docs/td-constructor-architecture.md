@@ -645,6 +645,36 @@ CampaignRun v1, and TowerScript v6 remain unchanged. See
 [ADR 0043](adr/0043-opt-in-dynamic-hero-blocking.md) and
 `docs/examples/opt-in-hero-roster/mechanics-blocking.json`.
 
+### R5.7A Logistics power grid
+
+Logistics v1 is an independent opt-in module with required nullable `power`. `null`, missing,
+disabled, and unselected profiles preserve infinite legacy supply and add no snapshot or UI. A
+non-null closed profile assigns disjoint tower types to generators, relays, and fire-capable
+consumers. It does not add fields to ordinary tower or mission forms and does not imply ammo,
+inventory, factories, production, or transfer.
+
+The pure engine owns footprint-edge link distance, deterministic connected components, nearest-node
+consumer coverage, and full-demand prefix allocation by ascending priority then binary tower ID.
+An unpowered consumer freezes its exact cooldown and cannot acquire a target, fire, run a pipeline,
+or keep a pulse field active. Generator and relay attack/support behavior remains independent.
+Only towers with absent HP or positive HP are live power participants.
+
+The derived graph rebuilds only after placement, movement, sale, destruction, or checkpoint restore.
+It is bounded to 4,096 live participants, 1,024 generator/relay nodes, and 65,536 undirected links;
+candidate placement, movement, and restore perform bounded preflight before mutation. Graph state is
+not checkpointed. Restore derives it from the existing tower state while retaining runtime tower
+order, so continuous and checkpoint/replay suffixes produce the same digest.
+
+Optional `snapshot.logistics` v1 is authoritative for components, node links, consumer coverage,
+and powered/brownout state. The shared fail-closed renderer projector validates the complete bounded
+relationship graph; Studio Playtest and generated Canvas/Phaser players display the same visible
+link and coverage cues without recalculating topology. Mechanics Hub, CLI, and MCP use the inert
+`basic_power_grid` recipe and existing revision/validation/backup/rollback transaction. Future v2+
+content is opaque/read-only. Commands, events, journal v6, outer checkpoint v1, project v3, profile
+v3, CampaignRun v1, and TowerScript v6 do not change. See
+[ADR 0044](adr/0044-opt-in-logistics-power-grid.md) and
+`docs/examples/opt-in-logistics-power/`.
+
 ## Done Criteria For Constructor Changes
 
 - Engine changes pass `npm run typecheck`.

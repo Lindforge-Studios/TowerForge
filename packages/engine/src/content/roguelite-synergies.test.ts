@@ -262,7 +262,8 @@ describe("R4.1A roguelite v1 schema and capability", () => {
     });
     expect(Object.isFrozen(schema)).toBe(true);
     expect(Engine.IMPLEMENTED_MECHANICS_MODULE_IDS).toEqual([
-      "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes"
+      "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes",
+      "logistics"
     ]);
   });
 

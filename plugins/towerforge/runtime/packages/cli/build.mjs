@@ -389,6 +389,7 @@ function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "
         <section id="roguelite-status" class="roguelite-status" aria-label="Tower synergies" hidden></section>
         <section id="wave-draft" class="roguelite-status" aria-label="Wave draft" hidden></section>
         <section id="artifact-inventory" class="roguelite-status" aria-label="Artifact inventory" hidden></section>
+        <section id="logistics-status" class="roguelite-status" aria-label="Power grid" hidden></section>
         <section id="campaign-run-panel" class="campaign-run-panel" aria-label="Campaign run" hidden>
           <strong>Campaign run</strong>
           <span id="campaign-run-summary"></span>
@@ -677,7 +678,7 @@ function playerTemplate() {
   validateCampaignRunAgainstContent
 } from "./engine/index.js";
 import { createPlayerProfileStore, derivePlayerProfileStorageKey } from "./player-runtime/index.mjs";
-import { createCanvasRenderer, hitTestHeroesPresentation, projectCampaignPresentation, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectRoguelitePresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
+import { createCanvasRenderer, hitTestHeroesPresentation, projectCampaignPresentation, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectRoguelitePresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
 import { createAudioPlayer } from "./renderer/audio.mjs";
 import project from "./project-data.js";
 
@@ -1579,6 +1580,7 @@ function updateHud(snap) {
   updateHeroSkillTree(snap);
   updateTargetMode(snap);
   updateRogueliteStatus(snap);
+  updateLogisticsStatus(snap);
   if (snap.outcome === "victory" && !victoryRewarded) {
     victoryRewarded = true;
     const earnedStars = (snap.stars || []).filter((item) => item.achieved).length;
@@ -1731,6 +1733,46 @@ function updateRogueliteStatus(snap) {
   }
 }
 
+function updateLogisticsStatus(snapshot) {
+  const panel = $("logistics-status");
+  if (!panel) return;
+  const presentation = projectLogisticsPresentation(snapshot);
+  panel.replaceChildren();
+  panel.hidden = !presentation.active;
+  if (!presentation.active) return;
+  const heading = document.createElement("strong");
+  heading.textContent = "Power grid";
+  panel.append(heading);
+  for (const component of presentation.power.components) {
+    const row = document.createElement("span");
+    row.textContent = component.id + ": " + component.allocated + "/" + component.output
+      + " allocated · " + component.consumerIds.length + " consumers";
+    panel.append(row);
+  }
+  const brownout = presentation.power.consumers.filter((consumer) => !consumer.powered);
+  if (brownout.length) {
+    const row = document.createElement("span");
+    row.dataset.logisticsBrownout = "true";
+    row.textContent = "Brownout: " + brownout.map((consumer) => consumer.towerId).join(", ");
+    panel.append(row);
+  }
+  for (const node of presentation.power.nodes) {
+    for (const linkedTowerId of node.linkTowerIds) {
+      if (node.towerId >= linkedTowerId) continue;
+      const row = document.createElement("span");
+      row.className = "logistics-link-cue";
+      row.textContent = "Grid link: " + node.towerId + " ↔ " + linkedTowerId;
+      panel.append(row);
+    }
+    for (const consumerTowerId of node.coveredConsumerIds) {
+      const row = document.createElement("span");
+      row.className = "logistics-coverage-cue";
+      row.textContent = "Power coverage: " + node.towerId + " → " + consumerTowerId;
+      panel.append(row);
+    }
+  }
+}
+
 function updateTargetMode(snap) {
   const select = $("target-mode");
   const tower = selectedTowerId ? snap.towers.find((item) => item.id === selectedTowerId) : null;
@@ -1806,6 +1848,7 @@ import {
   hitTestHeroesPresentation,
   projectHeroesPresentation,
   projectHeroPresentationPoint,
+  projectLogisticsPresentation,
   projectRoguelitePresentation,
   projectReactionPresentationCues,
   projectSnapshotSpawnCoord,
@@ -3304,6 +3347,7 @@ function updateHud(snap) {
   updateHeroSkillTree(snap);
   updateTargetMode(snap);
   updateRogueliteStatus(snap);
+  updateLogisticsStatus(snap);
   if (snap.outcome === "victory" && !victoryRewarded) {
     victoryRewarded = true;
     const earnedStars = (snap.stars || []).filter((item) => item.achieved).length;
@@ -3452,6 +3496,46 @@ function updateRogueliteStatus(snap) {
         }
       }
       artifactPanel.append(row);
+    }
+  }
+}
+
+function updateLogisticsStatus(snapshot) {
+  const panel = $("logistics-status");
+  if (!panel) return;
+  const presentation = projectLogisticsPresentation(snapshot);
+  panel.replaceChildren();
+  panel.hidden = !presentation.active;
+  if (!presentation.active) return;
+  const heading = document.createElement("strong");
+  heading.textContent = "Power grid";
+  panel.append(heading);
+  for (const component of presentation.power.components) {
+    const row = document.createElement("span");
+    row.textContent = component.id + ": " + component.allocated + "/" + component.output
+      + " allocated · " + component.consumerIds.length + " consumers";
+    panel.append(row);
+  }
+  const brownout = presentation.power.consumers.filter((consumer) => !consumer.powered);
+  if (brownout.length) {
+    const row = document.createElement("span");
+    row.dataset.logisticsBrownout = "true";
+    row.textContent = "Brownout: " + brownout.map((consumer) => consumer.towerId).join(", ");
+    panel.append(row);
+  }
+  for (const node of presentation.power.nodes) {
+    for (const linkedTowerId of node.linkTowerIds) {
+      if (node.towerId >= linkedTowerId) continue;
+      const row = document.createElement("span");
+      row.className = "logistics-link-cue";
+      row.textContent = "Grid link: " + node.towerId + " ↔ " + linkedTowerId;
+      panel.append(row);
+    }
+    for (const consumerTowerId of node.coveredConsumerIds) {
+      const row = document.createElement("span");
+      row.className = "logistics-coverage-cue";
+      row.textContent = "Power coverage: " + node.towerId + " → " + consumerTowerId;
+      panel.append(row);
     }
   }
 }

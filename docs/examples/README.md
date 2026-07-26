@@ -33,6 +33,7 @@ Reference examples show expected project and code patterns.
 | Opt-in campaign structural choices | `docs/examples/opt-in-campaign-structural-choices/` | R4.4B campaign graph v2 reference with declared run resources and atomic merchant/event costs and grants; battle-local draft/artifact transfer remains disabled. |
 | Opt-in campaign battle handoff | `docs/examples/opt-in-campaign-battle-handoff/` | R4.4C marker-v2 reference with an imported CampaignRun deck, unsocketed artifact carry, engine-owned prepare/settle, and marker-v1/absent compatibility. |
 | Opt-in hero roster, movement, durability, and targeted ability | `docs/examples/opt-in-hero-roster/` | `mechanics.json` is static Heroes v1; `mechanics-mobile.json` independently adds v2 movement; `mechanics-durable.json` adds v3 HP/shield; `mechanics-targeted-ability.json` adds v4 mana and one enemy-targeted spell without enabling adjacent mechanics. |
+| Opt-in Logistics power grid | `docs/examples/opt-in-logistics-power/` | R5.7A Logistics v1 reference with explicit generators, relays, fire-capable consumers, deterministic priority brownout, authoritative presentation links/coverage, and no ammo or factory coupling. |
 | Headless smoke sim | `packages/cli/sim.mjs` | CLI wrapper for engine-backed mission smoke runs. |
 | Static web build | `packages/cli/build.mjs` | Generates the playable web bundle from project data, compiled engine modules, renderer, and safe assets. |
 | Native packaging | `packages/cli/lib/packaging.mjs` | Canonical Capacitor/Tauri scaffold generation around a built web bundle. |

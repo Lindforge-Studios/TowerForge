@@ -1,0 +1,317 @@
+import type { GameContentRegistry } from "./registry.js";
+
+/** Closed structural and runtime budgets for the opt-in Logistics v1 power grid. */
+export const LOGISTICS_POWER_LIMITS = Object.freeze({
+  entriesPerRole: 4_096,
+  entriesTotal: 4_096,
+  idUtf8Bytes: 128,
+  output: 1_000_000_000_000,
+  demand: 1_000_000_000_000,
+  radius: 64,
+  priority: 1_000_000,
+  liveParticipants: 4_096,
+  liveNodes: 1_024,
+  undirectedEdges: 65_536
+});
+
+export interface LogisticsGeneratorDefinitionV1 {
+  readonly output: number;
+  readonly linkRadius: number;
+  readonly coverageRadius: number;
+}
+
+export interface LogisticsRelayDefinitionV1 {
+  readonly linkRadius: number;
+  readonly coverageRadius: number;
+}
+
+export interface LogisticsConsumerDefinitionV1 {
+  readonly demand: number;
+  readonly priority: number;
+}
+
+export interface LogisticsPowerDefinitionV1 {
+  readonly generators: Readonly<Record<string, LogisticsGeneratorDefinitionV1>>;
+  readonly relays: Readonly<Record<string, LogisticsRelayDefinitionV1>>;
+  readonly consumers: Readonly<Record<string, LogisticsConsumerDefinitionV1>>;
+}
+
+export interface LogisticsProfileV1 {
+  readonly power: LogisticsPowerDefinitionV1 | null;
+}
+
+export interface ActiveLogisticsMechanicsV1 extends LogisticsProfileV1 {
+  readonly schemaVersion: 1;
+  readonly profileId: string;
+}
+
+export const LOGISTICS_MECHANICS_SCHEMA = Object.freeze({
+  schemaVersion: 1,
+  moduleId: "logistics",
+  supportedModuleSchemaVersions: Object.freeze([1] as const),
+  profile: Object.freeze({
+    requiredFields: Object.freeze(["power"] as const),
+    optionalFields: Object.freeze([] as const),
+    additionalProperties: false
+  }),
+  power: Object.freeze({
+    nullable: true,
+    requiredFields: Object.freeze(["generators", "relays", "consumers"] as const),
+    optionalFields: Object.freeze([] as const),
+    additionalProperties: false,
+    generator: Object.freeze({
+      requiredFields: Object.freeze(["output", "linkRadius", "coverageRadius"] as const),
+      optionalFields: Object.freeze([] as const),
+      additionalProperties: false
+    }),
+    relay: Object.freeze({
+      requiredFields: Object.freeze(["linkRadius", "coverageRadius"] as const),
+      optionalFields: Object.freeze([] as const),
+      additionalProperties: false
+    }),
+    consumer: Object.freeze({
+      requiredFields: Object.freeze(["demand", "priority"] as const),
+      optionalFields: Object.freeze([] as const),
+      additionalProperties: false
+    })
+  }),
+  limits: LOGISTICS_POWER_LIMITS,
+  runtimeSnapshot: Object.freeze({
+    schemaVersion: 1,
+    fields: Object.freeze(["schemaVersion", "power"] as const),
+    powerFields: Object.freeze(["components", "nodes", "consumers"] as const)
+  })
+});
+
+export class LogisticsProfileValidationError extends Error {
+  constructor(readonly fieldPath: string, message: string) {
+    super(message);
+    this.name = "LogisticsProfileValidationError";
+  }
+}
+
+type OwnDataRecord = Record<string, unknown>;
+
+function utf8ByteLength(value: string): number {
+  let bytes = 0;
+  for (const character of value) {
+    const point = character.codePointAt(0)!;
+    bytes += point <= 0x7f ? 1 : point <= 0x7ff ? 2 : point <= 0xffff ? 3 : 4;
+  }
+  return bytes;
+}
+
+function inspectOwnDataRecord(value: unknown, fieldPath: string, label: string): OwnDataRecord {
+  let prototype: object | null;
+  let descriptors: Record<PropertyKey, PropertyDescriptor>;
+  try {
+    prototype = value !== null && typeof value === "object" ? Object.getPrototypeOf(value) : null;
+    descriptors = value !== null && typeof value === "object"
+      ? Object.getOwnPropertyDescriptors(value) as Record<PropertyKey, PropertyDescriptor>
+      : {};
+  } catch {
+    throw new LogisticsProfileValidationError(fieldPath, `${label} could not be inspected safely.`);
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)
+    || (prototype !== Object.prototype && prototype !== null)) {
+    throw new LogisticsProfileValidationError(fieldPath, `${label} must be a plain object with own data fields.`);
+  }
+  if (Object.getOwnPropertySymbols(descriptors).length > 0) {
+    throw new LogisticsProfileValidationError(fieldPath, `${label} must not contain symbol fields.`);
+  }
+  const result = Object.create(null) as OwnDataRecord;
+  for (const key of Object.keys(descriptors)) {
+    const descriptor = descriptors[key];
+    if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+      throw new LogisticsProfileValidationError(
+        `${fieldPath}.${key}`,
+        `${label} field "${key}" must be an enumerable own data field; accessors are not allowed.`
+      );
+    }
+    result[key] = descriptor.value;
+  }
+  return result;
+}
+
+function exactFields(record: OwnDataRecord, fields: readonly string[], fieldPath: string, label: string): void {
+  const allowed = new Set(fields);
+  for (const field of fields) {
+    if (!Object.prototype.hasOwnProperty.call(record, field)) {
+      throw new LogisticsProfileValidationError(`${fieldPath}.${field}`, `${label} is missing required field "${field}".`);
+    }
+  }
+  for (const key of Object.keys(record)) {
+    if (!allowed.has(key)) {
+      throw new LogisticsProfileValidationError(`${fieldPath}.${key}`, `${label} is closed; unknown field "${key}".`);
+    }
+  }
+}
+
+function boundedPositive(value: unknown, maximum: number, fieldPath: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0 || value > maximum) {
+    throw new LogisticsProfileValidationError(
+      fieldPath,
+      `${fieldPath} must be a finite positive number with maximum ${maximum}.`
+    );
+  }
+  return value;
+}
+
+function boundedRadius(value: unknown, fieldPath: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value)
+    || value < 0 || value > LOGISTICS_POWER_LIMITS.radius) {
+    throw new LogisticsProfileValidationError(
+      fieldPath,
+      `${fieldPath} must be a finite integer in 0..${LOGISTICS_POWER_LIMITS.radius}.`
+    );
+  }
+  return value;
+}
+
+function boundedPriority(value: unknown, fieldPath: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isSafeInteger(value)
+    || value < 0 || value > LOGISTICS_POWER_LIMITS.priority) {
+    throw new LogisticsProfileValidationError(
+      fieldPath,
+      `${fieldPath} priority must be a finite safe integer in 0..${LOGISTICS_POWER_LIMITS.priority}.`
+    );
+  }
+  return value;
+}
+
+function inspectRoleRecord(
+  value: unknown,
+  fieldPath: string,
+  role: "generator" | "relay" | "consumer"
+): OwnDataRecord {
+  const record = inspectOwnDataRecord(value, fieldPath, `Logistics ${role} record`);
+  const ids = Object.keys(record);
+  if (ids.length > LOGISTICS_POWER_LIMITS.entriesPerRole) {
+    throw new LogisticsProfileValidationError(
+      fieldPath,
+      `Logistics ${role} record exceeds the ${LOGISTICS_POWER_LIMITS.entriesPerRole} entry budget.`
+    );
+  }
+  for (const id of ids) {
+    if (id.length === 0 || utf8ByteLength(id) > LOGISTICS_POWER_LIMITS.idUtf8Bytes) {
+      throw new LogisticsProfileValidationError(
+        `${fieldPath}.${id}`,
+        `Logistics tower type id must contain 1..${LOGISTICS_POWER_LIMITS.idUtf8Bytes} UTF-8 bytes.`
+      );
+    }
+  }
+  return record;
+}
+
+function normalizeGenerators(value: unknown): Readonly<Record<string, LogisticsGeneratorDefinitionV1>> {
+  const root = "profile.power.generators";
+  const record = inspectRoleRecord(value, root, "generator");
+  const entries = Object.keys(record).sort().map((id) => {
+    const path = `${root}.${id}`;
+    const definition = inspectOwnDataRecord(record[id], path, "Logistics generator definition");
+    exactFields(definition, ["output", "linkRadius", "coverageRadius"], path, "Logistics generator definition");
+    return [id, Object.freeze({
+      output: boundedPositive(definition.output, LOGISTICS_POWER_LIMITS.output, `${path}.output`),
+      linkRadius: boundedRadius(definition.linkRadius, `${path}.linkRadius`),
+      coverageRadius: boundedRadius(definition.coverageRadius, `${path}.coverageRadius`)
+    })] as const;
+  });
+  return Object.freeze(Object.fromEntries(entries));
+}
+
+function normalizeRelays(value: unknown): Readonly<Record<string, LogisticsRelayDefinitionV1>> {
+  const root = "profile.power.relays";
+  const record = inspectRoleRecord(value, root, "relay");
+  const entries = Object.keys(record).sort().map((id) => {
+    const path = `${root}.${id}`;
+    const definition = inspectOwnDataRecord(record[id], path, "Logistics relay definition");
+    exactFields(definition, ["linkRadius", "coverageRadius"], path, "Logistics relay definition");
+    return [id, Object.freeze({
+      linkRadius: boundedRadius(definition.linkRadius, `${path}.linkRadius`),
+      coverageRadius: boundedRadius(definition.coverageRadius, `${path}.coverageRadius`)
+    })] as const;
+  });
+  return Object.freeze(Object.fromEntries(entries));
+}
+
+function normalizeConsumers(value: unknown): Readonly<Record<string, LogisticsConsumerDefinitionV1>> {
+  const root = "profile.power.consumers";
+  const record = inspectRoleRecord(value, root, "consumer");
+  const entries = Object.keys(record).sort().map((id) => {
+    const path = `${root}.${id}`;
+    const definition = inspectOwnDataRecord(record[id], path, "Logistics consumer definition");
+    exactFields(definition, ["demand", "priority"], path, "Logistics consumer definition");
+    return [id, Object.freeze({
+      demand: boundedPositive(definition.demand, LOGISTICS_POWER_LIMITS.demand, `${path}.demand`),
+      priority: boundedPriority(definition.priority, `${path}.priority`)
+    })] as const;
+  });
+  return Object.freeze(Object.fromEntries(entries));
+}
+
+/** Normalize one supported v1 profile without executing accessors or retaining authored references. */
+export function normalizeLogisticsProfileV1(value: unknown): LogisticsProfileV1 {
+  const profile = inspectOwnDataRecord(value, "profile", "Logistics profile");
+  exactFields(profile, ["power"], "profile", "Logistics profile");
+  if (profile.power === null) return Object.freeze({ power: null });
+  const power = inspectOwnDataRecord(profile.power, "profile.power", "Logistics power definition");
+  exactFields(power, ["generators", "relays", "consumers"], "profile.power", "Logistics power definition");
+
+  // Inspect record shapes and cardinality before traversing any nested definition.
+  const generatorsRecord = inspectRoleRecord(power.generators, "profile.power.generators", "generator");
+  const relaysRecord = inspectRoleRecord(power.relays, "profile.power.relays", "relay");
+  const consumersRecord = inspectRoleRecord(power.consumers, "profile.power.consumers", "consumer");
+  const total = Object.keys(generatorsRecord).length + Object.keys(relaysRecord).length
+    + Object.keys(consumersRecord).length;
+  if (total > LOGISTICS_POWER_LIMITS.entriesTotal) {
+    throw new LogisticsProfileValidationError(
+      "profile.power",
+      `Logistics power records exceed the ${LOGISTICS_POWER_LIMITS.entriesTotal} total entry budget.`
+    );
+  }
+  const roles = new Set<string>();
+  for (const [role, record] of [
+    ["generators", generatorsRecord], ["relays", relaysRecord], ["consumers", consumersRecord]
+  ] as const) {
+    for (const id of Object.keys(record)) {
+      if (roles.has(id)) {
+        throw new LogisticsProfileValidationError(
+          `profile.power.${role}.${id}`,
+          `Tower type "${id}" occurs in more than one Logistics power role.`
+        );
+      }
+      roles.add(id);
+    }
+  }
+
+  return Object.freeze({
+    power: Object.freeze({
+      generators: normalizeGenerators(generatorsRecord),
+      relays: normalizeRelays(relaysRecord),
+      consumers: normalizeConsumers(consumersRecord)
+    })
+  });
+}
+
+/** Resolve only a selected, enabled, supported Logistics v1 profile. */
+export function resolveActiveLogisticsMechanics(
+  content: GameContentRegistry,
+  missionId: string
+): ActiveLogisticsMechanicsV1 | undefined {
+  const mission = content.missions[missionId];
+  const capability = mission?.capabilities.logistics;
+  if (!mission || !capability?.active || capability.profileId === undefined) return undefined;
+  const module = content.mechanics.modules.logistics;
+  if (!module || module.schemaVersion !== 1) return undefined;
+  const authored = module.profiles[capability.profileId];
+  try {
+    const normalized = normalizeLogisticsProfileV1(authored);
+    return Object.freeze({
+      schemaVersion: 1 as const,
+      profileId: capability.profileId,
+      power: normalized.power
+    });
+  } catch {
+    return undefined;
+  }
+}

@@ -22,6 +22,7 @@ const BASIC_TARGETED_HERO_ABILITY_ID = "basic_targeted_hero_ability";
 const BASIC_HERO_SKILL_TREE_ID = "basic_hero_skill_tree";
 const BASIC_PASSIVE_HERO_AURA_ID = "basic_passive_hero_aura";
 const BASIC_DYNAMIC_HERO_BLOCKING_ID = "basic_dynamic_hero_blocking";
+const BASIC_POWER_GRID_ID = "basic_power_grid";
 const TERRAFORMING_RECIPE_IDS = Object.freeze([
   TAGGED_FLOOD_ID,
   TAGGED_MOAT_ID,
@@ -63,6 +64,16 @@ const ROGUELITE_ARTIFACT_PARAMETER_SCHEMA = Object.freeze({
   properties: Object.freeze({
     towerTypeIds: ROGUELITE_TOWER_TAG_PARAMETER_SCHEMA.properties.towerTypeIds,
     bossEnemyTypeId: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 })
+  })
+});
+const LOGISTICS_POWER_PARAMETER_SCHEMA = Object.freeze({
+  type: "object",
+  required: Object.freeze(["generatorTowerTypeId", "relayTowerTypeId", "consumerTowerTypeId"]),
+  additionalProperties: false,
+  properties: Object.freeze({
+    generatorTowerTypeId: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 }),
+    relayTowerTypeId: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 }),
+    consumerTowerTypeId: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 })
   })
 });
 export class MechanicsRecipeParameterError extends Error {
@@ -267,6 +278,15 @@ const RECIPES = Object.freeze([
     description: "Inert heroes v7 profile that holds only explicitly authored dynamic-navigation movement profiles.",
     suggestedId: BASIC_DYNAMIC_HERO_BLOCKING_ID,
     moduleSchemaVersion: 7
+  }),
+  Object.freeze({
+    id: BASIC_POWER_GRID_ID,
+    moduleId: "logistics",
+    label: "Basic Power Grid",
+    description: "Inert logistics v1 profile with one explicit generator, relay, and fire-capable consumer.",
+    suggestedId: BASIC_POWER_GRID_ID,
+    moduleSchemaVersion: 1,
+    parameterSchema: LOGISTICS_POWER_PARAMETER_SCHEMA
   })
 ]);
 
@@ -319,6 +339,17 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
       throw invalidTerraformingRecipeParameter("Terraforming recipe parameters must be an enumerable own data field.");
     }
     return materializeTerraformingRecipe(recipe, context, parameterField.value);
+  }
+  if (recipeId === BASIC_POWER_GRID_ID) {
+    if (parameterField.kind === "absent") {
+      throw invalidLogisticsRecipeParameter(
+        "Logistics recipe parameters are required and must name generator, relay, and consumer tower roles."
+      );
+    }
+    if (parameterField.kind === "invalid") {
+      throw invalidLogisticsRecipeParameter("Logistics recipe parameters must be enumerable own data.");
+    }
+    return materializePowerGridRecipe(recipe, context, parameterField.value);
   }
   if (parameterField.kind !== "absent") {
     throw new MechanicsRecipeParameterError(
@@ -699,6 +730,81 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
       profile: { shields: { enemies, towers } }
     }
   };
+}
+
+function materializePowerGridRecipe(recipe, context, parameterValue) {
+  const parameters = inspectLogisticsRecipeParameters(parameterValue);
+  const generatorTowerTypeId = boundedLogisticsRecipeId(parameters.generatorTowerTypeId, "generatorTowerTypeId");
+  const relayTowerTypeId = boundedLogisticsRecipeId(parameters.relayTowerTypeId, "relayTowerTypeId");
+  const consumerTowerTypeId = boundedLogisticsRecipeId(parameters.consumerTowerTypeId, "consumerTowerTypeId");
+  if (new Set([generatorTowerTypeId, relayTowerTypeId, consumerTowerTypeId]).size !== 3) {
+    throw invalidLogisticsRecipeParameter("Logistics generator, relay, and consumer roles must use three distinct tower IDs.");
+  }
+  const towerIds = new Set(sortedSafeIds(ownDataValue(context, "towerIds")));
+  for (const towerTypeId of [generatorTowerTypeId, relayTowerTypeId, consumerTowerTypeId]) {
+    if (!towerIds.has(towerTypeId)) {
+      throw invalidLogisticsRecipeParameter(`Logistics recipe references unknown authored tower "${towerTypeId}".`);
+    }
+  }
+  const attackKinds = ownDataValue(context, "towerAttackKindsByTowerId");
+  const consumerAttackKind = ownDataValue(attackKinds, consumerTowerTypeId);
+  if (!["single", "pulse", "sniper", "antiair", "splash", "pipeline"].includes(consumerAttackKind)) {
+    throw invalidLogisticsRecipeParameter(
+      `Logistics consumer "${consumerTowerTypeId}" must use a fire-capable attack kind.`
+    );
+  }
+  const generators = safeRecord();
+  const relays = safeRecord();
+  const consumers = safeRecord();
+  defineOwn(generators, generatorTowerTypeId, { output: 20, linkRadius: 4, coverageRadius: 3 });
+  defineOwn(relays, relayTowerTypeId, { linkRadius: 5, coverageRadius: 4 });
+  defineOwn(consumers, consumerTowerTypeId, { demand: 8, priority: 10 });
+  return {
+    ...recipe,
+    entity: {
+      moduleId: "logistics",
+      moduleSchemaVersion: 1,
+      missionId: chooseId(context.defaultMissionId, context.missionIds) ?? "",
+      profileId: recipe.suggestedId,
+      profile: { power: { generators, relays, consumers } }
+    }
+  };
+}
+
+function inspectLogisticsRecipeParameters(value) {
+  if (!isPlainRecord(value)) {
+    throw invalidLogisticsRecipeParameter("Logistics recipe parameters must be a closed ordinary object.");
+  }
+  let descriptors;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    throw invalidLogisticsRecipeParameter("Logistics recipe parameters could not be inspected safely.");
+  }
+  const allowed = ["generatorTowerTypeId", "relayTowerTypeId", "consumerTowerTypeId"];
+  if (Reflect.ownKeys(descriptors).some((key) => typeof key !== "string" || !allowed.includes(key))) {
+    throw invalidLogisticsRecipeParameter("Logistics recipe parameters are closed to the three explicit power roles.");
+  }
+  const result = safeRecord();
+  for (const key of allowed) {
+    const descriptor = descriptors[key];
+    if (!descriptor?.enumerable || !("value" in descriptor)) {
+      throw invalidLogisticsRecipeParameter(`Logistics recipe parameter ${key} is required as enumerable own data.`);
+    }
+    defineOwn(result, key, descriptor.value);
+  }
+  return result;
+}
+
+function boundedLogisticsRecipeId(value, name) {
+  if (typeof value !== "string" || value.length === 0 || utf8ByteLength(value) > 128) {
+    throw invalidLogisticsRecipeParameter(`Logistics recipe parameter ${name} must contain 1..128 UTF-8 bytes.`);
+  }
+  return value;
+}
+
+function invalidLogisticsRecipeParameter(message) {
+  return new MechanicsRecipeParameterError("logistics_recipe_parameter_invalid", message);
 }
 
 function materializeElementalSynergyRecipe(recipe, context, parameterValue) {

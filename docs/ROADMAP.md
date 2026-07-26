@@ -37,6 +37,7 @@
 | R5.4A — battle-local hero skill tree | Завершён; code + constructor sign-off; ADR Accepted | Heroes v5 nullable tree, GameCommand/Journal v6, authoritative snapshot v5, nested checkpoint v4 без CampaignRun/Profile carry |
 | R5.5A — passive hero damage aura | Завершён; code + constructor sign-off; ADR Accepted | Heroes v6 nullable aura, authoritative topology membership и tower-only `spatial` modifiers без нового command/event/checkpoint state |
 | R5.6A — dynamic hero blocking | Завершён; code + constructor sign-off; ADR Accepted | Heroes v7 nullable blocking, explicit dynamic movement-profile eligibility и bounded engine-owned holds без hero occupancy/path rebuild |
+| R5.7A — logistics power grid | Завершён; code + constructor sign-off; ADR Accepted | Logistics v1 nullable power, bounded deterministic generators/relays/components, priority brownout и authoritative visible overlay без ammo/factory |
 | R5–R8 | Запланированы | Каждый срез закрывает engine, Studio, AI/MCP, renderers/player, docs и два независимых sign-off |
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Поставленные версии `combat`, `reactions`, `navigation` и `elevation` уже прошли полные вертикальные срезы. Остальные модули Mechanics Hub остаются planned, а preview/apply отклоняют их включение без записи.
@@ -337,6 +338,31 @@ map compile, web build и plugin build/validate/smoke прошли. Оба не�
 без открытых P0–P3. Контракт: [ADR 0043](adr/0043-opt-in-dynamic-hero-blocking.md); fixtures:
 `docs/examples/opt-in-hero-roster/mechanics-blocking.json` и
 `docs/examples/opt-in-hero-roster/mission-blocking-selection.json`.
+
+R5.7A завершён как первый независимый Logistics-срез. `logistics` v1 получает required nullable
+`power`; null и отсутствие выбора сохраняют literal infinite-supply legacy path. Non-null профиль
+явно назначает tower types в непересекающиеся generators, relays и fire-capable consumers. Engine
+строит topology/footprint-aware connected components только при dirty placement/move/sell/destroy,
+назначает consumer ближайшему covering node и выполняет full-demand prefix allocation по priority,
+затем binary tower instance ID. Brownout замораживает точный cooldown и все fire/pulse effects;
+после питания башня продолжает штатный отсчёт/атаку.
+
+Snapshot v1 является единственным источником components, links, coverage и powered IDs для Studio,
+Canvas и Phaser. Сеть полностью выводится из уже checkpointed towers/content, поэтому commands,
+events, checkpoint, journal, profile, CampaignRun и TowerScript не меняются. `basic_power_grid`
+остаётся инертным recipe; Studio/MCP не создают tower types и не включают/выбирают модуль. Ammo,
+inventory, storage, factory, production и transfer graph остаются отдельным следующим TDD-срезом.
+
+Первичные независимые RED-волны дали 42 content, 23 runtime и 23 constructor failure при сохранении
+legacy compatibility passes. Проверяющие отдельно воспроизвели и закрыли pulse без питания,
+resource-bound graph, `hp<=0`, checkpoint-order digest, premature brownout, hostile snapshot и
+data-only overlay дефекты. Финальный Vitest прошёл 2 465/2 465 тестов в 214 файлах, Playwright —
+112/112. Code Verifier подтвердил 142/142 focused contracts; Constructor Integration Verifier —
+41/41 focused и 6/6 Chromium scenarios, включая Studio/MCP guarded flow, Canvas/Phaser × hex/square,
+package/template matrix и plugin parity. Typecheck, engine build, validation, tutorial simulation,
+balance, map compile, web build и plugin build/validate/smoke прошли. Оба независимых verifier выдали
+PASS без открытых P0–P3. Accepted contract: [ADR 0044](adr/0044-opt-in-logistics-power-grid.md);
+fixture: `docs/examples/opt-in-logistics-power/`.
 
 ### R6 — TowerScript DX 2.0
 

@@ -11,6 +11,7 @@ import { PHYSICS_LIMITS, inspectOwnDataEffect, parseDisplacementEffectV1, resolv
 import { TERRAFORMING_LIMITS, TerraformingProfileValidationError, normalizeTerraformingProfileV1 } from "./terraforming-mechanics.js";
 import { ROGUELITE_SYNERGY_LIMITS, ROGUELITE_DRAFT_LIMITS, RogueliteProfileValidationError, assertRogueliteV2ModifierBudget, assertRogueliteV3ModifierBudget, normalizeRogueliteProfileV1, normalizeRogueliteProfileV2, normalizeRogueliteProfileV3, normalizeRogueliteProfileV4, normalizeTowerTagsV1 } from "./roguelite-mechanics.js";
 import { HeroesProfileValidationError, normalizeHeroesProfileV1, normalizeHeroesProfileV2, normalizeHeroesProfileV3, normalizeHeroesProfileV4, normalizeHeroesProfileV5, normalizeHeroesProfileV6, normalizeHeroesProfileV7, validateHeroSkillTreeSemanticsV5 } from "./heroes-mechanics.js";
+import { LogisticsProfileValidationError, normalizeLogisticsProfileV1 } from "./logistics-mechanics.js";
 import { normalizeAuthoredWorldCampaign, WorldCampaignValidationError } from "../run/campaign-world.js";
 import { campaignBattleRogueliteWorstCaseModifierCount, preflightHeroAuraDamageFinite } from "../run/campaign-battle-policy.js";
 import { MAX_MODIFIERS_PER_RESOLUTION } from "../simulation/modifiers.js";
@@ -2133,6 +2134,128 @@ export function validateGameContentRegistry(content) {
         }
     };
     validateHeroesMechanics();
+    const validateLogisticsMechanics = () => {
+        const ownRecord = (value, entityId, fieldPath, label) => {
+            let prototype;
+            let descriptors;
+            try {
+                prototype = value !== null && typeof value === "object" ? Object.getPrototypeOf(value) : null;
+                descriptors = value !== null && typeof value === "object"
+                    ? Object.getOwnPropertyDescriptors(value)
+                    : {};
+            }
+            catch {
+                err("mechanics", entityId, fieldPath, `${label} could not be inspected safely.`);
+                return undefined;
+            }
+            if (value === null || typeof value !== "object" || Array.isArray(value)
+                || (prototype !== Object.prototype && prototype !== null)) {
+                err("mechanics", entityId, fieldPath, `${label} must be a plain object with own data fields.`);
+                return undefined;
+            }
+            if (Object.getOwnPropertySymbols(descriptors).length > 0) {
+                err("mechanics", entityId, fieldPath, `${label} must not contain symbol fields.`);
+            }
+            const detached = Object.create(null);
+            for (const key of Object.keys(descriptors)) {
+                const descriptor = descriptors[key];
+                if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+                    err("mechanics", entityId, `${fieldPath}.${key}`, `${label} field "${key}" must be an enumerable own data field; accessors are not allowed.`);
+                    continue;
+                }
+                detached[key] = descriptor.value;
+            }
+            return detached;
+        };
+        const catalog = ownRecord(content.mechanics, "logistics", "mechanics", "Mechanics catalog");
+        const modules = catalog
+            ? ownRecord(catalog.modules, "logistics", "mechanics.modules", "Mechanics modules")
+            : undefined;
+        if (!modules)
+            return;
+        const selectedByProfile = new Map();
+        for (const [missionId, mission] of Object.entries(content.missions)) {
+            const selected = mission.mechanics?.profiles?.logistics;
+            if (typeof selected !== "string")
+                continue;
+            const missionIds = selectedByProfile.get(selected) ?? [];
+            missionIds.push(missionId);
+            selectedByProfile.set(selected, missionIds);
+        }
+        if (modules.logistics === undefined) {
+            for (const [profileId, missionIds] of selectedByProfile) {
+                for (const missionId of missionIds) {
+                    warn("mission", missionId, "mechanics.profiles.logistics", `Mission selects logistics profile "${profileId}" from a missing inactive module.`);
+                }
+            }
+            return;
+        }
+        const module = ownRecord(modules.logistics, "logistics", "modules.logistics", "Logistics mechanics module");
+        if (!module)
+            return;
+        for (const key of Object.keys(module)) {
+            if (!["schemaVersion", "enabled", "profiles"].includes(key)) {
+                err("mechanics", "logistics", `modules.logistics.${key}`, `Logistics module is closed; unknown field "${key}".`);
+            }
+        }
+        const supported = module.schemaVersion === 1;
+        if (!supported) {
+            err("mechanics", "logistics", "modules.logistics.schemaVersion", "Logistics future or unsupported schemaVersion; only version 1 is supported.");
+        }
+        if (typeof module.enabled !== "boolean") {
+            err("mechanics", "logistics", "modules.logistics.enabled", "Logistics mechanics enabled must be boolean.");
+        }
+        const profiles = ownRecord(module.profiles, "logistics", "modules.logistics.profiles", "Logistics mechanics profiles");
+        if (!profiles || !supported)
+            return;
+        for (const [profileId, missionIds] of selectedByProfile) {
+            if (Object.prototype.hasOwnProperty.call(profiles, profileId))
+                continue;
+            for (const missionId of missionIds) {
+                (module.enabled === true ? err : warn)("mission", missionId, "mechanics.profiles.logistics", `Mission selects missing logistics profile "${profileId}"${module.enabled === true ? "" : " from an inactive module"}.`);
+            }
+        }
+        for (const profileId of Object.keys(profiles).sort()) {
+            const root = `modules.logistics.profiles.${profileId}`;
+            let profile;
+            try {
+                profile = normalizeLogisticsProfileV1(profiles[profileId]);
+            }
+            catch (error) {
+                const relative = error instanceof LogisticsProfileValidationError
+                    ? error.fieldPath.replace(/^profile(?=\.|$)/, "")
+                    : "";
+                err("mechanics", profileId, `${root}${relative}`, error instanceof Error ? error.message : "Logistics profile could not be inspected safely.");
+                continue;
+            }
+            if (profile.power === null)
+                continue;
+            const active = module.enabled === true && (selectedByProfile.get(profileId)?.length ?? 0) > 0;
+            const semantic = active ? err : warn;
+            const roles = [
+                ["generators", profile.power.generators],
+                ["relays", profile.power.relays],
+                ["consumers", profile.power.consumers]
+            ];
+            for (const [role, definitions] of roles) {
+                for (const towerTypeId of Object.keys(definitions)) {
+                    const tower = content.towers[towerTypeId];
+                    if (!tower) {
+                        semantic("mechanics", profileId, `${root}.power.${role}.${towerTypeId}`, `Logistics ${role.slice(0, -1)} references unknown tower type "${towerTypeId}"`
+                            + `${active ? "." : " in this inactive or unselected profile."}`);
+                        continue;
+                    }
+                    if (role === "consumers" && ![
+                        "single", "pulse", "sniper", "antiair", "splash", "pipeline"
+                    ].includes(tower.attack.kind)) {
+                        semantic("mechanics", profileId, `${root}.power.consumers.${towerTypeId}`, `Logistics consumer tower "${towerTypeId}" must use a fire-capable attack; `
+                            + `passive ${tower.attack.kind} is unsupported${active ? "." : " in this inactive profile."}`);
+                    }
+                }
+            }
+        }
+    };
+    validateLogisticsMechanics();
     const validateTerraformingMechanics = () => {
         const inspect = (value, entityId, fieldPath, label) => {
             let prototype;

@@ -34,7 +34,8 @@ const MECHANICS_MODULE_SCHEMA_VERSIONS = Object.freeze({
   physics: Object.freeze([1]),
   terraforming: Object.freeze([1]),
   roguelite: Object.freeze([1, 2, 3, 4]),
-  heroes: Object.freeze([1, 2, 3, 4, 5, 6, 7])
+  heroes: Object.freeze([1, 2, 3, 4, 5, 6, 7]),
+  logistics: Object.freeze([1])
 });
 const SOURCE_BYTE_LIMITS = Object.freeze({
   project: 256 * 1024,
@@ -77,7 +78,16 @@ export async function inspectMechanicsAuthoring(projectDir, options = {}) {
     throw new MechanicsAuthoringError("mission_not_found", `Mission "${String(missionId)}" was not found.`);
   }
 
-  const capabilities = engine.resolveCapabilitySet(files.mechanics, mission.mechanics);
+  const resolvedCapabilities = engine.resolveCapabilitySet(files.mechanics, mission.mechanics);
+  const capabilities = Object.fromEntries(Object.entries(resolvedCapabilities).map(([moduleId, state]) => {
+    const authoredModule = ownValue(files.mechanics?.modules, moduleId);
+    return [moduleId, {
+      ...state,
+      ...(isRecord(authoredModule) && Number.isSafeInteger(authoredModule.schemaVersion)
+        ? { moduleSchemaVersion: authoredModule.schemaVersion }
+        : {})
+    }];
+  }));
   const combat = moduleAuthoringView(files, mission, "combat", engine.COMBAT_MECHANICS_SCHEMA);
   const reactions = moduleAuthoringView(files, mission, "reactions", engine.REACTIONS_MECHANICS_SCHEMA);
   const navigation = moduleAuthoringView(files, mission, "navigation", engine.NAVIGATION_MECHANICS_SCHEMA);
@@ -89,6 +99,7 @@ export async function inspectMechanicsAuthoring(projectDir, options = {}) {
     towerTagsByTowerId: authoredTowerTags(files.balance?.towers)
   };
   const heroes = moduleAuthoringView(files, mission, "heroes", engine.HEROES_MECHANICS_SCHEMA);
+  const logistics = moduleAuthoringView(files, mission, "logistics", engine.LOGISTICS_MECHANICS_SCHEMA);
 
   const rawProjectSchemaVersion = snapshot.rawFiles.manifest?.schemaVersion;
   const authoring = authoringAvailability(rawProjectSchemaVersion);
@@ -111,7 +122,8 @@ export async function inspectMechanicsAuthoring(projectDir, options = {}) {
     physics,
     terraforming,
     roguelite,
-    heroes
+    heroes,
+    logistics
   };
 }
 

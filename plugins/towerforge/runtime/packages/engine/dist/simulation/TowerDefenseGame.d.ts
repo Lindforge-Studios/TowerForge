@@ -80,6 +80,7 @@ export declare class TowerDefenseGame {
     private readonly activeTerraformingMechanics;
     private readonly activeRogueliteMechanics;
     private readonly activeHeroesMechanics;
+    private readonly activeLogisticsPower;
     private readonly activeHeroPassiveAura;
     private readonly activeHeroBlocking;
     private readonly heroesSnapshotV1;
@@ -87,6 +88,11 @@ export declare class TowerDefenseGame {
     private heroMovementField;
     private readonly heroMovementLookupCache;
     private heroMovementDirty;
+    private logisticsPowerSnapshotCache;
+    private logisticsPoweredConsumerIds;
+    private logisticsPowerDirty;
+    private logisticsTopologyCounts;
+    private logisticsLiveParticipantIds;
     private rogueliteSnapshot;
     private rogueliteDamageModifiers;
     private artifactDamageModifiersByTowerId;
@@ -354,6 +360,11 @@ export declare class TowerDefenseGame {
     private artifactManagementAvailability;
     private replaceArtifactSocket;
     private autoUnsocketTowerArtifacts;
+    private isLogisticsParticipantType;
+    private isLiveLogisticsParticipant;
+    private markLogisticsPowerDirty;
+    private ensureLogisticsPowerSnapshot;
+    private currentLogisticsPowerSnapshot;
     private destroyTower;
     private rebuildRogueliteSynergies;
     private currentRogueliteSnapshot;
@@ -434,6 +445,7 @@ export declare class TowerDefenseGame {
     private routePathKey;
     private isTemporaryWaterTile;
     private isInsideAnyPulse;
+    private logisticsPulseFieldActive;
     private isInsideSupportAura;
     private buildNavigationWavePairs;
     private buildNavigationMandatoryPairs;

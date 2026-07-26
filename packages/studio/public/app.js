@@ -78,6 +78,7 @@ const MECHANICS_MODULES = [
   { id: "multiplayer", title: "Multiplayer", description: "Deterministic matches, replay, and local transport." }
 ];
 const HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4, 5, 6, 7]);
+const LOGISTICS_SUPPORTED_MODULE_SCHEMA_VERSIONS = Object.freeze([1]);
 const REACTION_RECIPE_IDS = new Set(["elemental_shatter", "wet_chain_shock", "poison_combustion"]);
 const ELEVATION_RECIPE_IDS = new Set([
   "basic_authored_elevation",
@@ -690,6 +691,7 @@ function mechanicsSelectedProfile() {
 }
 
 function normalizeMechanicsDraft(profile) {
+  if (MechanicsUI.selectedModuleId === "logistics") return normalizeLogisticsMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "heroes") return normalizeHeroesMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "roguelite") return normalizeRogueliteMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "terraforming") {
@@ -741,6 +743,11 @@ function normalizeMechanicsDraft(profile) {
       : {};
   }
   return draft;
+}
+
+function normalizeLogisticsMechanicsDraft(profile) {
+  const source = profile ?? { power: null };
+  return deep(source);
 }
 
 function normalizeRogueliteMechanicsDraft(profile) {
@@ -1118,6 +1125,8 @@ function initializeMechanicsDraft() {
               ? "tagged_flood"
               : MechanicsUI.selectedModuleId === "heroes"
                 ? "basic_commander_hero"
+              : MechanicsUI.selectedModuleId === "logistics"
+                ? "basic_power_grid"
               : MechanicsUI.selectedModuleId === "roguelite" ? "basic_elemental_synergy" : "basic_regenerating_shields");
   MechanicsUI.draft = normalizeMechanicsDraft(selectedProfile ?? mechanicsRecipeProfile());
   if (MechanicsUI.selectedModuleId === "roguelite") initializeRogueliteTowerTags();
@@ -1183,13 +1192,15 @@ function loadMechanicsProfile() {
   MechanicsUI.profileId = profileId;
   MechanicsUI.loadedProfileId = profileId;
   const authoredVersion = MechanicsUI.capabilities?.[MechanicsUI.selectedModuleId]?.moduleSchemaVersion;
-  MechanicsUI.moduleSchemaVersion = [1, 2, 3, 4, 5, 6].includes(authoredVersion)
+  MechanicsUI.moduleSchemaVersion = [1, 2, 3, 4, 5, 6, 7].includes(authoredVersion)
     ? authoredVersion
     : mechanicsProjectModuleVersion();
   MechanicsUI.draft = MechanicsUI.selectedModuleId === "navigation"
     ? normalizeNavigationMechanicsDraft(profile)
     : MechanicsUI.selectedModuleId === "heroes"
       ? normalizeHeroesMechanicsDraft(profile)
+      : MechanicsUI.selectedModuleId === "logistics"
+        ? normalizeLogisticsMechanicsDraft(profile)
     : normalizeMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "roguelite") initializeRogueliteTowerTags();
   MechanicsUI.preview = null;
@@ -1213,6 +1224,9 @@ async function newMechanicsProfile() {
     if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 6) {
       throw new Error("Future heroes schemaVersion 7+ modules are read-only in this Studio version.");
     }
+    if (MechanicsUI.selectedModuleId === "logistics" && mechanicsProjectModuleVersion() > 1) {
+      throw new Error("Future Logistics schemaVersion 2+ modules are preserved losslessly and read-only.");
+    }
     await loadMechanicsRecipe();
     const selectedRecipeId = $("mechanics-recipe-select")?.value || MechanicsUI.recipeId;
     const recipe = MechanicsUI.recipes.find((candidate) => candidate.id === selectedRecipeId) ?? MechanicsUI.recipe;
@@ -1222,6 +1236,10 @@ async function newMechanicsProfile() {
     }
     if (MechanicsUI.selectedModuleId === "roguelite") {
       await materializeRogueliteRecipeDraft(recipe);
+      return;
+    }
+    if (MechanicsUI.selectedModuleId === "logistics") {
+      await materializeLogisticsRecipeDraft(recipe);
       return;
     }
     if (!recipe?.entity?.profile) throw new Error("The selected mechanics recipe is unavailable.");
@@ -1245,6 +1263,33 @@ async function newMechanicsProfile() {
     MechanicsUI.error = error;
     renderMechanicsPreviewResult();
   }
+}
+
+async function materializeLogisticsRecipeDraft(recipe) {
+  if (mechanicsProjectModuleVersion() > 1) {
+    throw new Error("Future Logistics schemaVersion 2+ modules are preserved losslessly and read-only.");
+  }
+  if (recipe?.id !== "basic_power_grid") throw new Error("The basic power-grid recipe is unavailable.");
+  const generatorTowerTypeId = $("mechanics-logistics-recipe-generator")?.value ?? "";
+  const relayTowerTypeId = $("mechanics-logistics-recipe-relay")?.value ?? "";
+  const consumerTowerTypeId = $("mechanics-logistics-recipe-consumer")?.value ?? "";
+  const materialized = await apiPost("/api/mechanics/recipe", {
+    recipeId: recipe.id,
+    parameters: { generatorTowerTypeId, relayTowerTypeId, consumerTowerTypeId }
+  });
+  const candidate = materialized?.recipe ?? materialized;
+  if (candidate?.entity?.moduleId !== "logistics" || candidate.entity.moduleSchemaVersion !== 1
+    || !candidate.entity.profile) throw new Error("The shared Logistics recipe returned an invalid candidate.");
+  MechanicsUI.recipe = candidate;
+  MechanicsUI.recipeId = candidate.id;
+  MechanicsUI.profileId = nextMechanicsProfileId(candidate.entity.profileId || "basic_power_grid");
+  MechanicsUI.loadedProfileId = null;
+  MechanicsUI.draft = normalizeLogisticsMechanicsDraft(candidate.entity.profile);
+  MechanicsUI.moduleSchemaVersion = 1;
+  MechanicsUI.preview = null;
+  MechanicsUI.error = null;
+  renderMechanicsHub();
+  $("mechanics-profile-id")?.focus();
 }
 
 async function materializeRogueliteRecipeDraft(recipe) {
@@ -2786,6 +2831,152 @@ function mechanicsHeroBlockingNavigationState(movementProfileIds) {
       && missingIds.length === 0,
     missingIds
   };
+}
+
+function renderLogisticsMechanicsEditor() {
+  if (MechanicsUI.selectedModuleId !== "logistics" || !MechanicsUI.draft) return;
+  const readOnly = mechanicsProjectModuleVersion() > 1;
+  const futureNotice = $("mechanics-logistics-read-only");
+  futureNotice?.classList.toggle("hidden", !readOnly);
+  if (futureNotice) futureNotice.textContent = readOnly
+    ? "Future Logistics schemaVersion 2+ is preserved losslessly and is read-only in this Studio."
+    : "";
+  const powerEnabled = $("mechanics-logistics-power-enabled");
+  const power = MechanicsUI.draft.power === null ? null : MechanicsUI.draft.power;
+  powerEnabled.checked = power !== null;
+  powerEnabled.disabled = readOnly;
+  powerEnabled.onchange = () => {
+    MechanicsUI.draft.power = powerEnabled.checked
+      ? { generators: {}, relays: {}, consumers: {} }
+      : null;
+    MechanicsUI.preview = null;
+    renderMechanicsHub();
+  };
+
+  const definitionsPerKind = 4096;
+  const amountMaximum = 1000000000000;
+  const radiusMaximum = 64;
+  const priorityMaximum = 1000000;
+  const roleConfig = {
+    generators: {
+      singular: "generator",
+      containerId: "mechanics-logistics-generator-rows",
+      fields: [["output", "Output", amountMaximum], ["linkRadius", "Link radius", radiusMaximum], ["coverageRadius", "Coverage radius", radiusMaximum]]
+    },
+    relays: {
+      singular: "relay",
+      containerId: "mechanics-logistics-relay-rows",
+      fields: [["linkRadius", "Link radius", radiusMaximum], ["coverageRadius", "Coverage radius", radiusMaximum]]
+    },
+    consumers: {
+      singular: "consumer",
+      containerId: "mechanics-logistics-consumer-rows",
+      fields: [["demand", "Demand", amountMaximum], ["priority", "Brownout priority", priorityMaximum]]
+    }
+  };
+  for (const [role, config] of Object.entries(roleConfig)) {
+    const container = $(config.containerId);
+    if (!container) continue;
+    container.replaceChildren();
+    const definitions = power?.[role] ?? {};
+    for (const [towerTypeId, definition] of Object.entries(definitions).slice(0, definitionsPerKind)) {
+      const row = document.createElement("div");
+      row.className = "mechanics-definition-row";
+      row.dataset.logisticsRole = role;
+      row.setAttribute("data-logistics-role", role);
+      const towerLabel = document.createElement("label");
+      towerLabel.textContent = "Tower type ID";
+      const towerInput = document.createElement("input");
+      towerInput.type = "text";
+      towerInput.value = towerTypeId;
+      towerInput.disabled = readOnly;
+      towerInput.setAttribute("data-logistics-tower-type-id", "");
+      towerInput.onchange = (event) => {
+        const nextId = event.target.value.trim();
+        if (!nextId || nextId === towerTypeId || ownDataValue(definitions, nextId)) return;
+        const value = definitions[towerTypeId];
+        delete definitions[towerTypeId];
+        defineOwnDataValue(definitions, nextId, value);
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      };
+      towerLabel.append(towerInput);
+      row.append(towerLabel);
+      for (const [field, label, maximum] of config.fields) {
+        const fieldLabel = document.createElement("label");
+        fieldLabel.textContent = label;
+        const input = document.createElement("input");
+        input.type = "number";
+        input.value = String(definition?.[field] ?? "");
+        input.min = field === "output" || field === "demand" ? "0.000000000001" : "0";
+        input.max = String(maximum);
+        input.step = field === "output" || field === "demand" ? "any" : "1";
+        input.disabled = readOnly;
+        const fieldAttributes = {
+          output: "data-logistics-output",
+          linkRadius: "data-logistics-link-radius",
+          coverageRadius: "data-logistics-coverage-radius",
+          demand: "data-logistics-demand",
+          priority: "data-logistics-priority"
+        };
+        input.setAttribute(fieldAttributes[field], "");
+        input.oninput = (event) => {
+          definition[field] = Number(event.target.value);
+          MechanicsUI.preview = null;
+          renderMechanicsPreviewResult();
+        };
+        fieldLabel.append(input);
+        row.append(fieldLabel);
+      }
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "btn btn-danger";
+      remove.textContent = "Remove";
+      remove.disabled = readOnly;
+      remove.setAttribute("data-remove-logistics-role", config.singular);
+      remove.onclick = () => {
+        delete definitions[towerTypeId];
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      };
+      row.append(remove);
+      container.append(row);
+    }
+  }
+
+  const addRole = (role, defaultDefinition) => {
+    if (readOnly || !MechanicsUI.draft.power) return;
+    const definitions = MechanicsUI.draft.power[role];
+    if (Object.keys(definitions).length >= definitionsPerKind) return;
+    let suffix = Object.keys(definitions).length + 1;
+    let towerTypeId = `${role.slice(0, -1)}_${suffix}`;
+    while (ownDataValue(definitions, towerTypeId)) towerTypeId = `${role.slice(0, -1)}_${++suffix}`;
+    defineOwnDataValue(definitions, towerTypeId, deep(defaultDefinition));
+    MechanicsUI.preview = null;
+    renderMechanicsHub();
+  };
+  $("btn-mechanics-add-logistics-generator").onclick = () => addRole("generators", { output: 20, linkRadius: 4, coverageRadius: 3 });
+  $("btn-mechanics-add-logistics-relay").onclick = () => addRole("relays", { linkRadius: 5, coverageRadius: 4 });
+  $("btn-mechanics-add-logistics-consumer").onclick = () => addRole("consumers", { demand: 8, priority: 10 });
+  for (const id of [
+    "btn-mechanics-add-logistics-generator", "btn-mechanics-add-logistics-relay", "btn-mechanics-add-logistics-consumer"
+  ]) $(id).disabled = readOnly || power === null;
+
+  const towerIds = Object.keys(S.project?.towers ?? {}).sort();
+  const fireCapable = towerIds.filter((towerId) => [
+    "single", "pulse", "sniper", "antiair", "splash", "pipeline"
+  ].includes(S.project.towers[towerId]?.attack?.kind));
+  for (const [id, choices] of [
+    ["mechanics-logistics-recipe-generator", towerIds],
+    ["mechanics-logistics-recipe-relay", towerIds],
+    ["mechanics-logistics-recipe-consumer", fireCapable]
+  ]) {
+    const select = $(id);
+    const selected = select.value;
+    select.innerHTML = choices.map((towerId) => `<option value="${esc(towerId)}">${esc(S.project.towers[towerId]?.label ?? towerId)}</option>`).join("");
+    if (choices.includes(selected)) select.value = selected;
+    select.disabled = readOnly || choices.length === 0;
+  }
 }
 
 function renderHeroesMechanicsEditor() {
@@ -4450,6 +4641,9 @@ function mechanicsRequest(enabled) {
   if (MechanicsUI.selectedModuleId === "terraforming" && mechanicsProjectModuleVersion() !== 1) {
     throw new Error("Future terraforming module versions are read-only in this Studio version.");
   }
+  if (MechanicsUI.selectedModuleId === "logistics" && mechanicsProjectModuleVersion() > 1) {
+    throw new Error("Future Logistics schemaVersion 2+ modules are preserved losslessly and read-only.");
+  }
   const moduleSchemaVersion = mechanicsEffectiveModuleSchemaVersion();
   const request = {
     moduleId: MechanicsUI.selectedModuleId,
@@ -4551,6 +4745,8 @@ function renderMechanicsHub() {
             ? "Author detached terrain transitions and optional bounded elevation mutation, then explicitly enable the profile for this mission."
             : MechanicsUI.selectedModuleId === "heroes"
               ? "Author a closed static hero roster and core spawn, then explicitly enable the profile for this mission."
+            : MechanicsUI.selectedModuleId === "logistics"
+              ? "Author an optional power grid without adding Logistics fields to ordinary tower or mission forms."
             : MechanicsUI.selectedModuleId === "roguelite"
               ? "Author tower tags, global synergies, optional v2 artifact loot, and independent v3 wave draft choices as one opt-in profile transaction."
               : "Author a reusable combat profile, then explicitly select it for this mission.";
@@ -4632,6 +4828,7 @@ function renderMechanicsHub() {
   $("mechanics-terraforming-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "terraforming");
   $("mechanics-roguelite-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "roguelite");
   $("mechanics-heroes-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "heroes");
+  $("mechanics-logistics-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "logistics");
   const state = $("mechanics-hub-state");
   if (state) state.textContent = MechanicsUI.loading ? "Loading capabilities…"
     : MechanicsUI.error ? "Mechanics unavailable"
@@ -4695,6 +4892,8 @@ function renderMechanicsHub() {
       if (!CampaignUI.loaded && !CampaignUI.loading) void loadCampaignAuthoring();
     } else if (MechanicsUI.selectedModuleId === "heroes") {
       renderHeroesMechanicsEditor();
+    } else if (MechanicsUI.selectedModuleId === "logistics") {
+      renderLogisticsMechanicsEditor();
     }
     // Recipe prerequisites are shared authoring metadata. Keep them visible for every module,
     // including elevation recipes, instead of hiding them inside the reactions-only editor.
@@ -4707,17 +4906,21 @@ function renderMechanicsHub() {
     && !hasUnsupportedRogueliteCampaignMarker(MechanicsUI.draft)
   );
   const supportedHeroesVersion = MechanicsUI.selectedModuleId !== "heroes" || mechanicsProjectModuleVersion() <= 7;
+  const supportedLogisticsVersion = MechanicsUI.selectedModuleId !== "logistics" || mechanicsProjectModuleVersion() <= 1;
   const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion
-    && supportedRogueliteVersion && supportedHeroesVersion && !busy;
+    && supportedRogueliteVersion && supportedHeroesVersion && supportedLogisticsVersion && !busy;
   const dirtyWriteGuard = Boolean(S.dirty);
   if ($("btn-mechanics-preview")) $("btn-mechanics-preview").disabled = !writable;
+  if (MechanicsUI.selectedModuleId === "logistics" && mechanicsProjectModuleVersion() > 1) {
+    $("btn-mechanics-preview").disabled = true;
+  }
   $("btn-mechanics-enable").disabled = dirtyWriteGuard || !writable || Boolean(capability?.active);
   $("btn-mechanics-save").disabled = dirtyWriteGuard || !writable || !capability?.moduleEnabled;
   $("btn-mechanics-disable").disabled = dirtyWriteGuard || !writable || !capability?.moduleEnabled;
   $("btn-mechanics-load-profile").disabled = busy || mechanicsProfileIds().length === 0;
   $("btn-mechanics-new-profile").disabled = busy || !MechanicsUI.recipe
     || ((MechanicsUI.selectedModuleId === "terraforming" || MechanicsUI.selectedModuleId === "roguelite"
-      || MechanicsUI.selectedModuleId === "heroes") && !writable);
+      || MechanicsUI.selectedModuleId === "heroes" || MechanicsUI.selectedModuleId === "logistics") && !writable);
   if ($("mechanics-recipe-select")) $("mechanics-recipe-select").disabled = busy || MechanicsUI.recipes.length === 0;
   if ($("btn-mechanics-add-damage-type")) $("btn-mechanics-add-damage-type").disabled = !writable;
   if ($("btn-mechanics-add-armor-type")) $("btn-mechanics-add-armor-type").disabled = !writable;
@@ -6667,6 +6870,11 @@ function renderTowerDetail(id) {
   $("tower-dup-btn")?.addEventListener("click", () => duplicateStudioEntity("towers", id));
 }
 
+// Stable editor entry points used by isolated extension-surface checks.
+function renderTowerEditor(id) {
+  return renderTowerDetail(id);
+}
+
 function defaultAttackModel(kind) {
   const defaults = {
     single: { kind, fireRate: 1, damagePerStack: 1, startingStacks: 1, maxStacks: 5, upgradeCost: 10 },
@@ -7364,6 +7572,11 @@ function renderMissionDetail(id) {
       showSimResult(result);
     } catch (e) { toast("Sim error: " + e.message, "err"); $("sim-overlay")?.classList.add("hidden"); }
   });
+}
+
+// Stable editor entry points used by isolated extension-surface checks.
+function renderMissionEditor(id) {
+  return renderMissionDetail(id);
 }
 
 function persistMission(oldId) {
@@ -10046,6 +10259,47 @@ function renderPlaytestArtifacts(snapshot = PT.game?.getSnapshot()) {
   }
 }
 
+function renderPlaytestLogistics(snapshot) {
+  const panel = $("pt-logistics-power");
+  if (!panel || !PT.rmod?.projectLogisticsPresentation) return;
+  const presentation = PT.rmod.projectLogisticsPresentation(snapshot);
+  panel.replaceChildren();
+  panel.hidden = !presentation.active;
+  if (!presentation.active) return;
+  const title = document.createElement("div");
+  title.className = "form-section-title pt-debug-title";
+  title.textContent = "Power grid";
+  panel.append(title);
+  for (const component of presentation.power.components) {
+    const row = document.createElement("div");
+    row.textContent = `${component.id}: ${component.allocated}/${component.output} allocated`;
+    panel.append(row);
+  }
+  const brownout = presentation.power.consumers.filter((consumer) => !consumer.powered);
+  panel.dataset.powered = String(presentation.power.consumers.length - brownout.length);
+  if (brownout.length) {
+    const row = document.createElement("div");
+    row.className = "text-muted";
+    row.textContent = `Brownout: ${brownout.map((consumer) => consumer.towerId).join(", ")}`;
+    panel.append(row);
+  }
+  for (const node of presentation.power.nodes) {
+    for (const linkedTowerId of node.linkTowerIds) {
+      if (node.towerId >= linkedTowerId) continue;
+      const row = document.createElement("div");
+      row.className = "pt-logistics-link-cue text-muted";
+      row.textContent = `Grid link: ${node.towerId} ↔ ${linkedTowerId}`;
+      panel.append(row);
+    }
+    for (const consumerTowerId of node.coveredConsumerIds) {
+      const row = document.createElement("div");
+      row.className = "pt-logistics-coverage-cue text-muted";
+      row.textContent = `Power coverage: ${node.towerId} → ${consumerTowerId}`;
+      panel.append(row);
+    }
+  }
+}
+
 function renderPlaytestDebugger(snapshot = PT.game?.getSnapshot()) {
   const inspector = $("pt-inspector");
   const timeline = $("pt-event-timeline");
@@ -10154,6 +10408,7 @@ function updatePlaytestHud(s = PT.game.getSnapshot()) {
   const stars = s.stars ?? [];
   const starCount = stars.filter((item) => item.achieved).length;
   set("pt-objectives", `${objectiveCount}/${objectives.length}${stars.length ? ` | ${starCount}/${stars.length} stars` : ""}`);
+  renderPlaytestLogistics(s);
   if (PT.artifactUiDirty) {
     renderPlaytestArtifacts(s);
     PT.artifactUiDirty = false;

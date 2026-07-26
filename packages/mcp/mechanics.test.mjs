@@ -21,7 +21,10 @@ const R0A_MODULE_IDS = [
   "scriptingDx",
   "multiplayer"
 ];
-const IMPLEMENTED_MODULE_IDS = ["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes"];
+const IMPLEMENTED_MODULE_IDS = [
+  "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes",
+  "logistics"
+];
 const UNAVAILABLE_MODULE_IDS = R0A_MODULE_IDS.filter(
   (moduleId) => !IMPLEMENTED_MODULE_IDS.includes(moduleId)
 );
@@ -278,6 +281,20 @@ describe("R1 combat mechanics MCP contract", () => {
         }
       }
     };
+    const logisticsLimits = engine.LOGISTICS_MECHANICS_SCHEMA.limits;
+    const logisticsSurface = {
+      authoring: {
+        ...engine.LOGISTICS_MECHANICS_SCHEMA,
+        limits: {
+          ...logisticsLimits,
+          definitionsPerRole: logisticsLimits.entriesPerRole,
+          definitionsAcrossRoles: logisticsLimits.entriesTotal,
+          amount: Math.max(logisticsLimits.output, logisticsLimits.demand)
+        }
+      },
+      snapshot: { field: "logistics", optional: true, supportedSchemaVersions: [1] },
+      events: []
+    };
 
     expect(engine.COMBAT_MECHANICS_SCHEMA).toMatchObject({
       schemaVersion: 3,
@@ -308,7 +325,8 @@ describe("R1 combat mechanics MCP contract", () => {
         physics: physicsSurface,
         terraforming: terraformingSurface,
         roguelite: rogueliteSurface,
-        heroes: heroesSurface
+        heroes: heroesSurface,
+        logistics: logisticsSurface
       }
     });
     expect(mechanics.mechanics.moduleIds).toHaveLength(12);
@@ -419,6 +437,19 @@ describe("R1 combat mechanics MCP contract", () => {
         profileUses: {},
         towerTagsByTowerId: {}
       });
+      expect(result.capabilities.logistics).toMatchObject({
+        available: true,
+        moduleEnabled: false,
+        active: false,
+        reason: "module_missing"
+      });
+      expect(result.logistics).toMatchObject({
+        authoring: engine.LOGISTICS_MECHANICS_SCHEMA,
+        enabled: false,
+        profileIds: [],
+        profileUses: {}
+      });
+      expect(result.logistics).not.toHaveProperty("selectedProfileId");
       expect(UNAVAILABLE_MODULE_IDS.every((moduleId) => (
         result.capabilities[moduleId].available === false
         && result.capabilities[moduleId].active === false

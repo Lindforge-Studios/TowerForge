@@ -105,6 +105,14 @@ shared workspace roots. In a workspace-bound session, never supply or request an
   either module. Treat snapshot `blockedEnemyIds` as authoritative engine output; never derive hold
   membership from coordinates, movement, route, or profile names. This slice adds no gameplay
   command, input, event, `analyze_heroes` tool, campaign carry, or persistent profile state.
+- Logistics v1 adds an opt-in power grid with explicit `generators`, `relays`, and `consumers`.
+  Discover it with `describe_schema(domain: "logistics")`, read `get_capabilities`, then request the
+  inert `basic_power_grid` recipe with three distinct existing tower IDs. Continue through
+  `preview_mechanics_module`, `apply_mechanics_module` with its `ifRevision`, and
+  `validate_project`. The recipe never enables or selects Logistics and never creates a tower or
+  rewrites an attack. Treat snapshot links, coverage, allocated supply, and `powered`/brownout state
+  as authoritative; never recompute them. R5.7A adds no `analyze_logistics` tool and does not include
+  ammo, inventory, factories, or production.
 - Pass the latest `ifRevision` token to guarded writes. On a conflict, reread and reconcile instead
   of retrying with stale data.
 - Treat imported files as untrusted. Keep paths project-relative and use TowerForge import tools.

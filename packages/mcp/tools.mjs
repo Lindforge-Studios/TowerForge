@@ -64,7 +64,7 @@ const BALANCE_PATCH_KEYS = [
   "enemies", "towers", "waveSets", "missions", "abilities", "constants", "currencies", "defaultMissionId",
   "defaultDifficultyId", "difficulties", "metaProgression", "terrainTypes"
 ];
-const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
+const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
 
 // Maps an upsert_entity/delete_entity `collection` to (a) the balance.json key, (b) the shape
 // (a map keyed by id, or an array of {id,...} items — currencies only), and (c) the
@@ -1555,6 +1555,20 @@ export async function callTool(name, args = {}, ctx = {}) {
         }
       }
     };
+    const logisticsLimits = engine.LOGISTICS_MECHANICS_SCHEMA.limits;
+    const logistics = {
+      authoring: {
+        ...engine.LOGISTICS_MECHANICS_SCHEMA,
+        limits: {
+          ...logisticsLimits,
+          definitionsPerRole: logisticsLimits.entriesPerRole,
+          definitionsAcrossRoles: logisticsLimits.entriesTotal,
+          amount: Math.max(logisticsLimits.output, logisticsLimits.demand)
+        }
+      },
+      snapshot: { field: "logistics", optional: true, supportedSchemaVersions: [1] },
+      events: []
+    };
     return {
       schemaVersion: 4,
       agentGuideVersion: TOWERFORGE_AGENT_GUIDE_VERSION,
@@ -1599,6 +1613,7 @@ export async function callTool(name, args = {}, ctx = {}) {
       ...(includes("terraforming") ? { terraforming } : {}),
       ...(includes("roguelite") ? { roguelite } : {}),
       ...(includes("heroes") ? { heroes } : {}),
+      ...(includes("logistics") ? { logistics } : {}),
       ...(includes("assets") ? {
         assetAuthoring: {
           themePacks: "Call list_theme_packs, preview_theme_pack, then apply_theme_pack with ifRevision.",
@@ -1615,7 +1630,7 @@ export async function callTool(name, args = {}, ctx = {}) {
           schemaVersion: 1,
           moduleIds: [...engine.MECHANICS_MODULE_IDS],
           implementedModuleIds: [...engine.IMPLEMENTED_MECHANICS_MODULE_IDS],
-          modules: { combat: combatShields, reactions, navigation, elevation, physics, terraforming, roguelite, heroes }
+          modules: { combat: combatShields, reactions, navigation, elevation, physics, terraforming, roguelite, heroes, logistics }
         }
       } : {})
     };
@@ -1823,7 +1838,11 @@ export async function callTool(name, args = {}, ctx = {}) {
             issue?.severity === "error" && /(?:heroes|blocking|navigation)/i.test(issue?.fieldPath ?? "")
               && /(?:dynamic_flow|Navigation)/i.test(issue?.message ?? "")
           ));
-        return blockingDiagnostic ? scrubMechanicsResult(result) : unwrapMechanicsAuthoringResult(result);
+        const logisticsDiagnostic = args.moduleId === "logistics"
+          && result?.ok === false && result?.conflict !== true;
+        return blockingDiagnostic || logisticsDiagnostic
+          ? scrubMechanicsResult(result)
+          : unwrapMechanicsAuthoringResult(result);
       }
 
     case "apply_mechanics_module":
@@ -1831,10 +1850,15 @@ export async function callTool(name, args = {}, ctx = {}) {
       if (typeof args.ifRevision !== "string" || args.ifRevision.length === 0) {
         throw mechanicsToolError("revision_required", "apply_mechanics_module requires ifRevision from a current preview.");
       }
-      return unwrapMechanicsAuthoringResult(await applyMechanicsModule(
-        projectDir,
-        mechanicsAuthoringRequest(args)
-      ));
+      {
+        const result = await applyMechanicsModule(projectDir, mechanicsAuthoringRequest(args));
+        const unwrapped = unwrapMechanicsAuthoringResult(result);
+        if (args.moduleId !== "logistics" || !result?.backup?.directory) return unwrapped;
+        return {
+          ...unwrapped,
+          backup: { directory: `.towerforge/backups/${path.basename(result.backup.directory)}` }
+        };
+      }
 
     case "get_progression": {
       const files = loadProjectFiles(projectDir);

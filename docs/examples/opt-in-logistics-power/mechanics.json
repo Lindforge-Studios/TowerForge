@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "logistics": {
+      "schemaVersion": 1,
+      "enabled": true,
+      "profiles": {
+        "basic_power_grid": {
+          "power": {
+            "generators": {
+              "power_plant": {
+                "output": 20,
+                "linkRadius": 4,
+                "coverageRadius": 3
+              }
+            },
+            "relays": {
+              "power_pylon": {
+                "linkRadius": 5,
+                "coverageRadius": 4
+              }
+            },
+            "consumers": {
+              "arc_tower": {
+                "demand": 8,
+                "priority": 10
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -22,7 +22,8 @@ export const IMPLEMENTED_MECHANICS_MODULE_IDS = [
     "physics",
     "terraforming",
     "roguelite",
-    "heroes"
+    "heroes",
+    "logistics"
 ];
 export const SHIELD_LIMITS = Object.freeze({
     capacity: 1_000_000_000_000,
