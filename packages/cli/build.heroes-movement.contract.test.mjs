@@ -23,7 +23,7 @@ function expectExactMoveCommand(source) {
 }
 
 describe("R5.1B generated Canvas/Phaser hero controls", () => {
-  it("dispatches exact GameCommand v4 moveHero through the command surface in both players", () => {
+  it("dispatches exact GameCommand v4 and gates v2/v3 movement through the validated presentation", () => {
     const canvas = functionSource(buildSource, "playerTemplate");
     const phaser = functionSource(buildSource, "phaserPlayerTemplate");
 
@@ -31,8 +31,11 @@ describe("R5.1B generated Canvas/Phaser hero controls", () => {
     expectExactMoveCommand(phaser);
     expect(canvas).toMatch(/selectedHeroId|selectedHero/);
     expect(phaser).toMatch(/selectedHeroId|selectedHero/);
-    expect(canvas).toMatch(/schemaVersion\s*===\s*2|schemaVersion\s*!==\s*2/);
-    expect(phaser).toMatch(/schemaVersion\s*===\s*2|schemaVersion\s*!==\s*2/);
+    for (const source of [canvas, phaser]) {
+      expect(source).toMatch(/presentation\s*=\s*projectHeroesPresentation\s*\(\s*snapshot\s*\)/);
+      expect(source).toMatch(/presentation\.active[\s\S]{0,160}presentation\.units\.every\s*\(\s*\(?hero\)?\s*=>\s*hero\.movement\s*\)/);
+      expect(source).not.toMatch(/snapshot\??\.heroes\??\.schemaVersion|snapshot\[['"]heroes['"]\][\s\S]{0,40}schemaVersion/);
+    }
   });
 
   it("routes pointer/touch and keyboard targeting through shared presentation hit testing", () => {

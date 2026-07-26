@@ -157,9 +157,25 @@ the complete shared MovementProfileV1 shape through `describe_schema({domain:"he
 preview before guarded apply. Active movement accepts only exact `GameCommandV4 moveHero` and
 publishes `snapshot.heroes` v2 with nullable target/next coordinates and edge progress. Mouse,
 touch, keyboard, headless dispatch, checkpoint, and journal replay all use that command; never
-mutate snapshot state. Heroes v1 stays static, while future v3+ modules are lossless/read-only.
+mutate snapshot state. Heroes v1 stays static, while unsupported future modules are lossless/read-only.
 Use `docs/examples/opt-in-hero-roster/mechanics-mobile.json` for the v2 profile. HP, mana,
 abilities, auras, blocking, and TowerScript hero extensions remain later opt-in increments.
+
+For R5.2A durability, choose the separate inert `basic_durable_commander_hero` recipe or copy
+`docs/examples/opt-in-hero-roster/mechanics-durable.json`, then use the same
+`describe -> capabilities -> recipe -> preview -> guarded apply -> validate` flow. Heroes v3 keeps
+the complete v2 movement contract and requires exact `durability: {maxHp,shield}` on every
+definition. `maxHp` and shield `capacity` are finite, positive, and at most `1_000_000_000_000`;
+shield may be `null`. The recipe never enables Heroes, selects a mission, enables Navigation, or
+binds a sprite.
+
+At runtime, read HP, capacity/current shield, and defeat only from `snapshot.heroes` v3. Enemy
+attacks are resolved by the engine and consume shield before HP. A defeated hero cannot move and
+is no longer attacked. Never mutate snapshot durability or reconstruct it from renderer cues.
+Disabling/unselecting Heroes and all v1/v2 profiles keep their earlier snapshot/checkpoint shapes.
+Future heroes v4+ remains lossless/read-only in Studio. This slice has no healing, regeneration,
+revival, mana, abilities, auras, blocking, or TowerScript hero actions. See
+[ADR 0039](adr/0039-opt-in-hero-durability.md).
 
 Combat v1 accepts only `shields`. A target definition requires positive bounded `capacity` and may add `{ ratePerUnit, delayAfterDamage }` regeneration. Tower shields require a tower with `maxHp`. At runtime shield state is keyed by entity instance ID and appears only under active `snapshot.combat`; Canvas and Phaser consume the same presentation projection. A copyable v1 reference is under `docs/examples/opt-in-basic-shields/`.
 

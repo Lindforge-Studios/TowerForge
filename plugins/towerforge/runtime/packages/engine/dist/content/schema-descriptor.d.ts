@@ -88,7 +88,7 @@ export declare const DAMAGE_PACKET_SCHEMA: Readonly<{
     requiredFields: readonly ["amount", "source", "target"];
     optionalFields: readonly ["damageType", "tags", "modifiers"];
     sourceKinds: readonly ["tower", "ability", "tower_script", "status", "enemy", "leak", "reaction"];
-    targetKinds: readonly ["enemy", "tower", "core"];
+    targetKinds: readonly ["enemy", "tower", "hero", "core"];
     tags: ("reaction" | "area" | "over_time" | "armor_piercing")[];
     pipelineOrder: readonly ["modifiers", "marks", "armor_matrix", "entity_resistance", "legacy_pierce_only", "shield", "entity_hp", "reactions"];
 }>;

@@ -83,7 +83,7 @@ export const DAMAGE_PACKET_SCHEMA = Object.freeze({
   requiredFields: ["amount", "source", "target"] as const,
   optionalFields: ["damageType", "tags", "modifiers"] as const,
   sourceKinds: ["tower", "ability", "tower_script", "status", "enemy", "leak", "reaction"] as const,
-  targetKinds: ["enemy", "tower", "core"] as const,
+  targetKinds: ["enemy", "tower", "hero", "core"] as const,
   tags: [...DAMAGE_TAGS],
   pipelineOrder: [
     "modifiers",

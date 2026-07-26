@@ -132,6 +132,47 @@ describe("combat mechanics recipes", () => {
   });
 });
 
+describe("R5.2A durable hero recipe", () => {
+  it("materializes an inert heroes v3 commander without enabling heroes or navigation", () => {
+    expect(listMechanicsRecipes().map((recipe) => recipe.id)).toContain("basic_durable_commander_hero");
+
+    const recipe = materializeMechanicsRecipe("basic_durable_commander_hero", context);
+    expect(recipe).toMatchObject({
+      id: "basic_durable_commander_hero",
+      moduleId: "heroes",
+      moduleSchemaVersion: 3,
+      entity: {
+        moduleId: "heroes",
+        moduleSchemaVersion: 3,
+        missionId: "mission_b",
+        profileId: "basic_durable_commander_hero",
+        profile: {
+          selectedHeroId: "commander",
+          definitions: {
+            commander: {
+              label: "Commander",
+              spawn: "core",
+              movement: { movementProfileId: "ground", speed: 1 },
+              durability: { maxHp: 100, shield: { capacity: 25 } }
+            }
+          },
+          movementProfiles: {
+            ground: {
+              label: "Ground",
+              terrainMode: "respect_walkable",
+              towerOccupancy: "blocked",
+              defaultTerrainCost: 1000
+            }
+          }
+        }
+      }
+    });
+    expect(recipe.entity).not.toHaveProperty("enabled");
+    expect(recipe.entity).not.toHaveProperty("navigation");
+    expect(recipe.entity.profile).not.toHaveProperty("navigation");
+  });
+});
+
 describe("R1.5 reaction mechanics recipes", () => {
   it("materializes directional Fire/Ice Shatter with explicit combat prerequisites", () => {
     expect(listMechanicsRecipes().map((recipe) => recipe.id)).toContain("elemental_shatter");

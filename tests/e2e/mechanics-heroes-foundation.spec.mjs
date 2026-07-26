@@ -186,7 +186,85 @@ test.describe("R5.1A Studio static heroes lifecycle", () => {
     }
   });
 
-  test("enables, edits, reloads, disables, re-enables, and preserves future v3 read-only", async ({ page }) => {
+  test("enables, edits, saves, reloads, disables, and re-enables a v3 durable hero profile", async ({ page }) => {
+    test.setTimeout(120_000);
+    const balancePath = path.join(projectDir, "content", "balance.json");
+    const mechanicsPath = path.join(projectDir, "content", "mechanics.json");
+    const originalBalanceBytes = fs.readFileSync(balancePath, "utf8");
+    const originalMechanicsBytes = fs.existsSync(mechanicsPath) ? fs.readFileSync(mechanicsPath, "utf8") : null;
+    try {
+      await openStudio(page, studioUrl);
+      await openHeroesMechanics(page);
+      await expect(page.locator('#mechanics-recipe-select option[value="basic_durable_commander_hero"]'))
+        .toHaveCount(1);
+      await page.locator("#mechanics-recipe-select").selectOption("basic_durable_commander_hero");
+      await page.locator("#btn-mechanics-new-profile").click();
+      await expect(page.locator("#mechanics-profile-id")).toHaveValue("basic_durable_commander_hero");
+      const commander = page.locator('[data-hero-definition-id="commander"]');
+      await expect(commander.locator("[data-hero-max-hp]")).toHaveValue("100");
+      await expect(commander.locator("[data-hero-shield-enabled]")).toBeChecked();
+      await commander.locator("[data-hero-max-hp]").fill("120");
+      await commander.locator("[data-hero-shield-capacity]").fill("30");
+
+      const beforePreview = readHeroesState(projectDir);
+      await page.locator("#btn-mechanics-preview").click();
+      await expect(page.locator("#mechanics-preview-result")).toContainText('"ok": true');
+      expect(readHeroesState(projectDir)).toEqual(beforePreview);
+      await page.locator("#btn-mechanics-enable").click();
+      await expect.poll(() => readHeroesState(projectDir)).toMatchObject({
+        moduleSchemaVersion: 3,
+        enabled: true,
+        selectedProfileId: "basic_durable_commander_hero",
+        profile: {
+          definitions: {
+            commander: { durability: { maxHp: 120, shield: { capacity: 30 } } }
+          }
+        }
+      });
+
+      await page.reload();
+      await openHeroesMechanics(page);
+      const reloaded = page.locator('[data-hero-definition-id="commander"]');
+      await expect(reloaded.locator("[data-hero-max-hp]")).toHaveValue("120");
+      const beforeMalformedPreview = readHeroesState(projectDir);
+      await reloaded.locator("[data-hero-max-hp]").fill("0");
+      await page.locator("#btn-mechanics-preview").click();
+      await expect(page.locator("#mechanics-preview-result")).toContainText(/maxHp|positive|greater|range/i);
+      await expect(page.locator("#mechanics-preview-result")).not.toContainText('"ok": true');
+      expect(readHeroesState(projectDir)).toEqual(beforeMalformedPreview);
+      await reloaded.locator("[data-hero-max-hp]").fill("120");
+      await reloaded.locator("[data-hero-shield-capacity]").fill("40");
+      await page.locator("#btn-mechanics-save").click();
+      await expect.poll(() => (
+        readHeroesState(projectDir).profile?.definitions?.commander?.durability?.shield?.capacity
+      )).toBe(40);
+
+      await page.reload();
+      await openHeroesMechanics(page);
+      await expect(page.locator('[data-hero-definition-id="commander"] [data-hero-shield-capacity]'))
+        .toHaveValue("40");
+      const preservedProfile = structuredClone(readHeroesState(projectDir).profile);
+      page.once("dialog", (dialog) => dialog.accept());
+      await page.locator("#btn-mechanics-disable").click();
+      await expect.poll(() => readHeroesState(projectDir)).toMatchObject({
+        enabled: false,
+        selectedProfileId: "basic_durable_commander_hero",
+        profile: preservedProfile
+      });
+      await page.locator("#btn-mechanics-enable").click();
+      await expect.poll(() => readHeroesState(projectDir)).toMatchObject({
+        enabled: true,
+        selectedProfileId: "basic_durable_commander_hero",
+        profile: preservedProfile
+      });
+    } finally {
+      fs.writeFileSync(balancePath, originalBalanceBytes, "utf8");
+      if (originalMechanicsBytes === null) fs.rmSync(mechanicsPath, { force: true });
+      else fs.writeFileSync(mechanicsPath, originalMechanicsBytes, "utf8");
+    }
+  });
+
+  test("enables, edits, reloads, disables, re-enables, and preserves future v4 read-only", async ({ page }) => {
     test.setTimeout(120_000);
     const browserErrors = captureBrowserErrors(page);
     await openStudio(page, studioUrl);
@@ -263,8 +341,8 @@ test.describe("R5.1A Studio static heroes lifecycle", () => {
 
     const mechanicsPath = path.join(projectDir, "content", "mechanics.json");
     const future = readJson(mechanicsPath);
-    future.modules.heroes.schemaVersion = 3;
-    future.modules.heroes.futureModuleRule = { preserve: ["exact", 3] };
+    future.modules.heroes.schemaVersion = 4;
+    future.modules.heroes.futureModuleRule = { preserve: ["exact", 4] };
     future.modules.heroes.profiles.basic_commander_hero.futureProfileRule = { preserve: true };
     writeJson(mechanicsPath, future);
     const futureBytes = fs.readFileSync(mechanicsPath, "utf8");
@@ -287,7 +365,11 @@ test.describe("R5.1A Studio static heroes lifecycle", () => {
       "#btn-mechanics-add-hero"
     ]) await expect(page.locator(control)).toBeDisabled();
     expect(fs.readFileSync(mechanicsPath, "utf8")).toBe(futureBytes);
-    expect(browserErrors()).toEqual([]);
+    // A request already in flight when the fixture is replaced by future bytes may be rejected by
+    // the revision guard. That expected 409 is the safety behavior under test, not a browser fault.
+    expect(browserErrors().filter((message) => !(
+      message.includes("Failed to load resource") && message.includes("409 (Conflict)")
+    ))).toEqual([]);
   });
 });
 
@@ -302,6 +384,7 @@ test.describe("R5.1A generated-player static hero presentation", () => {
     for (const combination of combinations) {
       buildHeroPlayerFixture(tempRoot, combination);
       buildMobileHeroPlayerFixture(tempRoot, combination);
+      buildDurableHeroPlayerFixture(tempRoot, combination);
     }
     buildLegacyPlayerFixture(tempRoot);
     port = await freeHttpPort();
@@ -309,7 +392,7 @@ test.describe("R5.1A generated-player static hero presentation", () => {
       const relative = decodeURIComponent(new URL(request.url, `http://127.0.0.1:${port}`).pathname)
         .replace(/^\/+/, "");
       const [mode, grid, renderer, ...parts] = relative.split("/");
-      if (!(["active", "mobile", "legacy"].includes(mode)
+      if (!(["active", "mobile", "durable", "legacy"].includes(mode)
         && ["hex", "square"].includes(grid)
         && ["canvas", "phaser"].includes(renderer))) return respond404(response);
       const fixture = mode === "legacy"
@@ -429,6 +512,69 @@ test.describe("R5.1A generated-player static hero presentation", () => {
       });
     }
   }
+
+  for (const [index, { grid, renderer }] of combinations.entries()) {
+    test(`moves, damages, and defeats the opt-in v3 hero on ${grid}/${renderer}`, async ({ page }) => {
+      test.setTimeout(120_000);
+      const browserErrors = captureBrowserErrors(page);
+      await page.goto(playerUrl(port, "durable", grid, renderer));
+      await waitForPlayerBoot(page);
+
+      const initial = await inspectPlayer(page);
+      expect(initial.heroes).toEqual({
+        schemaVersion: 3,
+        units: [{
+          id: "commander",
+          definitionId: "commander",
+          label: "Durable Sentinel",
+          coord: initial.coreCoord,
+          movement: { targetCoord: null, nextCoord: null, edgeProgress: 0 },
+          durability: {
+            hp: 100,
+            maxHp: 100,
+            shield: { current: 25, capacity: 25 },
+            defeated: false
+          }
+        }]
+      });
+      await expect.poll(
+        () => countHeroDurabilityPixels(page, renderer, initial.coreCoord, "healthy"),
+        { message: `${grid}/${renderer} must draw HP/shield cues`, timeout: 10_000 }
+      ).toBeGreaterThan(5);
+
+      const inputFamily = mobileInputFamilies[index % mobileInputFamilies.length];
+      if (inputFamily === "keyboard") {
+        await assignHeroTargetWithKeyboard(page, initial.coreCoord, initial.spawnCoord, initial.heroes);
+      } else {
+        await assignHeroTargetWithPointer(page, inputFamily, initial.coreCoord, initial.spawnCoord);
+      }
+      await expect.poll(async () => {
+        const hero = (await inspectPlayer(page)).heroes?.units?.[0];
+        return hero?.movement?.targetCoord === null && coordinatesEqual(hero?.coord, initial.spawnCoord);
+      }, {
+        message: `${grid}/${renderer} v3 movement must reach its deterministic target`,
+        timeout: 20_000
+      }).toBe(true);
+
+      await page.locator("#start-wave").click();
+      await expect.poll(async () => (await inspectPlayer(page)).heroes?.units?.[0]?.durability, {
+        message: `${grid}/${renderer} enemy towerAttack must defeat the v3 hero`,
+        timeout: 20_000
+      }).toEqual({
+        hp: 0,
+        maxHp: 100,
+        shield: { current: 0, capacity: 25 },
+        defeated: true
+      });
+      const defeated = (await inspectPlayer(page)).heroes.units[0];
+      expect(defeated.movement).toEqual({ targetCoord: null, nextCoord: null, edgeProgress: 0 });
+      await expect.poll(
+        () => countHeroDurabilityPixels(page, renderer, defeated.coord, "defeated"),
+        { message: `${grid}/${renderer} must draw the defeated cue`, timeout: 10_000 }
+      ).toBeGreaterThan(5);
+      expect(browserErrors()).toEqual([]);
+    });
+  }
 });
 
 function buildHeroPlayerFixture(root, { grid, renderer, visual }) {
@@ -499,6 +645,57 @@ function buildMobileHeroPlayerFixture(root, { grid, renderer }) {
                 label: "Mobile Sentinel",
                 spawn: "core",
                 movement: { movementProfileId: "ground", speed: 0.4 }
+              }
+            },
+            movementProfiles: {
+              ground: {
+                label: "Ground",
+                terrainMode: "respect_walkable",
+                towerOccupancy: "blocked",
+                defaultTerrainCost: 1_000
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+  buildPlayer(projectDir, renderer, "heroes");
+}
+
+function buildDurableHeroPlayerFixture(root, { grid, renderer }) {
+  const name = `hero_durable_${grid}_${renderer}`;
+  const { projectDir } = createProject({ name, parentDir: root, templateName: "classic", gridKind: grid });
+  const manifestPath = path.join(projectDir, "project.json");
+  const manifest = readJson(manifestPath);
+  manifest.schemaVersion = 3;
+  writeJson(manifestPath, manifest);
+
+  const balancePath = path.join(projectDir, "content", "balance.json");
+  const balance = readJson(balancePath);
+  const missionId = balance.defaultMissionId ?? Object.keys(balance.missions)[0];
+  balance.missions[missionId].mechanics = { profiles: { heroes: "durable_commanders" } };
+  for (const enemy of Object.values(balance.enemies)) {
+    enemy.maxHp = Math.max(enemy.maxHp, 1_000);
+    enemy.speed = 0.01;
+    enemy.towerAttack = { interval: 0.05, damage: 70, range: 100 };
+  }
+  writeJson(balancePath, balance);
+  writeJson(path.join(projectDir, "content", "mechanics.json"), {
+    schemaVersion: 1,
+    modules: {
+      heroes: {
+        schemaVersion: 3,
+        enabled: true,
+        profiles: {
+          durable_commanders: {
+            selectedHeroId: "commander",
+            definitions: {
+              commander: {
+                label: "Durable Sentinel",
+                spawn: "core",
+                movement: { movementProfileId: "ground", speed: 20 },
+                durability: { maxHp: 100, shield: { capacity: 25 } }
               }
             },
             movementProfiles: {
@@ -593,6 +790,42 @@ async function countHeroPixels(page, renderer, visual, coreCoord) {
     }
   }
   return count;
+}
+
+async function countHeroDurabilityPixels(page, renderer, heroCoord, state) {
+  const canvas = renderer === "phaser" ? page.locator("#playfield canvas") : page.locator("canvas#playfield");
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const [box, point, screenshot] = await Promise.all([
+    canvas.boundingBox(),
+    page.evaluate((coord) => window.__towerforgeTilePoint(coord), heroCoord),
+    canvas.screenshot()
+  ]);
+  if (!box || !point) return 0;
+  const png = PNG.sync.read(screenshot);
+  const centerX = Math.round((point.x - box.x) * png.width / box.width);
+  const centerY = Math.round((point.y - box.y) * png.height / box.height);
+  const radius = Math.max(18, Math.round(38 * png.width / box.width));
+  let count = 0;
+  for (let y = Math.max(0, centerY - radius); y < Math.min(png.height, centerY + radius); y += 1) {
+    for (let x = Math.max(0, centerX - radius); x < Math.min(png.width, centerX + radius); x += 1) {
+      const offset = (y * png.width + x) * 4;
+      const red = png.data[offset];
+      const green = png.data[offset + 1];
+      const blue = png.data[offset + 2];
+      const alpha = png.data[offset + 3];
+      const healthy = alpha > 128 && (
+        (green > 175 && red >= 90 && red < 160 && blue >= 95 && blue < 170)
+        || (blue > 220 && green > 190 && red < 130)
+      );
+      const defeated = alpha > 128 && red > 190 && green >= 65 && green < 135 && blue >= 55 && blue < 120;
+      if ((state === "healthy" && healthy) || (state === "defeated" && defeated)) count += 1;
+    }
+  }
+  return count;
+}
+
+function coordinatesEqual(left, right) {
+  return Boolean(left && right && left.q === right.q && left.r === right.r);
 }
 
 async function exerciseOrdinaryInput(page, renderer, activation) {

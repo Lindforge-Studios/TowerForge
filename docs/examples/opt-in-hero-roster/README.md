@@ -34,7 +34,7 @@ The coordinate above is illustrative; the engine always copies the selected miss
 `coreCoord`. The profile supports 1–32 definitions, while only `selectedHeroId` is instantiated.
 Definition IDs and labels are limited to 128 UTF-8 bytes.
 
-This slice has no `moveHero`, hero command, checkpoint state, RNG, event, TowerScript extension,
+This v1 slice has no `moveHero`, hero command, checkpoint state, RNG, event, TowerScript extension,
 HP, shield, mana, cooldown, ability, skill, aura, blocking, or navigation behavior. Do not mutate
 the snapshot or add a hero checkpoint section. Removing the mission selection or disabling the
 module removes the optional snapshot and renderer surface. R5.1B owns movement,
@@ -65,3 +65,29 @@ and adds exact nullable movement state:
 Disabling Heroes or keeping schema v1 preserves the static/legacy paths. Movement v2 still does
 not add HP, mana, abilities, auras, blocking, or TowerScript hero actions. See
 [ADR 0038](../../adr/0038-opt-in-deterministic-hero-movement.md).
+
+## Optional durability (R5.2A)
+
+Use `mechanics-durable.json` to opt into Heroes v3. Every v3 definition retains v2 movement and
+adds exact `durability: {maxHp,shield}`. `shield` may be `null` or `{capacity}`; this recipe uses
+100 HP and a 25-point shield. The recipe is also available as `basic_durable_commander_hero` and
+does not enable the module or select the mission until the guarded apply is explicitly committed.
+
+Enemy attacks route through the shared damage resolver, consume the hero shield before HP, and set
+the authoritative `defeated` state at zero HP. The optional runtime section is
+`snapshot.heroes` v3:
+
+```json
+{
+  "durability": {
+    "hp": 100,
+    "maxHp": 100,
+    "shield": { "current": 25, "capacity": 25 },
+    "defeated": false
+  }
+}
+```
+
+Do not reconstruct combat state from presentation cues. This slice adds no mana, abilities,
+healing, regeneration, revival, auras, blocking, or TowerScript hero actions. See
+[ADR 0039](../../adr/0039-opt-in-hero-durability.md).

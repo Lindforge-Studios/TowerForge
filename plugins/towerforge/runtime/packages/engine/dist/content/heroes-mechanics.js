@@ -1,3 +1,4 @@
+import { SHIELD_LIMITS } from "./mechanics.js";
 import { MOVEMENT_PROFILE_V1_SCHEMA, NAVIGATION_LIMITS, NavigationProfileValidationError, normalizeMovementProfileV1 } from "./navigation-mechanics.js";
 /** Closed structural budgets for the first opt-in hero roster schema. */
 export const HEROES_LIMITS = Object.freeze({
@@ -33,11 +34,30 @@ const MOVEMENT_SCHEMA_V2 = Object.freeze({
     additionalProperties: false,
     speed: Object.freeze({ exclusiveMinimum: 0, maximum: 20 })
 });
+const DEFINITION_SCHEMA_V3 = Object.freeze({
+    requiredFields: Object.freeze(["label", "spawn", "movement", "durability"]),
+    optionalFields: Object.freeze([]),
+    additionalProperties: false,
+    spawnValues: Object.freeze(["core"])
+});
+const DURABILITY_SCHEMA_V3 = Object.freeze({
+    requiredFields: Object.freeze(["maxHp", "shield"]),
+    optionalFields: Object.freeze([]),
+    additionalProperties: false,
+    maxHp: Object.freeze({ exclusiveMinimum: 0, maximum: SHIELD_LIMITS.capacity })
+});
+const SHIELD_SCHEMA_V3 = Object.freeze({
+    nullable: true,
+    requiredFields: Object.freeze(["capacity"]),
+    optionalFields: Object.freeze([]),
+    additionalProperties: false,
+    capacity: Object.freeze({ exclusiveMinimum: 0, maximum: SHIELD_LIMITS.capacity })
+});
 /** Capability-aware authoring descriptor shared by Studio and MCP. */
 export const HEROES_MECHANICS_SCHEMA = Object.freeze({
-    schemaVersion: 2,
+    schemaVersion: 3,
     moduleId: "heroes",
-    supportedModuleSchemaVersions: Object.freeze([1, 2]),
+    supportedModuleSchemaVersions: Object.freeze([1, 2, 3]),
     profile: PROFILE_SCHEMA,
     definition: DEFINITION_SCHEMA,
     versions: Object.freeze({
@@ -47,18 +67,31 @@ export const HEROES_MECHANICS_SCHEMA = Object.freeze({
             definition: DEFINITION_SCHEMA_V2,
             movement: MOVEMENT_SCHEMA_V2,
             movementProfile: MOVEMENT_PROFILE_V1_SCHEMA
+        }),
+        3: Object.freeze({
+            profile: PROFILE_SCHEMA_V2,
+            definition: DEFINITION_SCHEMA_V3,
+            movement: MOVEMENT_SCHEMA_V2,
+            movementProfile: MOVEMENT_PROFILE_V1_SCHEMA,
+            durability: DURABILITY_SCHEMA_V3,
+            shield: SHIELD_SCHEMA_V3
         })
     }),
     limits: HEROES_LIMITS,
     runtimeSnapshot: Object.freeze({
         path: "snapshot.heroes",
-        schemaVersions: Object.freeze([1, 2]),
+        schemaVersions: Object.freeze([1, 2, 3]),
         optionalUnlessActive: true,
         versions: Object.freeze({
             1: Object.freeze({ unitFields: Object.freeze(["id", "definitionId", "label", "coord"]) }),
             2: Object.freeze({
                 unitFields: Object.freeze(["id", "definitionId", "label", "coord", "movement"]),
                 movementFields: Object.freeze(["targetCoord", "nextCoord", "edgeProgress"])
+            }),
+            3: Object.freeze({
+                unitFields: Object.freeze(["id", "definitionId", "label", "coord", "movement", "durability"]),
+                movementFields: Object.freeze(["targetCoord", "nextCoord", "edgeProgress"]),
+                durabilityFields: Object.freeze(["hp", "maxHp", "shield", "defeated"])
             })
         })
     })
@@ -227,6 +260,88 @@ export function normalizeHeroesProfileV2(input, root = "profile") {
         movementProfiles: Object.freeze(movementProfiles)
     });
 }
+/** Normalize the closed R5.2A durability profile while retaining the v2 movement contract. */
+export function normalizeHeroesProfileV3(input, root = "profile") {
+    const profile = dataRecord(input, root, "Heroes profile");
+    exactFields(profile, PROFILE_SCHEMA_V2.requiredFields, root, "Heroes profile");
+    const selectedHeroId = boundedText(profile.selectedHeroId, HEROES_LIMITS.idUtf8Bytes, `${root}.selectedHeroId`, "Selected hero id");
+    const rawMovementProfiles = dataRecord(profile.movementProfiles, `${root}.movementProfiles`, "Heroes movement profiles");
+    const movementProfileIds = Object.keys(rawMovementProfiles).sort(compareBinary);
+    if (movementProfileIds.length < 1 || movementProfileIds.length > NAVIGATION_LIMITS.movementProfiles) {
+        throw new HeroesProfileValidationError(`${root}.movementProfiles`, `Heroes movement profiles must contain 1..${NAVIGATION_LIMITS.movementProfiles} entries.`);
+    }
+    const movementProfiles = {};
+    for (const movementProfileId of movementProfileIds) {
+        boundedText(movementProfileId, HEROES_LIMITS.idUtf8Bytes, `${root}.movementProfiles.${movementProfileId}`, "Movement profile id");
+        let normalized;
+        try {
+            normalized = normalizeMovementProfileV1(rawMovementProfiles[movementProfileId], `${root}.movementProfiles.${movementProfileId}`);
+        }
+        catch (error) {
+            if (error instanceof NavigationProfileValidationError) {
+                throw new HeroesProfileValidationError(error.fieldPath, error.message);
+            }
+            throw error;
+        }
+        Object.defineProperty(movementProfiles, movementProfileId, { value: normalized, enumerable: true });
+    }
+    const rawDefinitions = dataRecord(profile.definitions, `${root}.definitions`, "Heroes definitions");
+    const definitionIds = Object.keys(rawDefinitions).sort(compareBinary);
+    if (definitionIds.length < 1 || definitionIds.length > HEROES_LIMITS.definitions) {
+        throw new HeroesProfileValidationError(`${root}.definitions`, `Heroes definitions must contain 1..${HEROES_LIMITS.definitions} entries.`);
+    }
+    const definitions = {};
+    for (const heroId of definitionIds) {
+        boundedText(heroId, HEROES_LIMITS.idUtf8Bytes, `${root}.definitions.${heroId}`, "Hero id");
+        const definitionRoot = `${root}.definitions.${heroId}`;
+        const rawDefinition = dataRecord(rawDefinitions[heroId], definitionRoot, `Hero definition "${heroId}"`);
+        exactFields(rawDefinition, DEFINITION_SCHEMA_V3.requiredFields, definitionRoot, `Hero definition "${heroId}"`);
+        const label = boundedText(rawDefinition.label, HEROES_LIMITS.labelUtf8Bytes, `${definitionRoot}.label`, "Hero label");
+        if (rawDefinition.spawn !== "core") {
+            throw new HeroesProfileValidationError(`${definitionRoot}.spawn`, "Hero spawn must be the supported value \"core\".");
+        }
+        const movementRoot = `${definitionRoot}.movement`;
+        const movement = dataRecord(rawDefinition.movement, movementRoot, `Hero movement "${heroId}"`);
+        exactFields(movement, MOVEMENT_SCHEMA_V2.requiredFields, movementRoot, `Hero movement "${heroId}"`);
+        const movementProfileId = boundedText(movement.movementProfileId, HEROES_LIMITS.idUtf8Bytes, `${movementRoot}.movementProfileId`, "Hero movement profile id");
+        const speed = movement.speed;
+        if (typeof speed !== "number" || !Number.isFinite(speed) || speed <= 0 || speed > 20) {
+            throw new HeroesProfileValidationError(`${movementRoot}.speed`, "Hero movement speed must be finite and inside (0, 20].");
+        }
+        const durabilityRoot = `${definitionRoot}.durability`;
+        const durability = dataRecord(rawDefinition.durability, durabilityRoot, `Hero durability "${heroId}"`);
+        exactFields(durability, DURABILITY_SCHEMA_V3.requiredFields, durabilityRoot, `Hero durability "${heroId}"`);
+        const maxHp = durability.maxHp;
+        if (typeof maxHp !== "number" || !Number.isFinite(maxHp) || maxHp <= 0 || maxHp > SHIELD_LIMITS.capacity) {
+            throw new HeroesProfileValidationError(`${durabilityRoot}.maxHp`, `Hero durability maxHp must be finite and inside (0, ${SHIELD_LIMITS.capacity}].`);
+        }
+        let shield = null;
+        if (durability.shield !== null) {
+            const shieldRoot = `${durabilityRoot}.shield`;
+            const rawShield = dataRecord(durability.shield, shieldRoot, `Hero shield "${heroId}"`);
+            exactFields(rawShield, SHIELD_SCHEMA_V3.requiredFields, shieldRoot, `Hero shield "${heroId}"`);
+            const capacity = rawShield.capacity;
+            if (typeof capacity !== "number" || !Number.isFinite(capacity) || capacity <= 0 || capacity > SHIELD_LIMITS.capacity) {
+                throw new HeroesProfileValidationError(`${shieldRoot}.capacity`, `Hero shield capacity must be finite and inside (0, ${SHIELD_LIMITS.capacity}].`);
+            }
+            shield = Object.freeze({ capacity });
+        }
+        Object.defineProperty(definitions, heroId, {
+            value: Object.freeze({
+                label,
+                spawn: "core",
+                movement: Object.freeze({ movementProfileId, speed }),
+                durability: Object.freeze({ maxHp, shield })
+            }),
+            enumerable: true
+        });
+    }
+    return Object.freeze({
+        selectedHeroId,
+        definitions: Object.freeze(definitions),
+        movementProfiles: Object.freeze(movementProfiles)
+    });
+}
 function ownData(value, key) {
     if (value === null || typeof value !== "object")
         return undefined;
@@ -245,33 +360,44 @@ export function resolveActiveHeroesMechanics(content, missionId) {
         return undefined;
     const module = ownData(ownData(content.mechanics, "modules"), "heroes");
     const schemaVersion = ownData(module, "schemaVersion");
-    if ((schemaVersion !== 1 && schemaVersion !== 2) || ownData(module, "enabled") !== true)
+    if ((schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3) || ownData(module, "enabled") !== true) {
         return undefined;
+    }
     const profile = ownData(ownData(module, "profiles"), capability.profileId);
     let normalized;
     try {
         normalized = schemaVersion === 1
             ? normalizeHeroesProfileV1(profile, `modules.heroes.profiles.${capability.profileId}`)
-            : normalizeHeroesProfileV2(profile, `modules.heroes.profiles.${capability.profileId}`);
+            : schemaVersion === 2
+                ? normalizeHeroesProfileV2(profile, `modules.heroes.profiles.${capability.profileId}`)
+                : normalizeHeroesProfileV3(profile, `modules.heroes.profiles.${capability.profileId}`);
     }
     catch {
         return undefined;
     }
     if (!Object.prototype.hasOwnProperty.call(normalized.definitions, normalized.selectedHeroId))
         return undefined;
-    if (schemaVersion === 2) {
+    if (schemaVersion === 2 || schemaVersion === 3) {
         const moving = normalized;
         const definition = moving.definitions[moving.selectedHeroId];
         if (!definition || !Object.prototype.hasOwnProperty.call(moving.movementProfiles, definition.movement.movementProfileId)) {
             return undefined;
         }
-        return Object.freeze({
-            schemaVersion: 2,
-            profileId: capability.profileId,
-            selectedHeroId: moving.selectedHeroId,
-            definitions: moving.definitions,
-            movementProfiles: moving.movementProfiles
-        });
+        return schemaVersion === 2
+            ? Object.freeze({
+                schemaVersion: 2,
+                profileId: capability.profileId,
+                selectedHeroId: moving.selectedHeroId,
+                definitions: moving.definitions,
+                movementProfiles: moving.movementProfiles
+            })
+            : Object.freeze({
+                schemaVersion: 3,
+                profileId: capability.profileId,
+                selectedHeroId: moving.selectedHeroId,
+                definitions: moving.definitions,
+                movementProfiles: moving.movementProfiles
+            });
     }
     return Object.freeze({
         schemaVersion: 1,

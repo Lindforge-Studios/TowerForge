@@ -650,6 +650,7 @@ export class TowerForgeCanvasRenderer {
     if (!p) return;
     const sprite = this.spriteFor("heroes", hero.definitionId);
     this.ctx.save();
+    if (hero.durability?.defeated) this.ctx.globalAlpha = 0.38;
     if (sprite) {
       const size = geom.r * 1.35;
       this.ctx.drawImage(sprite.img, sprite.sx, sprite.sy, sprite.sw, sprite.sh, p.x - size / 2, p.y - size / 2, size, size);
@@ -666,6 +667,44 @@ export class TowerForgeCanvasRenderer {
       this.ctx.textAlign = "center";
       this.ctx.textBaseline = "middle";
       this.ctx.fillText(hero.label.slice(0, 2), p.x, p.y);
+    }
+    this.ctx.restore();
+    const durability = hero.durability;
+    if (!durability) return;
+    const width = geom.r * 1.05;
+    const height = Math.max(3, geom.r * 0.13);
+    const x = p.x - width / 2;
+    const y = p.y - geom.r * 0.82;
+    const hpRatio = durability.hp / durability.maxHp;
+    this.ctx.save();
+    this.ctx.fillStyle = "rgba(0,0,0,.65)";
+    this.ctx.fillRect(x - 1, y - 1, width + 2, height + 2);
+    this.ctx.fillStyle = hpRatio > 0.35 ? "#73cf82" : "#df6a59";
+    this.ctx.fillRect(x, y, width * hpRatio, height);
+    if (durability.shield) {
+      const shieldRatio = durability.shield.current / durability.shield.capacity;
+      this.ctx.strokeStyle = "rgba(99,217,255,.28)";
+      this.ctx.lineWidth = Math.max(1.5, geom.r * 0.08);
+      this.ctx.beginPath();
+      this.ctx.arc(p.x, p.y, geom.r * 0.62, 0, Math.PI * 2);
+      this.ctx.stroke();
+      if (shieldRatio > 0) {
+        this.ctx.strokeStyle = "#63d9ff";
+        this.ctx.beginPath();
+        this.ctx.arc(p.x, p.y, geom.r * 0.62, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * shieldRatio);
+        this.ctx.stroke();
+      }
+    }
+    if (durability.defeated) {
+      const radius = geom.r * 0.38;
+      this.ctx.strokeStyle = "#df6a59";
+      this.ctx.lineWidth = Math.max(2, geom.r * 0.1);
+      this.ctx.beginPath();
+      this.ctx.moveTo(p.x - radius, p.y - radius);
+      this.ctx.lineTo(p.x + radius, p.y + radius);
+      this.ctx.moveTo(p.x + radius, p.y - radius);
+      this.ctx.lineTo(p.x - radius, p.y + radius);
+      this.ctx.stroke();
     }
     this.ctx.restore();
   }

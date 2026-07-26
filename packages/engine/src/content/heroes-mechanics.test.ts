@@ -177,15 +177,15 @@ function selfRevokingOnLastDescriptor<T extends object>(target: T): T {
 }
 
 describe("R5.1A static heroes v1 authoring contract", () => {
-  it("publishes heroes as implemented with one exact deep-frozen v1 descriptor", () => {
+  it("publishes heroes as implemented with one exact deep-frozen versioned descriptor", () => {
     expect(Engine.IMPLEMENTED_MECHANICS_MODULE_IDS).toContain("heroes");
     const schema = (Engine as unknown as { HEROES_MECHANICS_SCHEMA?: unknown }).HEROES_MECHANICS_SCHEMA;
     const limits = (Engine as unknown as { HEROES_LIMITS?: unknown }).HEROES_LIMITS;
     expect(limits).toEqual(HEROES_LIMITS_V1);
     expect(schema).toEqual({
-      schemaVersion: 2,
+      schemaVersion: 3,
       moduleId: "heroes",
-      supportedModuleSchemaVersions: [1, 2],
+      supportedModuleSchemaVersions: [1, 2, 3],
       profile: {
         requiredFields: ["selectedHeroId", "definitions"],
         optionalFields: [],
@@ -242,18 +242,68 @@ describe("R5.1A static heroes v1 authoring contract", () => {
               values: { integer: true, minimum: 1, maximum: 1_000_000, nullable: true }
             }
           }
+        },
+        3: {
+          profile: {
+            requiredFields: ["selectedHeroId", "definitions", "movementProfiles"],
+            optionalFields: [],
+            additionalProperties: false
+          },
+          definition: {
+            requiredFields: ["label", "spawn", "movement", "durability"],
+            optionalFields: [],
+            additionalProperties: false,
+            spawnValues: ["core"]
+          },
+          movement: {
+            requiredFields: ["movementProfileId", "speed"],
+            optionalFields: [],
+            additionalProperties: false,
+            speed: { exclusiveMinimum: 0, maximum: 20 }
+          },
+          movementProfile: {
+            requiredFields: ["label", "terrainMode", "towerOccupancy", "defaultTerrainCost"],
+            optionalFields: ["terrainCosts"],
+            additionalProperties: false,
+            label: { minLength: 1, maxLength: 128 },
+            terrainModeValues: ["respect_walkable", "ignore_walkable"],
+            towerOccupancyValues: ["blocked", "ignored"],
+            defaultTerrainCost: { integer: true, minimum: 1, maximum: 1_000_000, nullable: true },
+            terrainCosts: {
+              maximumEntries: 256,
+              values: { integer: true, minimum: 1, maximum: 1_000_000, nullable: true }
+            }
+          },
+          durability: {
+            requiredFields: ["maxHp", "shield"],
+            optionalFields: [],
+            additionalProperties: false,
+            maxHp: { exclusiveMinimum: 0, maximum: 1_000_000_000_000 }
+          },
+          shield: {
+            nullable: true,
+            requiredFields: ["capacity"],
+            optionalFields: [],
+            additionalProperties: false,
+            capacity: { exclusiveMinimum: 0, maximum: 1_000_000_000_000 }
+          }
         }
       },
       limits: HEROES_LIMITS_V1,
       runtimeSnapshot: {
         path: "snapshot.heroes",
-        schemaVersions: [1, 2],
+        schemaVersions: [1, 2, 3],
         optionalUnlessActive: true,
         versions: {
           1: { unitFields: ["id", "definitionId", "label", "coord"] },
           2: {
             unitFields: ["id", "definitionId", "label", "coord", "movement"],
             movementFields: ["targetCoord", "nextCoord", "edgeProgress"]
+          },
+          3: {
+            unitFields: ["id", "definitionId", "label", "coord", "movement", "durability"],
+            movementFields: ["targetCoord", "nextCoord", "edgeProgress"],
+            durabilityFields: ["hp", "maxHp", "shield", "defeated"]
           }
         }
       }
@@ -275,7 +325,7 @@ describe("R5.1A static heroes v1 authoring contract", () => {
       { profiles: { heroes: "field_commander" } }
     ).heroes).toMatchObject({ available: true, active: false, reason: "module_disabled" });
     expect(Engine.resolveCapabilitySet(
-      heroesInput({ moduleSchemaVersion: 3 }).mechanics!,
+      heroesInput({ moduleSchemaVersion: 4 }).mechanics!,
       { profiles: { heroes: "field_commander" } }
     ).heroes).toMatchObject({ available: true, active: false, reason: "module_version_unsupported" });
     expect(Engine.resolveCapabilitySet(
@@ -474,7 +524,7 @@ describe("R5.1B heroes v2 movement authoring contract (RED)", () => {
     const registry = createGameContentRegistry(v2Input());
     expect(validateGameContentRegistry(registry)).toEqual({ ok: true, issues: [] });
     expect(registry.mechanics.modules).not.toHaveProperty("navigation");
-    expect(Engine.HEROES_MECHANICS_SCHEMA.supportedModuleSchemaVersions).toEqual([1, 2]);
+    expect(Engine.HEROES_MECHANICS_SCHEMA.supportedModuleSchemaVersions).toEqual([1, 2, 3]);
     expect((Engine as unknown as {
       normalizeHeroesProfileV2?: (input: unknown) => unknown;
     }).normalizeHeroesProfileV2?.(movingProfile())).toEqual(movingProfile());
@@ -526,9 +576,9 @@ describe("R5.1B heroes v2 movement authoring contract (RED)", () => {
     ))).toBe(true);
   });
 
-  it("treats v3 as future while preserving v1 validation", () => {
+  it("treats v4 as future while preserving v1 validation", () => {
     const future = v2Input();
-    (future.mechanics!.modules.heroes as unknown as { schemaVersion: number }).schemaVersion = 3;
+    (future.mechanics!.modules.heroes as unknown as { schemaVersion: number }).schemaVersion = 4;
     expect(validateGameContentRegistry(createGameContentRegistry(future)).ok).toBe(false);
     expect(validate().ok).toBe(true);
   });

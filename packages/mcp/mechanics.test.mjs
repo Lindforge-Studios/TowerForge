@@ -195,8 +195,22 @@ describe("R1 combat mechanics MCP contract", () => {
     };
     const heroesSurface = {
       authoring: engine.HEROES_MECHANICS_SCHEMA,
-      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2] },
-      events: [],
+      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2, 3] },
+      events: {
+        heroShieldChanged: {
+          requiredFields: ["heroId", "previous", "current", "capacity", "cause", "amount"],
+          optionalFields: ["overflowDamage"],
+          causeValues: ["damage"]
+        },
+        heroAttacked: {
+          requiredFields: ["enemyId", "enemyTypeId", "heroId", "damage", "shieldAbsorbed", "hpDamage"],
+          optionalFields: []
+        },
+        heroDefeated: {
+          requiredFields: ["heroId", "heroDefinitionId", "enemyId"],
+          optionalFields: []
+        }
+      },
       commands: {
         schemaVersion: 4,
         moveHero: {

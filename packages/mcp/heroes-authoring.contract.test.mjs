@@ -33,7 +33,7 @@ async function rejection(promise) {
 }
 
 describe("R5.1A MCP/AI static hero authoring", () => {
-  it("describes the closed roster, optional snapshot, and explicitly deferred runtime surfaces", async () => {
+  it("describes the closed roster, optional snapshot, and v3 durability events", async () => {
     const heroes = await callTool("describe_schema", { domain: "heroes" }, {});
     const mechanics = await callTool("describe_schema", { domain: "mechanics" }, {});
 
@@ -42,12 +42,26 @@ describe("R5.1A MCP/AI static hero authoring", () => {
       heroes: {
         authoring: {
           moduleId: "heroes",
-          schemaVersion: 2,
-          supportedModuleSchemaVersions: [1, 2],
+          schemaVersion: 3,
+          supportedModuleSchemaVersions: [1, 2, 3],
           limits: { definitions: 32, idUtf8Bytes: 128, labelUtf8Bytes: 128 }
         },
-        snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2] },
-        events: []
+        snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2, 3] },
+        events: {
+          heroShieldChanged: {
+            requiredFields: ["heroId", "previous", "current", "capacity", "cause", "amount"],
+            optionalFields: ["overflowDamage"],
+            causeValues: ["damage"]
+          },
+          heroAttacked: {
+            requiredFields: ["enemyId", "enemyTypeId", "heroId", "damage", "shieldAbsorbed", "hpDamage"],
+            optionalFields: []
+          },
+          heroDefeated: {
+            requiredFields: ["heroId", "heroDefinitionId", "enemyId"],
+            optionalFields: []
+          }
+        }
       }
     });
     expect(heroes.availableDomains).toContain("heroes");
@@ -215,8 +229,8 @@ describe("R5.1B MCP/AI deterministic hero movement", () => {
     expect(described.heroes).toMatchObject({
       authoring: {
         moduleId: "heroes",
-        schemaVersion: 2,
-        supportedModuleSchemaVersions: [1, 2],
+        schemaVersion: 3,
+        supportedModuleSchemaVersions: [1, 2, 3],
         versions: {
           2: {
             movementProfile: {
@@ -233,7 +247,7 @@ describe("R5.1B MCP/AI deterministic hero movement", () => {
           }
         }
       },
-      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2] },
+      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2, 3] },
       commands: {
         schemaVersion: 4,
         moveHero: {
@@ -243,7 +257,21 @@ describe("R5.1B MCP/AI deterministic hero movement", () => {
         }
       }
     });
-    expect(described.heroes.events).toEqual([]);
+    expect(described.heroes.events).toEqual({
+      heroShieldChanged: {
+        requiredFields: ["heroId", "previous", "current", "capacity", "cause", "amount"],
+        optionalFields: ["overflowDamage"],
+        causeValues: ["damage"]
+      },
+      heroAttacked: {
+        requiredFields: ["enemyId", "enemyTypeId", "heroId", "damage", "shieldAbsorbed", "hpDamage"],
+        optionalFields: []
+      },
+      heroDefeated: {
+        requiredFields: ["heroId", "heroDefinitionId", "enemyId"],
+        optionalFields: []
+      }
+    });
     expect(described.heroes).not.toHaveProperty("towerScript");
   });
 
@@ -367,6 +395,93 @@ describe("R5.1B MCP/AI deterministic hero movement", () => {
     expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/GameCommand v4[\s\S]*moveHero/i);
     expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/snapshot[\s\S]*never (?:mutate|write)/i);
     expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/basic_mobile_commander_hero[\s\S]*(?:never|does not)[\s\S]*(?:enable|select)/i);
+  });
+});
+
+describe("R5.2A MCP/AI durable hero authoring", () => {
+  it("describes v3 durability and completes the inert guarded recipe flow", async () => {
+    const described = await callTool("describe_schema", { domain: "heroes" }, {});
+    expect(described.heroes).toMatchObject({
+      authoring: {
+        schemaVersion: 3,
+        supportedModuleSchemaVersions: [1, 2, 3],
+        versions: {
+          3: {
+            durability: {
+              requiredFields: ["maxHp", "shield"],
+              additionalProperties: false
+            },
+            shield: {
+              nullable: true,
+              requiredFields: ["capacity"],
+              additionalProperties: false
+            }
+          }
+        }
+      },
+      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2, 3] }
+    });
+
+    const projectDir = fixture();
+    const before = await callTool("get_capabilities", { projectDir, missionId: "tutorial_01" }, {});
+    expect(before.capabilities.heroes).toMatchObject({ available: true, active: false });
+
+    const materialized = await callTool("get_recipe", {
+      projectDir,
+      collection: "mechanics",
+      recipeId: "basic_durable_commander_hero"
+    }, {});
+    expect(materialized.recipe).toMatchObject({
+      moduleId: "heroes",
+      moduleSchemaVersion: 3,
+      entity: {
+        moduleId: "heroes",
+        moduleSchemaVersion: 3,
+        missionId: "tutorial_01",
+        profileId: "basic_durable_commander_hero",
+        profile: {
+          definitions: {
+            commander: { durability: { maxHp: 100, shield: { capacity: 25 } } }
+          }
+        }
+      }
+    });
+    expect(materialized.recipe.entity).not.toHaveProperty("enabled");
+
+    const request = { projectDir, ...materialized.recipe.entity, enabled: true };
+    const preview = await callTool("preview_mechanics_module", request, {});
+    expect(preview).toMatchObject({
+      ok: true,
+      dryRun: true,
+      revision: materialized.revision,
+      validation: { ok: true, issues: [] },
+      candidate: { mechanics: { modules: { heroes: { schemaVersion: 3, enabled: true } } } }
+    });
+    expect(preview.candidate.mechanics.modules.navigation).toBeUndefined();
+
+    const applied = await callTool("apply_mechanics_module", {
+      ...request,
+      ifRevision: preview.revision
+    }, {});
+    expect(applied).toMatchObject({ ok: true, previousRevision: preview.revision });
+    expect(await callTool("validate_project", { projectDir }, {})).toMatchObject({ ok: true });
+
+    const active = await callTool("get_capabilities", { projectDir, missionId: "tutorial_01" }, {});
+    expect(active.capabilities.heroes).toMatchObject({
+      active: true,
+      moduleSchemaVersion: 3,
+      profileId: "basic_durable_commander_hero"
+    });
+    expect(active.capabilities.navigation.active).toBe(false);
+  });
+
+  it("teaches agents to read durability only from authoritative state", () => {
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/Heroes v3[\s\S]*durability[\s\S]*maxHp[\s\S]*shield/i);
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/basic_durable_commander_hero[\s\S]*(?:never|do not)[\s\S]*(?:enable|select)/i);
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/HP[\s\S]*shield[\s\S]*snapshot[\s\S]*never (?:mutate|write)/i);
+    for (const eventType of ["heroShieldChanged", "heroAttacked", "heroDefeated"]) {
+      expect(TOWERFORGE_AGENT_INSTRUCTIONS).toContain(eventType);
+    }
   });
 });
 

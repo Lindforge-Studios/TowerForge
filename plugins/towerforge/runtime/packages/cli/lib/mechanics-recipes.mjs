@@ -17,6 +17,7 @@ const BASIC_ELEMENTAL_SYNERGY_ID = "basic_elemental_synergy";
 const BASIC_BOSS_ARTIFACT_LOOT_ID = "basic_boss_artifact_loot";
 const BASIC_COMMANDER_HERO_ID = "basic_commander_hero";
 const BASIC_MOBILE_COMMANDER_HERO_ID = "basic_mobile_commander_hero";
+const BASIC_DURABLE_COMMANDER_HERO_ID = "basic_durable_commander_hero";
 const TERRAFORMING_RECIPE_IDS = Object.freeze([
   TAGGED_FLOOD_ID,
   TAGGED_MOAT_ID,
@@ -222,6 +223,14 @@ const RECIPES = Object.freeze([
     description: "Inert heroes v2 profile with one commander and a heroes-owned deterministic ground movement profile.",
     suggestedId: BASIC_MOBILE_COMMANDER_HERO_ID,
     moduleSchemaVersion: 2
+  }),
+  Object.freeze({
+    id: BASIC_DURABLE_COMMANDER_HERO_ID,
+    moduleId: "heroes",
+    label: "Basic Durable Commander Hero",
+    description: "Inert heroes v3 profile with deterministic movement, bounded HP, and an optional absorb-first shield.",
+    suggestedId: BASIC_DURABLE_COMMANDER_HERO_ID,
+    moduleSchemaVersion: 3
   })
 ]);
 
@@ -321,6 +330,36 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
               label: "Commander",
               spawn: "core",
               movement: { movementProfileId: "ground", speed: 1 }
+            }
+          },
+          movementProfiles: {
+            ground: {
+              label: "Ground",
+              terrainMode: "respect_walkable",
+              towerOccupancy: "blocked",
+              defaultTerrainCost: 1_000
+            }
+          }
+        }
+      }
+    };
+  }
+  if (recipeId === BASIC_DURABLE_COMMANDER_HERO_ID) {
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "heroes",
+        moduleSchemaVersion: 3,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: {
+          selectedHeroId: "commander",
+          definitions: {
+            commander: {
+              label: "Commander",
+              spawn: "core",
+              movement: { movementProfileId: "ground", speed: 1 },
+              durability: { maxHp: 100, shield: { capacity: 25 } }
             }
           },
           movementProfiles: {

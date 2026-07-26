@@ -31,6 +31,8 @@
 | R4.4B — structural campaign choices | Завершён; code + constructor sign-off; ADR Accepted | Campaign graph v2, declared run resources и атомарные merchant/event choices без battle-state coupling |
 | R4.4C — campaign battle handoff | Завершён; code + constructor sign-off; ADR Accepted | Marker v2 переносит run deck/artifacts через deterministic prepare/checkpoint/atomic settlement; marker v1 остаётся legacy |
 | R5.1A — static hero roster foundation | Завершён; code + constructor sign-off; ADR Accepted | Opt-in `heroes` v1: bounded roster, один selected unit на core, optional snapshot и shared presentation без commands/checkpoint |
+| R5.1B — deterministic hero movement | Завершён; code + constructor sign-off; ADR Accepted | Heroes v2, own movement profiles, exact GameCommand/Journal v4, checkpoint/replay и Canvas/Phaser input без navigation activation |
+| R5.2A — hero durability | Завершён; code + constructor sign-off; ADR Accepted | Heroes v3, exact HP/optional shield, shared resolver, optional snapshot/checkpoint state, guarded authoring и legacy v1/v2 paths |
 | R5–R8 | Запланированы | Каждый срез закрывает engine, Studio, AI/MCP, renderers/player, docs и два независимых sign-off |
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Поставленные версии `combat`, `reactions`, `navigation` и `elevation` уже прошли полные вертикальные срезы. Остальные модули Mechanics Hub остаются planned, а preview/apply отклоняют их включение без записи.
@@ -208,6 +210,30 @@ plugin build/validate/smoke, PWA/single-file/file URL, web-package и `.tdpack` 
 code verifier и constructor-integration verifier выдали PASS без открытых P0–P3 findings. Контракт
 зафиксирован в [ADR 0038](adr/0038-opt-in-deterministic-hero-movement.md), copyable v2 fixture —
 `docs/examples/opt-in-hero-roster/mechanics-mobile.json`.
+
+R5.2A — отдельный opt-in durability-срез. `heroes` v3 сохраняет полный v2-
+контракт и требует для каждого definition точный `durability: {maxHp,shield}`, где
+`shield` равен `null` или `{capacity}`. Входящая enemy `towerAttack` проходит общий
+`DamagePacket`/`DamageResolver`, затем shield поглощает урон до HP; defeat срабатывает
+ровно один раз и блокирует движение. Optional `snapshot.heroes` v3 публикует
+`{hp,maxHp,shield,defeated}`, а nested heroes checkpoint эволюционирует в v2 без изменения
+внешнего `GameCheckpointV1`, GameCommand/Journal v4 и replay envelope.
+
+Studio редактирует v3 только в Mechanics Hub, MCP/AI раскрывает descriptor и инертный
+`basic_durable_commander_hero` через обычный guarded flow, а Canvas/Phaser читают только
+авторитетный snapshot/events. Нет mana, abilities, regeneration, revival, auras, blocking и
+TowerScript hero actions. V1/v2, absent/disabled/unselected пути не получают durability state. Контракт:
+[ADR 0039](adr/0039-opt-in-hero-durability.md); fixture:
+`docs/examples/opt-in-hero-roster/mechanics-durable.json`.
+
+R5.2A принят 2026-07-26. Независимые verifier-циклы дополнительно закрепили невозможные
+checkpoint-состояния shield/HP, forged hero events, точный MCP event descriptor, невалидные
+видимые Studio-значения и source↔plugin parity. Full Vitest прошёл 2 092/2 092 теста в 185
+файлах; full Playwright — 68/68. Active v3 acceptance покрывает Canvas/Phaser × hex/square,
+движение, HP/shield/defeat cues, PWA, single-file, web package и `.tdpack`; absent, v1 и v2
+пути остались совместимыми. Typecheck, engine/build, validate, sim, balance, maps и plugin
+build/validate/smoke прошли. Code verifier и constructor-integration verifier выдали PASS без
+открытых P0–P3 findings.
 
 ### R6 — TowerScript DX 2.0
 

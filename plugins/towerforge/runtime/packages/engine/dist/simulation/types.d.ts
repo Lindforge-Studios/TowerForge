@@ -629,6 +629,28 @@ export type GameEvent = {
     towerTypeId: string;
     enemyId: string;
 } | {
+    type: "heroShieldChanged";
+    heroId: string;
+    previous: number;
+    current: number;
+    capacity: number;
+    cause: "damage";
+    amount: number;
+    overflowDamage?: number;
+} | {
+    type: "heroAttacked";
+    enemyId: string;
+    enemyTypeId: string;
+    heroId: string;
+    damage: number;
+    shieldAbsorbed: number;
+    hpDamage: number;
+} | {
+    type: "heroDefeated";
+    heroId: string;
+    heroDefinitionId: string;
+    enemyId: string;
+} | {
     type: "towerTargetModeChanged";
     towerId: string;
     mode: TowerTargetMode;
@@ -952,7 +974,23 @@ export interface HeroesSnapshotV2 {
     readonly schemaVersion: 2;
     readonly units: readonly HeroUnitStateV2[];
 }
-export type HeroesSnapshot = HeroesSnapshotV1 | HeroesSnapshotV2;
+export interface HeroDurabilityStateSnapshotV3 {
+    readonly hp: number;
+    readonly maxHp: number;
+    readonly shield: Readonly<{
+        current: number;
+        capacity: number;
+    }> | null;
+    readonly defeated: boolean;
+}
+export interface HeroUnitStateV3 extends HeroUnitStateV2 {
+    readonly durability: HeroDurabilityStateSnapshotV3;
+}
+export interface HeroesSnapshotV3 {
+    readonly schemaVersion: 3;
+    readonly units: readonly HeroUnitStateV3[];
+}
+export type HeroesSnapshot = HeroesSnapshotV1 | HeroesSnapshotV2 | HeroesSnapshotV3;
 export interface GameSnapshot {
     /** Canonical authored map identity for presentation and renderer adapters. */
     mapId: string;

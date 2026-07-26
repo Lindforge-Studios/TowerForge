@@ -333,7 +333,7 @@ export declare class TowerDefenseGame {
     private applyHealAuras;
     /** Boss pattern: enemies with `towerDisrupt` periodically silence towers within radius. */
     private updateTowerDisruptions;
-    /** Boss pattern: enemies with `towerAttack` periodically damage the nearest tower with hp; destroy it at 0. */
+    /** Boss pattern: enemies with `towerAttack` damage the nearest durable tower or opt-in v3 hero. */
     private updateEnemyTowerAttacks;
     private artifactManagementAvailability;
     private replaceArtifactSocket;
@@ -385,6 +385,7 @@ export declare class TowerDefenseGame {
     private applyResolvedEnemyDamage;
     private applyResolvedCoreDamage;
     private applyResolvedTowerEntityDamage;
+    private applyResolvedHeroDamage;
     private resolveAndApplyDamage;
     private planAndApplyReactions;
     private applyEnemyExposure;

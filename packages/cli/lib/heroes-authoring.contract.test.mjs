@@ -161,3 +161,63 @@ describe("R5.1A CLI heroes inspect and guarded authoring", () => {
     expect(transactionBytes(projectDir)).toEqual(concurrent);
   }, 15_000);
 });
+
+describe("R5.2A CLI durable hero authoring", () => {
+  it("previews and applies an exact heroes v3 profile through the existing guarded transaction", async () => {
+    const projectDir = fixture();
+    const durable = request({
+      moduleSchemaVersion: 3,
+      profileId: "durable_commander",
+      profile: {
+        selectedHeroId: "commander",
+        definitions: {
+          commander: {
+            label: "Commander",
+            spawn: "core",
+            movement: { movementProfileId: "ground", speed: 1 },
+            durability: { maxHp: 100, shield: { capacity: 25 } }
+          }
+        },
+        movementProfiles: {
+          ground: {
+            label: "Ground",
+            terrainMode: "respect_walkable",
+            towerOccupancy: "blocked",
+            defaultTerrainCost: 1000
+          }
+        }
+      }
+    });
+
+    const preview = await previewMechanicsModule(projectDir, durable);
+    expect(preview).toMatchObject({
+      ok: true,
+      dryRun: true,
+      validation: { ok: true, issues: [] },
+      candidate: {
+        mechanics: { modules: { heroes: { schemaVersion: 3, enabled: true } } },
+        balance: {
+          missions: {
+            tutorial_01: { mechanics: { profiles: { heroes: "durable_commander" } } }
+          }
+        }
+      }
+    });
+    expect(preview.candidate.mechanics.modules.navigation).toBeUndefined();
+
+    const applied = await applyMechanicsModule(projectDir, {
+      ...durable,
+      ifRevision: preview.revision
+    });
+    expect(applied).toMatchObject({ ok: true, written: true, previousRevision: preview.revision });
+
+    const reread = await inspectMechanicsAuthoring(projectDir, { missionId: "tutorial_01" });
+    expect(reread.heroes).toMatchObject({
+      enabled: true,
+      moduleSchemaVersion: 3,
+      selectedProfileId: "durable_commander",
+      selectedProfile: durable.profile
+    });
+    expect(reread.capabilities.navigation.active).toBe(false);
+  }, 15_000);
+});

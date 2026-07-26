@@ -1455,7 +1455,7 @@ export async function callTool(name, args = {}, ctx = {}) {
     };
     const heroes = {
       authoring: engine.HEROES_MECHANICS_SCHEMA,
-      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2] },
+      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2, 3] },
       commands: {
         schemaVersion: 4,
         moveHero: {
@@ -1464,7 +1464,21 @@ export async function callTool(name, args = {}, ctx = {}) {
           additionalProperties: false
         }
       },
-      events: []
+      events: {
+        heroShieldChanged: {
+          requiredFields: ["heroId", "previous", "current", "capacity", "cause", "amount"],
+          optionalFields: ["overflowDamage"],
+          causeValues: ["damage"]
+        },
+        heroAttacked: {
+          requiredFields: ["enemyId", "enemyTypeId", "heroId", "damage", "shieldAbsorbed", "hpDamage"],
+          optionalFields: []
+        },
+        heroDefeated: {
+          requiredFields: ["heroId", "heroDefinitionId", "enemyId"],
+          optionalFields: []
+        }
+      }
     };
     return {
       schemaVersion: 4,

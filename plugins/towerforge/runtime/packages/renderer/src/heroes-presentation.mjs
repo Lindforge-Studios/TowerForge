@@ -2,6 +2,7 @@ const MAX_UNITS = 1;
 const MAX_ID_BYTES = 128;
 const MAX_LABEL_BYTES = 128;
 const MAX_COORDINATE = 1_000_000;
+const MAX_DURABILITY = 1_000_000_000_000;
 
 const INACTIVE = Object.freeze({ active: false, units: Object.freeze([]) });
 
@@ -98,6 +99,30 @@ function movement(value) {
   return Object.freeze({ targetCoord, nextCoord, edgeProgress });
 }
 
+function boundedDurabilityNumber(value, minimum, maximum) {
+  return typeof value === "number" && Number.isFinite(value)
+    && value >= minimum && value <= maximum ? value : null;
+}
+
+function durability(value) {
+  const record = exactRecord(value, ["hp", "maxHp", "shield", "defeated"]);
+  if (!record) return null;
+  const maxHp = boundedDurabilityNumber(record.maxHp, Number.MIN_VALUE, MAX_DURABILITY);
+  const hp = maxHp === null ? null : boundedDurabilityNumber(record.hp, 0, maxHp);
+  if (hp === null || maxHp === null || typeof record.defeated !== "boolean"
+    || record.defeated !== (hp === 0)) return null;
+  let shield = null;
+  if (record.shield !== null) {
+    const shieldRecord = exactRecord(record.shield, ["current", "capacity"]);
+    if (!shieldRecord) return null;
+    const capacity = boundedDurabilityNumber(shieldRecord.capacity, Number.MIN_VALUE, MAX_DURABILITY);
+    const current = capacity === null ? null : boundedDurabilityNumber(shieldRecord.current, 0, capacity);
+    if (capacity === null || current === null) return null;
+    shield = Object.freeze({ current, capacity });
+  }
+  return Object.freeze({ hp, maxHp, shield, defeated: record.defeated });
+}
+
 /**
  * Project only the authoritative optional engine snapshot. Invalid/future/untrusted shapes fail
  * closed to the same inactive sentinel; renderers never reconstruct a hero from mechanics data.
@@ -106,7 +131,8 @@ export function projectHeroesPresentation(snapshot) {
   const value = ownData(snapshot, "heroes");
   if (value === undefined || value === null) return INACTIVE;
   const section = exactRecord(value, ["schemaVersion", "units"]);
-  if (!section || (section.schemaVersion !== 1 && section.schemaVersion !== 2)) return INACTIVE;
+  if (!section || (section.schemaVersion !== 1 && section.schemaVersion !== 2
+    && section.schemaVersion !== 3)) return INACTIVE;
   const authoredUnits = denseArray(section.units, MAX_UNITS);
   if (!authoredUnits || authoredUnits.length !== 1) return INACTIVE;
   const units = [];
@@ -115,7 +141,9 @@ export function projectHeroesPresentation(snapshot) {
   for (const value of authoredUnits) {
     const unit = exactRecord(value, section.schemaVersion === 1
       ? ["id", "definitionId", "label", "coord"]
-      : ["id", "definitionId", "label", "coord", "movement"]);
+      : section.schemaVersion === 2
+        ? ["id", "definitionId", "label", "coord", "movement"]
+        : ["id", "definitionId", "label", "coord", "movement", "durability"]);
     if (!unit) return INACTIVE;
     const id = boundedText(unit.id, MAX_ID_BYTES);
     const definitionId = boundedText(unit.definitionId, MAX_ID_BYTES);
@@ -131,7 +159,15 @@ export function projectHeroesPresentation(snapshot) {
     }
     const projectedMovement = movement(unit.movement);
     if (!projectedMovement) return INACTIVE;
-    units.push(Object.freeze({ id, definitionId, label, coord, movement: projectedMovement }));
+    if (section.schemaVersion === 2) {
+      units.push(Object.freeze({ id, definitionId, label, coord, movement: projectedMovement }));
+      continue;
+    }
+    const projectedDurability = durability(unit.durability);
+    if (!projectedDurability) return INACTIVE;
+    units.push(Object.freeze({
+      id, definitionId, label, coord, movement: projectedMovement, durability: projectedDurability
+    }));
   }
   return Object.freeze({ active: true, units: Object.freeze(units) });
 }

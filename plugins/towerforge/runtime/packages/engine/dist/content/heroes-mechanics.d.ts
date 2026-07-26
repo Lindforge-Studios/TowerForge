@@ -36,12 +36,31 @@ export interface ActiveHeroesMechanicsV2 extends HeroesProfileV2 {
     readonly schemaVersion: 2;
     readonly profileId: string;
 }
-export type ActiveHeroesMechanics = ActiveHeroesMechanicsV1 | ActiveHeroesMechanicsV2;
+export interface HeroShieldDefinitionV3 {
+    readonly capacity: number;
+}
+export interface HeroDurabilityDefinitionV3 {
+    readonly maxHp: number;
+    readonly shield: HeroShieldDefinitionV3 | null;
+}
+export interface HeroUnitDefinitionV3 extends HeroUnitDefinitionV2 {
+    readonly durability: HeroDurabilityDefinitionV3;
+}
+export interface HeroesProfileV3 {
+    readonly selectedHeroId: string;
+    readonly definitions: Readonly<Record<string, HeroUnitDefinitionV3>>;
+    readonly movementProfiles: Readonly<Record<string, MovementProfileV1>>;
+}
+export interface ActiveHeroesMechanicsV3 extends HeroesProfileV3 {
+    readonly schemaVersion: 3;
+    readonly profileId: string;
+}
+export type ActiveHeroesMechanics = ActiveHeroesMechanicsV1 | ActiveHeroesMechanicsV2 | ActiveHeroesMechanicsV3;
 /** Capability-aware authoring descriptor shared by Studio and MCP. */
 export declare const HEROES_MECHANICS_SCHEMA: Readonly<{
-    schemaVersion: 2;
+    schemaVersion: 3;
     moduleId: "heroes";
-    supportedModuleSchemaVersions: readonly [1, 2];
+    supportedModuleSchemaVersions: readonly [1, 2, 3];
     profile: Readonly<{
         requiredFields: readonly ["selectedHeroId", "definitions"];
         optionalFields: readonly [];
@@ -115,6 +134,73 @@ export declare const HEROES_MECHANICS_SCHEMA: Readonly<{
                 }>;
             }>;
         }>;
+        3: Readonly<{
+            profile: Readonly<{
+                requiredFields: readonly ["selectedHeroId", "definitions", "movementProfiles"];
+                optionalFields: readonly [];
+                additionalProperties: false;
+            }>;
+            definition: Readonly<{
+                requiredFields: readonly ["label", "spawn", "movement", "durability"];
+                optionalFields: readonly [];
+                additionalProperties: false;
+                spawnValues: readonly ["core"];
+            }>;
+            movement: Readonly<{
+                requiredFields: readonly ["movementProfileId", "speed"];
+                optionalFields: readonly [];
+                additionalProperties: false;
+                speed: Readonly<{
+                    exclusiveMinimum: 0;
+                    maximum: 20;
+                }>;
+            }>;
+            movementProfile: Readonly<{
+                requiredFields: readonly ["label", "terrainMode", "towerOccupancy", "defaultTerrainCost"];
+                optionalFields: readonly ["terrainCosts"];
+                additionalProperties: false;
+                label: Readonly<{
+                    minLength: 1;
+                    maxLength: 128;
+                }>;
+                terrainModeValues: readonly ["respect_walkable", "ignore_walkable"];
+                towerOccupancyValues: readonly ["blocked", "ignored"];
+                defaultTerrainCost: Readonly<{
+                    integer: true;
+                    minimum: 1;
+                    maximum: 1000000;
+                    nullable: true;
+                }>;
+                terrainCosts: Readonly<{
+                    maximumEntries: 256;
+                    values: Readonly<{
+                        integer: true;
+                        minimum: 1;
+                        maximum: 1000000;
+                        nullable: true;
+                    }>;
+                }>;
+            }>;
+            durability: Readonly<{
+                requiredFields: readonly ["maxHp", "shield"];
+                optionalFields: readonly [];
+                additionalProperties: false;
+                maxHp: Readonly<{
+                    exclusiveMinimum: 0;
+                    maximum: 1000000000000;
+                }>;
+            }>;
+            shield: Readonly<{
+                nullable: true;
+                requiredFields: readonly ["capacity"];
+                optionalFields: readonly [];
+                additionalProperties: false;
+                capacity: Readonly<{
+                    exclusiveMinimum: 0;
+                    maximum: 1000000000000;
+                }>;
+            }>;
+        }>;
     }>;
     limits: Readonly<{
         definitions: 32;
@@ -123,7 +209,7 @@ export declare const HEROES_MECHANICS_SCHEMA: Readonly<{
     }>;
     runtimeSnapshot: Readonly<{
         path: "snapshot.heroes";
-        schemaVersions: readonly [1, 2];
+        schemaVersions: readonly [1, 2, 3];
         optionalUnlessActive: true;
         versions: Readonly<{
             1: Readonly<{
@@ -132,6 +218,11 @@ export declare const HEROES_MECHANICS_SCHEMA: Readonly<{
             2: Readonly<{
                 unitFields: readonly ["id", "definitionId", "label", "coord", "movement"];
                 movementFields: readonly ["targetCoord", "nextCoord", "edgeProgress"];
+            }>;
+            3: Readonly<{
+                unitFields: readonly ["id", "definitionId", "label", "coord", "movement", "durability"];
+                movementFields: readonly ["targetCoord", "nextCoord", "edgeProgress"];
+                durabilityFields: readonly ["hp", "maxHp", "shield", "defeated"];
             }>;
         }>;
     }>;
@@ -144,5 +235,7 @@ export declare class HeroesProfileValidationError extends Error {
 export declare function normalizeHeroesProfileV1(input: unknown, root?: string): HeroesProfileV1;
 /** Normalize the closed R5.1B movement-enabled profile without activating navigation. */
 export declare function normalizeHeroesProfileV2(input: unknown, root?: string): HeroesProfileV2;
+/** Normalize the closed R5.2A durability profile while retaining the v2 movement contract. */
+export declare function normalizeHeroesProfileV3(input: unknown, root?: string): HeroesProfileV3;
 /** Resolve a detached profile only when the mission genuinely selected a supported heroes version. */
 export declare function resolveActiveHeroesMechanics(content: GameContentRegistry, missionId: string): ActiveHeroesMechanics | undefined;

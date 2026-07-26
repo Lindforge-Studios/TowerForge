@@ -71,13 +71,13 @@ const MECHANICS_MODULES = [
   { id: "physics", title: "Physics", description: "Bounded push/pull displacement, immunities, and explicit fall hazards." },
   { id: "terraforming", title: "Terraforming", description: "Transactional terrain transitions and bounded elevation edits authored as an independent opt-in profile." },
   { id: "roguelite", title: "Rogue-lite", description: "Synergies, artifacts, draft choices, and campaign runs." },
-  { id: "heroes", title: "Heroes", description: "Optional opt-in hero roster spawning at the core; v2 adds deterministic movement." },
+  { id: "heroes", title: "Heroes", description: "Optional opt-in hero roster spawning at the core; v2 adds movement and v3 adds bounded HP and shields." },
   { id: "logistics", title: "Logistics", description: "Power grids, inventories, ammunition, and production." },
   { id: "director", title: "AI Director", description: "Deterministic adaptation and generative Studio hooks." },
   { id: "scriptingDx", title: "TowerScript DX", description: "Visual graphs, structured traces, and step debugging." },
   { id: "multiplayer", title: "Multiplayer", description: "Deterministic matches, replay, and local transport." }
 ];
-const HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS = Object.freeze([1, 2]);
+const HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS = Object.freeze([1, 2, 3]);
 const REACTION_RECIPE_IDS = new Set(["elemental_shatter", "wet_chain_shock", "poison_combustion"]);
 const ELEVATION_RECIPE_IDS = new Set([
   "basic_authored_elevation",
@@ -1026,11 +1026,16 @@ function mechanicsAuthoredMatrixEntryCount() {
 }
 
 function mechanicsEffectiveModuleSchemaVersion() {
-  if (MechanicsUI.selectedModuleId === "heroes") return Math.max(
-    mechanicsProjectModuleVersion(),
-    Number.isInteger(MechanicsUI.moduleSchemaVersion) ? MechanicsUI.moduleSchemaVersion : 1,
-    MechanicsUI.draft?.movementProfiles ? 2 : 1
-  );
+  if (MechanicsUI.selectedModuleId === "heroes") {
+    const authoredVersion = Math.max(
+      mechanicsProjectModuleVersion(),
+      Number.isInteger(MechanicsUI.moduleSchemaVersion) ? MechanicsUI.moduleSchemaVersion : 1
+    );
+    const hasDurability = Object.values(MechanicsUI.draft?.definitions ?? {})
+      .some((definition) => definition?.durability !== undefined);
+    if (hasDurability) return Math.max(authoredVersion, 3);
+    return MechanicsUI.draft?.movementProfiles ? Math.max(authoredVersion, 2) : authoredVersion;
+  }
   if (MechanicsUI.selectedModuleId === "roguelite") {
     const authoredVersion = Math.max(
       mechanicsProjectModuleVersion(),
@@ -1193,8 +1198,8 @@ function nextMechanicsProfileId(suggestedId) {
 
 async function newMechanicsProfile() {
   try {
-    if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 2) {
-      throw new Error("Future heroes schemaVersion 3+ modules are read-only in this Studio version.");
+    if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 3) {
+      throw new Error("Future heroes schemaVersion 4+ modules are read-only in this Studio version.");
     }
     await loadMechanicsRecipe();
     const selectedRecipeId = $("mechanics-recipe-select")?.value || MechanicsUI.recipeId;
@@ -2765,13 +2770,16 @@ function renderHeroesMechanicsEditor() {
   const editorVersion = Math.max(projectVersion, Number.isInteger(MechanicsUI.moduleSchemaVersion) ? MechanicsUI.moduleSchemaVersion : 1);
   const supportedVersion = HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS.includes(editorVersion)
     && descriptor?.supportedModuleSchemaVersions?.includes(editorVersion) !== false;
-  const movementEnabled = editorVersion === 2;
+  const movementEnabled = editorVersion >= 2 && editorVersion <= 3;
+  const durabilityEnabled = editorVersion === 3;
+  const durabilityDescriptor = descriptor?.versions?.[3]?.durability;
+  const shieldDescriptor = descriptor?.versions?.[3]?.shield;
   const notice = $("mechanics-heroes-read-only");
   if (notice) {
     notice.classList.toggle("hidden", supportedVersion);
     notice.textContent = supportedVersion
       ? ""
-      : "Future heroes schemaVersion 3+ is preserved losslessly and read-only by this Studio version.";
+      : "Future heroes schemaVersion 4+ is preserved losslessly and read-only by this Studio version.";
   }
 
   const definitions = MechanicsUI.draft.definitions ?? {};
@@ -2807,6 +2815,9 @@ function renderHeroesMechanicsEditor() {
       <label>Spawn<select data-hero-spawn ${supportedVersion ? "" : "disabled"}><option value="core">Core</option></select></label>
       ${movementEnabled ? `<label>Movement profile<select data-hero-movement-profile-definition-id ${supportedVersion ? "" : "disabled"}>${movementProfileOptions}</select></label>
       <label>Speed<input data-hero-movement-speed type="number" min="0.000001" max="20" step="0.1" value="${esc(definition?.movement?.speed ?? 1)}" ${supportedVersion ? "" : "disabled"}></label>` : ""}
+      ${durabilityEnabled ? `<label>Max HP<input data-hero-max-hp type="number" min="0.000001"${mechanicsMaximumAttribute("max", durabilityDescriptor?.maxHp?.maximum)} value="${esc(definition?.durability?.maxHp ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+      <label><input data-hero-shield-enabled type="checkbox" ${definition?.durability?.shield === null ? "" : "checked"} ${supportedVersion ? "" : "disabled"}> Shield</label>
+      <label>Shield capacity<input data-hero-shield-capacity type="number" min="0.000001"${mechanicsMaximumAttribute("max", shieldDescriptor?.capacity?.maximum)} value="${esc(definition?.durability?.shield?.capacity ?? "")}" ${supportedVersion && definition?.durability?.shield !== null ? "" : "disabled"}></label>` : ""}
       <button type="button" class="btn btn-danger" data-remove-hero ${supportedVersion && entries.length > 1 ? "" : "disabled"}>Remove</button>
     </div>`;
     }).join("");
@@ -2823,8 +2834,22 @@ function renderHeroesMechanicsEditor() {
         });
       }
       row.querySelector("[data-hero-movement-speed]")?.addEventListener("input", (event) => {
-        const speed = Number(event.target.value);
-        if (Number.isFinite(speed) && speed > 0 && speed <= 20) definition.movement.speed = speed;
+        definition.movement.speed = Number(event.target.value);
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-max-hp]")?.addEventListener("input", (event) => {
+        definition.durability.maxHp = Number(event.target.value);
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-shield-enabled]")?.addEventListener("change", (event) => {
+        definition.durability.shield = event.target.checked ? { capacity: 25 } : null;
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      });
+      row.querySelector("[data-hero-shield-capacity]")?.addEventListener("input", (event) => {
+        if (definition.durability.shield) definition.durability.shield.capacity = Number(event.target.value);
         MechanicsUI.preview = null;
         renderMechanicsPreviewResult();
       });
@@ -2877,7 +2902,8 @@ function renderHeroesMechanicsEditor() {
       while (ownDataValue(MechanicsUI.draft.definitions, heroId)) heroId = `hero_${++suffix}`;
       defineOwnDataValue(MechanicsUI.draft.definitions, heroId, {
         label: "Commander", spawn: "core",
-        ...(movementEnabled ? { movement: { movementProfileId: Object.keys(MechanicsUI.draft.movementProfiles ?? {}).sort()[0] ?? "ground", speed: 1 } } : {})
+        ...(movementEnabled ? { movement: { movementProfileId: Object.keys(MechanicsUI.draft.movementProfiles ?? {}).sort()[0] ?? "ground", speed: 1 } } : {}),
+        ...(durabilityEnabled ? { durability: { maxHp: 100, shield: { capacity: 25 } } } : {})
       });
       MechanicsUI.preview = null;
       renderMechanicsHub();
@@ -3962,8 +3988,8 @@ function renderMechanicsPreviewResult() {
 }
 
 function mechanicsRequest(enabled) {
-  if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 2) {
-    throw new Error("Future heroes schemaVersion 3+ modules are read-only in this Studio version.");
+  if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 3) {
+    throw new Error("Future heroes schemaVersion 4+ modules are read-only in this Studio version.");
   }
   if (MechanicsUI.selectedModuleId === "roguelite" && mechanicsProjectModuleVersion() > 4) {
     throw new Error("Future roguelite schemaVersion 5+ modules are read-only in this Studio version.");
@@ -4227,7 +4253,7 @@ function renderMechanicsHub() {
     mechanicsProjectModuleVersion() <= 4
     && !hasUnsupportedRogueliteCampaignMarker(MechanicsUI.draft)
   );
-  const supportedHeroesVersion = MechanicsUI.selectedModuleId !== "heroes" || mechanicsProjectModuleVersion() <= 2;
+  const supportedHeroesVersion = MechanicsUI.selectedModuleId !== "heroes" || mechanicsProjectModuleVersion() <= 3;
   const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion
     && supportedRogueliteVersion && supportedHeroesVersion && !busy;
   const dirtyWriteGuard = Boolean(S.dirty);

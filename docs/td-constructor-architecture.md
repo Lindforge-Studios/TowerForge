@@ -510,7 +510,7 @@ Studio authors the roster only in Mechanics Hub through the existing revision-gu
 mechanics transaction. MCP/AI uses the same descriptor and `describe -> capabilities -> recipe ->
 preview -> guarded apply -> validate` flow. Canvas and Phaser consume one shared fail-closed hero
 projection. `visuals.bindings.heroes` is optional and no empty binding is synthesized for legacy
-projects. Missing, disabled, unselected, and future-v3+ modules publish no hero snapshot or UI.
+projects. Missing, disabled, unselected, and unsupported future modules publish no hero snapshot or UI.
 This v1 path remains static and byte-compatible; the separately selected v2 movement extension is
 described below. See [ADR 0037](adr/0037-opt-in-static-hero-roster-foundation.md).
 
@@ -532,6 +532,29 @@ snapshot and dispatch commands for pointer/touch and Enter, with Escape and ever
 handoff clearing selection. Heroes v1 remains the static snapshot contract and receives no new
 input behavior. HP, mana, abilities, skills, auras, blocking, and TowerScript hero actions remain
 outside this slice. See [ADR 0038](adr/0038-opt-in-deterministic-hero-movement.md).
+
+### R5.2A hero durability
+
+Heroes v3 retains the exact v2 movement profile and requires each definition to add closed
+`durability: {maxHp,shield}`. HP and capacity are finite positive values bounded at
+`1_000_000_000_000`; shield is `null` or exact `{capacity}`. Structural validation applies while
+disabled, while activation and runtime allocation still require the ordinary enabled module plus
+mission profile selection.
+
+A live in-range v3 hero can be targeted by enemy `towerAttack`. Damage passes the shared
+`DamagePacket` / `DamageResolver` boundary and the authored hero shield absorbs the resolved amount
+before HP. Zero HP emits one defeat transition, disables movement, and removes the hero from future
+attack targeting. There is no regeneration, healing, revival, threat configuration, mana, ability,
+aura, blocking, or TowerScript hero surface in R5.2A.
+
+The optional snapshot advances to heroes v3 with exact `durability: {hp,maxHp,shield,defeated}`.
+The optional nested heroes checkpoint advances to v2 for current HP/shield while outer
+`GameCheckpointV1`, engine v2, GameCommand/Journal v4, replay, project v3, and mechanics catalog v1
+stay unchanged. Studio v3 authoring is isolated in Mechanics Hub; future v4+ data remains exact and
+read-only. CLI/MCP share the engine descriptor, inert `basic_durable_commander_hero` recipe, and
+existing revision/validation/backup/rollback transaction. Canvas and Phaser consume only bounded
+snapshot/event projections. See [ADR 0039](adr/0039-opt-in-hero-durability.md) and
+`docs/examples/opt-in-hero-roster/mechanics-durable.json`.
 
 ## Done Criteria For Constructor Changes
 

@@ -810,9 +810,10 @@ canvas.addEventListener("pointerdown", (event) => {
 
 function heroMovementPresentation() {
   const snapshot = game.getRenderSnapshot();
-  if (snapshot?.heroes?.schemaVersion !== 2) return null;
   const presentation = projectHeroesPresentation(snapshot);
-  return presentation.active ? { snapshot, presentation } : null;
+  return presentation.active && presentation.units.every((hero) => hero.movement)
+    ? { snapshot, presentation }
+    : null;
 }
 
 function hitTestHeroAtCoord(coord) {
@@ -1717,8 +1718,8 @@ function hitTestHeroAtCoord(coord) {
   const scene = typeof phaserGame === "undefined" ? null : phaserGame.scene.getScenes(true)[0];
   if (!scene || !coord) return null;
   const snapshot = game.getRenderSnapshot();
-  if (snapshot?.heroes?.schemaVersion !== 2) return null;
   const presentation = projectHeroesPresentation(snapshot);
+  if (!presentation.active || !presentation.units.every((hero) => hero.movement)) return null;
   const geom = scene.geometry(snapshot.tiles, snapshot.grid);
   const point = scene.center(coord, geom);
   return hitTestHeroesPresentation(presentation, point, (candidate) => scene.center(candidate, geom), geom.r * 0.7);
@@ -1959,8 +1960,8 @@ class PlayScene extends Phaser.Scene {
   }
   hitTestHero(x, y) {
     const snapshot = game.getRenderSnapshot();
-    if (snapshot?.heroes?.schemaVersion !== 2) return null;
     const presentation = projectHeroesPresentation(snapshot);
+    if (!presentation.active || !presentation.units.every((hero) => hero.movement)) return null;
     const geom = this.geometry(snapshot.tiles, snapshot.grid);
     return hitTestHeroesPresentation(presentation, { x, y }, (coord) => this.center(coord, geom), geom.r * 0.7);
   }
@@ -2302,8 +2303,8 @@ class PlayScene extends Phaser.Scene {
     }
     for (const [id, lbl] of this.towerLabels) { if (!seen.has(id)) { lbl.destroy(); this.towerLabels.delete(id); } }
 
-    // Both heroes schemas render from the exact fail-closed engine snapshot. V1 remains static;
-    // v2 input above dispatches GameCommandV4 while this scene only projects presentation state.
+    // Every supported heroes schema renders from the exact fail-closed engine snapshot. V1 remains
+    // static; validated v2/v3 movement input dispatches GameCommandV4 while this scene only presents.
     const heroPresentation = projectHeroesPresentation(snap);
     const seenHeroes = new Set();
     for (const hero of heroPresentation.units) {
@@ -2315,24 +2316,47 @@ class PlayScene extends Phaser.Scene {
       const texture = this.spriteTexture(spriteId);
       let image = this.heroImages.get(hero.id);
       let label = this.heroLabels.get(hero.id);
+      const heroAlpha = hero.durability?.defeated ? 0.38 : 1;
       if (texture) {
         if (!image) {
           image = this.add.image(point.x, point.y, texture.key, texture.frame).setDepth(9);
           this.heroImages.set(hero.id, image);
         }
         image.setTexture(texture.key, texture.frame).setPosition(point.x, point.y)
-          .setDisplaySize(g.r * 1.35, g.r * 1.35).setVisible(true);
+          .setDisplaySize(g.r * 1.35, g.r * 1.35).setAlpha(heroAlpha).setVisible(true);
         if (label) { label.destroy(); this.heroLabels.delete(hero.id); label = null; }
       } else {
         if (image) { image.destroy(); this.heroImages.delete(hero.id); image = null; }
-        this.entG.fillStyle(0xe6b85c, 1); this.entG.fillCircle(point.x, point.y, g.r * 0.5);
-        this.entG.lineStyle(2, 0xfff0bd, 1); this.entG.strokeCircle(point.x, point.y, g.r * 0.5);
+        this.entG.fillStyle(0xe6b85c, heroAlpha); this.entG.fillCircle(point.x, point.y, g.r * 0.5);
+        this.entG.lineStyle(2, 0xfff0bd, heroAlpha); this.entG.strokeCircle(point.x, point.y, g.r * 0.5);
         if (!label) {
           label = this.add.text(0, 0, "", { fontFamily: "sans-serif", fontStyle: "bold", color: "#101410" }).setOrigin(0.5).setDepth(10);
           this.heroLabels.set(hero.id, label);
         }
         label.setText(hero.label.slice(0, 2)).setFontSize(Math.max(10, Math.round(g.r * 0.38)))
-          .setPosition(point.x, point.y).setVisible(true);
+          .setPosition(point.x, point.y).setAlpha(heroAlpha).setVisible(true);
+      }
+      if (hero.durability) {
+        const width = g.r * 1.05;
+        const height = Math.max(3, g.r * 0.13);
+        const x = point.x - width / 2;
+        const y = point.y - g.r * 0.82;
+        const hpRatio = hero.durability.hp / hero.durability.maxHp;
+        this.entG.fillStyle(0x000000, 0.65);
+        this.entG.fillRect(x - 1, y - 1, width + 2, height + 2);
+        this.entG.fillStyle(hpRatio > 0.35 ? 0x73cf82 : 0xdf6a59, 1);
+        this.entG.fillRect(x, y, width * hpRatio, height);
+        if (hero.durability.shield) {
+          this.shieldRing(this.entG, point.x, point.y, g.r * 0.62, {
+            ratio: hero.durability.shield.current / hero.durability.shield.capacity
+          });
+        }
+        if (hero.durability.defeated) {
+          const radius = g.r * 0.38;
+          this.entG.lineStyle(Math.max(2, g.r * 0.1), 0xdf6a59, 1);
+          this.entG.lineBetween(point.x - radius, point.y - radius, point.x + radius, point.y + radius);
+          this.entG.lineBetween(point.x + radius, point.y - radius, point.x - radius, point.y + radius);
+        }
       }
     }
     for (const [id, image] of this.heroImages) {
