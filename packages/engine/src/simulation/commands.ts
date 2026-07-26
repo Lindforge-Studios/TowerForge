@@ -13,7 +13,8 @@ export {
   type GameCommand,
   type GameCommandV1,
   type GameCommandV2,
-  type GameCommandV3
+  type GameCommandV3,
+  type GameCommandV4
 } from "./command-internal.js";
 
 /** Validate and dispatch one deterministic simulation command. Invalid input never mutates the game. */

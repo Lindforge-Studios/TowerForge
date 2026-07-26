@@ -32,6 +32,28 @@ function validProfile(): HeroProfileFixture {
   };
 }
 
+function movingProfile(overrides: Readonly<Record<string, unknown>> = {}): HeroProfileFixture {
+  return {
+    selectedHeroId: "commander",
+    definitions: {
+      commander: {
+        label: "Commander",
+        spawn: "core",
+        movement: { movementProfileId: "ground", speed: 2 }
+      }
+    },
+    movementProfiles: {
+      ground: {
+        label: "Ground",
+        terrainMode: "respect_walkable",
+        towerOccupancy: "blocked",
+        defaultTerrainCost: 1_000
+      }
+    },
+    ...overrides
+  };
+}
+
 function heroesInput(options: FixtureOptions = {}): GameContentInput {
   const profileId = options.profileId ?? "field_commander";
   return {
@@ -161,9 +183,9 @@ describe("R5.1A static heroes v1 authoring contract", () => {
     const limits = (Engine as unknown as { HEROES_LIMITS?: unknown }).HEROES_LIMITS;
     expect(limits).toEqual(HEROES_LIMITS_V1);
     expect(schema).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       moduleId: "heroes",
-      supportedModuleSchemaVersions: [1],
+      supportedModuleSchemaVersions: [1, 2],
       profile: {
         requiredFields: ["selectedHeroId", "definitions"],
         optionalFields: [],
@@ -175,12 +197,65 @@ describe("R5.1A static heroes v1 authoring contract", () => {
         additionalProperties: false,
         spawnValues: ["core"]
       },
+      versions: {
+        1: {
+          profile: {
+            requiredFields: ["selectedHeroId", "definitions"],
+            optionalFields: [],
+            additionalProperties: false
+          },
+          definition: {
+            requiredFields: ["label", "spawn"],
+            optionalFields: [],
+            additionalProperties: false,
+            spawnValues: ["core"]
+          }
+        },
+        2: {
+          profile: {
+            requiredFields: ["selectedHeroId", "definitions", "movementProfiles"],
+            optionalFields: [],
+            additionalProperties: false
+          },
+          definition: {
+            requiredFields: ["label", "spawn", "movement"],
+            optionalFields: [],
+            additionalProperties: false,
+            spawnValues: ["core"]
+          },
+          movement: {
+            requiredFields: ["movementProfileId", "speed"],
+            optionalFields: [],
+            additionalProperties: false,
+            speed: { exclusiveMinimum: 0, maximum: 20 }
+          },
+          movementProfile: {
+            requiredFields: ["label", "terrainMode", "towerOccupancy", "defaultTerrainCost"],
+            optionalFields: ["terrainCosts"],
+            additionalProperties: false,
+            label: { minLength: 1, maxLength: 128 },
+            terrainModeValues: ["respect_walkable", "ignore_walkable"],
+            towerOccupancyValues: ["blocked", "ignored"],
+            defaultTerrainCost: { integer: true, minimum: 1, maximum: 1_000_000, nullable: true },
+            terrainCosts: {
+              maximumEntries: 256,
+              values: { integer: true, minimum: 1, maximum: 1_000_000, nullable: true }
+            }
+          }
+        }
+      },
       limits: HEROES_LIMITS_V1,
       runtimeSnapshot: {
         path: "snapshot.heroes",
-        schemaVersion: 1,
+        schemaVersions: [1, 2],
         optionalUnlessActive: true,
-        unitFields: ["id", "definitionId", "label", "coord"]
+        versions: {
+          1: { unitFields: ["id", "definitionId", "label", "coord"] },
+          2: {
+            unitFields: ["id", "definitionId", "label", "coord", "movement"],
+            movementFields: ["targetCoord", "nextCoord", "edgeProgress"]
+          }
+        }
       }
     });
     expect(Object.isFrozen(schema)).toBe(true);
@@ -200,7 +275,7 @@ describe("R5.1A static heroes v1 authoring contract", () => {
       { profiles: { heroes: "field_commander" } }
     ).heroes).toMatchObject({ available: true, active: false, reason: "module_disabled" });
     expect(Engine.resolveCapabilitySet(
-      heroesInput({ moduleSchemaVersion: 2 }).mechanics!,
+      heroesInput({ moduleSchemaVersion: 3 }).mechanics!,
       { profiles: { heroes: "field_commander" } }
     ).heroes).toMatchObject({ available: true, active: false, reason: "module_version_unsupported" });
     expect(Engine.resolveCapabilitySet(
@@ -305,7 +380,7 @@ describe("R5.1A static heroes v1 authoring contract", () => {
   });
 
   it("rejects future versions and accessor/prototype-backed authored values without invoking them", () => {
-    expect(validate({ enabled: false, moduleSchemaVersion: 2 }).ok).toBe(false);
+    expect(validate({ enabled: false, moduleSchemaVersion: 3 }).ok).toBe(false);
     let calls = 0;
     const hostileDefinition = Object.defineProperty({}, "label", {
       enumerable: true,
@@ -383,5 +458,164 @@ describe("R5.1A static heroes v1 authoring contract", () => {
       message: expect.stringMatching(/inspect.*safe/i)
     }));
     expect(JSON.stringify(result)).not.toMatch(/IsArray|revoked/i);
+  });
+});
+
+describe("R5.1B heroes v2 movement authoring contract (RED)", () => {
+  function v2Input(profile: HeroProfileFixture = movingProfile()): GameContentInput {
+    const fixture = heroesInput({ profiles: { field_commander: profile } }) as GameContentInput & {
+      mechanics: { modules: { heroes: { schemaVersion: number } } };
+    };
+    fixture.mechanics.modules.heroes.schemaVersion = 2;
+    return fixture;
+  }
+
+  it("accepts and resolves an exact v2 profile without a navigation module", () => {
+    const registry = createGameContentRegistry(v2Input());
+    expect(validateGameContentRegistry(registry)).toEqual({ ok: true, issues: [] });
+    expect(registry.mechanics.modules).not.toHaveProperty("navigation");
+    expect(Engine.HEROES_MECHANICS_SCHEMA.supportedModuleSchemaVersions).toEqual([1, 2]);
+    expect((Engine as unknown as {
+      normalizeHeroesProfileV2?: (input: unknown) => unknown;
+    }).normalizeHeroesProfileV2?.(movingProfile())).toEqual(movingProfile());
+    expect(Engine.resolveActiveHeroesMechanics(registry, "heroes")).toEqual({
+      schemaVersion: 2,
+      profileId: "field_commander",
+      selectedHeroId: "commander",
+      definitions: movingProfile().definitions,
+      movementProfiles: movingProfile().movementProfiles
+    });
+  });
+
+  it.each([
+    ["unknown profile field", movingProfile({ extra: true })],
+    ["missing movement profiles", {
+      selectedHeroId: "commander",
+      definitions: movingProfile().definitions
+    }],
+    ["unknown movement profile reference", movingProfile({
+      definitions: {
+        commander: {
+          label: "Commander", spawn: "core",
+          movement: { movementProfileId: "missing", speed: 2 }
+        }
+      }
+    })],
+    ["zero speed", movingProfile({
+      definitions: {
+        commander: {
+          label: "Commander", spawn: "core",
+          movement: { movementProfileId: "ground", speed: 0 }
+        }
+      }
+    })],
+    ["speed over bound", movingProfile({
+      definitions: {
+        commander: {
+          label: "Commander", spawn: "core",
+          movement: { movementProfileId: "ground", speed: 20.0001 }
+        }
+      }
+    })]
+  ])("rejects the closed bounded v2 shape: %s", (_label, profile) => {
+    const result = validateGameContentRegistry(createGameContentRegistry(v2Input(profile)));
+    expect(result.ok).toBe(false);
+    expect(result.issues.some((candidate) => (
+      candidate.severity === "error"
+      && /heroes|movement|speed|profile/i.test(`${candidate.fieldPath} ${candidate.message}`)
+    ))).toBe(true);
+  });
+
+  it("treats v3 as future while preserving v1 validation", () => {
+    const future = v2Input();
+    (future.mechanics!.modules.heroes as unknown as { schemaVersion: number }).schemaVersion = 3;
+    expect(validateGameContentRegistry(createGameContentRegistry(future)).ok).toBe(false);
+    expect(validate().ok).toBe(true);
+  });
+
+  it("validates hero movement terrain references as active errors and inactive warnings", () => {
+    const brokenProfile = movingProfile({
+      movementProfiles: {
+        ground: {
+          label: "Ground",
+          terrainMode: "respect_walkable",
+          towerOccupancy: "blocked",
+          defaultTerrainCost: 1_000,
+          terrainCosts: { typo_terrain: 1_000 }
+        }
+      }
+    });
+    const active = validateGameContentRegistry(createGameContentRegistry(v2Input(brokenProfile)));
+    expect(active.ok).toBe(false);
+    expect(issue(active, "error", /heroes.*terrainCosts|terrainCosts/i, /typo_terrain|unknown terrain/i)).toBe(true);
+
+    for (const mode of ["disabled", "unselected"] as const) {
+      const input = v2Input(brokenProfile);
+      if (mode === "disabled") input.mechanics!.modules.heroes!.enabled = false;
+      if (mode === "unselected") delete input.balance.missions.heroes!.mechanics;
+      const inactive = validateGameContentRegistry(createGameContentRegistry(input));
+      expect(inactive.ok).toBe(true);
+      expect(inactive.issues.some((candidate) => candidate.severity === "error")).toBe(false);
+      expect(issue(inactive, "warning", /heroes.*terrainCosts|terrainCosts/i, /typo_terrain|unknown terrain|inactive|unselected/i)).toBe(true);
+    }
+  });
+
+  it("rejects active hero movement maps above the shared navigation cell budget", () => {
+    const input = v2Input();
+    input.maps.lane!.width = 257;
+    input.maps.lane!.height = 256;
+    const result = validateGameContentRegistry(createGameContentRegistry(input));
+    expect(result.ok).toBe(false);
+    expect(issue(result, "error", /heroes|map|dimensions|cells/i, /65,?536|cell|budget|limit|maximum/i)).toBe(true);
+  });
+
+  it("rejects an unsafe active hero movement map cell product before runtime allocation", () => {
+    const input = v2Input();
+    input.maps.lane!.width = Number.MAX_SAFE_INTEGER;
+    input.maps.lane!.height = 2;
+    const result = validateGameContentRegistry(createGameContentRegistry(input));
+    expect(result.ok).toBe(false);
+    expect(issue(result, "error", /heroes|map|dimensions|cells/i, /safe integer|cell|budget|limit|maximum/i)).toBe(true);
+  });
+
+  it("applies the shared navigation terrain budgets to active hero movement only", () => {
+    const defaults = createGameContentRegistry(v2Input()).terrainTypes;
+    const extraCount = 257 - Object.keys(defaults).length;
+    const tooManyTerrainTypes = {
+      ...defaults,
+      ...Object.fromEntries(Array.from({ length: extraCount }, (_, index) => {
+        const id = `hero_extra_${index}`;
+        return [id, {
+          id,
+          label: `Hero extra ${index}`,
+          buildable: true,
+          walkable: true,
+          groundSpeedMultiplier: 1,
+          tags: []
+        }];
+      }))
+    };
+    const active = v2Input();
+    active.balance.terrainTypes = tooManyTerrainTypes;
+    const activeResult = validateGameContentRegistry(createGameContentRegistry(active));
+    expect(activeResult.ok).toBe(false);
+    expect(issue(activeResult, "error", /heroes|terrainTypes|terrain/i, /256|definition|budget|limit|maximum/i)).toBe(true);
+
+    const inactive = v2Input();
+    inactive.balance.terrainTypes = tooManyTerrainTypes;
+    inactive.mechanics!.modules.heroes!.enabled = false;
+    expect(validateGameContentRegistry(createGameContentRegistry(inactive))).toEqual({ ok: true, issues: [] });
+
+    const tooManyTags = v2Input();
+    tooManyTags.balance.terrainTypes = {
+      ...defaults,
+      buildable: {
+        ...defaults.buildable!,
+        tags: Array.from({ length: 65 }, (_, index) => `hero_tag_${index}`)
+      }
+    };
+    const tagsResult = validateGameContentRegistry(createGameContentRegistry(tooManyTags));
+    expect(tagsResult.ok).toBe(false);
+    expect(issue(tagsResult, "error", /heroes|terrainTypes|terrain|tags/i, /64|tag|budget|limit|maximum/i)).toBe(true);
   });
 });

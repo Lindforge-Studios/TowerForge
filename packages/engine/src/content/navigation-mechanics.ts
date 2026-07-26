@@ -56,6 +56,31 @@ export type ActiveNavigationMechanicsV1 = NavigationProfileV1 & {
   readonly profileId: string;
 };
 
+/** Closed descriptor for the shared deterministic movement-profile value shape. */
+export const MOVEMENT_PROFILE_V1_SCHEMA = Object.freeze({
+  requiredFields: Object.freeze(["label", "terrainMode", "towerOccupancy", "defaultTerrainCost"] as const),
+  optionalFields: Object.freeze(["terrainCosts"] as const),
+  additionalProperties: false,
+  label: Object.freeze({ minLength: 1, maxLength: NAVIGATION_LIMITS.labelLength }),
+  terrainModeValues: Object.freeze(["respect_walkable", "ignore_walkable"] as const),
+  towerOccupancyValues: Object.freeze(["blocked", "ignored"] as const),
+  defaultTerrainCost: Object.freeze({
+    integer: true,
+    minimum: 1,
+    maximum: NAVIGATION_LIMITS.terrainCost,
+    nullable: true
+  }),
+  terrainCosts: Object.freeze({
+    maximumEntries: NAVIGATION_LIMITS.terrainOverridesPerProfile,
+    values: Object.freeze({
+      integer: true,
+      minimum: 1,
+      maximum: NAVIGATION_LIMITS.terrainCost,
+      nullable: true
+    })
+  })
+});
+
 /** Machine-readable authoring descriptor shared with future Studio/MCP surfaces. */
 export const NAVIGATION_MECHANICS_SCHEMA = Object.freeze({
   schemaVersion: 1,
@@ -75,6 +100,7 @@ export const NAVIGATION_MECHANICS_SCHEMA = Object.freeze({
       })
     })
   }),
+  movementProfile: MOVEMENT_PROFILE_V1_SCHEMA,
   limits: NAVIGATION_LIMITS,
   runtimeSnapshot: Object.freeze({
     path: "snapshot.navigation",
@@ -205,9 +231,10 @@ function defineOwn<T>(target: Record<string, T>, key: string, value: T): void {
   Object.defineProperty(target, key, { value, enumerable: true });
 }
 
-function normalizeMovementProfile(
+/** Normalize one closed movement profile for navigation-owned and other opt-in modules. */
+export function normalizeMovementProfileV1(
   value: unknown,
-  fieldPath: string
+  fieldPath = "movementProfile"
 ): MovementProfileV1 {
   const profile = plainRecord(value, fieldPath, "Movement profile");
   requireExactKeys(
@@ -307,7 +334,7 @@ export function normalizeNavigationProfileV1(value: unknown): NavigationProfileV
   let terrainOverrideCount = 0;
   for (const movementProfileId of Object.keys(rawMovementProfiles).sort(compareBinary)) {
     boundedId(movementProfileId, `profile.movementProfiles.${movementProfileId}`, "Movement profile id");
-    const normalized = normalizeMovementProfile(
+    const normalized = normalizeMovementProfileV1(
       rawMovementProfiles[movementProfileId],
       `profile.movementProfiles.${movementProfileId}`
     );

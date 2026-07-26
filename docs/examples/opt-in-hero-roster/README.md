@@ -41,3 +41,27 @@ module removes the optional snapshot and renderer surface. R5.1B owns movement,
 GameCommand/Journal v4, mutable state, checkpointing, replay, and input handling.
 
 See [ADR 0037](../../adr/0037-opt-in-static-hero-roster-foundation.md).
+
+## Optional deterministic movement (R5.1B)
+
+Use `mechanics-mobile.json` instead of `mechanics.json` to opt this same mission into Heroes v2.
+The module owns its movement profile and does not require or enable the separate `navigation`
+module. Mouse, touch, keyboard, headless, checkpoint, and replay all dispatch the same exact
+`GameCommandV4 moveHero`; the engine remains the only pathfinding authority.
+
+The optional runtime section becomes `snapshot.heroes` v2. Each unit keeps the v1 identity fields
+and adds exact nullable movement state:
+
+```json
+{
+  "movement": {
+    "targetCoord": null,
+    "nextCoord": null,
+    "edgeProgress": 0
+  }
+}
+```
+
+Disabling Heroes or keeping schema v1 preserves the static/legacy paths. Movement v2 still does
+not add HP, mana, abilities, auras, blocking, or TowerScript hero actions. See
+[ADR 0038](../../adr/0038-opt-in-deterministic-hero-movement.md).

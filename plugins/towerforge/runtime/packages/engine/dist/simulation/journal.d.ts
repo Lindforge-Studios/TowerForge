@@ -1,10 +1,10 @@
 import type { GameContentRegistry } from "../content/registry.js";
-import { type GameCommand, type GameCommandV1, type GameCommandV2 } from "./command-internal.js";
+import { type GameCommand, type GameCommandV1, type GameCommandV2, type GameCommandV3 } from "./command-internal.js";
 import { SIMULATION_ENGINE_VERSION, type GameCheckpointV1 } from "./checkpoint.js";
 import { TowerDefenseGame } from "./TowerDefenseGame.js";
 import type { ActionResult } from "./types.js";
-export declare const GAME_COMMAND_JOURNAL_SCHEMA_VERSION: 3;
-export declare const GAME_COMMAND_JOURNAL_SUPPORTED_SCHEMA_VERSIONS: readonly [1, 2, 3];
+export declare const GAME_COMMAND_JOURNAL_SCHEMA_VERSION: 4;
+export declare const GAME_COMMAND_JOURNAL_SUPPORTED_SCHEMA_VERSIONS: readonly [1, 2, 3, 4];
 export declare const GAME_COMMAND_JOURNAL_LIMITS: Readonly<{
     entries: 100000;
     totalBytes: number;
@@ -44,7 +44,7 @@ export interface GameCommandJournalV2 {
 }
 export interface GameCommandJournalEntryV3 {
     readonly sequence: number;
-    readonly command: GameCommand;
+    readonly command: GameCommandV1 | GameCommandV2 | GameCommandV3;
     readonly result: GameCommandJournalResultV1;
     readonly postStateDigest: string;
 }
@@ -55,7 +55,20 @@ export interface GameCommandJournalV3 {
     readonly initialCheckpoint: GameCheckpointV1;
     readonly entries: readonly GameCommandJournalEntryV3[];
 }
-export type GameCommandJournal = GameCommandJournalV1 | GameCommandJournalV2 | GameCommandJournalV3;
+export interface GameCommandJournalEntryV4 {
+    readonly sequence: number;
+    readonly command: GameCommand;
+    readonly result: GameCommandJournalResultV1;
+    readonly postStateDigest: string;
+}
+export interface GameCommandJournalV4 {
+    readonly schemaVersion: 4;
+    readonly engineVersion: typeof SIMULATION_ENGINE_VERSION;
+    readonly contentDigest: string;
+    readonly initialCheckpoint: GameCheckpointV1;
+    readonly entries: readonly GameCommandJournalEntryV4[];
+}
+export type GameCommandJournal = GameCommandJournalV1 | GameCommandJournalV2 | GameCommandJournalV3 | GameCommandJournalV4;
 /**
  * Owns the command boundary around one simulation instance. Any mutation that
  * bypasses dispatch makes the journal ambiguous, so the session faults closed.

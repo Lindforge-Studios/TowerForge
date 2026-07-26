@@ -1,8 +1,8 @@
 import type { TowerScriptJson } from "../scripting/types.js";
 import type { TowerDefenseGame } from "./TowerDefenseGame.js";
 import { type ActionResult, type GridCoord, type MissionAbilityId, type TowerTargetMode } from "./types.js";
-export declare const GAME_COMMAND_SCHEMA_VERSION: 3;
-export declare const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS: readonly [1, 2, 3];
+export declare const GAME_COMMAND_SCHEMA_VERSION: 4;
+export declare const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS: readonly [1, 2, 3, 4];
 export type GameCommandV1 = {
     readonly schemaVersion: 1;
     readonly type: "tick";
@@ -108,7 +108,13 @@ export type GameCommandV3 = WithCommandSchemaVersion<GameCommandV2, 3> | {
     readonly offerId: string;
     readonly cardId: string;
 };
-export type GameCommand = GameCommandV1 | GameCommandV2 | GameCommandV3;
+export type GameCommandV4 = WithCommandSchemaVersion<GameCommandV3, 4> | {
+    readonly schemaVersion: 4;
+    readonly type: "moveHero";
+    readonly heroId: string;
+    readonly target: Readonly<GridCoord>;
+};
+export type GameCommand = GameCommandV1 | GameCommandV2 | GameCommandV3 | GameCommandV4;
 export declare function invalidGameCommandResult(): ActionResult;
 /**
  * Strict descriptor-safe parser shared by direct dispatch and command journals.

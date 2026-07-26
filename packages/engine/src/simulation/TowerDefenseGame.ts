@@ -39,7 +39,11 @@ import {
   type ActiveRogueliteMechanics,
   type RogueliteDraftDefinitionV3
 } from "../content/roguelite-mechanics.js";
-import { resolveActiveHeroesMechanics } from "../content/heroes-mechanics.js";
+import {
+  resolveActiveHeroesMechanics,
+  type ActiveHeroesMechanics,
+  type ActiveHeroesMechanicsV2
+} from "../content/heroes-mechanics.js";
 import { CAMPAIGN_RUN_LIMITS } from "../run/campaign-run.js";
 import { campaignBattleWorstCaseModifierCount } from "../run/campaign-battle-policy.js";
 import { evaluateTowerScriptExpression } from "../scripting/expression.js";
@@ -69,7 +73,7 @@ import {
 } from "./high-ground.js";
 import { NavigationResolver } from "./navigation-runtime.js";
 import { NavigationFieldLookupCache } from "./navigation-movement.js";
-import type { NavigationFieldResult } from "./navigation-field.js";
+import { buildNavigationField, type NavigationFieldResult } from "./navigation-field.js";
 import {
   planDynamicTerraformingNavigation,
   type DynamicTerraformingNavigationPlan
@@ -273,6 +277,10 @@ function emptyDataRecord<T>(): Record<string, T> {
 
 function compareBinary(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function sameGridCoord(left: Readonly<HexCoord>, right: Readonly<HexCoord>): boolean {
+  return left.q === right.q && left.r === right.r;
 }
 
 function cloneExposureStates(
@@ -762,6 +770,14 @@ interface TowerDefenseGameInternalOptions {
   skipGameStarted?: boolean;
 }
 
+interface HeroRuntimeStateV2 {
+  definitionId: string;
+  currentCoord: HexCoord;
+  targetCoord: HexCoord | null;
+  nextCoord: HexCoord | null;
+  edgeProgress: number;
+}
+
 export class TowerDefenseGame {
   readonly content: GameContentRegistry;
   readonly mission: GameContentRegistry["missions"][string];
@@ -793,7 +809,12 @@ export class TowerDefenseGame {
   private readonly activePhysicsMechanics: ActivePhysicsMechanicsV1 | undefined;
   private readonly activeTerraformingMechanics: ActiveTerraformingMechanicsV1 | undefined;
   private readonly activeRogueliteMechanics: ActiveRogueliteMechanics | undefined;
-  private readonly heroesSnapshot: GameSnapshot["heroes"];
+  private readonly activeHeroesMechanics: ActiveHeroesMechanics | undefined;
+  private readonly heroesSnapshotV1: GameSnapshot["heroes"];
+  private heroStateV2: HeroRuntimeStateV2 | undefined;
+  private heroMovementField: NavigationFieldResult | undefined;
+  private readonly heroMovementLookupCache = new NavigationFieldLookupCache();
+  private heroMovementDirty = false;
   private rogueliteSnapshot: GameSnapshot["roguelite"];
   private rogueliteDamageModifiers: readonly ModifierSpec[] = Object.freeze([]);
   private artifactDamageModifiersByTowerId: ReadonlyMap<string, readonly ModifierSpec[]> = new Map();
@@ -899,21 +920,30 @@ export class TowerDefenseGame {
     this.activePhysicsMechanics = resolveActivePhysicsMechanics(this.content, missionId);
     this.activeTerraformingMechanics = resolveActiveTerraformingMechanics(this.content, missionId);
     this.activeRogueliteMechanics = resolveActiveRogueliteMechanics(this.content, missionId);
-    const activeHeroes = resolveActiveHeroesMechanics(this.content, missionId);
-    if (activeHeroes) {
-      const definition = activeHeroes.definitions[activeHeroes.selectedHeroId]!;
+    this.activeHeroesMechanics = resolveActiveHeroesMechanics(this.content, missionId);
+    if (this.activeHeroesMechanics?.schemaVersion === 1) {
+      const definition = this.activeHeroesMechanics.definitions[this.activeHeroesMechanics.selectedHeroId]!;
       const coord = Object.freeze({ q: this.map.coreCoord.q, r: this.map.coreCoord.r });
-      this.heroesSnapshot = Object.freeze({
+      this.heroesSnapshotV1 = Object.freeze({
         schemaVersion: 1 as const,
         units: Object.freeze([Object.freeze({
-          id: activeHeroes.selectedHeroId,
-          definitionId: activeHeroes.selectedHeroId,
+          id: this.activeHeroesMechanics.selectedHeroId,
+          definitionId: this.activeHeroesMechanics.selectedHeroId,
           label: definition.label,
           coord
         })])
       });
     } else {
-      this.heroesSnapshot = undefined;
+      this.heroesSnapshotV1 = undefined;
+    }
+    if (this.activeHeroesMechanics?.schemaVersion === 2) {
+      this.heroStateV2 = {
+        definitionId: this.activeHeroesMechanics.selectedHeroId,
+        currentCoord: { q: this.map.coreCoord.q, r: this.map.coreCoord.r },
+        targetCoord: null,
+        nextCoord: null,
+        edgeProgress: 0
+      };
     }
     if (options.campaignBattle !== undefined) {
       this.campaignBattle = normalizeCampaignBattleLoadout(
@@ -1041,6 +1071,17 @@ export class TowerDefenseGame {
 
     this.enemies = [];
     this.navigationEnemyFields?.clear();
+    if (this.activeHeroesMechanics?.schemaVersion === 2) {
+      this.heroStateV2 = {
+        definitionId: this.activeHeroesMechanics.selectedHeroId,
+        currentCoord: { q: this.map.coreCoord.q, r: this.map.coreCoord.r },
+        targetCoord: null,
+        nextCoord: null,
+        edgeProgress: 0
+      };
+      this.heroMovementField = undefined;
+      this.heroMovementDirty = false;
+    }
     this.towers = [];
     this.artifactInventory = this.campaignBattle
       ? this.campaignBattle.artifacts.map((entry) => ({ ...entry, socket: null }))
@@ -1845,6 +1886,50 @@ export class TowerDefenseGame {
     return this.map.occupiedTowerAt(coord);
   }
 
+  /** Retarget the single opt-in v2 hero through a canonical shared flow field. */
+  moveHero(heroId: string, target: HexCoord): ActionResult {
+    const profile = this.activeHeroesV2();
+    const state = this.heroStateV2;
+    if (!profile || !state) {
+      return this.fail("Hero movement is not active.", "reason.heroMovementUnavailable");
+    }
+    if (this.outcome !== "playing") {
+      return this.fail("Mission already ended.", "reason.missionEnded");
+    }
+    if (heroId !== state.definitionId) {
+      return this.fail("Hero is unavailable.", "reason.heroUnavailable");
+    }
+    if (!this.map.isInside(target)) {
+      return this.fail("Hero target is outside the map.", "reason.tileOutsideMap");
+    }
+    if (sameGridCoord(state.currentCoord, target)) {
+      state.targetCoord = null;
+      state.nextCoord = null;
+      state.edgeProgress = 0;
+      this.heroMovementField = undefined;
+      this.heroMovementDirty = false;
+      return { ok: true };
+    }
+
+    let field: NavigationFieldResult;
+    try {
+      field = this.buildHeroMovementField(profile, target);
+    } catch {
+      return this.fail("Hero target is unreachable.", "reason.heroTargetUnreachable");
+    }
+    const currentCell = this.heroMovementLookupCache.get(field).get(state.currentCoord);
+    if (!currentCell?.nextCoord) {
+      return this.fail("Hero target is unreachable.", "reason.heroTargetUnreachable");
+    }
+    const preservesProgress = state.nextCoord !== null && sameGridCoord(state.nextCoord, currentCell.nextCoord);
+    state.targetCoord = this.cleanCoord(target);
+    state.nextCoord = this.cleanCoord(currentCell.nextCoord);
+    state.edgeProgress = preservesProgress ? state.edgeProgress : 0;
+    this.heroMovementField = field;
+    this.heroMovementDirty = false;
+    return { ok: true };
+  }
+
   tick(deltaUnits: number): void {
     this.lastEvents = [];
     if (this.activePhysicsMechanics) this.displacementStepAttemptsThisTick = 0;
@@ -1859,6 +1944,7 @@ export class TowerDefenseGame {
     const delta = Math.max(0, Math.min(deltaUnits, 0.2));
     this.updateAbilities(delta);
     this.advanceNativeTerraformingExpiry(delta);
+    this.moveHeroUnit(delta);
 
     if (this.startedWaveCount > 0) {
       this.missionElapsed += delta;
@@ -3199,6 +3285,18 @@ export class TowerDefenseGame {
     const reactions = this.buildReactionState();
     const artifacts = this.buildArtifactCheckpointState();
     const draft = this.buildDraftCheckpointState();
+    const heroes = this.heroStateV2 === undefined
+      ? undefined
+      : {
+          schemaVersion: 1 as const,
+          unit: {
+            definitionId: this.heroStateV2.definitionId,
+            currentCoord: { ...this.heroStateV2.currentCoord },
+            targetCoord: this.heroStateV2.targetCoord === null ? null : { ...this.heroStateV2.targetCoord },
+            nextCoord: this.heroStateV2.nextCoord === null ? null : { ...this.heroStateV2.nextCoord },
+            edgeProgress: this.heroStateV2.edgeProgress
+          }
+        };
     const runtimeElevationOverrides = [...this.runtimeElevationOverrides.values()]
       .sort((left, right) => left.r - right.r || left.q - right.q)
       .map((entry) => ({ q: entry.q, r: entry.r, elevation: entry.elevation }));
@@ -3294,6 +3392,7 @@ export class TowerDefenseGame {
       ...(reactions === undefined ? {} : { reactions }),
       ...(artifacts === undefined ? {} : { artifacts }),
       ...(draft === undefined ? {} : { draft }),
+      ...(heroes === undefined ? {} : { heroes }),
       ...(this.campaignBattle === undefined ? {} : {
         campaignBattle: {
           schemaVersion: 1 as const,
@@ -3360,6 +3459,7 @@ export class TowerDefenseGame {
     for (const key of required) checkpointDataField(descriptors, key, "Game checkpoint state");
     const checkpointTerraforming = resolveActiveTerraformingMechanics(content, identity.missionId);
     const checkpointRoguelite = resolveActiveRogueliteMechanics(content, identity.missionId);
+    const checkpointHeroes = resolveActiveHeroesMechanics(content, identity.missionId);
     const mission = content.missions[identity.missionId]!;
     const requiresArtifactCheckpoint = checkpointRoguelite?.artifacts !== undefined;
     const requiresDraftCheckpoint = checkpointRoguelite?.draft !== undefined;
@@ -3395,6 +3495,15 @@ export class TowerDefenseGame {
     if (hasDraftCheckpoint) checkpointDataField(descriptors, "draft", "Game checkpoint state");
     const hasCampaignBattleCheckpoint = Object.prototype.hasOwnProperty.call(descriptors, "campaignBattle");
     if (hasCampaignBattleCheckpoint) checkpointDataField(descriptors, "campaignBattle", "Game checkpoint state");
+    const requiresHeroesCheckpoint = checkpointHeroes?.schemaVersion === 2;
+    const hasHeroesCheckpoint = Object.prototype.hasOwnProperty.call(descriptors, "heroes");
+    if (requiresHeroesCheckpoint && !hasHeroesCheckpoint) {
+      throw new Error("Game checkpoint hero state is required for active heroes v2.");
+    }
+    if (!requiresHeroesCheckpoint && hasHeroesCheckpoint) {
+      throw new Error("Game checkpoint hero state is unsupported for an inactive or static capability.");
+    }
+    if (hasHeroesCheckpoint) checkpointDataField(descriptors, "heroes", "Game checkpoint state");
     requireExactCheckpointKeys(descriptors, [
       ...required,
       ...(hasTerraformingCheckpoint ? ["terraforming"] : []),
@@ -3402,7 +3511,8 @@ export class TowerDefenseGame {
       ...(Object.prototype.hasOwnProperty.call(descriptors, "reactions") ? ["reactions"] : []),
       ...(hasArtifactCheckpoint ? ["artifacts"] : []),
       ...(hasDraftCheckpoint ? ["draft"] : []),
-      ...(hasCampaignBattleCheckpoint ? ["campaignBattle"] : [])
+      ...(hasCampaignBattleCheckpoint ? ["campaignBattle"] : []),
+      ...(hasHeroesCheckpoint ? ["heroes"] : [])
     ], "Game checkpoint state");
 
     const finite = (value: unknown, label: string, minimum = 0, maximum = Infinity): number => {
@@ -4915,6 +5025,78 @@ export class TowerDefenseGame {
       if (key === coordKey(mapDefinition.coreCoord)) return "core";
       return authoredTerrain.get(key) ?? mapDefinition.defaultTerrain;
     };
+    if (hasHeroesCheckpoint && checkpointHeroes?.schemaVersion === 2) {
+      const heroes = closed(state.heroes, "heroes", ["schemaVersion", "unit"]);
+      if (checkpointDataField(heroes, "schemaVersion", "heroes") !== 1) {
+        throw new Error("Game checkpoint hero state schema version is unsupported.");
+      }
+      const unit = closed(
+        checkpointDataField(heroes, "unit", "heroes"),
+        "hero unit",
+        ["definitionId", "currentCoord", "targetCoord", "nextCoord", "edgeProgress"]
+      );
+      const definitionId = stringValue(
+        checkpointDataField(unit, "definitionId", "hero unit"),
+        "hero definitionId"
+      );
+      if (definitionId !== checkpointHeroes.selectedHeroId) {
+        throw new Error("Game checkpoint hero state references an unavailable definition.");
+      }
+      const definition = checkpointHeroes.definitions[definitionId]!;
+      const currentCoord = validCoord(
+        checkpointDataField(unit, "currentCoord", "hero unit"),
+        "hero currentCoord"
+      );
+      const rawTarget = checkpointDataField(unit, "targetCoord", "hero unit");
+      const rawNext = checkpointDataField(unit, "nextCoord", "hero unit");
+      const targetCoord = rawTarget === null ? null : validCoord(rawTarget, "hero targetCoord");
+      const nextCoord = rawNext === null ? null : validCoord(rawNext, "hero nextCoord");
+      const edgeProgress = finite(
+        checkpointDataField(unit, "edgeProgress", "hero unit"),
+        "hero edgeProgress",
+        0,
+        0.999999999999
+      );
+      if (targetCoord === null) {
+        if (nextCoord !== null || edgeProgress !== 0) {
+          throw new Error("Game checkpoint idle hero state must have null movement coordinates and zero progress.");
+        }
+      } else {
+        if (sameGridCoord(currentCoord, targetCoord)) {
+          throw new Error("Game checkpoint hero at its target must use canonical idle state.");
+        }
+        const terrainByCoord: Record<string, string> = {};
+        const runtimeTerrain = new Map(
+          state.runtimeTerrainOverrides.map((override) => [coordKey(override), override.terrain])
+        );
+        for (let r = 0; r < mapDefinition.height; r += 1) {
+          for (let q = 0; q < mapDefinition.width; q += 1) {
+            const coord = { q, r };
+            terrainByCoord[coordKey(coord)] = runtimeTerrain.get(coordKey(coord)) ?? authoredTerrainAt(coord);
+          }
+        }
+        const movementProfileId = definition.movement.movementProfileId;
+        const field = buildNavigationField({
+          grid: normalizeGridDefinition(mapDefinition.grid),
+          width: mapDefinition.width,
+          height: mapDefinition.height,
+          movementProfileId,
+          goal: targetCoord,
+          profile: checkpointHeroes.movementProfiles[movementProfileId]!,
+          terrainTypes: content.terrainTypes,
+          terrainByCoord,
+          occupiedCoords: state.towers.flatMap((tower) => tower.footprint.map((coord) => ({ q: coord.q, r: coord.r })))
+        });
+        const currentCell = new NavigationFieldLookupCache().get(field).get(currentCoord);
+        if (!currentCell?.nextCoord) {
+          if (nextCoord !== null || edgeProgress !== 0) {
+            throw new Error("Game checkpoint stalled hero must have null nextCoord and zero progress.");
+          }
+        } else if (!nextCoord || !sameGridCoord(nextCoord, currentCell.nextCoord)) {
+          throw new Error("Game checkpoint hero nextCoord is not the canonical field link.");
+        }
+      }
+    }
     if (hasTerraformingCheckpoint) {
       const schemaProbe = checkpointObjectDescriptors(state.terraforming, "Game checkpoint state terraforming");
       const terraformingSchemaVersion = checkpointDataField(schemaProbe, "schemaVersion", "terraforming");
@@ -5418,6 +5600,19 @@ export class TowerDefenseGame {
     for (const tower of this.towers) this.map.setOccupied(tower.footprint, tower.id);
     this.syncTemporaryWaterTiles();
     this.syncNavigationResolver();
+    if (this.activeHeroesMechanics?.schemaVersion === 2 && state.heroes) {
+      this.heroStateV2 = {
+        definitionId: state.heroes.unit.definitionId,
+        currentCoord: { ...state.heroes.unit.currentCoord },
+        targetCoord: state.heroes.unit.targetCoord === null ? null : { ...state.heroes.unit.targetCoord },
+        nextCoord: state.heroes.unit.nextCoord === null ? null : { ...state.heroes.unit.nextCoord },
+        edgeProgress: state.heroes.unit.edgeProgress
+      };
+      this.heroMovementField = this.heroStateV2.targetCoord === null
+        ? undefined
+        : this.buildHeroMovementField(this.activeHeroesMechanics, this.heroStateV2.targetCoord);
+      this.heroMovementDirty = false;
+    }
     if (this.navigationEnemyFields) {
       for (const enemy of this.enemies) {
         if (!enemy.navigation || !enemy.routeId) continue;
@@ -5438,6 +5633,26 @@ export class TowerDefenseGame {
       ? buildTerraformingSnapshot(this.pendingTerraformExpiryGroups)
       : undefined;
     const roguelite = this.currentRogueliteSnapshot();
+    const heroes = this.activeHeroesMechanics?.schemaVersion === 2 && this.heroStateV2
+      ? Object.freeze({
+          schemaVersion: 2 as const,
+          units: Object.freeze([Object.freeze({
+            id: this.heroStateV2.definitionId,
+            definitionId: this.heroStateV2.definitionId,
+            label: this.activeHeroesMechanics.definitions[this.heroStateV2.definitionId]!.label,
+            coord: Object.freeze({ ...this.heroStateV2.currentCoord }),
+            movement: Object.freeze({
+              targetCoord: this.heroStateV2.targetCoord === null
+                ? null
+                : Object.freeze({ ...this.heroStateV2.targetCoord }),
+              nextCoord: this.heroStateV2.nextCoord === null
+                ? null
+                : Object.freeze({ ...this.heroStateV2.nextCoord }),
+              edgeProgress: this.heroStateV2.edgeProgress
+            })
+          })])
+        })
+      : this.heroesSnapshotV1;
     return {
       mapId: this.map.id,
       grid: { ...this.map.grid },
@@ -5514,7 +5729,7 @@ export class TowerDefenseGame {
       ...(elevation === undefined ? {} : { elevation }),
       ...(terraforming === undefined ? {} : { terraforming }),
       ...(roguelite === undefined ? {} : { roguelite }),
-      ...(this.heroesSnapshot === undefined ? {} : { heroes: this.heroesSnapshot }),
+      ...(heroes === undefined ? {} : { heroes }),
       scriptState: {
         values: this.cloneScriptValues(),
         diagnostics: this.scriptDiagnostics.map((diagnostic) => ({ ...diagnostic }))
@@ -6914,6 +7129,7 @@ export class TowerDefenseGame {
     if (terrainCandidate) {
       for (const write of terrainCandidate.writes) this.map.setTerrain(write.coord, write.terrain);
       this.runtimeTerrainOverrides = terrainCandidate.overrides;
+      this.revalidateHeroMovementAfterMapMutation();
     }
     if (elevationCandidate) {
       this.runtimeElevationOverrides = elevationCandidate.overrides;
@@ -7261,6 +7477,112 @@ export class TowerDefenseGame {
     const profile = this.activeNavigationProfile;
     if (!profile) throw new Error("Dynamic enemy navigation requires an active profile.");
     return profile.enemyMovementProfiles?.[typeId] ?? profile.defaultMovementProfileId;
+  }
+
+  private activeHeroesV2(): ActiveHeroesMechanicsV2 | undefined {
+    return this.activeHeroesMechanics?.schemaVersion === 2
+      ? this.activeHeroesMechanics
+      : undefined;
+  }
+
+  private buildHeroMovementField(
+    profile: ActiveHeroesMechanicsV2,
+    target: Readonly<HexCoord>
+  ): NavigationFieldResult {
+    const definition = profile.definitions[profile.selectedHeroId]!;
+    const movementProfileId = definition.movement.movementProfileId;
+    return buildNavigationField({
+      grid: this.map.grid,
+      width: this.map.width,
+      height: this.map.height,
+      movementProfileId,
+      goal: { q: target.q, r: target.r },
+      profile: profile.movementProfiles[movementProfileId]!,
+      terrainTypes: this.content.terrainTypes,
+      terrainByCoord: this.navigationTerrainByCoord(),
+      occupiedCoords: this.navigationOccupiedCoords()
+    });
+  }
+
+  private stabilizeHeroMovement(): void {
+    const profile = this.activeHeroesV2();
+    const state = this.heroStateV2;
+    if (!profile || !state || !this.heroMovementDirty) return;
+    this.heroMovementDirty = false;
+    if (state.targetCoord === null) {
+      state.nextCoord = null;
+      state.edgeProgress = 0;
+      this.heroMovementField = undefined;
+      return;
+    }
+    let field: NavigationFieldResult;
+    try {
+      field = this.buildHeroMovementField(profile, state.targetCoord);
+    } catch {
+      state.nextCoord = null;
+      state.edgeProgress = 0;
+      this.heroMovementField = undefined;
+      return;
+    }
+    const cell = this.heroMovementLookupCache.get(field).get(state.currentCoord);
+    const canonicalNext = cell?.nextCoord;
+    if (!canonicalNext) {
+      state.nextCoord = null;
+      state.edgeProgress = 0;
+      this.heroMovementField = field;
+      return;
+    }
+    const preservesProgress = state.nextCoord !== null && sameGridCoord(state.nextCoord, canonicalNext);
+    state.nextCoord = this.cleanCoord(canonicalNext);
+    state.edgeProgress = preservesProgress ? state.edgeProgress : 0;
+    this.heroMovementField = field;
+  }
+
+  private moveHeroUnit(delta: number): void {
+    const profile = this.activeHeroesV2();
+    const state = this.heroStateV2;
+    if (!profile || !state) return;
+    this.stabilizeHeroMovement();
+    if (state.targetCoord === null || !this.heroMovementField) return;
+    const definition = profile.definitions[state.definitionId];
+    if (!definition) return;
+    const lookup = this.heroMovementLookupCache.get(this.heroMovementField);
+    let movementBudget = Math.max(0, definition.movement.speed * delta * 1_000);
+    let entered = 0;
+    while (entered < NAVIGATION_LIMITS.activeMapCells) {
+      if (state.targetCoord === null) break;
+      if (sameGridCoord(state.currentCoord, state.targetCoord)) {
+        state.targetCoord = null;
+        state.nextCoord = null;
+        state.edgeProgress = 0;
+        this.heroMovementField = undefined;
+        break;
+      }
+      const cell = lookup.get(state.currentCoord);
+      if (!cell?.nextCoord) {
+        state.nextCoord = null;
+        state.edgeProgress = 0;
+        break;
+      }
+      state.nextCoord = this.cleanCoord(cell.nextCoord);
+      const enteredCost = lookup.enteredCost(cell);
+      if (enteredCost === undefined || movementBudget <= 0) break;
+      const remainingCost = (1 - state.edgeProgress) * enteredCost;
+      if (movementBudget + 1e-9 < remainingCost) {
+        state.edgeProgress = Math.min(0.999999999999, state.edgeProgress + movementBudget / enteredCost);
+        break;
+      }
+      movementBudget = Math.max(0, movementBudget - remainingCost);
+      state.currentCoord = this.cleanCoord(cell.nextCoord);
+      state.edgeProgress = 0;
+      entered += 1;
+    }
+    if (state.targetCoord !== null && sameGridCoord(state.currentCoord, state.targetCoord)) {
+      state.targetCoord = null;
+      state.nextCoord = null;
+      state.edgeProgress = 0;
+      this.heroMovementField = undefined;
+    }
   }
 
   private navigationField(movementProfileId: string, routeId: string): NavigationFieldResult {
@@ -10073,18 +10395,28 @@ export class TowerDefenseGame {
 
   private syncNavigationTerrain(): void {
     this.navigationResolver?.updateTerrainByCoord(this.navigationTerrainByCoord());
+    this.revalidateHeroMovementAfterMapMutation();
   }
 
   private syncNavigationOccupancy(): void {
     this.navigationResolver?.updateOccupiedCoords(this.navigationOccupiedCoords());
+    this.revalidateHeroMovementAfterMapMutation();
   }
 
   private syncNavigationResolver(): void {
     const resolver = this.navigationResolver;
-    if (!resolver) return;
-    resolver.updateTerrainByCoord(this.navigationTerrainByCoord());
-    resolver.updateOccupiedCoords(this.navigationOccupiedCoords());
-    resolver.updateRoutes(this.map.pathRoutes);
+    if (resolver) {
+      resolver.updateTerrainByCoord(this.navigationTerrainByCoord());
+      resolver.updateOccupiedCoords(this.navigationOccupiedCoords());
+      resolver.updateRoutes(this.map.pathRoutes);
+    }
+    this.revalidateHeroMovementAfterMapMutation();
+  }
+
+  private revalidateHeroMovementAfterMapMutation(): void {
+    if (!this.heroStateV2) return;
+    this.heroMovementDirty = true;
+    this.stabilizeHeroMovement();
   }
 
   private canOccupyTowerFootprint(

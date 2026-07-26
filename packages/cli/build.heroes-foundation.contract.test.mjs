@@ -67,11 +67,10 @@ describe("R5.1A generated Canvas/Phaser static hero foundation", () => {
     expect(emptyGuard).toBeLessThan(lookupIndex);
   });
 
-  it("does not leak R5.1B movement commands or controls into the static slice", () => {
+  it("does not pull later hero abilities, skills, or TowerScript actions into movement", () => {
     const canvas = functionSource(buildSource, "playerTemplate");
     const phaser = functionSource(buildSource, "phaserPlayerTemplate");
-    expect(canvas).not.toMatch(/moveHero|hero-target|command-hero/i);
-    expect(phaser).not.toMatch(/moveHero|hero-target|command-hero/i);
-    expect(buildSource).not.toMatch(/schemaVersion\s*:\s*4\s*,\s*type\s*:\s*["']moveHero["']/);
+    expect(canvas).not.toMatch(/useHeroAbility|unlockHeroSkill|heroTowerScript/i);
+    expect(phaser).not.toMatch(/useHeroAbility|unlockHeroSkill|heroTowerScript/i);
   });
 });

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { migrateProjectFiles, writeMigratedProjectFiles } from "../cli/lib/project-migrations.mjs";
 import { readRawProjectFiles } from "../cli/lib/project-loader.mjs";
 import { callTool, TOOLS } from "./tools.mjs";
+import { TOWERFORGE_AGENT_INSTRUCTIONS } from "./agent-instructions.mjs";
 
 const STARTER = path.resolve("examples/starter.tdproj");
 const projects = [];
@@ -41,16 +42,17 @@ describe("R5.1A MCP/AI static hero authoring", () => {
       heroes: {
         authoring: {
           moduleId: "heroes",
-          schemaVersion: 1,
-          supportedModuleSchemaVersions: [1],
+          schemaVersion: 2,
+          supportedModuleSchemaVersions: [1, 2],
           limits: { definitions: 32, idUtf8Bytes: 128, labelUtf8Bytes: 128 }
         },
-        snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1] },
+        snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2] },
         events: []
       }
     });
     expect(heroes.availableDomains).toContain("heroes");
-    expect(heroes.heroes).not.toHaveProperty("commands");
+    expect(heroes.heroes.commands).toHaveProperty("moveHero");
+    expect(heroes.heroes).not.toHaveProperty("abilities");
     expect(heroes.heroes).not.toHaveProperty("towerScript");
     expect(mechanics.mechanics.implementedModuleIds).toContain("heroes");
     expect(mechanics.mechanics.modules.heroes).toEqual(heroes.heroes);
@@ -203,6 +205,168 @@ describe("R5.1A MCP/AI static hero authoring", () => {
     persisted = JSON.parse(fs.readFileSync(visualsPath, "utf8"));
     expect(Object.hasOwn(persisted.bindings.heroes, "__proto__")).toBe(false);
     expect(Object.getPrototypeOf(persisted.bindings.heroes)).toBe(Object.prototype);
+  });
+});
+
+describe("R5.1B MCP/AI deterministic hero movement", () => {
+  it("advertises heroes v2, snapshot v2, and the exact GameCommand v4 moveHero surface", async () => {
+    const described = await callTool("describe_schema", { domain: "heroes" }, {});
+
+    expect(described.heroes).toMatchObject({
+      authoring: {
+        moduleId: "heroes",
+        schemaVersion: 2,
+        supportedModuleSchemaVersions: [1, 2],
+        versions: {
+          2: {
+            movementProfile: {
+              requiredFields: ["label", "terrainMode", "towerOccupancy", "defaultTerrainCost"],
+              optionalFields: ["terrainCosts"],
+              terrainModeValues: ["respect_walkable", "ignore_walkable"],
+              towerOccupancyValues: ["blocked", "ignored"],
+              defaultTerrainCost: { integer: true, minimum: 1, maximum: 1_000_000, nullable: true },
+              terrainCosts: {
+                maximumEntries: 256,
+                values: { integer: true, minimum: 1, maximum: 1_000_000, nullable: true }
+              }
+            }
+          }
+        }
+      },
+      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2] },
+      commands: {
+        schemaVersion: 4,
+        moveHero: {
+          requiredFields: ["heroId", "target"],
+          optionalFields: [],
+          additionalProperties: false
+        }
+      }
+    });
+    expect(described.heroes.events).toEqual([]);
+    expect(described.heroes).not.toHaveProperty("towerScript");
+  });
+
+  it("materializes an inert heroes-owned movement recipe without enabling navigation", async () => {
+    const projectDir = fixture();
+    const materialized = await callTool("get_recipe", {
+      projectDir,
+      collection: "mechanics",
+      recipeId: "basic_mobile_commander_hero"
+    }, {});
+
+    expect(materialized.recipe).toMatchObject({
+      id: "basic_mobile_commander_hero",
+      moduleId: "heroes",
+      moduleSchemaVersion: 2,
+      entity: {
+        moduleId: "heroes",
+        moduleSchemaVersion: 2,
+        missionId: "tutorial_01",
+        profileId: "basic_mobile_commander_hero",
+        profile: {
+          selectedHeroId: "commander",
+          definitions: {
+            commander: {
+              label: "Commander",
+              spawn: "core",
+              movement: { movementProfileId: "ground", speed: 1 }
+            }
+          },
+          movementProfiles: {
+            ground: {
+              label: "Ground",
+              terrainMode: "respect_walkable",
+              towerOccupancy: "blocked",
+              defaultTerrainCost: 1000
+            }
+          }
+        }
+      }
+    });
+    expect(materialized.recipe.entity).not.toHaveProperty("enabled");
+    expect(materialized.recipe.entity).not.toHaveProperty("navigation");
+    expect(materialized.recipe.entity.profile).not.toHaveProperty("navigation");
+
+    const raw = readRawProjectFiles(projectDir);
+    expect(raw.mechanics?.modules?.heroes).toBeUndefined();
+    expect(raw.mechanics?.modules?.navigation).toBeUndefined();
+    expect(raw.balance.missions.tutorial_01.mechanics?.profiles).toBeUndefined();
+  });
+
+  it("runs the complete guarded v2 AI flow and keeps navigation absent", async () => {
+    const projectDir = fixture();
+    const described = await callTool("describe_schema", { domain: "heroes" }, {});
+    expect(described.heroes.authoring.versions[2].movementProfile).toMatchObject({
+      terrainModeValues: ["respect_walkable", "ignore_walkable"],
+      towerOccupancyValues: ["blocked", "ignored"]
+    });
+
+    const before = await callTool("get_capabilities", {
+      projectDir,
+      missionId: "tutorial_01"
+    }, {});
+    expect(before.capabilities.heroes).toMatchObject({ available: true, active: false });
+    expect(before.capabilities.navigation.active).toBe(false);
+
+    const materialized = await callTool("get_recipe", {
+      projectDir,
+      collection: "mechanics",
+      recipeId: "basic_mobile_commander_hero"
+    }, {});
+    const request = {
+      projectDir,
+      ...materialized.recipe.entity,
+      enabled: true
+    };
+    const preview = await callTool("preview_mechanics_module", request, {});
+    expect(preview).toMatchObject({
+      ok: true,
+      dryRun: true,
+      revision: materialized.revision,
+      validation: { ok: true, issues: [] },
+      candidate: {
+        manifest: { schemaVersion: 3 },
+        mechanics: { modules: { heroes: { schemaVersion: 2, enabled: true } } },
+        balance: {
+          missions: {
+            tutorial_01: { mechanics: { profiles: { heroes: "basic_mobile_commander_hero" } } }
+          }
+        }
+      }
+    });
+    expect(preview.candidate.mechanics.modules.navigation).toBeUndefined();
+
+    const applied = await callTool("apply_mechanics_module", {
+      ...request,
+      ifRevision: preview.revision
+    }, {});
+    expect(applied).toMatchObject({ ok: true, previousRevision: preview.revision });
+    expect(await callTool("validate_project", { projectDir }, {})).toMatchObject({ ok: true });
+    const active = await callTool("get_capabilities", {
+      projectDir,
+      missionId: "tutorial_01"
+    }, {});
+    expect(active.capabilities.heroes).toMatchObject({
+      available: true,
+      active: true,
+      moduleSchemaVersion: 2,
+      profileId: "basic_mobile_commander_hero"
+    });
+    expect(active.capabilities.navigation.active).toBe(false);
+
+    const stale = await rejection(callTool("apply_mechanics_module", {
+      ...request,
+      ifRevision: preview.revision
+    }, {}));
+    expect(stale).toMatchObject({ code: "conflict" });
+  });
+
+  it("teaches agents the guarded independent v2 flow instead of inventing direct runtime mutation", () => {
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/Heroes v2[\s\S]*independent[\s\S]*navigation/i);
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/GameCommand v4[\s\S]*moveHero/i);
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/snapshot[\s\S]*never (?:mutate|write)/i);
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/basic_mobile_commander_hero[\s\S]*(?:never|does not)[\s\S]*(?:enable|select)/i);
   });
 });
 

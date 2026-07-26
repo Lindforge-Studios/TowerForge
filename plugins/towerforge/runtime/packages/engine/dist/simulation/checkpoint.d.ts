@@ -138,6 +138,25 @@ export interface CampaignBattleCheckpointStateV1 {
         readonly artifactId: string;
     }[];
 }
+export interface HeroesCheckpointStateV1 {
+    readonly schemaVersion: 1;
+    readonly unit: {
+        readonly definitionId: string;
+        readonly currentCoord: Readonly<{
+            q: number;
+            r: number;
+        }>;
+        readonly targetCoord: Readonly<{
+            q: number;
+            r: number;
+        }> | null;
+        readonly nextCoord: Readonly<{
+            q: number;
+            r: number;
+        }> | null;
+        readonly edgeProgress: number;
+    };
+}
 /** Authoritative mutable simulation state. Map occupancy and water cues are rebuilt derivatives. */
 export interface GameCheckpointStateV1 {
     readonly coreHp: number;
@@ -176,6 +195,7 @@ export interface GameCheckpointStateV1 {
     readonly artifacts?: ArtifactCheckpointState;
     readonly draft?: DraftCheckpointState;
     readonly campaignBattle?: CampaignBattleCheckpointStateV1;
+    readonly heroes?: HeroesCheckpointStateV1;
 }
 export interface GameCheckpointV1 {
     readonly schemaVersion: typeof GAME_CHECKPOINT_SCHEMA_VERSION;

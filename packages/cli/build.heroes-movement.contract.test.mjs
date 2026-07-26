@@ -1,0 +1,65 @@
+import fs from "node:fs";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+
+const buildSource = fs.readFileSync(path.resolve("packages/cli/build.mjs"), "utf8");
+
+function functionSource(source, name) {
+  const start = source.indexOf(`function ${name}`);
+  expect(start, `${name} must exist`).toBeGreaterThanOrEqual(0);
+  const open = source.indexOf("{", start);
+  let depth = 0;
+  for (let index = open; index < source.length; index += 1) {
+    if (source[index] === "{") depth += 1;
+    if (source[index] === "}") depth -= 1;
+    if (depth === 0) return source.slice(start, index + 1);
+  }
+  throw new Error(`Unclosed function ${name}`);
+}
+
+function expectExactMoveCommand(source) {
+  expect(source).toMatch(/dispatchGameCommand\s*\(\s*game\s*,\s*\{[\s\S]{0,260}schemaVersion\s*:\s*4[\s\S]{0,120}type\s*:\s*["']moveHero["'][\s\S]{0,160}heroId[\s\S]{0,160}target\s*:\s*\{[\s\S]{0,100}q[\s\S]{0,100}r/);
+  expect(source).not.toMatch(/game\.moveHero\s*\(/);
+}
+
+describe("R5.1B generated Canvas/Phaser hero controls", () => {
+  it("dispatches exact GameCommand v4 moveHero through the command surface in both players", () => {
+    const canvas = functionSource(buildSource, "playerTemplate");
+    const phaser = functionSource(buildSource, "phaserPlayerTemplate");
+
+    expectExactMoveCommand(canvas);
+    expectExactMoveCommand(phaser);
+    expect(canvas).toMatch(/selectedHeroId|selectedHero/);
+    expect(phaser).toMatch(/selectedHeroId|selectedHero/);
+    expect(canvas).toMatch(/schemaVersion\s*===\s*2|schemaVersion\s*!==\s*2/);
+    expect(phaser).toMatch(/schemaVersion\s*===\s*2|schemaVersion\s*!==\s*2/);
+  });
+
+  it("routes pointer/touch and keyboard targeting through shared presentation hit testing", () => {
+    const canvas = functionSource(buildSource, "playerTemplate");
+    const phaser = functionSource(buildSource, "phaserPlayerTemplate");
+
+    for (const source of [canvas, phaser]) {
+      expect(source).toMatch(/hitTestHeroesPresentation/);
+      expect(source).toMatch(/projectHeroPresentationPoint/);
+      expect(source).toMatch(/pointerdown/);
+      expect(source).toMatch(/keydown/);
+      expect(source).toMatch(/Enter/);
+      expect(source).toMatch(/Escape/);
+      expect(source).toMatch(/selectedHero(?:Id)?\s*=\s*null/);
+    }
+    expect(buildSource.match(/hitTestHeroesPresentation/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+    expect(buildSource.match(/projectHeroPresentationPoint/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+  });
+
+  it("keeps selection UI-only and clears it when the run context changes", () => {
+    const canvas = functionSource(buildSource, "playerTemplate");
+    const phaser = functionSource(buildSource, "phaserPlayerTemplate");
+
+    for (const source of [canvas, phaser]) {
+      expect(source).toMatch(/reset-run[\s\S]{0,500}selectedHero(?:Id)?\s*=\s*null/);
+      expect(source).toMatch(/missionSelect[\s\S]{0,900}selectedHero(?:Id)?\s*=\s*null/);
+      expect(source).not.toMatch(/snapshot\.selectedHero|game\.selectedHero/);
+    }
+  });
+});

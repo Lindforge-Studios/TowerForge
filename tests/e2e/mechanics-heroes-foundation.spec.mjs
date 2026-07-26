@@ -20,6 +20,7 @@ const combinations = ["hex", "square"].flatMap((grid) => (
   }))
 ));
 const activations = ["click", "enter", "space", "tap"];
+const mobileInputFamilies = ["mouse", "touch", "keyboard"];
 
 test.use({ hasTouch: true });
 
@@ -58,7 +59,134 @@ test.describe("R5.1A Studio static heroes lifecycle", () => {
     if (tempRoot) fs.rmSync(tempRoot, { recursive: true, force: true });
   });
 
-  test("enables, edits, reloads, disables, re-enables, and preserves future v2 read-only", async ({ page }) => {
+  test("keeps malformed authored v2 references lossless and blocks preview instead of repairing them", async ({ page }) => {
+    test.setTimeout(120_000);
+    const balancePath = path.join(projectDir, "content", "balance.json");
+    const mechanicsPath = path.join(projectDir, "content", "mechanics.json");
+    const originalBalanceBytes = fs.readFileSync(balancePath, "utf8");
+    const originalMechanicsBytes = fs.existsSync(mechanicsPath) ? fs.readFileSync(mechanicsPath, "utf8") : null;
+    try {
+      const balance = JSON.parse(originalBalanceBytes);
+      balance.missions.tutorial_01.mechanics = { profiles: { heroes: "malformed_mobile" } };
+      writeJson(balancePath, balance);
+      writeJson(mechanicsPath, {
+        schemaVersion: 1,
+        modules: {
+          heroes: {
+            schemaVersion: 2,
+            enabled: false,
+            profiles: {
+              malformed_mobile: {
+                selectedHeroId: "commander",
+                definitions: {
+                  commander: {
+                    label: "Commander",
+                    spawn: "core",
+                    movement: { movementProfileId: "ghost", speed: 1 }
+                  }
+                },
+                movementProfiles: {
+                  ground: {
+                    label: "Ground",
+                    terrainMode: "respect_walkable",
+                    towerOccupancy: "blocked",
+                    defaultTerrainCost: 1_000
+                  }
+                }
+              }
+            }
+          }
+        }
+      });
+      const authoredBytes = fs.readFileSync(mechanicsPath, "utf8");
+
+      await openStudio(page, studioUrl);
+      await openHeroesMechanics(page);
+      const reference = page.locator('[data-hero-definition-id="commander"] [data-hero-movement-profile-definition-id]');
+      await expect(reference).toHaveValue("ghost");
+      await expect(reference.locator('option[value="ghost"]')).toContainText(/unknown|missing|ghost/i);
+      await page.locator("#btn-mechanics-preview").click();
+      await expect(page.locator("#mechanics-preview-result")).toContainText(/ghost|movement profile|invalid/i);
+      await expect(page.locator("#mechanics-preview-result")).not.toContainText('"ok": true');
+      expect(fs.readFileSync(mechanicsPath, "utf8")).toBe(authoredBytes);
+    } finally {
+      fs.writeFileSync(balancePath, originalBalanceBytes, "utf8");
+      if (originalMechanicsBytes === null) fs.rmSync(mechanicsPath, { force: true });
+      else fs.writeFileSync(mechanicsPath, originalMechanicsBytes, "utf8");
+    }
+  });
+
+  test("enables, edits, saves, reloads, disables, and re-enables a v2 mobile hero profile", async ({ page }) => {
+    test.setTimeout(120_000);
+    const balancePath = path.join(projectDir, "content", "balance.json");
+    const mechanicsPath = path.join(projectDir, "content", "mechanics.json");
+    const originalBalanceBytes = fs.readFileSync(balancePath, "utf8");
+    const originalMechanicsBytes = fs.existsSync(mechanicsPath) ? fs.readFileSync(mechanicsPath, "utf8") : null;
+    try {
+      await openStudio(page, studioUrl);
+      await openHeroesMechanics(page);
+      await expect(page.locator('#mechanics-recipe-select option[value="basic_mobile_commander_hero"]'))
+        .toHaveCount(1);
+      await page.locator("#mechanics-recipe-select").selectOption("basic_mobile_commander_hero");
+      await page.locator("#btn-mechanics-new-profile").click();
+      await expect(page.locator("#mechanics-profile-id")).toHaveValue("basic_mobile_commander_hero");
+      const commander = page.locator('[data-hero-definition-id="commander"]');
+      await expect(commander.locator("[data-hero-movement-profile-definition-id]")).toHaveValue("ground");
+      await commander.locator("[data-hero-movement-speed]").fill("1.5");
+      await page.locator("#mechanics-heroes-movement summary").click();
+      await page.locator('[data-hero-movement-profile-id="ground"] [data-hero-movement-label]').fill("Field Ground");
+
+      const beforePreview = readHeroesState(projectDir);
+      await page.locator("#btn-mechanics-preview").click();
+      await expect(page.locator("#mechanics-preview-result")).toContainText('"ok": true');
+      expect(readHeroesState(projectDir)).toEqual(beforePreview);
+      await page.locator("#btn-mechanics-enable").click();
+      await expect.poll(() => readHeroesState(projectDir)).toMatchObject({
+        moduleSchemaVersion: 2,
+        enabled: true,
+        selectedProfileId: "basic_mobile_commander_hero",
+        profile: {
+          definitions: {
+            commander: { movement: { movementProfileId: "ground", speed: 1.5 } }
+          },
+          movementProfiles: { ground: { label: "Field Ground" } }
+        }
+      });
+
+      await page.reload();
+      await openHeroesMechanics(page);
+      await expect(page.locator('[data-hero-definition-id="commander"] [data-hero-movement-speed]'))
+        .toHaveValue("1.5");
+      await page.locator('[data-hero-definition-id="commander"] [data-hero-movement-speed]').fill("2");
+      await page.locator("#btn-mechanics-save").click();
+      await expect.poll(() => readHeroesState(projectDir).profile?.definitions?.commander?.movement?.speed).toBe(2);
+
+      await page.reload();
+      await openHeroesMechanics(page);
+      await expect(page.locator('[data-hero-definition-id="commander"] [data-hero-movement-speed]'))
+        .toHaveValue("2");
+      const preservedProfile = structuredClone(readHeroesState(projectDir).profile);
+      page.once("dialog", (dialog) => dialog.accept());
+      await page.locator("#btn-mechanics-disable").click();
+      await expect.poll(() => readHeroesState(projectDir)).toMatchObject({
+        enabled: false,
+        selectedProfileId: "basic_mobile_commander_hero",
+        profile: preservedProfile
+      });
+      await page.locator("#btn-mechanics-enable").click();
+      await expect.poll(() => readHeroesState(projectDir)).toMatchObject({
+        enabled: true,
+        selectedProfileId: "basic_mobile_commander_hero",
+        profile: preservedProfile
+      });
+    } finally {
+      fs.writeFileSync(balancePath, originalBalanceBytes, "utf8");
+      if (originalMechanicsBytes === null) fs.rmSync(mechanicsPath, { force: true });
+      else fs.writeFileSync(mechanicsPath, originalMechanicsBytes, "utf8");
+    }
+  });
+
+  test("enables, edits, reloads, disables, re-enables, and preserves future v3 read-only", async ({ page }) => {
     test.setTimeout(120_000);
     const browserErrors = captureBrowserErrors(page);
     await openStudio(page, studioUrl);
@@ -135,8 +263,8 @@ test.describe("R5.1A Studio static heroes lifecycle", () => {
 
     const mechanicsPath = path.join(projectDir, "content", "mechanics.json");
     const future = readJson(mechanicsPath);
-    future.modules.heroes.schemaVersion = 2;
-    future.modules.heroes.futureModuleRule = { preserve: ["exact", 2] };
+    future.modules.heroes.schemaVersion = 3;
+    future.modules.heroes.futureModuleRule = { preserve: ["exact", 3] };
     future.modules.heroes.profiles.basic_commander_hero.futureProfileRule = { preserve: true };
     writeJson(mechanicsPath, future);
     const futureBytes = fs.readFileSync(mechanicsPath, "utf8");
@@ -169,18 +297,24 @@ test.describe("R5.1A generated-player static hero presentation", () => {
   let port;
 
   test.beforeAll(async () => {
+    test.setTimeout(300_000);
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "towerforge-heroes-player-"));
-    for (const combination of combinations) buildHeroPlayerFixture(tempRoot, combination);
+    for (const combination of combinations) {
+      buildHeroPlayerFixture(tempRoot, combination);
+      buildMobileHeroPlayerFixture(tempRoot, combination);
+    }
     buildLegacyPlayerFixture(tempRoot);
     port = await freeHttpPort();
     server = http.createServer((request, response) => {
       const relative = decodeURIComponent(new URL(request.url, `http://127.0.0.1:${port}`).pathname)
         .replace(/^\/+/, "");
       const [mode, grid, renderer, ...parts] = relative.split("/");
-      if (!(["active", "legacy"].includes(mode)
+      if (!(["active", "mobile", "legacy"].includes(mode)
         && ["hex", "square"].includes(grid)
         && ["canvas", "phaser"].includes(renderer))) return respond404(response);
-      const fixture = mode === "legacy" ? "hero_legacy_hex_canvas" : `hero_active_${grid}_${renderer}`;
+      const fixture = mode === "legacy"
+        ? "hero_legacy_hex_canvas"
+        : `hero_${mode}_${grid}_${renderer}`;
       const buildDir = path.join(tempRoot, `${fixture}.tdproj`, "dist");
       const filePath = path.resolve(buildDir, parts.join("/") || "index.html");
       const confined = path.relative(buildDir, filePath);
@@ -246,6 +380,55 @@ test.describe("R5.1A generated-player static hero presentation", () => {
     expect(await inspectPlayer(page)).not.toHaveProperty("heroes");
     expect(browserErrors()).toEqual([]);
   });
+
+  for (const { grid, renderer } of combinations) {
+    for (const inputFamily of mobileInputFamilies) {
+      test(`moves the opt-in v2 hero with ${inputFamily} on ${grid}/${renderer}`, async ({ page }) => {
+        test.setTimeout(90_000);
+        const browserErrors = captureBrowserErrors(page);
+        await page.goto(playerUrl(port, "mobile", grid, renderer));
+        await waitForPlayerBoot(page);
+
+        const initial = await inspectPlayer(page);
+        expect(initial).not.toHaveProperty("navigation");
+        expect(initial.heroes).toEqual({
+          schemaVersion: 2,
+          units: [{
+            id: "commander",
+            definitionId: "commander",
+            label: "Mobile Sentinel",
+            coord: initial.coreCoord,
+            movement: { targetCoord: null, nextCoord: null, edgeProgress: 0 }
+          }]
+        });
+
+        const target = initial.spawnCoord;
+        expect(target).not.toEqual(initial.coreCoord);
+        if (inputFamily === "keyboard") {
+          await assignHeroTargetWithKeyboard(page, initial.coreCoord, target, initial.heroes);
+        } else {
+          await assignHeroTargetWithPointer(page, inputFamily, initial.coreCoord, target);
+        }
+
+        await expect.poll(async () => {
+          const unit = (await inspectPlayer(page)).heroes?.units?.[0];
+          return Boolean(unit?.movement?.targetCoord
+            && unit.movement.nextCoord
+            && unit.movement.edgeProgress > 0
+            && unit.movement.edgeProgress < 1);
+        }, {
+          message: `${inputFamily} must dispatch v4 and produce observable interpolated movement`,
+          timeout: 10_000
+        }).toBe(true);
+
+        await expect.poll(async () => (await inspectPlayer(page)).heroes?.units?.[0]?.coord, {
+          message: `${inputFamily} must advance the authoritative hero coordinate`,
+          timeout: 15_000
+        }).not.toEqual(initial.coreCoord);
+        expect(browserErrors()).toEqual([]);
+      });
+    }
+  }
 });
 
 function buildHeroPlayerFixture(root, { grid, renderer, visual }) {
@@ -286,6 +469,51 @@ function buildHeroPlayerFixture(root, { grid, renderer, visual }) {
     visuals.bindings.heroes = { commander: "hero_e2e" };
     writeJson(visualsPath, visuals);
   }
+  buildPlayer(projectDir, renderer, "heroes");
+}
+
+function buildMobileHeroPlayerFixture(root, { grid, renderer }) {
+  const name = `hero_mobile_${grid}_${renderer}`;
+  const { projectDir } = createProject({ name, parentDir: root, templateName: "classic", gridKind: grid });
+  const manifestPath = path.join(projectDir, "project.json");
+  const manifest = readJson(manifestPath);
+  manifest.schemaVersion = 3;
+  writeJson(manifestPath, manifest);
+
+  const balancePath = path.join(projectDir, "content", "balance.json");
+  const balance = readJson(balancePath);
+  const missionId = balance.defaultMissionId ?? Object.keys(balance.missions)[0];
+  balance.missions[missionId].mechanics = { profiles: { heroes: "mobile_commanders" } };
+  writeJson(balancePath, balance);
+  writeJson(path.join(projectDir, "content", "mechanics.json"), {
+    schemaVersion: 1,
+    modules: {
+      heroes: {
+        schemaVersion: 2,
+        enabled: true,
+        profiles: {
+          mobile_commanders: {
+            selectedHeroId: "commander",
+            definitions: {
+              commander: {
+                label: "Mobile Sentinel",
+                spawn: "core",
+                movement: { movementProfileId: "ground", speed: 0.4 }
+              }
+            },
+            movementProfiles: {
+              ground: {
+                label: "Ground",
+                terrainMode: "respect_walkable",
+                towerOccupancy: "blocked",
+                defaultTerrainCost: 1_000
+              }
+            }
+          }
+        }
+      }
+    }
+  });
   buildPlayer(projectDir, renderer, "heroes");
 }
 
@@ -380,6 +608,55 @@ async function exerciseOrdinaryInput(page, renderer, activation) {
     await canvas.focus();
     await page.keyboard.press(activation === "space" ? "Space" : "Enter");
   }
+}
+
+async function assignHeroTargetWithPointer(page, inputFamily, heroCoord, targetCoord) {
+  const [heroPoint, targetPoint] = await Promise.all([
+    page.evaluate((coord) => window.__towerforgeTilePoint(coord), heroCoord),
+    page.evaluate((coord) => window.__towerforgeTilePoint(coord), targetCoord)
+  ]);
+  expect(heroPoint).toMatchObject({ x: expect.any(Number), y: expect.any(Number) });
+  expect(targetPoint).toMatchObject({ x: expect.any(Number), y: expect.any(Number) });
+  const activate = inputFamily === "touch"
+    ? (point) => page.touchscreen.tap(point.x, point.y)
+    : (point) => page.mouse.click(point.x, point.y);
+  await activate(heroPoint);
+  await expect(page.locator("#message")).toContainText("Hero selected");
+  await activate(targetPoint);
+}
+
+async function assignHeroTargetWithKeyboard(page, heroCoord, targetCoord, initialHeroes) {
+  const playfield = page.locator("#playfield");
+  await playfield.focus();
+  await moveKeyboardCursorTo(page, heroCoord);
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#message")).toContainText("Hero selected");
+
+  // Selection is presentation-only UI state: Escape must cancel without mutating engine state.
+  await page.keyboard.press("Escape");
+  expect((await inspectPlayer(page)).heroes).toEqual(initialHeroes);
+
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#message")).toContainText("Hero selected");
+  await moveKeyboardCursorTo(page, targetCoord);
+  await page.keyboard.press("Enter");
+}
+
+async function moveKeyboardCursorTo(page, targetCoord) {
+  const playfield = page.locator("#playfield");
+  const label = await playfield.getAttribute("aria-label");
+  const match = /Selected tile q (-?\d+), r (-?\d+)/.exec(label ?? "");
+  expect(match, `keyboard cursor label: ${label}`).not.toBeNull();
+  let q = Number(match[1]);
+  let r = Number(match[2]);
+  while (q < targetCoord.q) { await page.keyboard.press("ArrowRight"); q += 1; }
+  while (q > targetCoord.q) { await page.keyboard.press("ArrowLeft"); q -= 1; }
+  while (r < targetCoord.r) { await page.keyboard.press("ArrowDown"); r += 1; }
+  while (r > targetCoord.r) { await page.keyboard.press("ArrowUp"); r -= 1; }
+  await expect(playfield).toHaveAttribute(
+    "aria-label",
+    new RegExp(`Selected tile q ${targetCoord.q}, r ${targetCoord.r},`)
+  );
 }
 
 async function openStudio(page, url) {

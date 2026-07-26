@@ -80,7 +80,7 @@ function input(
         schemaVersion: 1,
         modules: {
           heroes: {
-            schemaVersion: (activation === "future" ? 2 : 1) as 1,
+            schemaVersion: (activation === "future" ? 3 : 1) as 1,
             enabled: activation !== "disabled",
             profiles: {
               commanders: { selectedHeroId: "commander", definitions }
@@ -208,9 +208,9 @@ describe("R5.1A static hero runtime foundation", () => {
     }
   );
 
-  it("does not bump commands, journal/replay, checkpoint, events, TowerScript, or RNG in the static slice", () => {
-    expect(Engine.GAME_COMMAND_SCHEMA_VERSION).toBe(3);
-    expect(Engine.GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS).toEqual([1, 2, 3]);
+  it("keeps checkpoint, events, TowerScript, and RNG stable while movement owns command v4", () => {
+    expect(Engine.GAME_COMMAND_SCHEMA_VERSION).toBe(4);
+    expect(Engine.GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS).toEqual([1, 2, 3, 4]);
     expect(Engine.GAME_CHECKPOINT_SCHEMA_VERSION).toBe(1);
     expect(Engine.SIMULATION_ENGINE_VERSION).toBe("towerforge-sim-v2");
     expect(Engine.TOWER_SCRIPT_SCHEMA.actions).not.toHaveProperty("moveHero");

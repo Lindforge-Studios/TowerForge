@@ -32,7 +32,7 @@ Reference examples show expected project and code patterns.
 | Opt-in campaign run | `docs/examples/opt-in-campaign-run/` | R4.4A roguelite v4 reference with a bounded typed campaign DAG, separate CampaignRun/Profile reducers, explicit run import/export, and no implicit storage or battle checkpoint coupling. |
 | Opt-in campaign structural choices | `docs/examples/opt-in-campaign-structural-choices/` | R4.4B campaign graph v2 reference with declared run resources and atomic merchant/event costs and grants; battle-local draft/artifact transfer remains disabled. |
 | Opt-in campaign battle handoff | `docs/examples/opt-in-campaign-battle-handoff/` | R4.4C marker-v2 reference with an imported CampaignRun deck, unsocketed artifact carry, engine-owned prepare/settle, and marker-v1/absent compatibility. |
-| Opt-in static hero roster | `docs/examples/opt-in-hero-roster/` | R5.1A `heroes` v1 reference with one selected commander derived at the map core, optional sprite binding, and no movement, commands, or checkpoint state. |
+| Opt-in hero roster and movement | `docs/examples/opt-in-hero-roster/` | `mechanics.json` is the static R5.1A `heroes` v1 reference; `mechanics-mobile.json` is the independent R5.1B v2 movement reference with heroes-owned flow profile, exact GameCommand v4, and no navigation activation. |
 | Headless smoke sim | `packages/cli/sim.mjs` | CLI wrapper for engine-backed mission smoke runs. |
 | Static web build | `packages/cli/build.mjs` | Generates the playable web bundle from project data, compiled engine modules, renderer, and safe assets. |
 | Native packaging | `packages/cli/lib/packaging.mjs` | Canonical Capacitor/Tauri scaffold generation around a built web bundle. |

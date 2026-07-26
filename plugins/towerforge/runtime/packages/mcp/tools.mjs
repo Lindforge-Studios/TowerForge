@@ -1455,7 +1455,15 @@ export async function callTool(name, args = {}, ctx = {}) {
     };
     const heroes = {
       authoring: engine.HEROES_MECHANICS_SCHEMA,
-      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1] },
+      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2] },
+      commands: {
+        schemaVersion: 4,
+        moveHero: {
+          requiredFields: ["heroId", "target"],
+          optionalFields: [],
+          additionalProperties: false
+        }
+      },
       events: []
     };
     return {

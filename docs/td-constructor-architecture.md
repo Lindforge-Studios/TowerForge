@@ -510,9 +510,28 @@ Studio authors the roster only in Mechanics Hub through the existing revision-gu
 mechanics transaction. MCP/AI uses the same descriptor and `describe -> capabilities -> recipe ->
 preview -> guarded apply -> validate` flow. Canvas and Phaser consume one shared fail-closed hero
 projection. `visuals.bindings.heroes` is optional and no empty binding is synthesized for legacy
-projects. Missing, disabled, unselected, and future-version modules publish no hero snapshot or UI.
-`moveHero`, GameCommand/Journal v4, mutable movement state, checkpointing, and input replay are
-explicitly deferred to R5.1B. See [ADR 0037](adr/0037-opt-in-static-hero-roster-foundation.md).
+projects. Missing, disabled, unselected, and future-v3+ modules publish no hero snapshot or UI.
+This v1 path remains static and byte-compatible; the separately selected v2 movement extension is
+described below. See [ADR 0037](adr/0037-opt-in-static-hero-roster-foundation.md).
+
+### R5.1B deterministic hero movement
+
+Heroes v2 adds movement as an independent opt-in profile extension. The profile owns
+`movementProfiles` in the same closed shape as `MovementProfileV1`; each selected definition adds
+exact nested `movement: {movementProfileId, speed}`. This reuses the engine topology and bounded
+reverse-field implementation but does not require, enable, select, or mutate the separate
+`navigation` module. The inert `basic_mobile_commander_hero` recipe likewise writes nothing until
+the normal preview/revision/apply transaction is explicitly committed.
+
+Movement enters simulation only through exact `GameCommandV4 moveHero`. Mutable coordinate,
+nullable target/next coordinate, and fractional edge progress live in the optional active heroes
+checkpoint section and replay through journal v4. The optional `snapshot.heroes` v2 is the only
+renderer input. Its movement record is exact and nullable; the shared renderer projects an
+interpolated point and presentation-only hit test. Canvas and Phaser keep selection outside the
+snapshot and dispatch commands for pointer/touch and Enter, with Escape and every run-context
+handoff clearing selection. Heroes v1 remains the static snapshot contract and receives no new
+input behavior. HP, mana, abilities, skills, auras, blocking, and TowerScript hero actions remain
+outside this slice. See [ADR 0038](adr/0038-opt-in-deterministic-hero-movement.md).
 
 ## Done Criteria For Constructor Changes
 

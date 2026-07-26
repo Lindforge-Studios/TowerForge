@@ -144,14 +144,22 @@ selects a mission by itself. The profile must contain 1–32 definitions, one ow
 `selectedHeroId`, and exact definitions `{label,spawn:"core"}`. IDs and labels are limited to 128
 UTF-8 bytes.
 
-An active profile displays exactly one engine-derived hero at the map core through
+An active v1 profile displays exactly one engine-derived hero at the map core through
 `snapshot.heroes` v1. Renderers may use an explicitly authored `visuals.bindings.heroes` sprite or
-their built-in shape fallback. Do not infer roster activation from `mechanics.json`, add a hero to
-the checkpoint, or attempt to dispatch `moveHero`: R5.1A has no hero command, event, mutable state,
-HP, mana, ability, aura, blocking, or TowerScript extension. Disabling or unselecting removes the
-snapshot and presentation without rewriting the roster. Future heroes module versions are
-read-only. Use `docs/examples/opt-in-hero-roster/`; movement and GameCommand/Journal v4 belong to
-R5.1B.
+their built-in shape fallback. Do not infer roster activation from `mechanics.json` or add v1 hero
+state to a checkpoint. Disabling or unselecting removes the snapshot and presentation without
+rewriting the roster.
+
+For deterministic movement, select the separate inert `basic_mobile_commander_hero` recipe and run
+the same guarded flow. It stages `heroes` v2 with heroes-owned `movementProfiles` and exact nested
+`movement: {movementProfileId,speed}`; it does not create, enable, or select `navigation`. Inspect
+the complete shared MovementProfileV1 shape through `describe_schema({domain:"heroes"})`, then
+preview before guarded apply. Active movement accepts only exact `GameCommandV4 moveHero` and
+publishes `snapshot.heroes` v2 with nullable target/next coordinates and edge progress. Mouse,
+touch, keyboard, headless dispatch, checkpoint, and journal replay all use that command; never
+mutate snapshot state. Heroes v1 stays static, while future v3+ modules are lossless/read-only.
+Use `docs/examples/opt-in-hero-roster/mechanics-mobile.json` for the v2 profile. HP, mana,
+abilities, auras, blocking, and TowerScript hero extensions remain later opt-in increments.
 
 Combat v1 accepts only `shields`. A target definition requires positive bounded `capacity` and may add `{ ratePerUnit, delayAfterDamage }` regeneration. Tower shields require a tower with `maxHp`. At runtime shield state is keyed by entity instance ID and appears only under active `snapshot.combat`; Canvas and Phaser consume the same presentation projection. A copyable v1 reference is under `docs/examples/opt-in-basic-shields/`.
 

@@ -677,7 +677,7 @@ function playerTemplate() {
   validateCampaignRunAgainstContent
 } from "./engine/index.js";
 import { createPlayerProfileStore, derivePlayerProfileStorageKey } from "./player-runtime/index.mjs";
-import { createCanvasRenderer, projectCampaignPresentation, projectElevationCues, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectRoguelitePresentation } from "./renderer/index.mjs";
+import { createCanvasRenderer, hitTestHeroesPresentation, projectCampaignPresentation, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectRoguelitePresentation } from "./renderer/index.mjs";
 import { createAudioPlayer } from "./renderer/audio.mjs";
 import project from "./project-data.js";
 
@@ -711,6 +711,7 @@ let message = "Choose a tower, click a buildable tile, then start the wave.";
 let armedAbility = null;
 let sellMode = false;
 let selectedTowerId = null;
+let selectedHeroId = null;
 let keyboardCoord = null;
 let navigationHoverCoord = null;
 let navigationOverlayPlacementState = null;
@@ -743,7 +744,7 @@ if ("serviceWorker" in navigator) {
 $("start-wave").addEventListener("click", () => { audio.resume(); report(game.startNextWave()); });
 $("pause-run").addEventListener("click", () => setPaused(Number($("speed").value) > 0));
 $("sell-mode").addEventListener("click", () => setSellMode(!sellMode));
-$("reset-run").addEventListener("click", () => { game.reset(); victoryRewarded = false; selectedTowerId = null; initAbilityBar(); setSellMode(false); clearNavigationOverlay(); message = "Run reset."; });
+$("reset-run").addEventListener("click", () => { game.reset(); victoryRewarded = false; selectedTowerId = null; selectedHeroId = null; initAbilityBar(); setSellMode(false); clearNavigationOverlay(); message = "Run reset."; });
 $("reset-progress")?.addEventListener("click", resetPlayerProgress);
 $("speed").addEventListener("input", syncSpeedUi);
 $("snd").addEventListener("change", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
@@ -762,8 +763,8 @@ document.addEventListener("keydown", (event) => {
   if (document.activeElement !== canvas) return;
   const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
   if (moves[event.key]) { event.preventDefault(); moveKeyboardCursor(moves[event.key][0], moves[event.key][1]); }
-  else if (event.key === "Enter") { event.preventDefault(); actAtCoord(ensureKeyboardCoord()); }
-  else if (event.key === "Escape") { event.preventDefault(); setArmed(null); setSellMode(false); message = "Build action cancelled."; }
+  else if (event.key === "Enter") { event.preventDefault(); const coord = ensureKeyboardCoord(); actAtCoord(coord, hitTestHeroAtCoord(coord)); }
+  else if (event.key === "Escape") { event.preventDefault(); selectedHeroId = null; setArmed(null); setSellMode(false); message = "Build action cancelled."; }
 });
 syncSpeedUi();
 syncAudioSettings();
@@ -804,8 +805,32 @@ canvas.addEventListener("pointerdown", (event) => {
   if (!coord) return;
   window.__towerforgeLastPointerCoord = coord;
   syncKeyboardCursor(coord);
-  actAtCoord(coord);
+  actAtCoord(coord, hitTestHeroAtPointer(event));
 });
+
+function heroMovementPresentation() {
+  const snapshot = game.getRenderSnapshot();
+  if (snapshot?.heroes?.schemaVersion !== 2) return null;
+  const presentation = projectHeroesPresentation(snapshot);
+  return presentation.active ? { snapshot, presentation } : null;
+}
+
+function hitTestHeroAtCoord(coord) {
+  const source = heroMovementPresentation();
+  if (!source || !coord) return null;
+  const geom = renderer.geometry(source.snapshot.tiles, source.snapshot.grid);
+  const point = renderer.center(coord, geom);
+  return hitTestHeroesPresentation(source.presentation, point, (candidate) => renderer.center(candidate, geom), geom.r * 0.7);
+}
+
+function hitTestHeroAtPointer(event) {
+  const source = heroMovementPresentation();
+  if (!source) return null;
+  const rect = canvas.getBoundingClientRect();
+  const geom = renderer.geometry(source.snapshot.tiles, source.snapshot.grid);
+  const point = { x: (event.clientX - rect.left) * canvas.width / rect.width, y: (event.clientY - rect.top) * canvas.height / rect.height };
+  return hitTestHeroesPresentation(source.presentation, point, (candidate) => renderer.center(candidate, geom), geom.r * 0.7);
+}
 
 function clearNavigationOverlay() {
   navigationOverlayPlacementState = null;
@@ -885,7 +910,7 @@ function refreshNavigationOverlay(coord = navigationHoverCoord || keyboardCoord)
   if (blocked?.reasonKey === "reason.lastPathBlocked") message = "That tower would block the last path.";
 }
 
-function actAtCoord(coord) {
+function actAtCoord(coord, heroHitId = null) {
   if (!coord) return;
   if (sellMode) {
     const towerAt = game.getTowerIdAt(coord);
@@ -895,6 +920,16 @@ function actAtCoord(coord) {
     return;
   }
   if (armedAbility) { report(game.useAbility(armedAbility, coord)); setArmed(null); return; }
+  if (selectedHeroId) {
+    const result = dispatchGameCommand(game, {
+      schemaVersion: 4, type: "moveHero", heroId: selectedHeroId,
+      target: { q: coord.q, r: coord.r }
+    });
+    report(result);
+    if (result.ok) selectedHeroId = null;
+    return;
+  }
+  if (heroHitId) { selectedHeroId = heroHitId; selectedTowerId = null; message = "Hero selected. Choose a destination."; return; }
   const towerAt = game.getTowerIdAt(coord);
   if (towerAt) { selectedTowerId = towerAt; message = "Tower selected."; return; }
   if (!towerId) return;
@@ -992,6 +1027,7 @@ function initSelectors() {
     missionId = missionSelect.value;
     towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
     game = createGame();
+    selectedHeroId = null;
     syncKeyboardCursor(null);
     clearNavigationOverlay();
     victoryRewarded = false;
@@ -1015,6 +1051,7 @@ function initDifficultySelector() {
     const result = choosePlayerDifficulty(select.value);
     if (!result.ok) { select.value = currentPlayerLaunchOptions().difficultyId; return; }
     game = createGame();
+    selectedHeroId = null;
     clearNavigationOverlay();
     victoryRewarded = false;
     selectedTowerId = null;
@@ -1165,6 +1202,7 @@ function selectCampaignNode(nodeId) {
     return;
   }
   towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
+  selectedHeroId = null;
   refreshMissionOptions();
   syncKeyboardCursor(null);
   clearNavigationOverlay();
@@ -1561,7 +1599,9 @@ import {
   projectMarkPresentationCues,
   projectNavigationPlacementCues,
   projectPhysicsPresentationCues,
+  hitTestHeroesPresentation,
   projectHeroesPresentation,
+  projectHeroPresentationPoint,
   projectRoguelitePresentation,
   projectReactionPresentationCues,
   projectSnapshotSpawnCoord,
@@ -1611,6 +1651,7 @@ let message = "Choose a tower, click a buildable tile, then start the wave.";
 let armedAbility = null;
 let sellMode = false;
 let selectedTowerId = null;
+let selectedHeroId = null;
 let keyboardCoord = null;
 let navigationHoverCoord = null;
 let navigationOverlay = projectNavigationPlacementCues(undefined);
@@ -1641,7 +1682,7 @@ updateCampaignRun();
 $("start-wave").addEventListener("click", () => { audio.resume(); report(game.startNextWave()); });
 $("pause-run").addEventListener("click", () => setPaused(Number($("speed").value) > 0));
 $("sell-mode").addEventListener("click", () => setSellMode(!sellMode));
-$("reset-run").addEventListener("click", () => { game.reset(); victoryRewarded = false; selectedTowerId = null; initAbilityBar(); setSellMode(false); clearNavigationOverlay(); message = "Run reset."; });
+$("reset-run").addEventListener("click", () => { game.reset(); victoryRewarded = false; selectedTowerId = null; selectedHeroId = null; initAbilityBar(); setSellMode(false); clearNavigationOverlay(); message = "Run reset."; });
 $("reset-progress")?.addEventListener("click", resetPlayerProgress);
 $("speed").addEventListener("input", syncSpeedUi);
 $("snd").addEventListener("change", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
@@ -1660,8 +1701,8 @@ document.addEventListener("keydown", (event) => {
   if (document.activeElement !== $("playfield")) return;
   const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
   if (moves[event.key]) { event.preventDefault(); moveKeyboardCursor(moves[event.key][0], moves[event.key][1]); }
-  else if (event.key === "Enter") { event.preventDefault(); actAtCoord(ensureKeyboardCoord()); }
-  else if (event.key === "Escape") { event.preventDefault(); setArmed(null); setSellMode(false); message = "Build action cancelled."; }
+  else if (event.key === "Enter") { event.preventDefault(); const coord = ensureKeyboardCoord(); actAtCoord(coord, hitTestHeroAtCoord(coord)); }
+  else if (event.key === "Escape") { event.preventDefault(); selectedHeroId = null; setArmed(null); setSellMode(false); message = "Build action cancelled."; }
 });
 syncSpeedUi();
 syncAudioSettings();
@@ -1671,6 +1712,17 @@ showStoryForMission("beforeMission");
 $("playfield").addEventListener("focus", () => syncKeyboardCursor(ensureKeyboardCoord()));
 
 function createGame() { return new TowerDefenseGame({ missionId, content, ...currentPlayerLaunchOptions() }); }
+
+function hitTestHeroAtCoord(coord) {
+  const scene = typeof phaserGame === "undefined" ? null : phaserGame.scene.getScenes(true)[0];
+  if (!scene || !coord) return null;
+  const snapshot = game.getRenderSnapshot();
+  if (snapshot?.heroes?.schemaVersion !== 2) return null;
+  const presentation = projectHeroesPresentation(snapshot);
+  const geom = scene.geometry(snapshot.tiles, snapshot.grid);
+  const point = scene.center(coord, geom);
+  return hitTestHeroesPresentation(presentation, point, (candidate) => scene.center(candidate, geom), geom.r * 0.7);
+}
 
 function clearNavigationOverlay() {
   navigationOverlay = projectNavigationPlacementCues(undefined);
@@ -1748,7 +1800,7 @@ function refreshNavigationOverlay(coord = navigationHoverCoord || keyboardCoord)
   if (blocked?.reasonKey === "reason.lastPathBlocked") message = "That tower would block the last path.";
 }
 
-function actAtCoord(coord) {
+function actAtCoord(coord, heroHitId = null) {
   if (!coord) return;
   if (sellMode) {
     const towerAt = game.getTowerIdAt(coord);
@@ -1758,6 +1810,16 @@ function actAtCoord(coord) {
     return;
   }
   if (armedAbility) { report(game.useAbility(armedAbility, coord)); setArmed(null); return; }
+  if (selectedHeroId) {
+    const result = dispatchGameCommand(game, {
+      schemaVersion: 4, type: "moveHero", heroId: selectedHeroId,
+      target: { q: coord.q, r: coord.r }
+    });
+    report(result);
+    if (result.ok) selectedHeroId = null;
+    return;
+  }
+  if (heroHitId) { selectedHeroId = heroHitId; selectedTowerId = null; message = "Hero selected. Choose a destination."; return; }
   const towerAt = game.getTowerIdAt(coord);
   if (towerAt) { selectedTowerId = towerAt; message = "Tower selected."; return; }
   if (!towerId) return;
@@ -1864,14 +1926,16 @@ class PlayScene extends Phaser.Scene {
     this.registerAtlasFrames();
     this.input.on("pointerdown", (p) => {
       audio.resume();
-      const coord = this.pickTile(p.worldX, p.worldY);
+      const point = this.pointerScenePoint(p);
+      const coord = point && this.pickTile(point.x, point.y);
       if (!coord) return;
       window.__towerforgeLastPointerCoord = coord;
       syncKeyboardCursor(coord);
-      actAtCoord(coord);
+      actAtCoord(coord, this.hitTestHero(point.x, point.y));
     });
     this.input.on("pointermove", (p) => {
-      const coord = this.pickTile(p.worldX, p.worldY);
+      const point = this.pointerScenePoint(p);
+      const coord = point && this.pickTile(point.x, point.y);
       if (coord?.q === navigationHoverCoord?.q && coord?.r === navigationHoverCoord?.r) return;
       navigationHoverCoord = coord;
       refreshNavigationOverlay(navigationHoverCoord);
@@ -1880,6 +1944,25 @@ class PlayScene extends Phaser.Scene {
       navigationHoverCoord = null;
       refreshNavigationOverlay(keyboardCoord);
     });
+  }
+  pointerScenePoint(pointer) {
+    const event = pointer && pointer.event;
+    const source = event && ((event.changedTouches && event.changedTouches[0])
+      || (event.touches && event.touches[0]) || event);
+    const rect = this.game.canvas.getBoundingClientRect();
+    if (!source || !Number.isFinite(source.clientX) || !Number.isFinite(source.clientY)
+      || !(rect.width > 0) || !(rect.height > 0)) return null;
+    return {
+      x: (source.clientX - rect.left) * this.scale.width / rect.width,
+      y: (source.clientY - rect.top) * this.scale.height / rect.height
+    };
+  }
+  hitTestHero(x, y) {
+    const snapshot = game.getRenderSnapshot();
+    if (snapshot?.heroes?.schemaVersion !== 2) return null;
+    const presentation = projectHeroesPresentation(snapshot);
+    const geom = this.geometry(snapshot.tiles, snapshot.grid);
+    return hitTestHeroesPresentation(presentation, { x, y }, (coord) => this.center(coord, geom), geom.r * 0.7);
   }
   registerAtlasFrames() {
     for (const [spriteId, sprite] of Object.entries(content.visuals?.sprites || {})) {
@@ -2219,13 +2302,14 @@ class PlayScene extends Phaser.Scene {
     }
     for (const [id, lbl] of this.towerLabels) { if (!seen.has(id)) { lbl.destroy(); this.towerLabels.delete(id); } }
 
-    // R5.1A renders the exact fail-closed engine snapshot only. There are intentionally no hero
-    // input controls or commands in this static foundation slice.
+    // Both heroes schemas render from the exact fail-closed engine snapshot. V1 remains static;
+    // v2 input above dispatches GameCommandV4 while this scene only projects presentation state.
     const heroPresentation = projectHeroesPresentation(snap);
     const seenHeroes = new Set();
     for (const hero of heroPresentation.units) {
       seenHeroes.add(hero.id);
-      const point = this.center(hero.coord, g);
+      const point = projectHeroPresentationPoint(hero, (coord) => this.center(coord, g));
+      if (!point) continue;
       const heroBindings = ownDataValue(ownDataValue(content.visuals, "bindings"), "heroes");
       const spriteId = ownDataValue(heroBindings, hero.definitionId);
       const texture = this.spriteTexture(spriteId);
@@ -2459,6 +2543,7 @@ function initSelectors() {
     missionId = missionSelect.value;
     towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
     game = createGame();
+    selectedHeroId = null;
     syncKeyboardCursor(null);
     clearNavigationOverlay();
     victoryRewarded = false;
@@ -2482,6 +2567,7 @@ function initDifficultySelector() {
     const result = choosePlayerDifficulty(select.value);
     if (!result.ok) { select.value = currentPlayerLaunchOptions().difficultyId; return; }
     game = createGame();
+    selectedHeroId = null;
     clearNavigationOverlay();
     victoryRewarded = false;
     selectedTowerId = null;
@@ -2631,6 +2717,7 @@ function selectCampaignNode(nodeId) {
     return;
   }
   towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
+  selectedHeroId = null;
   refreshMissionOptions();
   syncKeyboardCursor(null);
   clearNavigationOverlay();

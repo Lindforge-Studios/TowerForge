@@ -79,6 +79,25 @@ function coordinate(value) {
   return Object.freeze({ q: coord.q, r: coord.r });
 }
 
+function nullableCoordinate(value) {
+  return value === null ? null : coordinate(value);
+}
+
+function movement(value) {
+  const record = exactRecord(value, ["targetCoord", "nextCoord", "edgeProgress"]);
+  if (!record) return null;
+  const targetCoord = nullableCoordinate(record.targetCoord);
+  const nextCoord = nullableCoordinate(record.nextCoord);
+  const edgeProgress = record.edgeProgress;
+  if ((record.targetCoord !== null && !targetCoord)
+    || (record.nextCoord !== null && !nextCoord)
+    || typeof edgeProgress !== "number" || !Number.isFinite(edgeProgress)
+    || edgeProgress < 0 || edgeProgress >= 1
+    || (nextCoord === null && edgeProgress !== 0)
+    || (targetCoord === null && nextCoord !== null)) return null;
+  return Object.freeze({ targetCoord, nextCoord, edgeProgress });
+}
+
 /**
  * Project only the authoritative optional engine snapshot. Invalid/future/untrusted shapes fail
  * closed to the same inactive sentinel; renderers never reconstruct a hero from mechanics data.
@@ -87,14 +106,16 @@ export function projectHeroesPresentation(snapshot) {
   const value = ownData(snapshot, "heroes");
   if (value === undefined || value === null) return INACTIVE;
   const section = exactRecord(value, ["schemaVersion", "units"]);
-  if (!section || section.schemaVersion !== 1) return INACTIVE;
+  if (!section || (section.schemaVersion !== 1 && section.schemaVersion !== 2)) return INACTIVE;
   const authoredUnits = denseArray(section.units, MAX_UNITS);
   if (!authoredUnits || authoredUnits.length !== 1) return INACTIVE;
   const units = [];
   const ids = new Set();
   const definitionIds = new Set();
   for (const value of authoredUnits) {
-    const unit = exactRecord(value, ["id", "definitionId", "label", "coord"]);
+    const unit = exactRecord(value, section.schemaVersion === 1
+      ? ["id", "definitionId", "label", "coord"]
+      : ["id", "definitionId", "label", "coord", "movement"]);
     if (!unit) return INACTIVE;
     const id = boundedText(unit.id, MAX_ID_BYTES);
     const definitionId = boundedText(unit.definitionId, MAX_ID_BYTES);
@@ -104,7 +125,53 @@ export function projectHeroesPresentation(snapshot) {
       || ids.has(id) || definitionIds.has(definitionId)) return INACTIVE;
     ids.add(id);
     definitionIds.add(definitionId);
-    units.push(Object.freeze({ id, definitionId, label, coord }));
+    if (section.schemaVersion === 1) {
+      units.push(Object.freeze({ id, definitionId, label, coord }));
+      continue;
+    }
+    const projectedMovement = movement(unit.movement);
+    if (!projectedMovement) return INACTIVE;
+    units.push(Object.freeze({ id, definitionId, label, coord, movement: projectedMovement }));
   }
   return Object.freeze({ active: true, units: Object.freeze(units) });
+}
+
+/** Convert one detached presentation unit into a renderer point without pathfinding. */
+export function projectHeroPresentationPoint(hero, coordToPoint) {
+  if (typeof coordToPoint !== "function") return undefined;
+  try {
+    const current = coordinate(ownData(hero, "coord"));
+    if (!current) return undefined;
+    const currentPoint = coordToPoint(current);
+    if (!currentPoint || !Number.isFinite(currentPoint.x) || !Number.isFinite(currentPoint.y)) return undefined;
+    const authoredMovement = ownData(hero, "movement");
+    if (authoredMovement === undefined) return { x: currentPoint.x, y: currentPoint.y };
+    const projectedMovement = movement(authoredMovement);
+    if (!projectedMovement) return undefined;
+    if (projectedMovement.nextCoord === null) return { x: currentPoint.x, y: currentPoint.y };
+    const nextPoint = coordToPoint(projectedMovement.nextCoord);
+    if (!nextPoint || !Number.isFinite(nextPoint.x) || !Number.isFinite(nextPoint.y)) return undefined;
+    const progress = projectedMovement.edgeProgress;
+    return {
+      x: currentPoint.x + (nextPoint.x - currentPoint.x) * progress,
+      y: currentPoint.y + (nextPoint.y - currentPoint.y) * progress
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Presentation-only hit test; returns an authoritative snapshot unit id or null. */
+export function hitTestHeroesPresentation(presentation, point, coordToPoint, radius = 0) {
+  if (!presentation?.active || !Array.isArray(presentation.units)
+    || !point || !Number.isFinite(point.x) || !Number.isFinite(point.y)
+    || !Number.isFinite(radius) || radius < 0) return null;
+  for (const hero of presentation.units) {
+    const projected = projectHeroPresentationPoint(hero, coordToPoint);
+    if (!projected) continue;
+    const dx = projected.x - point.x;
+    const dy = projected.y - point.y;
+    if (dx * dx + dy * dy <= radius * radius) return hero.id;
+  }
+  return null;
 }

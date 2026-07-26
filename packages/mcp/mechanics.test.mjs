@@ -195,8 +195,16 @@ describe("R1 combat mechanics MCP contract", () => {
     };
     const heroesSurface = {
       authoring: engine.HEROES_MECHANICS_SCHEMA,
-      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1] },
-      events: []
+      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1, 2] },
+      events: [],
+      commands: {
+        schemaVersion: 4,
+        moveHero: {
+          requiredFields: ["heroId", "target"],
+          optionalFields: [],
+          additionalProperties: false
+        }
+      }
     };
 
     expect(engine.COMBAT_MECHANICS_SCHEMA).toMatchObject({

@@ -8,8 +8,8 @@ import {
   type TowerTargetMode
 } from "./types.js";
 
-export const GAME_COMMAND_SCHEMA_VERSION = 3 as const;
-export const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2, 3] as const);
+export const GAME_COMMAND_SCHEMA_VERSION = 4 as const;
+export const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4] as const);
 
 export type GameCommandV1 =
   | { readonly schemaVersion: 1; readonly type: "tick"; readonly units: number }
@@ -110,7 +110,16 @@ export type GameCommandV3 =
       readonly cardId: string;
     };
 
-export type GameCommand = GameCommandV1 | GameCommandV2 | GameCommandV3;
+export type GameCommandV4 =
+  | WithCommandSchemaVersion<GameCommandV3, 4>
+  | {
+      readonly schemaVersion: 4;
+      readonly type: "moveHero";
+      readonly heroId: string;
+      readonly target: Readonly<GridCoord>;
+    };
+
+export type GameCommand = GameCommandV1 | GameCommandV2 | GameCommandV3 | GameCommandV4;
 
 const MAX_PAYLOAD_DEPTH = 32;
 const MAX_PAYLOAD_NODES = 4_096;
@@ -164,7 +173,7 @@ function isBoundedCommandId(value: unknown): value is string {
   return isTrimmedId(value) && utf8ByteLength(value) <= 128;
 }
 
-function isCommandId(schemaVersion: 1 | 2 | 3, value: unknown): value is string {
+function isCommandId(schemaVersion: 1 | 2 | 3 | 4, value: unknown): value is string {
   return schemaVersion === 1 ? isTrimmedId(value) : isBoundedCommandId(value);
 }
 
@@ -291,7 +300,7 @@ export function parseGameCommand(input: unknown): GameCommand | undefined {
   if (!fields) return undefined;
   const schemaVersion = fields.get("schemaVersion");
   const type = fields.get("type");
-  if ((schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3) || typeof type !== "string") return undefined;
+  if ((schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3 && schemaVersion !== 4) || typeof type !== "string") return undefined;
 
   if (type === "tick") {
     if (!hasClosedFields(fields, ["schemaVersion", "type", "units"])) return undefined;
@@ -349,7 +358,7 @@ export function parseGameCommand(input: unknown): GameCommand | undefined {
     if (payload === undefined) return undefined;
     return { schemaVersion, type, signal, payload } as GameCommand;
   }
-  if ((schemaVersion === 2 || schemaVersion === 3) && (type === "socketArtifact" || type === "unsocketArtifact")) {
+  if ((schemaVersion === 2 || schemaVersion === 3 || schemaVersion === 4) && (type === "socketArtifact" || type === "unsocketArtifact")) {
     if (!hasClosedFields(fields, ["schemaVersion", "type", "artifactInstanceId", "towerId", "slotId"])) {
       return undefined;
     }
@@ -361,12 +370,19 @@ export function parseGameCommand(input: unknown): GameCommand | undefined {
       || !isBoundedCommandId(slotId)) return undefined;
     return { schemaVersion, type, artifactInstanceId, towerId, slotId } as GameCommand;
   }
-  if (schemaVersion === 3 && type === "chooseDraftOption") {
+  if ((schemaVersion === 3 || schemaVersion === 4) && type === "chooseDraftOption") {
     if (!hasClosedFields(fields, ["schemaVersion", "type", "offerId", "cardId"])) return undefined;
     const offerId = fields.get("offerId");
     const cardId = fields.get("cardId");
     if (!isBoundedCommandId(offerId) || !isBoundedCommandId(cardId)) return undefined;
-    return { schemaVersion: 3, type, offerId, cardId };
+    return { schemaVersion, type, offerId, cardId } as GameCommand;
+  }
+  if (schemaVersion === 4 && type === "moveHero") {
+    if (!hasClosedFields(fields, ["schemaVersion", "type", "heroId", "target"])) return undefined;
+    const heroId = fields.get("heroId");
+    const target = parseCoord(fields.get("target"));
+    if (!isBoundedCommandId(heroId) || !target) return undefined;
+    return { schemaVersion: 4, type, heroId, target };
   }
   return undefined;
 }
@@ -402,5 +418,7 @@ export function executeParsedGameCommand(
       return game.unsocketArtifact(command.artifactInstanceId, command.towerId, command.slotId);
     case "chooseDraftOption":
       return game.chooseDraftOption(command.offerId, command.cardId);
+    case "moveHero":
+      return game.moveHero(command.heroId, command.target);
   }
 }

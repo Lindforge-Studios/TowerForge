@@ -18,7 +18,7 @@ import {
 export { projectLineOfSightAnalysis } from "./line-of-sight-presentation.mjs";
 import { projectElevationCues } from "./elevation-presentation.mjs";
 import { projectPhysicsPresentationCues } from "./physics-presentation.mjs";
-import { projectHeroesPresentation } from "./heroes-presentation.mjs";
+import { projectHeroPresentationPoint, projectHeroesPresentation } from "./heroes-presentation.mjs";
 export * from "./autotile.mjs";
 export * from "./combat-presentation.mjs";
 export * from "./navigation-presentation.mjs";
@@ -646,7 +646,8 @@ export class TowerForgeCanvasRenderer {
   }
 
   drawHero(hero, geom) {
-    const p = this.center(hero.coord, geom);
+    const p = projectHeroPresentationPoint(hero, (coord) => this.center(coord, geom));
+    if (!p) return;
     const sprite = this.spriteFor("heroes", hero.definitionId);
     this.ctx.save();
     if (sprite) {

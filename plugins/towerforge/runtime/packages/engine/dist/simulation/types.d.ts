@@ -940,6 +940,19 @@ export interface HeroesSnapshotV1 {
     readonly schemaVersion: 1;
     readonly units: readonly HeroUnitStateV1[];
 }
+export interface HeroMovementStateSnapshotV2 {
+    readonly targetCoord: Readonly<GridCoord> | null;
+    readonly nextCoord: Readonly<GridCoord> | null;
+    readonly edgeProgress: number;
+}
+export interface HeroUnitStateV2 extends HeroUnitStateV1 {
+    readonly movement: HeroMovementStateSnapshotV2;
+}
+export interface HeroesSnapshotV2 {
+    readonly schemaVersion: 2;
+    readonly units: readonly HeroUnitStateV2[];
+}
+export type HeroesSnapshot = HeroesSnapshotV1 | HeroesSnapshotV2;
 export interface GameSnapshot {
     /** Canonical authored map identity for presentation and renderer adapters. */
     mapId: string;
@@ -985,7 +998,7 @@ export interface GameSnapshot {
     elevation?: ElevationSnapshotV1;
     terraforming?: TerraformingSnapshotV1;
     roguelite?: RogueliteSnapshot;
-    heroes?: HeroesSnapshotV1;
+    heroes?: HeroesSnapshot;
     scriptState: import("../scripting/types.js").TowerScriptStateSnapshot;
     lastEvents: GameEvent[];
 }

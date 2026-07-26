@@ -52,9 +52,9 @@ describe("R5.1A shared heroes presentation", () => {
     expect(projector()(undefined)).toEqual({ active: false, units: [] });
   });
 
-  it("fails closed on future, duplicate, multi-unit, extra-field, and accessor-backed shapes", () => {
+  it("fails closed on future v3, duplicate, multi-unit, extra-field, and accessor-backed v1 shapes", () => {
     const project = projector();
-    expect(project({ heroes: { ...snapshot().heroes, schemaVersion: 2 } })).toEqual({ active: false, units: [] });
+    expect(project({ heroes: { ...snapshot().heroes, schemaVersion: 3 } })).toEqual({ active: false, units: [] });
     expect(project({ heroes: { schemaVersion: 1, units: [] } })).toEqual({ active: false, units: [] });
     expect(project({
       heroes: { schemaVersion: 1, units: [{ ...snapshot().heroes.units[0], definitionId: "other" }] }

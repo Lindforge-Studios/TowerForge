@@ -185,9 +185,29 @@ R4.4C независимо версионирует только campaign marker
 
 R5.1A отдельно вводит только статический foundation-контракт `heroes` v1. Профиль закрытой формы `{selectedHeroId, definitions}` выбирает одного героя из 1–32 определений `{label, spawn:"core"}`; ID и label ограничены 128 реальными UTF-8 bytes. Активная миссия выводит один immutable unit в `map.coreCoord` и публикует optional `snapshot.heroes` v1 с полями `id`, `definitionId`, `label`, `coord`. Engine остаётся единственным источником selection/spawn, а Canvas и Phaser используют общий fail-closed projector и необязательный `visuals.bindings.heroes` с shape fallback.
 
-В R5.1A намеренно нет `moveHero`, hero HP/shield, mana, cooldowns, abilities, skills, auras, blocking, TowerScript scope/events/actions, RNG или mutable runtime state. Поэтому outer checkpoint v1, `towerforge-sim-v2`, GameCommand/Journal v3 и TowerScript v6 не меняются, а checkpoint не получает hero-секцию: restore повторно выводит unit из уже привязанного content digest и map core. Missing selected-definition reference является error только для active-selected профиля и warning в выключенном/невыбранном профиле; future `heroes` v2 остаётся opaque/read-only. Движение, GameCommand/Journal v4 и nested hero checkpoint принадлежат отдельному R5.1B RED/GREEN циклу.
+В самостоятельном v1-пути R5.1A намеренно нет `moveHero`, hero HP/shield, mana, cooldowns, abilities, skills, auras, blocking, TowerScript scope/events/actions, RNG или mutable runtime state. Поэтому его checkpoint не получает hero-секцию: restore повторно выводит unit из уже привязанного content digest и map core. Missing selected-definition reference является error только для active-selected профиля и warning в выключенном/невыбранном профиле. Движение, GameCommand/Journal v4 и nested hero checkpoint принадлежат отдельному opt-in R5.1B циклу ниже; v1 остаётся byte-compatible.
 
-R5.1A принят 2026-07-26. Начальный независимый RED дал 29 падений из 36 contracts в восьми файлах; verifier-циклы отдельно закрепили revoked/self-revoking Proxy, exact `{q,r}`, own-safe `__proto__` bind/remove и sprite lookup, inherited renderer bindings, Phaser `undefined` coercion и запрет преждевременно рекламировать active hero mechanics. Финальный focused набор — 50/50, full Vitest — 2 042/2 042 в 179 файлах, full Playwright — 49/49. Typecheck, engine/build, validate, sim, balance, maps, web build и plugin build/validate/smoke прошли; source↔plugin parity подтверждена. Независимая constructor-проверка также подтвердила Studio lifecycle, Canvas/Phaser × hex/square, 4 templates × 2 grids × 2 renderers, PWA/single-file/file-URL boot, web-package и `.tdpack` export/import/validate. Code verifier и constructor-integration verifier выдали PASS без открытых P0–P3 findings. Контракт описан в [ADR 0037](adr/0037-opt-in-static-hero-roster-foundation.md), copyable fixture — `docs/examples/opt-in-hero-roster/`; следующий отдельный RED/GREEN срез — R5.1B movement/commands/checkpoint.
+R5.1A принят 2026-07-26. Начальный независимый RED дал 29 падений из 36 contracts в восьми файлах; verifier-циклы отдельно закрепили revoked/self-revoking Proxy, exact `{q,r}`, own-safe `__proto__` bind/remove и sprite lookup, inherited renderer bindings, Phaser `undefined` coercion и запрет преждевременно рекламировать active hero mechanics. Финальный focused набор — 50/50, full Vitest — 2 042/2 042 в 179 файлах, full Playwright — 49/49. Typecheck, engine/build, validate, sim, balance, maps, web build и plugin build/validate/smoke прошли; source↔plugin parity подтверждена. Независимая constructor-проверка также подтвердила Studio lifecycle, Canvas/Phaser × hex/square, 4 templates × 2 grids × 2 renderers, PWA/single-file/file-URL boot, web-package и `.tdpack` export/import/validate. Code verifier и constructor-integration verifier выдали PASS без открытых P0–P3 findings. Контракт описан в [ADR 0037](adr/0037-opt-in-static-hero-roster-foundation.md), copyable fixture — `docs/examples/opt-in-hero-roster/`; последующий отдельный R5.1B срез принят ниже.
+
+R5.1B принят 2026-07-26 отдельным RED/GREEN-срезом. `heroes` v2 получает собственные
+`movementProfiles` и nested `{movementProfileId,speed}` без зависимости от opt-in `navigation`;
+движение принимает только exact `GameCommandV4 moveHero`, а checkpoint/journal/replay версии
+эволюционируют независимо. `snapshot.heroes` v2 публикует точные nullable target/next/progress,
+Canvas и Phaser используют общий fail-closed interpolation/hit-test и хранят selection только в
+UI. V1 остаётся статическим, absent/disabled path не получает новых DOM/input/runtime секций.
+
+Независимый engine RED дал 8 ожидаемых падений из 38 focused tests, surface RED — 13 из 32;
+последующие verifier RED отдельно закрыли dirty-checkpoint canonicalization, чистоту read-only
+snapshot/digest/checkpoint, unsafe map-cell product, terrain references/budgets и lossless Studio
+preview. Финальный full Vitest — 2 075/2 075 в 182 файлах; full Playwright — 63/63, включая точную
+матрицу `Canvas/Phaser × hex/square × mouse/touch/keyboard`, malformed-v2 preview и полный Studio
+v2 lifecycle. `describe_schema` раскрывает shared closed `MovementProfileV1`, а automated MCP flow
+проходит `describe → read → recipe → preview → guarded apply → validate → stale revision` без
+активации navigation. Typecheck, engine/build, validate, sim, balance, maps, web build,
+plugin build/validate/smoke, PWA/single-file/file URL, web-package и `.tdpack` прошли. Независимые
+code verifier и constructor-integration verifier выдали PASS без открытых P0–P3 findings. Контракт
+зафиксирован в [ADR 0038](adr/0038-opt-in-deterministic-hero-movement.md), copyable v2 fixture —
+`docs/examples/opt-in-hero-roster/mechanics-mobile.json`.
 
 ### R6 — TowerScript DX 2.0
 

@@ -43,7 +43,10 @@ import {
 } from "./roguelite-mechanics.js";
 import {
   HeroesProfileValidationError,
-  normalizeHeroesProfileV1
+  normalizeHeroesProfileV1,
+  normalizeHeroesProfileV2,
+  type HeroesProfileV1,
+  type HeroesProfileV2
 } from "./heroes-mechanics.js";
 import {
   normalizeAuthoredWorldCampaign,
@@ -2521,6 +2524,118 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
         }
       }
     };
+    const utf8Bytes = (value: string): number => {
+      let bytes = 0;
+      for (const character of value) {
+        const point = character.codePointAt(0)!;
+        bytes += point <= 0x7f ? 1 : point <= 0x7ff ? 2 : point <= 0xffff ? 3 : 4;
+      }
+      return bytes;
+    };
+    const validateActiveHeroTerrainBudgets = (profileId: string): void => {
+      const root = `modules.heroes.profiles.${profileId}.terrainTypes`;
+      const terrainTypes = inspect(
+        content.terrainTypes,
+        profileId,
+        root,
+        "Active hero movement terrain types"
+      );
+      if (!terrainTypes) return;
+      const terrainIds = Object.keys(terrainTypes).sort();
+      if (terrainIds.length > NAVIGATION_LIMITS.terrainDefinitions) {
+        err(
+          "mechanics",
+          profileId,
+          root,
+          `Active hero movement terrain definitions exceed the ${NAVIGATION_LIMITS.terrainDefinitions} definition budget.`
+        );
+      }
+
+      let totalTags = 0;
+      for (const terrainId of terrainIds) {
+        const definitionPath = `${root}.${terrainId}`;
+        if (terrainId.length === 0 || utf8Bytes(terrainId) > NAVIGATION_LIMITS.idUtf8Bytes) {
+          err(
+            "mechanics",
+            profileId,
+            `${definitionPath}.id`,
+            `Active hero movement terrain id must contain 1..${NAVIGATION_LIMITS.idUtf8Bytes} UTF-8 bytes.`
+          );
+        }
+        const definition = inspect(
+          terrainTypes[terrainId],
+          profileId,
+          definitionPath,
+          "Active hero movement terrain definition"
+        );
+        if (!definition) continue;
+        if (typeof definition.label === "string" && definition.label.length > NAVIGATION_LIMITS.labelLength) {
+          err(
+            "mechanics",
+            profileId,
+            `${definitionPath}.label`,
+            `Active hero movement terrain label exceeds the ${NAVIGATION_LIMITS.labelLength} character budget.`
+          );
+        }
+        if (!Array.isArray(definition.tags)) continue;
+        const tags = definition.tags;
+        if (tags.length > NAVIGATION_LIMITS.terrainTagsPerDefinition) {
+          err(
+            "mechanics",
+            profileId,
+            `${definitionPath}.tags`,
+            `Active hero movement terrain tags exceed the ${NAVIGATION_LIMITS.terrainTagsPerDefinition} tag-per-definition budget.`
+          );
+        }
+        totalTags += tags.length;
+        for (let index = 0; index < tags.length; index += 1) {
+          const tag = tags[index];
+          if (typeof tag === "string" && utf8Bytes(tag) > NAVIGATION_LIMITS.terrainTagUtf8Bytes) {
+            err(
+              "mechanics",
+              profileId,
+              `${definitionPath}.tags[${index}]`,
+              `Active hero movement terrain tag exceeds the ${NAVIGATION_LIMITS.terrainTagUtf8Bytes} UTF-8 byte budget.`
+            );
+          }
+        }
+      }
+      if (totalTags > NAVIGATION_LIMITS.terrainTagsAcrossDefinitions) {
+        err(
+          "mechanics",
+          profileId,
+          root,
+          `Active hero movement terrain tags exceed the ${NAVIGATION_LIMITS.terrainTagsAcrossDefinitions} total-tag budget.`
+        );
+      }
+    };
+    const validateActiveHeroMapBudget = (profileId: string, missionId: string): void => {
+      const mission = content.missions[missionId];
+      if (!mission || typeof mission.mapId !== "string") return;
+      const mapId = mission.mapId;
+      const map = content.maps[mapId];
+      if (!map) return;
+      const hasSafePositiveDimensions = Number.isSafeInteger(map.width) && map.width > 0
+        && Number.isSafeInteger(map.height) && map.height > 0;
+      const cellCount = hasSafePositiveDimensions ? map.width * map.height : undefined;
+      if (cellCount !== undefined && !Number.isSafeInteger(cellCount)) {
+        err(
+          "mission",
+          missionId,
+          `maps.${mapId}.heroes.cells`,
+          `Active hero movement map cell product must be a safe integer within the `
+          + `${NAVIGATION_LIMITS.activeMapCells} cell budget for profile "${profileId}".`
+        );
+      } else if (cellCount !== undefined && cellCount > NAVIGATION_LIMITS.activeMapCells) {
+        err(
+          "mission",
+          missionId,
+          `maps.${mapId}.heroes.cells`,
+          `Active hero movement map dimensions contain ${cellCount} cells, exceeding the `
+          + `${NAVIGATION_LIMITS.activeMapCells} cell budget for profile "${profileId}".`
+        );
+      }
+    };
 
     const catalog = inspect(content.mechanics, "heroes", "mechanics", "Mechanics catalog");
     if (!catalog) return;
@@ -2545,12 +2660,12 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
     const module = inspect(modules.heroes, "heroes", "modules.heroes", "Heroes mechanics module");
     if (!module) return;
     unknownFields(module, ["schemaVersion", "enabled", "profiles"], "heroes", "modules.heroes");
-    if (module.schemaVersion !== 1) {
+    if (module.schemaVersion !== 1 && module.schemaVersion !== 2) {
       err(
         "mechanics",
         "heroes",
         "modules.heroes.schemaVersion",
-        "Heroes future or unsupported schemaVersion; only version 1 is supported."
+        "Heroes future or unsupported schemaVersion; only versions 1 and 2 are supported."
       );
     }
     if (typeof module.enabled !== "boolean") {
@@ -2560,7 +2675,7 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
     if (!profiles) return;
     for (const [missionId, profileId] of selections) {
       if (Object.prototype.hasOwnProperty.call(profiles, profileId)) continue;
-      const active = module.enabled === true && module.schemaVersion === 1;
+      const active = module.enabled === true && (module.schemaVersion === 1 || module.schemaVersion === 2);
       (active ? err : warn)(
         "mission",
         missionId,
@@ -2571,9 +2686,11 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
     const selectedProfileIds = new Set(selections.values());
     for (const profileId of Object.keys(profiles).sort()) {
       const root = `modules.heroes.profiles.${profileId}`;
-      let profile;
+      let profile: HeroesProfileV1 | HeroesProfileV2;
       try {
-        profile = normalizeHeroesProfileV1(profiles[profileId], root);
+        profile = module.schemaVersion === 2
+          ? normalizeHeroesProfileV2(profiles[profileId], root)
+          : normalizeHeroesProfileV1(profiles[profileId], root);
       } catch (error) {
         err(
           "mechanics",
@@ -2583,16 +2700,49 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
         );
         continue;
       }
-      if (Object.prototype.hasOwnProperty.call(profile.definitions, profile.selectedHeroId)) continue;
+      const selectedExists = Object.prototype.hasOwnProperty.call(profile.definitions, profile.selectedHeroId);
       const active = module.enabled === true
-        && module.schemaVersion === 1
+        && (module.schemaVersion === 1 || module.schemaVersion === 2)
         && selectedProfileIds.has(profileId);
-      (active ? err : warn)(
-        "mechanics",
-        profileId,
-        `${root}.selectedHeroId`,
-        `Heroes selectedHeroId "${profile.selectedHeroId}" references a missing definition${active ? "" : " in this inactive or unselected profile"}.`
-      );
+      if (module.schemaVersion === 2) {
+        const v2 = profile as HeroesProfileV2;
+        const semantic = (fieldPath: string, message: string): void => {
+          (active ? err : warn)("mechanics", profileId, fieldPath, message);
+        };
+        for (const [heroId, definition] of Object.entries(v2.definitions)) {
+          const movementProfileId = definition.movement.movementProfileId;
+          if (Object.prototype.hasOwnProperty.call(v2.movementProfiles, movementProfileId)) continue;
+          semantic(
+            `${root}.definitions.${heroId}.movement.movementProfileId`,
+            `Hero movement profile "${movementProfileId}" is missing${active ? "" : " in this inactive or unselected profile"}.`
+          );
+        }
+        for (const [movementProfileId, movementProfile] of Object.entries(v2.movementProfiles)) {
+          for (const terrainId of Object.keys(movementProfile.terrainCosts ?? {})) {
+            if (Object.prototype.hasOwnProperty.call(content.terrainTypes, terrainId)) continue;
+            semantic(
+              `${root}.movementProfiles.${movementProfileId}.terrainCosts.${terrainId}`,
+              `Hero movement terrain cost references unknown terrain "${terrainId}"`
+              + `${active ? "." : " in this inactive or unselected profile."}`
+            );
+          }
+        }
+        if (active) {
+          validateActiveHeroTerrainBudgets(profileId);
+          for (const [missionId, selectedProfileId] of selections) {
+            if (selectedProfileId === profileId) validateActiveHeroMapBudget(profileId, missionId);
+          }
+        }
+      }
+      if (!selectedExists) {
+        (active ? err : warn)(
+          "mechanics",
+          profileId,
+          `${root}.selectedHeroId`,
+          `Heroes selectedHeroId "${profile.selectedHeroId}" references a missing definition${active ? "" : " in this inactive or unselected profile"}.`
+        );
+        continue;
+      }
     }
   };
 

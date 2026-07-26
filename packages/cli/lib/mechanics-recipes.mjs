@@ -16,6 +16,7 @@ const TAGGED_DESTRUCTIBLE_BRIDGE_ID = "tagged_destructible_bridge";
 const BASIC_ELEMENTAL_SYNERGY_ID = "basic_elemental_synergy";
 const BASIC_BOSS_ARTIFACT_LOOT_ID = "basic_boss_artifact_loot";
 const BASIC_COMMANDER_HERO_ID = "basic_commander_hero";
+const BASIC_MOBILE_COMMANDER_HERO_ID = "basic_mobile_commander_hero";
 const TERRAFORMING_RECIPE_IDS = Object.freeze([
   TAGGED_FLOOD_ID,
   TAGGED_MOAT_ID,
@@ -213,6 +214,14 @@ const RECIPES = Object.freeze([
     description: "Inert heroes v1 profile with one static commander spawned at the authored mission core.",
     suggestedId: BASIC_COMMANDER_HERO_ID,
     moduleSchemaVersion: 1
+  }),
+  Object.freeze({
+    id: BASIC_MOBILE_COMMANDER_HERO_ID,
+    moduleId: "heroes",
+    label: "Basic Mobile Commander Hero",
+    description: "Inert heroes v2 profile with one commander and a heroes-owned deterministic ground movement profile.",
+    suggestedId: BASIC_MOBILE_COMMANDER_HERO_ID,
+    moduleSchemaVersion: 2
   })
 ]);
 
@@ -292,6 +301,35 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
           selectedHeroId: "commander",
           definitions: {
             commander: { label: "Commander", spawn: "core" }
+          }
+        }
+      }
+    };
+  }
+  if (recipeId === BASIC_MOBILE_COMMANDER_HERO_ID) {
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "heroes",
+        moduleSchemaVersion: 2,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: {
+          selectedHeroId: "commander",
+          definitions: {
+            commander: {
+              label: "Commander",
+              spawn: "core",
+              movement: { movementProfileId: "ground", speed: 1 }
+            }
+          },
+          movementProfiles: {
+            ground: {
+              label: "Ground",
+              terrainMode: "respect_walkable",
+              towerOccupancy: "blocked",
+              defaultTerrainCost: 1_000
+            }
           }
         }
       }
