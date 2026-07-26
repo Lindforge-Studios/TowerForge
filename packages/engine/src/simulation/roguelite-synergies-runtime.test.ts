@@ -153,7 +153,7 @@ function runtimeInput(
         schemaVersion: 1,
         modules: {
           roguelite: {
-            schemaVersion: mode === "future" ? 3 : 1,
+            schemaVersion: mode === "future" ? 4 : 1,
             enabled: mode !== "disabled",
             profiles: { core: profile }
           }

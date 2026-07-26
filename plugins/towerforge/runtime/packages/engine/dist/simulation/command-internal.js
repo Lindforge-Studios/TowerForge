@@ -1,6 +1,6 @@
 import { TOWER_TARGET_MODES } from "./types.js";
-export const GAME_COMMAND_SCHEMA_VERSION = 2;
-export const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2]);
+export const GAME_COMMAND_SCHEMA_VERSION = 3;
+export const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2, 3]);
 const MAX_PAYLOAD_DEPTH = 32;
 const MAX_PAYLOAD_NODES = 4_096;
 const MAX_PAYLOAD_BYTES = 64 * 1_024;
@@ -174,7 +174,7 @@ export function parseGameCommand(input) {
         return undefined;
     const schemaVersion = fields.get("schemaVersion");
     const type = fields.get("type");
-    if ((schemaVersion !== 1 && schemaVersion !== 2) || typeof type !== "string")
+    if ((schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3) || typeof type !== "string")
         return undefined;
     if (type === "tick") {
         if (!hasClosedFields(fields, ["schemaVersion", "type", "units"]))
@@ -183,14 +183,12 @@ export function parseGameCommand(input) {
         if (typeof units !== "number" || !Number.isFinite(units) || units < 0)
             return undefined;
         const canonicalUnits = canonicalNumber(units);
-        return schemaVersion === 1
-            ? { schemaVersion: 1, type, units: canonicalUnits }
-            : { schemaVersion: 2, type, units: canonicalUnits };
+        return { schemaVersion, type, units: canonicalUnits };
     }
     if (type === "startWave") {
         if (!hasClosedFields(fields, ["schemaVersion", "type"]))
             return undefined;
-        return schemaVersion === 1 ? { schemaVersion: 1, type } : { schemaVersion: 2, type };
+        return { schemaVersion, type };
     }
     if (type === "placeTower") {
         if (!hasClosedFields(fields, ["schemaVersion", "type", "towerTypeId", "coord"]))
@@ -199,9 +197,7 @@ export function parseGameCommand(input) {
         const coord = parseCoord(fields.get("coord"));
         if (!isCommandId(schemaVersion, towerTypeId) || !coord)
             return undefined;
-        return schemaVersion === 1
-            ? { schemaVersion: 1, type, towerTypeId, coord }
-            : { schemaVersion: 2, type, towerTypeId, coord };
+        return { schemaVersion, type, towerTypeId, coord };
     }
     if (type === "moveTower") {
         if (!hasClosedFields(fields, ["schemaVersion", "type", "towerId", "coord"]))
@@ -210,9 +206,7 @@ export function parseGameCommand(input) {
         const coord = parseCoord(fields.get("coord"));
         if (!isCommandId(schemaVersion, towerId) || !coord)
             return undefined;
-        return schemaVersion === 1
-            ? { schemaVersion: 1, type, towerId, coord }
-            : { schemaVersion: 2, type, towerId, coord };
+        return { schemaVersion, type, towerId, coord };
     }
     if (type === "sellTower" || type === "upgradeTower") {
         if (!hasClosedFields(fields, ["schemaVersion", "type", "towerId"]))
@@ -220,9 +214,7 @@ export function parseGameCommand(input) {
         const towerId = fields.get("towerId");
         if (!isCommandId(schemaVersion, towerId))
             return undefined;
-        return schemaVersion === 1
-            ? { schemaVersion: 1, type, towerId }
-            : { schemaVersion: 2, type, towerId };
+        return { schemaVersion, type, towerId };
     }
     if (type === "setTargetMode") {
         if (!hasClosedFields(fields, ["schemaVersion", "type", "towerId", "mode"]))
@@ -231,9 +223,7 @@ export function parseGameCommand(input) {
         const mode = fields.get("mode");
         if (!isCommandId(schemaVersion, towerId) || !isTowerTargetMode(mode))
             return undefined;
-        return schemaVersion === 1
-            ? { schemaVersion: 1, type, towerId, mode }
-            : { schemaVersion: 2, type, towerId, mode };
+        return { schemaVersion, type, towerId, mode };
     }
     if (type === "useAbility") {
         if (!hasClosedFields(fields, ["schemaVersion", "type", "abilityId", "center"]))
@@ -242,9 +232,7 @@ export function parseGameCommand(input) {
         const center = parseCoord(fields.get("center"));
         if (!isCommandId(schemaVersion, abilityId) || !center)
             return undefined;
-        return schemaVersion === 1
-            ? { schemaVersion: 1, type, abilityId, center }
-            : { schemaVersion: 2, type, abilityId, center };
+        return { schemaVersion, type, abilityId, center };
     }
     if (type === "emitSignal") {
         if (!hasClosedFields(fields, ["schemaVersion", "type", "signal"], ["payload"]))
@@ -253,18 +241,14 @@ export function parseGameCommand(input) {
         if (!isCommandId(schemaVersion, signal) || !SAFE_SIGNAL_RE.test(signal))
             return undefined;
         if (!fields.has("payload")) {
-            return schemaVersion === 1
-                ? { schemaVersion: 1, type, signal }
-                : { schemaVersion: 2, type, signal };
+            return { schemaVersion, type, signal };
         }
         const payload = cloneJsonSafePayload(fields.get("payload"));
         if (payload === undefined)
             return undefined;
-        return schemaVersion === 1
-            ? { schemaVersion: 1, type, signal, payload }
-            : { schemaVersion: 2, type, signal, payload };
+        return { schemaVersion, type, signal, payload };
     }
-    if (schemaVersion === 2 && (type === "socketArtifact" || type === "unsocketArtifact")) {
+    if ((schemaVersion === 2 || schemaVersion === 3) && (type === "socketArtifact" || type === "unsocketArtifact")) {
         if (!hasClosedFields(fields, ["schemaVersion", "type", "artifactInstanceId", "towerId", "slotId"])) {
             return undefined;
         }
@@ -275,7 +259,16 @@ export function parseGameCommand(input) {
             || !isBoundedCommandId(towerId)
             || !isBoundedCommandId(slotId))
             return undefined;
-        return { schemaVersion: 2, type, artifactInstanceId, towerId, slotId };
+        return { schemaVersion, type, artifactInstanceId, towerId, slotId };
+    }
+    if (schemaVersion === 3 && type === "chooseDraftOption") {
+        if (!hasClosedFields(fields, ["schemaVersion", "type", "offerId", "cardId"]))
+            return undefined;
+        const offerId = fields.get("offerId");
+        const cardId = fields.get("cardId");
+        if (!isBoundedCommandId(offerId) || !isBoundedCommandId(cardId))
+            return undefined;
+        return { schemaVersion: 3, type, offerId, cardId };
     }
     return undefined;
 }
@@ -305,5 +298,7 @@ export function executeParsedGameCommand(game, command) {
             return game.socketArtifact(command.artifactInstanceId, command.towerId, command.slotId);
         case "unsocketArtifact":
             return game.unsocketArtifact(command.artifactInstanceId, command.towerId, command.slotId);
+        case "chooseDraftOption":
+            return game.chooseDraftOption(command.offerId, command.cardId);
     }
 }

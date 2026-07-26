@@ -130,7 +130,7 @@ function rogueliteInput(
         schemaVersion: 1,
         modules: {
           roguelite: {
-            schemaVersion: mode === "future" ? 3 : 1,
+            schemaVersion: mode === "future" ? 4 : 1,
             enabled: mode !== "disabled",
             profiles: { core: profile }
           }
@@ -182,19 +182,21 @@ describe("R4.1A roguelite v1 schema and capability", () => {
       "tiers",
       "modifier",
       "artifacts",
+      "draft",
       "limits",
       "runtimeSnapshot"
     ]);
     expect(schema).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       moduleId: "roguelite",
-      supportedModuleSchemaVersions: [1, 2],
+      supportedModuleSchemaVersions: [1, 2, 3],
       profile: {
-        requiredFields: ["synergies", "artifacts"], optionalFields: [], additionalProperties: false
+        requiredFields: ["synergies"], optionalFields: ["artifacts", "draft"], additionalProperties: false
       },
       profileVersions: {
         1: { requiredFields: ["synergies"], optionalFields: [], additionalProperties: false },
-        2: { requiredFields: ["synergies", "artifacts"], optionalFields: [], additionalProperties: false }
+        2: { requiredFields: ["synergies", "artifacts"], optionalFields: [], additionalProperties: false },
+        3: { requiredFields: ["synergies"], optionalFields: ["artifacts", "draft"], additionalProperties: false }
       },
       towerTags: { field: "tags", optional: true, itemType: "string", uniqueItems: true },
       synergy: {
@@ -217,13 +219,15 @@ describe("R4.1A roguelite v1 schema and capability", () => {
       limits: { synergies: EXPECTED_LIMITS },
       runtimeSnapshot: {
         path: "snapshot.roguelite",
-        supportedSchemaVersions: [1, 2, 3],
+        supportedSchemaVersions: [1, 2, 3, 4],
         optionalUnlessActive: true,
         fieldsByVersion: {
           1: ["schemaVersion", "synergies"],
           2: ["schemaVersion", "synergies", "artifacts"],
-          3: ["schemaVersion", "synergies", "artifacts"]
-        }
+          3: ["schemaVersion", "synergies", "artifacts"],
+          4: ["schemaVersion", "synergies", "draft"]
+        },
+        optionalFieldsByVersion: { 4: ["artifacts"] }
       }
     });
     expect(Object.isFrozen(schema)).toBe(true);

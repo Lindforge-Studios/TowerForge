@@ -31,10 +31,13 @@ import {
 } from "./terraforming-mechanics.js";
 import {
   ROGUELITE_SYNERGY_LIMITS,
+  ROGUELITE_DRAFT_LIMITS,
   RogueliteProfileValidationError,
   assertRogueliteV2ModifierBudget,
+  assertRogueliteV3ModifierBudget,
   normalizeRogueliteProfileV1,
   normalizeRogueliteProfileV2,
+  normalizeRogueliteProfileV3,
   normalizeTowerTagsV1
 } from "./roguelite-mechanics.js";
 
@@ -2772,9 +2775,9 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
         err("mechanics", "roguelite", `modules.roguelite.${key}`, `Roguelite module is closed; unknown field "${key}".`);
       }
     }
-    const supportedVersion = module.schemaVersion === 1 || module.schemaVersion === 2;
+    const supportedVersion = module.schemaVersion === 1 || module.schemaVersion === 2 || module.schemaVersion === 3;
     if (!supportedVersion) {
-      err("mechanics", "roguelite", "modules.roguelite.schemaVersion", "Roguelite future or unsupported schemaVersion; only versions 1 and 2 are supported.");
+      err("mechanics", "roguelite", "modules.roguelite.schemaVersion", "Roguelite future or unsupported schemaVersion; only versions 1, 2, and 3 are supported.");
     }
     if (typeof module.enabled !== "boolean") {
       err("mechanics", "roguelite", "modules.roguelite.enabled", "Roguelite mechanics enabled must be boolean.");
@@ -2796,11 +2799,16 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
     if (!supportedVersion) return;
     for (const profileId of Object.keys(profiles).sort()) {
       const root = `modules.roguelite.profiles.${profileId}`;
-      let profile: ReturnType<typeof normalizeRogueliteProfileV1> | ReturnType<typeof normalizeRogueliteProfileV2>;
+      let profile:
+        | ReturnType<typeof normalizeRogueliteProfileV1>
+        | ReturnType<typeof normalizeRogueliteProfileV2>
+        | ReturnType<typeof normalizeRogueliteProfileV3>;
       try {
-        profile = module.schemaVersion === 2
-          ? normalizeRogueliteProfileV2(profiles[profileId])
-          : normalizeRogueliteProfileV1(profiles[profileId]);
+        profile = module.schemaVersion === 3
+          ? normalizeRogueliteProfileV3(profiles[profileId])
+          : module.schemaVersion === 2
+            ? normalizeRogueliteProfileV2(profiles[profileId])
+            : normalizeRogueliteProfileV1(profiles[profileId]);
       } catch (error) {
         const relativePath = error instanceof RogueliteProfileValidationError
           ? error.fieldPath.replace(/^profile(?=\.|$)/, "")
@@ -2838,21 +2846,22 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
           }
         }
       }
-      if (module.schemaVersion !== 2) continue;
-      const artifactProfile = profile as ReturnType<typeof normalizeRogueliteProfileV2>;
       const semantic = activeMissionIds.length > 0 ? err : warn;
-      try {
-        assertRogueliteV2ModifierBudget(artifactProfile);
-      } catch (error) {
-        semantic(
-          "mechanics",
-          profileId,
-          `${root}.synergies`,
-          error instanceof Error ? error.message : "Roguelite v2 modifier budget is invalid."
-        );
+      const artifacts = "artifacts" in profile ? profile.artifacts : undefined;
+      if (artifacts) {
+        try {
+          assertRogueliteV2ModifierBudget({ synergies: profile.synergies, artifacts });
+        } catch (error) {
+          semantic(
+            "mechanics",
+            profileId,
+            `${root}.synergies`,
+            error instanceof Error ? error.message : "Roguelite artifact modifier budget is invalid."
+          );
+        }
       }
       const slotTypes = new Set<string>();
-      for (const [towerTypeId, slots] of Object.entries(artifactProfile.artifacts.towerSlots)) {
+      for (const [towerTypeId, slots] of Object.entries(artifacts?.towerSlots ?? {})) {
         slots.forEach((slot) => slotTypes.add(slot.slotType));
         if (Object.prototype.hasOwnProperty.call(content.towers, towerTypeId)) continue;
         semantic(
@@ -2863,7 +2872,7 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
         );
       }
       const referencedArtifacts = new Set<string>();
-      for (const [enemyTypeId, table] of Object.entries(artifactProfile.artifacts.bossLootTables)) {
+      for (const [enemyTypeId, table] of Object.entries(artifacts?.bossLootTables ?? {})) {
         if (!Object.prototype.hasOwnProperty.call(content.enemies, enemyTypeId)) {
           semantic(
             "mechanics",
@@ -2874,7 +2883,7 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
         }
         for (const entry of table.entries) {
           referencedArtifacts.add(entry.artifactId);
-          if (Object.prototype.hasOwnProperty.call(artifactProfile.artifacts.definitions, entry.artifactId)) continue;
+          if (Object.prototype.hasOwnProperty.call(artifacts?.definitions ?? {}, entry.artifactId)) continue;
           semantic(
             "mechanics",
             profileId,
@@ -2883,7 +2892,7 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
           );
         }
       }
-      for (const [artifactId, definition] of Object.entries(artifactProfile.artifacts.definitions)) {
+      for (const [artifactId, definition] of Object.entries(artifacts?.definitions ?? {})) {
         if (!slotTypes.has(definition.slotType)) {
           warn(
             "mechanics",
@@ -2905,7 +2914,7 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
         const authoredEnemyIds = new Set(
           content.missions[missionId]!.waves.flatMap((wave) => wave.groups.map((group) => group.enemyId))
         );
-        for (const enemyTypeId of Object.keys(artifactProfile.artifacts.bossLootTables)) {
+        for (const enemyTypeId of Object.keys(artifacts?.bossLootTables ?? {})) {
           if (authoredEnemyIds.has(enemyTypeId)) continue;
           warn(
             "mechanics",
@@ -2913,6 +2922,78 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
             `${root}.artifacts.bossLootTables.${enemyTypeId}`,
             `Loot-bearing enemy "${enemyTypeId}" does not appear in mission "${missionId}" waves.`
           );
+        }
+      }
+
+      const draft = "draft" in profile ? profile.draft : undefined;
+      if (draft) {
+        if (!Object.prototype.hasOwnProperty.call(draft.pools, draft.defaultPoolId)) {
+          semantic(
+            "mechanics",
+            profileId,
+            `${root}.draft.defaultPoolId`,
+            `Draft defaultPoolId references missing pool "${draft.defaultPoolId}"${activeMissionIds.length > 0 ? "" : " in this inactive profile"}.`
+          );
+        }
+        for (const [poolId, pool] of Object.entries(draft.pools)) {
+          for (const entry of pool.entries) {
+            if (Object.prototype.hasOwnProperty.call(draft.definitions, entry.cardId)) continue;
+            semantic(
+              "mechanics",
+              profileId,
+              `${root}.draft.pools.${poolId}.entries.${entry.cardId}`,
+              `Draft pool entry references missing card "${entry.cardId}"${activeMissionIds.length > 0 ? "" : " in this inactive profile"}.`
+            );
+          }
+        }
+        for (const [cardId, definition] of Object.entries(draft.definitions)) {
+          definition.effects.forEach((effect, effectIndex) => {
+            const scopePath = `${root}.draft.definitions.${cardId}.effects[${effectIndex}].scope`;
+            if (effect.scope.kind === "tower_type"
+              && !Object.prototype.hasOwnProperty.call(content.towers, effect.scope.towerTypeId)) {
+              semantic(
+                "mechanics",
+                profileId,
+                `${scopePath}.towerTypeId`,
+                `Draft modifier references missing tower type "${effect.scope.towerTypeId}"${activeMissionIds.length > 0 ? "" : " in this inactive profile"}.`
+              );
+            }
+            if (effect.scope.kind === "tower_tag" && !allTags.has(effect.scope.tag)) {
+              semantic(
+                "mechanics",
+                profileId,
+                `${scopePath}.tag`,
+                `Draft modifier references missing tower tag "${effect.scope.tag}"${activeMissionIds.length > 0 ? "" : " in this inactive profile"}.`
+              );
+            }
+          });
+        }
+      }
+      if (module.schemaVersion === 3) {
+        for (const missionId of activeMissionIds) {
+          const mission = content.missions[missionId];
+          if (draft && mission && Math.max(0, mission.waves.length - 1) > ROGUELITE_DRAFT_LIMITS.selections) {
+            semantic(
+              "mission",
+              missionId,
+              `missions.${missionId}.mechanics.profiles.roguelite.draft`,
+              `Draft mission can require more than ${ROGUELITE_DRAFT_LIMITS.selections} interwave selections.`
+            );
+          }
+          try {
+            assertRogueliteV3ModifierBudget(
+              profile as ReturnType<typeof normalizeRogueliteProfileV3>,
+              content,
+              missionId
+            );
+          } catch (error) {
+            semantic(
+              "mechanics",
+              profileId,
+              root,
+              error instanceof Error ? error.message : "Roguelite v3 modifier budget is invalid."
+            );
+          }
         }
       }
     }

@@ -387,6 +387,7 @@ function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "
         <label class="speed">Music <input id="music-volume" type="range" min="0" max="1" step="0.05" value="0.35"><span id="music-volume-label">35%</span></label>
         <div id="ability-bar" class="ability-bar"></div>
         <section id="roguelite-status" class="roguelite-status" aria-label="Tower synergies" hidden></section>
+        <section id="wave-draft" class="roguelite-status" aria-label="Wave draft" hidden></section>
         <section id="artifact-inventory" class="roguelite-status" aria-label="Artifact inventory" hidden></section>
         <section id="meta-panel" class="meta-panel" aria-label="Permanent upgrades" hidden>
           <div class="meta-title">Forge upgrades <span id="meta-resources"></span></div>
@@ -1164,8 +1165,9 @@ function updateHud(snap) {
 
 function updateRogueliteStatus(snap) {
   const panel = $("roguelite-status");
+  const draftPanel = $("wave-draft");
   const artifactPanel = $("artifact-inventory");
-  if (!panel || !artifactPanel) return;
+  if (!panel || !draftPanel || !artifactPanel) return;
   const source = snap?.roguelite;
   const nextCache = {
     synergies: source?.synergies,
@@ -1173,6 +1175,8 @@ function updateRogueliteStatus(snap) {
     towerSlots: source?.artifacts?.towerSlots,
     allowed: source?.artifacts?.management?.allowed,
     reasonKey: source?.artifacts?.management?.reasonKey,
+    pendingOffer: source?.draft?.pendingOffer,
+    selections: source?.draft?.selections,
     selectedTowerId
   };
   const previousCache = updateRogueliteStatus.lastRender;
@@ -1182,12 +1186,16 @@ function updateRogueliteStatus(snap) {
     && previousCache.towerSlots === nextCache.towerSlots
     && previousCache.allowed === nextCache.allowed
     && previousCache.reasonKey === nextCache.reasonKey
+    && previousCache.pendingOffer === nextCache.pendingOffer
+    && previousCache.selections === nextCache.selections
     && previousCache.selectedTowerId === nextCache.selectedTowerId) return;
   updateRogueliteStatus.lastRender = nextCache;
   const presentation = projectRoguelitePresentation(snap);
-  if (!presentation) { panel.hidden = true; panel.replaceChildren(); artifactPanel.hidden = true; artifactPanel.replaceChildren(); return; }
+  if (!presentation) { panel.hidden = true; panel.replaceChildren(); draftPanel.hidden = true; draftPanel.replaceChildren(); artifactPanel.hidden = true; artifactPanel.replaceChildren(); return; }
   panel.hidden = !presentation.active;
   panel.replaceChildren();
+  draftPanel.hidden = !presentation.active || !presentation.draft?.pendingOffer;
+  draftPanel.replaceChildren();
   artifactPanel.hidden = !presentation.active || !presentation.artifacts;
   artifactPanel.replaceChildren();
   if (!presentation.active) return;
@@ -1198,6 +1206,28 @@ function updateRogueliteStatus(snap) {
       : "inactive";
     row.textContent = synergy.label + ": " + synergy.towerCount + " towers (" + active + ")";
     panel.append(row);
+  }
+  const pendingOffer = presentation.draft?.pendingOffer;
+  if (pendingOffer) {
+    const title = document.createElement("strong");
+    title.textContent = "Choose a wave upgrade";
+    draftPanel.append(title);
+    for (const option of pendingOffer.options) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.setAttribute("data-draft-card-id", option.cardId);
+      button.textContent = option.label;
+      button.addEventListener("click", () => {
+        const result = dispatchGameCommand(game, {
+          schemaVersion: 3, type: "chooseDraftOption",
+          offerId: pendingOffer.offerId,
+          cardId: option.cardId
+        });
+        report(result);
+        if (result.ok) updateRogueliteStatus(game.getSnapshot());
+      });
+      draftPanel.append(button);
+    }
   }
   if (presentation.artifacts) {
     const title = document.createElement("strong");
@@ -2309,8 +2339,9 @@ function updateHud(snap) {
 
 function updateRogueliteStatus(snap) {
   const panel = $("roguelite-status");
+  const draftPanel = $("wave-draft");
   const artifactPanel = $("artifact-inventory");
-  if (!panel || !artifactPanel) return;
+  if (!panel || !draftPanel || !artifactPanel) return;
   const source = snap?.roguelite;
   const nextCache = {
     synergies: source?.synergies,
@@ -2318,6 +2349,8 @@ function updateRogueliteStatus(snap) {
     towerSlots: source?.artifacts?.towerSlots,
     allowed: source?.artifacts?.management?.allowed,
     reasonKey: source?.artifacts?.management?.reasonKey,
+    pendingOffer: source?.draft?.pendingOffer,
+    selections: source?.draft?.selections,
     selectedTowerId
   };
   const previousCache = updateRogueliteStatus.lastRender;
@@ -2327,12 +2360,16 @@ function updateRogueliteStatus(snap) {
     && previousCache.towerSlots === nextCache.towerSlots
     && previousCache.allowed === nextCache.allowed
     && previousCache.reasonKey === nextCache.reasonKey
+    && previousCache.pendingOffer === nextCache.pendingOffer
+    && previousCache.selections === nextCache.selections
     && previousCache.selectedTowerId === nextCache.selectedTowerId) return;
   updateRogueliteStatus.lastRender = nextCache;
   const presentation = projectRoguelitePresentation(snap);
-  if (!presentation) { panel.hidden = true; panel.replaceChildren(); artifactPanel.hidden = true; artifactPanel.replaceChildren(); return; }
+  if (!presentation) { panel.hidden = true; panel.replaceChildren(); draftPanel.hidden = true; draftPanel.replaceChildren(); artifactPanel.hidden = true; artifactPanel.replaceChildren(); return; }
   panel.hidden = !presentation.active;
   panel.replaceChildren();
+  draftPanel.hidden = !presentation.active || !presentation.draft?.pendingOffer;
+  draftPanel.replaceChildren();
   artifactPanel.hidden = !presentation.active || !presentation.artifacts;
   artifactPanel.replaceChildren();
   if (!presentation.active) return;
@@ -2343,6 +2380,28 @@ function updateRogueliteStatus(snap) {
       : "inactive";
     row.textContent = synergy.label + ": " + synergy.towerCount + " towers (" + active + ")";
     panel.append(row);
+  }
+  const pendingOffer = presentation.draft?.pendingOffer;
+  if (pendingOffer) {
+    const title = document.createElement("strong");
+    title.textContent = "Choose a wave upgrade";
+    draftPanel.append(title);
+    for (const option of pendingOffer.options) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.setAttribute("data-draft-card-id", option.cardId);
+      button.textContent = option.label;
+      button.addEventListener("click", () => {
+        const result = dispatchGameCommand(game, {
+          schemaVersion: 3, type: "chooseDraftOption",
+          offerId: pendingOffer.offerId,
+          cardId: option.cardId
+        });
+        report(result);
+        if (result.ok) updateRogueliteStatus(game.getSnapshot());
+      });
+      draftPanel.append(button);
+    }
   }
   if (presentation.artifacts) {
     const title = document.createElement("strong");

@@ -78,6 +78,21 @@ renderers after apply; disable/re-enable must remove/restore the optional surfac
 the profile. Reference data is in `docs/examples/opt-in-boss-artifact-loot/`; the accepted boundary is
 [ADR 0031](adr/0031-opt-in-roguelite-artifact-loot.md).
 
+For R4.3, author a `roguelite` v3 profile with required `synergies` and an independent optional
+`draft` block. Use Mechanics Hub or the usual AI path
+`describe_schema({domain:"roguelite"})` → `get_capabilities` → `preview_mechanics_module` →
+guarded `apply_mechanics_module` → `validate_project`; no dedicated draft writer exists. Every pool
+must contain at least three unique valid card IDs. Cards contain only typed damage modifiers scoped
+to all towers, one authored tower type, or one authored tower tag.
+
+After a non-final wave clears, choose one of the three authoritative snapshot options. UI controls
+dispatch exact `GameCommandV3 chooseDraftOption`; do not mutate the snapshot or call an unvalidated
+game method. A pending offer intentionally freezes ticks and blocks the next wave. Choosing starts a
+fresh prep timer. Checkpoint and journal replay must reproduce the same offer and digest. Removing
+`draft`, disabling/unselecting the module, or using v1/v2 removes the draft RNG, checkpoint section,
+pause, and UI without affecting artifacts or synergies. Use `docs/examples/opt-in-wave-draft/` as the
+copyable fixture; see [ADR 0033](adr/0033-opt-in-deterministic-wave-draft.md).
+
 Combat v1 accepts only `shields`. A target definition requires positive bounded `capacity` and may add `{ ratePerUnit, delayAfterDamage }` regeneration. Tower shields require a tower with `maxHp`. At runtime shield state is keyed by entity instance ID and appears only under active `snapshot.combat`; Canvas and Phaser consume the same presentation projection. A copyable v1 reference is under `docs/examples/opt-in-basic-shields/`.
 
 Combat v2 retains shields and adds `damageTypes`, `armorTypes`, and `armorAssignments.enemies`. Every assigned enemy requires an existing armor type, and any non-empty assignment set requires a declared `physical` damage type because an untyped packet falls back to `physical`. Multipliers are finite numbers from `0` through `1,000,000`; `0` is a valid immunity, an absent explicit/default multiplier means `1`, and per-enemy `resistances` apply after the matrix. The fixed order is `source modifiers → armor matrix → entity resistance → legacy pierce_only → shield → HP`. `armor_piercing` bypasses only legacy `pierce_only`, not the matrix.

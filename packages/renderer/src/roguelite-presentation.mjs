@@ -7,6 +7,8 @@ const MAX_ARTIFACT_INVENTORY = 10_000;
 const MAX_DROP_EVENTS = 10_000;
 const MAX_TOWER_SLOT_ROWS = 65_536;
 const MAX_SLOTS_PER_TOWER = 8;
+const MAX_DRAFT_OPTIONS = 3;
+const MAX_DRAFT_SELECTIONS = 10_000;
 
 const INACTIVE = Object.freeze({ active: false, synergies: Object.freeze([]) });
 
@@ -109,6 +111,54 @@ function projectRow(value) {
   });
 }
 
+function projectDraft(value) {
+  const draft = record(value, ["pendingOffer", "selections"]);
+  if (!draft || Object.keys(draft).length !== 2) return null;
+  let pendingOffer = null;
+  if (draft.pendingOffer !== null) {
+    const offer = record(draft.pendingOffer, ["offerId", "afterWaveIndex", "poolId", "options"]);
+    if (!offer || Object.keys(offer).length !== 4) return null;
+    const offerId = boundedText(offer.offerId, MAX_ID_OR_TAG_BYTES);
+    const poolId = boundedText(offer.poolId, MAX_ID_OR_TAG_BYTES);
+    const authoredOptions = denseArray(offer.options, MAX_DRAFT_OPTIONS);
+    if (!offerId || !poolId || !Number.isSafeInteger(offer.afterWaveIndex) || offer.afterWaveIndex < 0
+      || !authoredOptions || authoredOptions.length !== MAX_DRAFT_OPTIONS) return null;
+    const cardIds = new Set();
+    const options = [];
+    for (const value of authoredOptions) {
+      const option = record(value, ["cardId", "label"]);
+      if (!option || Object.keys(option).length !== 2) return null;
+      const cardId = boundedText(option.cardId, MAX_ID_OR_TAG_BYTES);
+      const label = boundedText(option.label, MAX_LABEL_BYTES);
+      if (!cardId || !label || cardIds.has(cardId)) return null;
+      cardIds.add(cardId);
+      options.push(Object.freeze({ cardId, label }));
+    }
+    pendingOffer = Object.freeze({
+      offerId,
+      afterWaveIndex: offer.afterWaveIndex,
+      poolId,
+      options: Object.freeze(options)
+    });
+  }
+  const authoredSelections = denseArray(draft.selections, MAX_DRAFT_SELECTIONS);
+  if (!authoredSelections) return null;
+  const selections = [];
+  const selectedIds = new Set();
+  for (const value of authoredSelections) {
+    const selection = record(value, ["cardId", "label", "count"]);
+    if (!selection || Object.keys(selection).length !== 3) return null;
+    const cardId = boundedText(selection.cardId, MAX_ID_OR_TAG_BYTES);
+    const label = boundedText(selection.label, MAX_LABEL_BYTES);
+    if (!cardId || !label || selectedIds.has(cardId)
+      || !Number.isSafeInteger(selection.count) || selection.count < 1 || selection.count > MAX_DRAFT_SELECTIONS) return null;
+    selectedIds.add(cardId);
+    selections.push(Object.freeze({ cardId, label, count: selection.count }));
+  }
+  selections.sort((left, right) => left.cardId < right.cardId ? -1 : left.cardId > right.cardId ? 1 : 0);
+  return Object.freeze({ pendingOffer, selections: Object.freeze(selections) });
+}
+
 /** Project only the authoritative optional engine snapshot; renderers never count towers. */
 export function projectRoguelitePresentation(snapshot) {
   const sectionValue = ownData(snapshot, "roguelite");
@@ -118,8 +168,14 @@ export function projectRoguelitePresentation(snapshot) {
     ? record(sectionValue, ["schemaVersion", "synergies"])
     : schemaVersion === 2 || schemaVersion === 3
       ? record(sectionValue, ["schemaVersion", "synergies", "artifacts"])
-      : null;
-  if (!section || Object.keys(section).length !== (schemaVersion === 1 ? 2 : 3)) return undefined;
+      : schemaVersion === 4
+        ? record(sectionValue, ["schemaVersion", "synergies", "draft", "artifacts"])
+        : null;
+  const sectionKeyCount = section ? Object.keys(section).length : 0;
+  if (!section || (schemaVersion === 1 && sectionKeyCount !== 2)
+    || ((schemaVersion === 2 || schemaVersion === 3) && sectionKeyCount !== 3)
+    || (schemaVersion === 4 && sectionKeyCount !== 3 && sectionKeyCount !== 4)
+    || (schemaVersion === 4 && !Object.hasOwn(section, "draft"))) return undefined;
   const authoredRows = denseArray(section.synergies, MAX_SYNERGIES);
   if (!authoredRows) return undefined;
   const rows = [];
@@ -132,6 +188,12 @@ export function projectRoguelitePresentation(snapshot) {
   }
   rows.sort((left, right) => left.synergyId < right.synergyId ? -1 : left.synergyId > right.synergyId ? 1 : 0);
   if (schemaVersion === 1) return Object.freeze({ active: true, synergies: Object.freeze(rows) });
+
+  const draft = schemaVersion === 4 ? projectDraft(section.draft) : null;
+  if (schemaVersion === 4 && !draft) return undefined;
+  if (schemaVersion === 4 && !Object.hasOwn(section, "artifacts")) {
+    return Object.freeze({ active: true, synergies: Object.freeze(rows), draft });
+  }
 
   const artifacts = schemaVersion === 2
     ? record(section.artifacts, ["inventory"])
@@ -166,7 +228,7 @@ export function projectRoguelitePresentation(snapshot) {
 
   let towerSlots;
   let management;
-  if (schemaVersion === 3) {
+  if (schemaVersion === 3 || schemaVersion === 4) {
     const authoredTowerRows = denseArray(artifacts.towerSlots, MAX_TOWER_SLOT_ROWS);
     if (!authoredTowerRows) return undefined;
     const towerIds = new Set();
@@ -262,10 +324,11 @@ export function projectRoguelitePresentation(snapshot) {
   return Object.freeze({
     active: true,
     synergies: Object.freeze(rows),
+    ...(draft ? { draft } : {}),
     artifacts: Object.freeze({
       inventory: Object.freeze(inventory),
       drops: Object.freeze(drops),
-      ...(schemaVersion === 3 ? {
+      ...(schemaVersion === 3 || schemaVersion === 4 ? {
         towerSlots: Object.freeze(towerSlots),
         management
       } : {})

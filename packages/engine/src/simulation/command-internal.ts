@@ -8,8 +8,8 @@ import {
   type TowerTargetMode
 } from "./types.js";
 
-export const GAME_COMMAND_SCHEMA_VERSION = 2 as const;
-export const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2] as const);
+export const GAME_COMMAND_SCHEMA_VERSION = 3 as const;
+export const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2, 3] as const);
 
 export type GameCommandV1 =
   | { readonly schemaVersion: 1; readonly type: "tick"; readonly units: number }
@@ -97,7 +97,20 @@ export type GameCommandV2 =
       readonly slotId: string;
     };
 
-export type GameCommand = GameCommandV1 | GameCommandV2;
+type WithCommandSchemaVersion<T, Version extends number> = T extends { readonly schemaVersion: number }
+  ? Omit<T, "schemaVersion"> & { readonly schemaVersion: Version }
+  : never;
+
+export type GameCommandV3 =
+  | WithCommandSchemaVersion<GameCommandV2, 3>
+  | {
+      readonly schemaVersion: 3;
+      readonly type: "chooseDraftOption";
+      readonly offerId: string;
+      readonly cardId: string;
+    };
+
+export type GameCommand = GameCommandV1 | GameCommandV2 | GameCommandV3;
 
 const MAX_PAYLOAD_DEPTH = 32;
 const MAX_PAYLOAD_NODES = 4_096;
@@ -151,7 +164,7 @@ function isBoundedCommandId(value: unknown): value is string {
   return isTrimmedId(value) && utf8ByteLength(value) <= 128;
 }
 
-function isCommandId(schemaVersion: 1 | 2, value: unknown): value is string {
+function isCommandId(schemaVersion: 1 | 2 | 3, value: unknown): value is string {
   return schemaVersion === 1 ? isTrimmedId(value) : isBoundedCommandId(value);
 }
 
@@ -278,81 +291,65 @@ export function parseGameCommand(input: unknown): GameCommand | undefined {
   if (!fields) return undefined;
   const schemaVersion = fields.get("schemaVersion");
   const type = fields.get("type");
-  if ((schemaVersion !== 1 && schemaVersion !== 2) || typeof type !== "string") return undefined;
+  if ((schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3) || typeof type !== "string") return undefined;
 
   if (type === "tick") {
     if (!hasClosedFields(fields, ["schemaVersion", "type", "units"])) return undefined;
     const units = fields.get("units");
     if (typeof units !== "number" || !Number.isFinite(units) || units < 0) return undefined;
     const canonicalUnits = canonicalNumber(units);
-    return schemaVersion === 1
-      ? { schemaVersion: 1, type, units: canonicalUnits }
-      : { schemaVersion: 2, type, units: canonicalUnits };
+    return { schemaVersion, type, units: canonicalUnits } as GameCommand;
   }
   if (type === "startWave") {
     if (!hasClosedFields(fields, ["schemaVersion", "type"])) return undefined;
-    return schemaVersion === 1 ? { schemaVersion: 1, type } : { schemaVersion: 2, type };
+    return { schemaVersion, type } as GameCommand;
   }
   if (type === "placeTower") {
     if (!hasClosedFields(fields, ["schemaVersion", "type", "towerTypeId", "coord"])) return undefined;
     const towerTypeId = fields.get("towerTypeId");
     const coord = parseCoord(fields.get("coord"));
     if (!isCommandId(schemaVersion, towerTypeId) || !coord) return undefined;
-    return schemaVersion === 1
-      ? { schemaVersion: 1, type, towerTypeId, coord }
-      : { schemaVersion: 2, type, towerTypeId, coord };
+    return { schemaVersion, type, towerTypeId, coord } as GameCommand;
   }
   if (type === "moveTower") {
     if (!hasClosedFields(fields, ["schemaVersion", "type", "towerId", "coord"])) return undefined;
     const towerId = fields.get("towerId");
     const coord = parseCoord(fields.get("coord"));
     if (!isCommandId(schemaVersion, towerId) || !coord) return undefined;
-    return schemaVersion === 1
-      ? { schemaVersion: 1, type, towerId, coord }
-      : { schemaVersion: 2, type, towerId, coord };
+    return { schemaVersion, type, towerId, coord } as GameCommand;
   }
   if (type === "sellTower" || type === "upgradeTower") {
     if (!hasClosedFields(fields, ["schemaVersion", "type", "towerId"])) return undefined;
     const towerId = fields.get("towerId");
     if (!isCommandId(schemaVersion, towerId)) return undefined;
-    return schemaVersion === 1
-      ? { schemaVersion: 1, type, towerId }
-      : { schemaVersion: 2, type, towerId };
+    return { schemaVersion, type, towerId } as GameCommand;
   }
   if (type === "setTargetMode") {
     if (!hasClosedFields(fields, ["schemaVersion", "type", "towerId", "mode"])) return undefined;
     const towerId = fields.get("towerId");
     const mode = fields.get("mode");
     if (!isCommandId(schemaVersion, towerId) || !isTowerTargetMode(mode)) return undefined;
-    return schemaVersion === 1
-      ? { schemaVersion: 1, type, towerId, mode }
-      : { schemaVersion: 2, type, towerId, mode };
+    return { schemaVersion, type, towerId, mode } as GameCommand;
   }
   if (type === "useAbility") {
     if (!hasClosedFields(fields, ["schemaVersion", "type", "abilityId", "center"])) return undefined;
     const abilityId = fields.get("abilityId");
     const center = parseCoord(fields.get("center"));
     if (!isCommandId(schemaVersion, abilityId) || !center) return undefined;
-    return schemaVersion === 1
-      ? { schemaVersion: 1, type, abilityId, center }
-      : { schemaVersion: 2, type, abilityId, center };
+    return { schemaVersion, type, abilityId, center } as GameCommand;
   }
   if (type === "emitSignal") {
     if (!hasClosedFields(fields, ["schemaVersion", "type", "signal"], ["payload"])) return undefined;
     const signal = fields.get("signal");
     if (!isCommandId(schemaVersion, signal) || !SAFE_SIGNAL_RE.test(signal)) return undefined;
     if (!fields.has("payload")) {
-      return schemaVersion === 1
-        ? { schemaVersion: 1, type, signal }
-        : { schemaVersion: 2, type, signal };
+      return { schemaVersion, type, signal } as GameCommand;
     }
     const payload = cloneJsonSafePayload(fields.get("payload"));
     if (payload === undefined) return undefined;
-    return schemaVersion === 1
-      ? { schemaVersion: 1, type, signal, payload }
-      : { schemaVersion: 2, type, signal, payload };
+    return { schemaVersion, type, signal, payload } as GameCommand;
   }
-  if (schemaVersion === 2 && (type === "socketArtifact" || type === "unsocketArtifact")) {
+  if ((schemaVersion === 2 || schemaVersion === 3) && (type === "socketArtifact" || type === "unsocketArtifact")) {
     if (!hasClosedFields(fields, ["schemaVersion", "type", "artifactInstanceId", "towerId", "slotId"])) {
       return undefined;
     }
@@ -362,7 +359,14 @@ export function parseGameCommand(input: unknown): GameCommand | undefined {
     if (!isBoundedCommandId(artifactInstanceId)
       || !isBoundedCommandId(towerId)
       || !isBoundedCommandId(slotId)) return undefined;
-    return { schemaVersion: 2, type, artifactInstanceId, towerId, slotId };
+    return { schemaVersion, type, artifactInstanceId, towerId, slotId } as GameCommand;
+  }
+  if (schemaVersion === 3 && type === "chooseDraftOption") {
+    if (!hasClosedFields(fields, ["schemaVersion", "type", "offerId", "cardId"])) return undefined;
+    const offerId = fields.get("offerId");
+    const cardId = fields.get("cardId");
+    if (!isBoundedCommandId(offerId) || !isBoundedCommandId(cardId)) return undefined;
+    return { schemaVersion: 3, type, offerId, cardId };
   }
   return undefined;
 }
@@ -396,5 +400,7 @@ export function executeParsedGameCommand(
       return game.socketArtifact(command.artifactInstanceId, command.towerId, command.slotId);
     case "unsocketArtifact":
       return game.unsocketArtifact(command.artifactInstanceId, command.towerId, command.slotId);
+    case "chooseDraftOption":
+      return game.chooseDraftOption(command.offerId, command.cardId);
   }
 }

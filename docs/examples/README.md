@@ -28,6 +28,7 @@ Reference examples show expected project and code patterns.
 | Opt-in transactional terraforming | `docs/examples/opt-in-transactional-terraforming/` | R3.4b terraforming v1 reference with separate authored terrain, map, mission, mechanics and TowerScript v6 choices; flood, moat and bridge recipes remain inert until explicitly selected and bound. |
 | Opt-in elemental synergies | `docs/examples/opt-in-elemental-synergies/` | R4.1A roguelite v1 reference with tower tags, highest-tier damage modifiers, and no inventory or campaign coupling. |
 | Opt-in boss artifact loot | `docs/examples/opt-in-boss-artifact-loot/` | R4.2 roguelite v2 reference with typed slots, deterministic boss drops, battle-local between-wave socketing, exact-tower modifiers, and no campaign persistence. |
+| Opt-in deterministic wave draft | `docs/examples/opt-in-wave-draft/` | R4.3 roguelite v3 reference with three seeded interwave options, scoped run modifiers, exact GameCommand v3 choice, and no mandatory artifacts or legacy pause. |
 | Headless smoke sim | `packages/cli/sim.mjs` | CLI wrapper for engine-backed mission smoke runs. |
 | Static web build | `packages/cli/build.mjs` | Generates the playable web bundle from project data, compiled engine modules, renderer, and safe assets. |
 | Native packaging | `packages/cli/lib/packaging.mjs` | Canonical Capacitor/Tauri scaffold generation around a built web bundle. |

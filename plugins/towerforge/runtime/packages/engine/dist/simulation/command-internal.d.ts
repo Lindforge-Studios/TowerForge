@@ -1,8 +1,8 @@
 import type { TowerScriptJson } from "../scripting/types.js";
 import type { TowerDefenseGame } from "./TowerDefenseGame.js";
 import { type ActionResult, type GridCoord, type MissionAbilityId, type TowerTargetMode } from "./types.js";
-export declare const GAME_COMMAND_SCHEMA_VERSION: 2;
-export declare const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS: readonly [1, 2];
+export declare const GAME_COMMAND_SCHEMA_VERSION: 3;
+export declare const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS: readonly [1, 2, 3];
 export type GameCommandV1 = {
     readonly schemaVersion: 1;
     readonly type: "tick";
@@ -97,7 +97,18 @@ export type GameCommandV2 = {
     readonly towerId: string;
     readonly slotId: string;
 };
-export type GameCommand = GameCommandV1 | GameCommandV2;
+type WithCommandSchemaVersion<T, Version extends number> = T extends {
+    readonly schemaVersion: number;
+} ? Omit<T, "schemaVersion"> & {
+    readonly schemaVersion: Version;
+} : never;
+export type GameCommandV3 = WithCommandSchemaVersion<GameCommandV2, 3> | {
+    readonly schemaVersion: 3;
+    readonly type: "chooseDraftOption";
+    readonly offerId: string;
+    readonly cardId: string;
+};
+export type GameCommand = GameCommandV1 | GameCommandV2 | GameCommandV3;
 export declare function invalidGameCommandResult(): ActionResult;
 /**
  * Strict descriptor-safe parser shared by direct dispatch and command journals.
@@ -106,3 +117,4 @@ export declare function invalidGameCommandResult(): ActionResult;
 export declare function parseGameCommand(input: unknown): GameCommand | undefined;
 /** Execute a command that has already passed the strict parser exactly once. */
 export declare function executeParsedGameCommand(game: TowerDefenseGame, command: GameCommand): ActionResult;
+export {};

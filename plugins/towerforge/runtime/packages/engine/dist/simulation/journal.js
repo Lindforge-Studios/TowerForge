@@ -3,8 +3,8 @@ import { cloneCheckpointJson, checkpointDataField, checkpointObjectDescriptors, 
 import { canonicalStringify, getSimulationContentDigest } from "./stable-digest.js";
 import { TowerDefenseGame } from "./TowerDefenseGame.js";
 import { GAME_COMMAND_JOURNAL_RESULT_LIMITS_INTERNAL, normalizeGameCommandJournalResult } from "./journal-result-internal.js";
-export const GAME_COMMAND_JOURNAL_SCHEMA_VERSION = 2;
-export const GAME_COMMAND_JOURNAL_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2]);
+export const GAME_COMMAND_JOURNAL_SCHEMA_VERSION = 3;
+export const GAME_COMMAND_JOURNAL_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2, 3]);
 export const GAME_COMMAND_JOURNAL_LIMITS = Object.freeze({
     entries: 100_000,
     totalBytes: 64 * 1_024 * 1_024,
@@ -105,7 +105,10 @@ function detachedJournal(initialCheckpoint, contentDigest, entries, schemaVersio
             entries: common.entries
         };
     }
-    return { schemaVersion: 2, ...common };
+    if (schemaVersion === 2) {
+        return { schemaVersion: 2, ...common, entries: common.entries };
+    }
+    return { schemaVersion: 3, ...common };
 }
 /**
  * Owns the command boundary around one simulation instance. Any mutation that
@@ -184,8 +187,8 @@ export class JournaledGameSession {
         }
         if (!command)
             return invalidGameCommandResult();
-        if (command.schemaVersion === 2)
-            this.journalSchemaVersion = 2;
+        if (command.schemaVersion > this.journalSchemaVersion)
+            this.journalSchemaVersion = command.schemaVersion;
         this.assertLiveCapacity(command);
         let result;
         try {
@@ -230,7 +233,7 @@ export class JournaledGameSession {
 export function decodeGameCommandJournal(options) {
     const descriptors = checkpointObjectDescriptors(options.journal, "Game command journal");
     const schemaVersion = checkpointDataField(descriptors, "schemaVersion", "Game command journal");
-    if (schemaVersion !== 1 && schemaVersion !== 2) {
+    if (schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3) {
         throw new Error(`Unsupported game command journal schema version "${String(schemaVersion)}".`);
     }
     const engineVersion = checkpointDataField(descriptors, "engineVersion", "Game command journal");
@@ -276,6 +279,9 @@ export function decodeGameCommandJournal(options) {
         }
         if (schemaVersion === 1 && command.schemaVersion !== 1) {
             throw new Error(`Game command journal v1 entry ${index} must contain a v1 command.`);
+        }
+        if (schemaVersion === 2 && command.schemaVersion === 3) {
+            throw new Error(`Game command journal v2 entry ${index} cannot contain a v3 command.`);
         }
         const result = decodeResult(checkpointDataField(entryDescriptors, "result", `Game command journal entry ${index}`));
         const postStateDigest = checkpointDataField(entryDescriptors, "postStateDigest", `Game command journal entry ${index}`);

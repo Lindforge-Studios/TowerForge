@@ -32,10 +32,12 @@ import {
 import {
   ROGUELITE_ARTIFACT_INVENTORY_LIMIT,
   ROGUELITE_DAMAGE_MODIFIER_RESERVE,
+  ROGUELITE_DRAFT_LIMITS,
   deriveRogueliteSynergyStateV1,
   rogueliteSynergyWorstCaseModifierCount,
   resolveActiveRogueliteMechanics,
-  type ActiveRogueliteMechanics
+  type ActiveRogueliteMechanics,
+  type RogueliteDraftDefinitionV3
 } from "../content/roguelite-mechanics.js";
 import { evaluateTowerScriptExpression } from "../scripting/expression.js";
 import {
@@ -114,6 +116,7 @@ import {
   requireExactCheckpointKeys,
   type GameCheckpointIdentityV1,
   type ArtifactCheckpointState,
+  type DraftCheckpointStateV1,
   type RuntimeElevationOverrideV1,
   type TerraformingCheckpointStateV2,
   type GameCheckpointStateV1,
@@ -578,6 +581,43 @@ function artifactLootSeed(seed: GameSeed, missionId: string): string {
   return `towerforge:artifact-loot:v1|${seedType}:${seedPayload.length}:${seedPayload}|m:${missionId.length}:${missionId}`;
 }
 
+function waveDraftSeed(initialRngState: SeededRngStateV1, missionId: string): string {
+  const seedPayload = canonicalStringify(initialRngState);
+  return `towerforge:wave-draft:v1|r:${seedPayload.length}:${seedPayload}|m:${missionId.length}:${missionId}`;
+}
+
+function sampleDraftOfferCardIds(
+  draft: RogueliteDraftDefinitionV3,
+  poolId: string,
+  rng: SeededRng
+): readonly [string, string, string] {
+  const pool = draft.pools[poolId];
+  if (!pool || pool.entries.length < ROGUELITE_DRAFT_LIMITS.offerSize) {
+    throw new Error("Draft offer pool is unavailable or too small.");
+  }
+  const remaining = pool.entries.map((entry) => ({ ...entry }));
+  const selected: string[] = [];
+  while (selected.length < ROGUELITE_DRAFT_LIMITS.offerSize) {
+    const totalWeight = remaining.reduce((sum, entry) => sum + entry.weight, 0);
+    let cursor = rng.nextInt(totalWeight);
+    let selectedIndex = 0;
+    for (let index = 0; index < remaining.length; index += 1) {
+      const entry = remaining[index]!;
+      if (cursor < entry.weight) {
+        selectedIndex = index;
+        break;
+      }
+      cursor -= entry.weight;
+    }
+    const [entry] = remaining.splice(selectedIndex, 1);
+    if (!entry || !draft.definitions[entry.cardId]) {
+      throw new Error("Active draft pool references an unavailable card.");
+    }
+    selected.push(entry.cardId);
+  }
+  return Object.freeze(selected) as unknown as readonly [string, string, string];
+}
+
 interface ArtifactInventorySocketRef {
   readonly towerId: string;
   readonly slotId: string;
@@ -587,6 +627,19 @@ interface ArtifactInventoryEntry {
   readonly instanceId: string;
   readonly artifactId: string;
   socket: ArtifactInventorySocketRef | null;
+}
+
+interface DraftPendingOffer {
+  readonly offerId: string;
+  readonly afterWaveIndex: number;
+  readonly poolId: string;
+  readonly cardIds: readonly [string, string, string];
+}
+
+interface DraftSelection {
+  readonly sequence: number;
+  readonly offerId: string;
+  readonly cardId: string;
 }
 
 export interface TowerDefenseGameOptions {
@@ -643,6 +696,11 @@ export class TowerDefenseGame {
   private nextArtifactInstanceSequence = 1;
   /** Preserve historic artifact checkpoint v1 until a socket assignment first changes. */
   private artifactCheckpointForm: 0 | 1 | 2 = 0;
+  private draftInitialRngState: SeededRngStateV1 | undefined;
+  private draftRng: SeededRng | undefined;
+  private nextDraftOfferSequence = 1;
+  private pendingDraftOffer: DraftPendingOffer | null = null;
+  private draftSelections: DraftSelection[] = [];
   private readonly navigationMandatoryPairs: readonly NavigationMandatoryPair[];
   private readonly navigationKnownPairs: readonly NavigationMandatoryPair[];
   private navigationResolver: NavigationResolver | undefined;
@@ -732,10 +790,14 @@ export class TowerDefenseGame {
     this.activePhysicsMechanics = resolveActivePhysicsMechanics(this.content, missionId);
     this.activeTerraformingMechanics = resolveActiveTerraformingMechanics(this.content, missionId);
     this.activeRogueliteMechanics = resolveActiveRogueliteMechanics(this.content, missionId);
-    if (this.activeRogueliteMechanics?.schemaVersion === 2) {
+    if (this.activeRogueliteMechanics?.artifacts) {
       this.artifactRng = new SeededRng(artifactLootSeed(options.seed ?? 0, missionId));
       this.artifactInitialRngState = this.artifactRng.exportState();
       this.artifactCheckpointForm = 1;
+    }
+    if (this.activeRogueliteMechanics?.draft) {
+      this.draftRng = new SeededRng(waveDraftSeed(this.initialRngState, missionId));
+      this.draftInitialRngState = this.draftRng.exportState();
     }
     this.rebuildRogueliteSynergies();
     this.terraformingCheckpointForm = this.activeTerraformingMechanics ? 2 : 0;
@@ -844,10 +906,14 @@ export class TowerDefenseGame {
     this.towers = [];
     this.artifactInventory = [];
     this.nextArtifactInstanceSequence = 1;
-    this.artifactCheckpointForm = this.activeRogueliteMechanics?.schemaVersion === 2 ? 1 : 0;
+    this.artifactCheckpointForm = this.activeRogueliteMechanics?.artifacts ? 1 : 0;
     if (this.artifactInitialRngState) {
       this.artifactRng = SeededRng.fromState(this.artifactInitialRngState);
     }
+    this.nextDraftOfferSequence = 1;
+    this.pendingDraftOffer = null;
+    this.draftSelections = [];
+    if (this.draftInitialRngState) this.draftRng = SeededRng.fromState(this.draftInitialRngState);
     this.rebuildRogueliteSynergies();
     this.enemyShields = {};
     this.towerShields = {};
@@ -886,6 +952,13 @@ export class TowerDefenseGame {
   startNextWave(): ActionResult {
     if (this.outcome !== "playing") {
       return this.fail("Mission already ended.", "reason.missionEnded");
+    }
+
+    if (this.pendingDraftOffer) {
+      return this.fail("Choose a draft option before starting the next wave.", "reason.draftChoiceRequired");
+    }
+    if (this.activeRogueliteMechanics?.draft && this.startedWaveCount > this.clearedWaveCount) {
+      return this.fail("The active wave must be cleared before drafting.", "reason.waveInProgress");
     }
 
     if (this.startedWaveCount >= this.mission.waves.length) {
@@ -1144,7 +1217,8 @@ export class TowerDefenseGame {
     const availability = this.artifactManagementAvailability();
     if (!availability.ok) return availability;
     const active = this.activeRogueliteMechanics;
-    if (active?.schemaVersion !== 2) {
+    const artifacts = active?.artifacts;
+    if (!active || !artifacts) {
       return this.fail("Artifacts are not available.", "reason.artifactsUnavailable");
     }
     const entry = this.artifactInventory.find((item) => item.instanceId === artifactInstanceId);
@@ -1152,9 +1226,9 @@ export class TowerDefenseGame {
     if (entry.socket) return this.fail("Artifact is already socketed.", "reason.artifactAlreadySocketed");
     const tower = this.towers.find((item) => item.id === towerId && (item.hp === undefined || item.hp > 0));
     if (!tower) return this.fail("Tower was not found.", "reason.artifactTowerNotFound");
-    const slot = active.artifacts.towerSlots[tower.typeId]?.find((item) => item.slotId === slotId);
+    const slot = artifacts.towerSlots[tower.typeId]?.find((item) => item.slotId === slotId);
     if (!slot) return this.fail("Artifact slot was not found.", "reason.artifactSlotNotFound");
-    const definition = active.artifacts.definitions[entry.artifactId];
+    const definition = artifacts.definitions[entry.artifactId];
     if (!definition || definition.slotType !== slot.slotType) {
       return this.fail("Artifact is incompatible with this slot.", "reason.artifactSlotIncompatible");
     }
@@ -1163,7 +1237,7 @@ export class TowerDefenseGame {
     }
     const existingModifierCount = this.artifactInventory.reduce((sum, item) => {
       if (item.socket?.towerId !== towerId) return sum;
-      return sum + (active.artifacts.definitions[item.artifactId]?.modifiers.length ?? 0);
+      return sum + (artifacts.definitions[item.artifactId]?.modifiers.length ?? 0);
     }, 0);
     const synergyWorstCase = rogueliteSynergyWorstCaseModifierCount(active.synergies);
     if (
@@ -1230,6 +1304,36 @@ export class TowerDefenseGame {
     });
     this.rebuildRogueliteSynergies();
     this.finishScriptedAction();
+    return { ok: true };
+  }
+
+  chooseDraftOption(offerId: string, cardId: string): ActionResult {
+    if (this.outcome !== "playing") {
+      return this.fail("Mission already ended.", "reason.missionEnded");
+    }
+    const active = this.activeRogueliteMechanics;
+    const offer = this.pendingDraftOffer;
+    if (!active?.draft || !offer) {
+      return this.fail("No draft choice is pending.", "reason.draftOptionUnavailable");
+    }
+    if (offer.offerId !== offerId || !offer.cardIds.includes(cardId)) {
+      return this.fail("Draft option is unavailable.", "reason.draftOptionUnavailable");
+    }
+    if (!active.draft.definitions[cardId] || this.draftSelections.length >= ROGUELITE_DRAFT_LIMITS.selections) {
+      return this.fail("Draft option is unavailable.", "reason.draftOptionUnavailable");
+    }
+    this.draftSelections.push(Object.freeze({
+      sequence: this.draftSelections.length + 1,
+      offerId,
+      cardId
+    }));
+    this.pendingDraftOffer = null;
+    this.nextWaveStartAt = this.startedWaveCount < this.mission.waves.length
+      ? this.missionElapsed + this.mission.prepTimeUnits
+      : null;
+    this.waveState = "between";
+    this.syncPrepRemaining();
+    this.rebuildRogueliteSynergies();
     return { ok: true };
   }
 
@@ -1602,6 +1706,7 @@ export class TowerDefenseGame {
     if (this.activePhysicsMechanics) this.displacementStepAttemptsThisTick = 0;
     this.scriptEventCursor = 0;
     this.beginScriptTransaction();
+    if (this.pendingDraftOffer) return;
 
     if (this.outcome !== "playing") {
       return;
@@ -1639,6 +1744,7 @@ export class TowerDefenseGame {
     this.resolveWaveState();
     this.processScriptEvents();
     this.stabilizeDynamicEnemyNavigation();
+    if (this.pendingDraftOffer) this.beginScriptTransaction();
   }
 
   getSnapshot(): GameSnapshot {
@@ -1865,7 +1971,7 @@ export class TowerDefenseGame {
       }
     }
     const state = cloneCheckpointJson(rawState) as GameCheckpointStateV1;
-    TowerDefenseGame.validateCheckpointState(options.content, identity, state);
+    TowerDefenseGame.validateCheckpointState(options.content, identity, state, initialRng);
     const expectedStateDigest = checkpointDataField(descriptors, "stateDigest", "Game checkpoint");
     if (
       typeof expectedStateDigest !== "string" ||
@@ -2809,7 +2915,7 @@ export class TowerDefenseGame {
   }
 
   private buildArtifactCheckpointState(): ArtifactCheckpointState | undefined {
-    if (this.activeRogueliteMechanics?.schemaVersion !== 2
+    if (!this.activeRogueliteMechanics?.artifacts
       || !this.artifactInitialRngState
       || !this.artifactRng) return undefined;
     const base = {
@@ -2837,6 +2943,25 @@ export class TowerDefenseGame {
             artifactId: entry.artifactId
           }))
         };
+  }
+
+  private buildDraftCheckpointState(): DraftCheckpointStateV1 | undefined {
+    if (!this.activeRogueliteMechanics?.draft || !this.draftInitialRngState || !this.draftRng) return undefined;
+    return {
+      schemaVersion: 1,
+      rng: {
+        initial: this.draftInitialRngState,
+        current: this.draftRng.exportState()
+      },
+      nextOfferSequence: this.nextDraftOfferSequence,
+      pendingOffer: this.pendingDraftOffer === null ? null : {
+        offerId: this.pendingDraftOffer.offerId,
+        afterWaveIndex: this.pendingDraftOffer.afterWaveIndex,
+        poolId: this.pendingDraftOffer.poolId,
+        cardIds: [...this.pendingDraftOffer.cardIds] as [string, string, string]
+      },
+      selections: this.draftSelections.map((selection) => ({ ...selection }))
+    };
   }
 
   private buildCheckpointState(): GameCheckpointStateV1 {
@@ -2888,6 +3013,7 @@ export class TowerDefenseGame {
     const combat = this.buildCombatState();
     const reactions = this.buildReactionState();
     const artifacts = this.buildArtifactCheckpointState();
+    const draft = this.buildDraftCheckpointState();
     const runtimeElevationOverrides = [...this.runtimeElevationOverrides.values()]
       .sort((left, right) => left.r - right.r || left.q - right.q)
       .map((entry) => ({ q: entry.q, r: entry.r, elevation: entry.elevation }));
@@ -2981,7 +3107,8 @@ export class TowerDefenseGame {
       scriptSignalDepth: this.scriptSignalDepth,
       ...(combat === undefined ? {} : { combat }),
       ...(reactions === undefined ? {} : { reactions }),
-      ...(artifacts === undefined ? {} : { artifacts })
+      ...(artifacts === undefined ? {} : { artifacts }),
+      ...(draft === undefined ? {} : { draft })
     };
     return cloneCheckpointJson(state);
   }
@@ -3023,7 +3150,8 @@ export class TowerDefenseGame {
   private static validateCheckpointState(
     content: GameContentRegistry,
     identity: GameCheckpointIdentityV1,
-    state: GameCheckpointStateV1
+    state: GameCheckpointStateV1,
+    rootInitialRng: SeededRngStateV1
   ): void {
     const descriptors = checkpointObjectDescriptors(state, "Game checkpoint state");
     const required = [
@@ -3037,7 +3165,9 @@ export class TowerDefenseGame {
     for (const key of required) checkpointDataField(descriptors, key, "Game checkpoint state");
     const checkpointTerraforming = resolveActiveTerraformingMechanics(content, identity.missionId);
     const checkpointRoguelite = resolveActiveRogueliteMechanics(content, identity.missionId);
-    const requiresArtifactCheckpoint = checkpointRoguelite?.schemaVersion === 2;
+    const mission = content.missions[identity.missionId]!;
+    const requiresArtifactCheckpoint = checkpointRoguelite?.artifacts !== undefined;
+    const requiresDraftCheckpoint = checkpointRoguelite?.draft !== undefined;
     const requiresElevationTerraformingCheckpoint = (
       resolveActiveElevationMechanics(content, identity.missionId) !== undefined
       && checkpointTerraforming?.elevation !== undefined
@@ -3060,12 +3190,21 @@ export class TowerDefenseGame {
       throw new Error("Game checkpoint artifact state is unsupported for an inactive capability.");
     }
     if (hasArtifactCheckpoint) checkpointDataField(descriptors, "artifacts", "Game checkpoint state");
+    const hasDraftCheckpoint = Object.prototype.hasOwnProperty.call(descriptors, "draft");
+    if (requiresDraftCheckpoint && !hasDraftCheckpoint) {
+      throw new Error("Game checkpoint draft state is required for active wave draft.");
+    }
+    if (!requiresDraftCheckpoint && hasDraftCheckpoint) {
+      throw new Error("Game checkpoint draft state is unsupported for an inactive capability.");
+    }
+    if (hasDraftCheckpoint) checkpointDataField(descriptors, "draft", "Game checkpoint state");
     requireExactCheckpointKeys(descriptors, [
       ...required,
       ...(hasTerraformingCheckpoint ? ["terraforming"] : []),
       ...(Object.prototype.hasOwnProperty.call(descriptors, "combat") ? ["combat"] : []),
       ...(Object.prototype.hasOwnProperty.call(descriptors, "reactions") ? ["reactions"] : []),
-      ...(hasArtifactCheckpoint ? ["artifacts"] : [])
+      ...(hasArtifactCheckpoint ? ["artifacts"] : []),
+      ...(hasDraftCheckpoint ? ["draft"] : [])
     ], "Game checkpoint state");
 
     const finite = (value: unknown, label: string, minimum = 0, maximum = Infinity): number => {
@@ -3219,8 +3358,133 @@ export class TowerDefenseGame {
       }
     }
 
+    if (requiresDraftCheckpoint) {
+      const draftDefinition = checkpointRoguelite?.draft;
+      const draftState = state.draft;
+      if (!draftDefinition || !draftState) throw new Error("Game checkpoint draft state is required.");
+      const draft = closed(
+        draftState,
+        "draft state",
+        ["schemaVersion", "rng", "nextOfferSequence", "pendingOffer", "selections"]
+      );
+      if (checkpointDataField(draft, "schemaVersion", "draft state") !== 1) {
+        throw new Error("Game checkpoint draft state schema version is unsupported.");
+      }
+      const draftRng = closed(checkpointDataField(draft, "rng", "draft state"), "draft RNG", ["initial", "current"]);
+      const draftInitial = checkpointDataField(draftRng, "initial", "draft RNG") as SeededRngStateV1;
+      const draftCurrent = checkpointDataField(draftRng, "current", "draft RNG") as SeededRngStateV1;
+      for (const [label, rngState] of [["initial", draftInitial], ["current", draftCurrent]] as const) {
+        closed(rngState, `draft ${label} RNG state`, ["schemaVersion", "algorithm", "words"]);
+        SeededRng.fromState(rngState);
+      }
+      const expectedDraftInitial = new SeededRng(waveDraftSeed(rootInitialRng, identity.missionId)).exportState();
+      if (canonicalStringify(draftInitial) !== canonicalStringify(expectedDraftInitial)) {
+        throw new Error("Game checkpoint draft initial RNG does not match the simulation seed domain.");
+      }
+      const replayDraftRng = SeededRng.fromState(draftInitial);
+      const selections = array(checkpointDataField(draft, "selections", "draft state"), "draft selections");
+      if (selections.length > ROGUELITE_DRAFT_LIMITS.selections) {
+        throw new Error("Game checkpoint draft selections exceed the selection budget.");
+      }
+      if (selections.length > Math.max(0, mission.waves.length - 1)) {
+        throw new Error("Game checkpoint draft selections exceed the mission inter-wave opportunities.");
+      }
+      for (let index = 0; index < selections.length; index += 1) {
+        const selection = closed(selections[index], "draft selection", ["sequence", "offerId", "cardId"]);
+        const sequence = integer(checkpointDataField(selection, "sequence", "draft selection"), "draft selection sequence", 1);
+        const offerId = stringValue(checkpointDataField(selection, "offerId", "draft selection"), "draft selection offerId");
+        const cardId = stringValue(checkpointDataField(selection, "cardId", "draft selection"), "draft selection cardId");
+        const offeredCardIds = sampleDraftOfferCardIds(draftDefinition, draftDefinition.defaultPoolId, replayDraftRng);
+        if (
+          sequence !== index + 1
+          || offerId !== `draft_offer_${sequence}`
+          || !draftDefinition.definitions[cardId]
+          || !offeredCardIds.includes(cardId)
+        ) {
+          throw new Error("Game checkpoint draft selection sequence, offer, or card is invalid.");
+        }
+      }
+      const pendingValue = checkpointDataField(draft, "pendingOffer", "draft state");
+      if (pendingValue !== null) {
+        const pending = closed(
+          pendingValue,
+          "draft pending offer",
+          ["offerId", "afterWaveIndex", "poolId", "cardIds"]
+        );
+        const offerId = stringValue(checkpointDataField(pending, "offerId", "draft pending offer"), "draft offerId");
+        const afterWaveIndex = integer(
+          checkpointDataField(pending, "afterWaveIndex", "draft pending offer"),
+          "draft afterWaveIndex"
+        );
+        const poolId = stringValue(checkpointDataField(pending, "poolId", "draft pending offer"), "draft poolId");
+        if (poolId !== draftDefinition.defaultPoolId) {
+          throw new Error("Game checkpoint draft pending offer must use the authored default pool.");
+        }
+        const cardIds = stringArray(
+          checkpointDataField(pending, "cardIds", "draft pending offer"),
+          "draft pending cardIds",
+          true
+        );
+        const pool = draftDefinition.pools[poolId];
+        const nextOfferSequence = integer(
+          checkpointDataField(draft, "nextOfferSequence", "draft state"),
+          "draft nextOfferSequence",
+          1
+        );
+        const expectedCardIds = sampleDraftOfferCardIds(draftDefinition, poolId, replayDraftRng);
+        if (
+          cardIds.length !== ROGUELITE_DRAFT_LIMITS.offerSize
+          || offerId !== `draft_offer_${nextOfferSequence - 1}`
+          || nextOfferSequence !== selections.length + 2
+          || afterWaveIndex !== state.clearedWaveCount - 1
+          || afterWaveIndex >= mission.waves.length - 1
+          || !pool
+          || cardIds.some((cardId) => (
+            !draftDefinition.definitions[cardId]
+            || !pool.entries.some((entry) => entry.cardId === cardId)
+          ))
+          || cardIds.some((cardId, index) => cardId !== expectedCardIds[index])
+          || state.outcome !== "playing"
+          || state.waveState !== "between"
+          || state.startedWaveCount !== state.clearedWaveCount
+          || state.enemies.length !== 0
+          || state.spawnQueue.length !== 0
+          || state.nextWaveStartAt !== null
+          || state.prepRemaining !== 0
+          || state.scriptActionsRemaining !== TOWER_SCRIPT_LIMITS.actionsPerTransaction
+          || state.scriptTerrainChangesRemaining !== TOWER_SCRIPT_LIMITS.terrainChangesPerTransaction
+          || state.scriptSignalDepth !== 0
+        ) {
+          throw new Error("Game checkpoint draft pending offer is incoherent with authored cards or sequence.");
+        }
+      } else {
+        const nextOfferSequence = integer(
+          checkpointDataField(draft, "nextOfferSequence", "draft state"),
+          "draft nextOfferSequence",
+          1
+        );
+        if (nextOfferSequence !== selections.length + 1) {
+          throw new Error("Game checkpoint draft offer sequence is incoherent with selections.");
+        }
+      }
+      const pendingCount = pendingValue === null ? 0 : 1;
+      const clearedDelta = state.clearedWaveCount - selections.length;
+      const finalWaveCleared = state.clearedWaveCount === mission.waves.length;
+      if (
+        (pendingCount === 1 && (clearedDelta !== 1 || finalWaveCleared))
+        || (pendingCount === 0 && (
+          clearedDelta !== 0
+          && !(clearedDelta === 1 && (state.outcome !== "playing" || finalWaveCleared))
+        ))
+      ) {
+        throw new Error("Game checkpoint draft phase is incoherent with cleared waves and terminal outcome.");
+      }
+      if (canonicalStringify(replayDraftRng.exportState()) !== canonicalStringify(draftCurrent)) {
+        throw new Error("Game checkpoint draft RNG is incoherent with recorded offers and selections.");
+      }
+    }
+
     finite(state.coreHp, "coreHp");
-    const mission = content.missions[identity.missionId]!;
     const currencyIds = new Set(content.currencies.map((currency) => currency.id));
     recordNumbers(state.resources, "resources", currencyIds);
     const waveIndex = integer(state.waveIndex, "waveIndex");
@@ -3526,8 +3790,8 @@ export class TowerDefenseGame {
     if (towerCounter < maxTowerId) throw new Error("Game checkpoint tower counter is below a live tower id.");
 
     if (artifactSockets.length > 0) {
-      if (checkpointRoguelite?.schemaVersion !== 2) {
-        throw new Error("Game checkpoint artifact sockets require active roguelite v2.");
+      if (!checkpointRoguelite?.artifacts) {
+        throw new Error("Game checkpoint artifact sockets require active roguelite artifacts.");
       }
       const occupiedArtifactSlots = new Set<string>();
       const artifactModifierCounts = new Map<string, number>();
@@ -4244,8 +4508,8 @@ export class TowerDefenseGame {
         integer(checkpointDataField(event, "dropped", type), `${type}.dropped`, 1);
       }
       if (type === "artifactDropped") {
-        if (checkpointRoguelite?.schemaVersion !== 2 || !state.artifacts) {
-          throw new Error("Game checkpoint artifact drop event requires active roguelite v2.");
+        if (!checkpointRoguelite?.artifacts || !state.artifacts) {
+          throw new Error("Game checkpoint artifact drop event requires active roguelite artifacts.");
         }
         const artifactId = stringValue(
           checkpointDataField(event, "artifactId", type),
@@ -4272,7 +4536,7 @@ export class TowerDefenseGame {
         }
       }
       if (type === "artifactSocketed" || type === "artifactUnsocketed") {
-        if (checkpointRoguelite?.schemaVersion !== 2 || state.artifacts?.schemaVersion !== 2) {
+        if (!checkpointRoguelite?.artifacts || state.artifacts?.schemaVersion !== 2) {
           throw new Error("Game checkpoint artifact socket event requires artifact checkpoint v2.");
         }
         const artifactId = stringValue(checkpointDataField(event, "artifactId", type), `${type}.artifactId`);
@@ -4709,7 +4973,7 @@ export class TowerDefenseGame {
     }));
     this.navigationEnemyFields?.clear();
     this.towers = [...state.towers] as TowerState[];
-    if (this.activeRogueliteMechanics?.schemaVersion === 2 && state.artifacts) {
+    if (this.activeRogueliteMechanics?.artifacts && state.artifacts) {
       const artifacts = state.artifacts;
       this.artifactInitialRngState = cloneCheckpointJson(artifacts.rng.initial);
       this.artifactRng = SeededRng.fromState(artifacts.rng.current);
@@ -4732,6 +4996,24 @@ export class TowerDefenseGame {
       this.nextArtifactInstanceSequence = 1;
       this.artifactInventory = [];
       this.artifactCheckpointForm = 0;
+    }
+    if (this.activeRogueliteMechanics?.draft && state.draft) {
+      this.draftInitialRngState = cloneCheckpointJson(state.draft.rng.initial);
+      this.draftRng = SeededRng.fromState(state.draft.rng.current);
+      this.nextDraftOfferSequence = state.draft.nextOfferSequence;
+      this.pendingDraftOffer = state.draft.pendingOffer === null
+        ? null
+        : Object.freeze({
+            ...state.draft.pendingOffer,
+            cardIds: Object.freeze([...state.draft.pendingOffer.cardIds]) as unknown as readonly [string, string, string]
+          });
+      this.draftSelections = state.draft.selections.map((selection) => Object.freeze({ ...selection }));
+    } else {
+      this.draftInitialRngState = undefined;
+      this.draftRng = undefined;
+      this.nextDraftOfferSequence = 1;
+      this.pendingDraftOffer = null;
+      this.draftSelections = [];
     }
     this.rebuildRogueliteSynergies();
     this.lastEvents = [...state.lastEvents] as GameEvent[];
@@ -6799,8 +7081,9 @@ export class TowerDefenseGame {
     this.waveState = "spawning";
     this.spawnQueue.push(...this.buildSpawnQueue(wave, startedAt));
     this.spawnQueue.sort((a, b) => a.at - b.at);
-    this.nextWaveStartAt =
-      this.startedWaveCount < this.mission.waves.length ? startedAt + this.mission.prepTimeUnits : null;
+    this.nextWaveStartAt = this.activeRogueliteMechanics?.draft
+      ? null
+      : this.startedWaveCount < this.mission.waves.length ? startedAt + this.mission.prepTimeUnits : null;
     this.syncPrepRemaining();
     const waveStartIncome = this.normalizeCost(this.mission.economy?.perWaveStart ?? {});
     if (this.bagHasValue(waveStartIncome)) {
@@ -6819,6 +7102,7 @@ export class TowerDefenseGame {
   }
 
   private startScheduledWaves(): void {
+    if (this.pendingDraftOffer) return;
     while (
       this.nextWaveStartAt !== null &&
       this.startedWaveCount < this.mission.waves.length &&
@@ -7604,7 +7888,7 @@ export class TowerDefenseGame {
   }
 
   private artifactManagementAvailability(): ActionResult {
-    if (this.activeRogueliteMechanics?.schemaVersion !== 2) {
+    if (!this.activeRogueliteMechanics?.artifacts) {
       return this.fail("Artifacts are not available.", "reason.artifactsUnavailable");
     }
     if (this.outcome !== "playing") return this.fail("Mission already ended.", "reason.missionEnded");
@@ -7669,12 +7953,11 @@ export class TowerDefenseGame {
       this.artifactDamageModifiersByTowerId = new Map();
       return;
     }
-    const derived = deriveRogueliteSynergyStateV1(this.activeRogueliteMechanics, this.towers);
-    if (this.activeRogueliteMechanics.schemaVersion === 1) {
-      this.rogueliteSnapshot = derived.snapshot;
-      this.artifactDamageModifiersByTowerId = new Map();
-    } else {
-      const active = this.activeRogueliteMechanics;
+    const active = this.activeRogueliteMechanics;
+    const derived = deriveRogueliteSynergyStateV1(active, this.towers);
+    let artifactSnapshot: Extract<NonNullable<GameSnapshot["roguelite"]>, { schemaVersion: 3 }>["artifacts"] | undefined;
+    if (active.artifacts) {
+      const artifacts = active.artifacts;
       const towerById = new Map(this.towers.map((tower) => [tower.id, tower] as const));
       const artifactBySlot = new Map<string, string>();
       const damageModifiersByTowerId = new Map<string, ModifierSpec[]>();
@@ -7684,7 +7967,7 @@ export class TowerDefenseGame {
           `${entry.socket.towerId.length}:${entry.socket.towerId}|${entry.socket.slotId.length}:${entry.socket.slotId}`,
           entry.instanceId
         );
-        const definition = active.artifacts.definitions[entry.artifactId];
+        const definition = artifacts.definitions[entry.artifactId];
         if (!definition) throw new Error(`Artifact inventory references unknown definition "${entry.artifactId}".`);
         const modifiers = damageModifiersByTowerId.get(entry.socket.towerId) ?? [];
         definition.modifiers.forEach((modifier, modifierIndex) => {
@@ -7701,12 +7984,9 @@ export class TowerDefenseGame {
       this.artifactDamageModifiersByTowerId = new Map(
         [...damageModifiersByTowerId].map(([towerId, modifiers]) => [towerId, Object.freeze(modifiers)] as const)
       );
-      this.rogueliteSnapshot = Object.freeze({
-        schemaVersion: 3 as const,
-        synergies: derived.snapshot.synergies,
-        artifacts: Object.freeze({
-          inventory: Object.freeze(this.artifactInventory.map((entry) => {
-            const definition = active.artifacts.definitions[entry.artifactId];
+      artifactSnapshot = Object.freeze({
+        inventory: Object.freeze(this.artifactInventory.map((entry) => {
+            const definition = artifacts.definitions[entry.artifactId];
             if (!definition) throw new Error(`Artifact inventory references unknown definition "${entry.artifactId}".`);
             const tower = entry.socket === null ? undefined : towerById.get(entry.socket.towerId);
             if (entry.socket !== null && !tower) {
@@ -7724,10 +8004,10 @@ export class TowerDefenseGame {
               })
             });
           })),
-          towerSlots: Object.freeze([...this.towers]
+        towerSlots: Object.freeze([...this.towers]
             .sort((left, right) => compareBinary(left.id, right.id))
             .flatMap((tower) => {
-              const slots = active.artifacts.towerSlots[tower.typeId];
+              const slots = artifacts.towerSlots[tower.typeId];
               if (!slots?.length) return [];
               return [Object.freeze({
                 towerId: tower.id,
@@ -7741,25 +8021,84 @@ export class TowerDefenseGame {
                 })))
               })];
             })),
-          management: this.artifactManagementSnapshot()
-        })
+        management: this.artifactManagementSnapshot()
       });
+    } else {
+      this.artifactDamageModifiersByTowerId = new Map();
+    }
+
+    if (active.draft) {
+      const selectionCounts = new Map<string, { label: string; count: number }>();
+      for (const selection of this.draftSelections) {
+        const definition = active.draft.definitions[selection.cardId];
+        if (!definition) throw new Error(`Draft selection references unknown card "${selection.cardId}".`);
+        const previous = selectionCounts.get(selection.cardId);
+        selectionCounts.set(selection.cardId, {
+          label: definition.label,
+          count: (previous?.count ?? 0) + 1
+        });
+      }
+      const pendingOffer = this.pendingDraftOffer === null ? null : Object.freeze({
+        offerId: this.pendingDraftOffer.offerId,
+        afterWaveIndex: this.pendingDraftOffer.afterWaveIndex,
+        poolId: this.pendingDraftOffer.poolId,
+        options: Object.freeze(this.pendingDraftOffer.cardIds.map((cardId) => {
+          const definition = active.draft!.definitions[cardId];
+          if (!definition) throw new Error(`Draft offer references unknown card "${cardId}".`);
+          return Object.freeze({ cardId, label: definition.label });
+        }))
+      });
+      this.rogueliteSnapshot = Object.freeze({
+        schemaVersion: 4 as const,
+        synergies: derived.snapshot.synergies,
+        draft: Object.freeze({
+          pendingOffer,
+          selections: Object.freeze([...selectionCounts].map(([cardId, value]) => Object.freeze({
+            cardId,
+            label: value.label,
+            count: value.count
+          })))
+        }),
+        ...(artifactSnapshot === undefined ? {} : { artifacts: artifactSnapshot })
+      });
+    } else if (artifactSnapshot) {
+      this.rogueliteSnapshot = Object.freeze({
+        schemaVersion: 3 as const,
+        synergies: derived.snapshot.synergies,
+        artifacts: artifactSnapshot
+      });
+    } else {
+      this.rogueliteSnapshot = derived.snapshot;
     }
     this.rogueliteDamageModifiers = derived.damageModifiers;
   }
 
   private currentRogueliteSnapshot(): GameSnapshot["roguelite"] {
     const snapshot = this.rogueliteSnapshot;
-    if (snapshot?.schemaVersion !== 3) return snapshot;
-    return Object.freeze({
-      schemaVersion: 3 as const,
-      synergies: snapshot.synergies,
-      artifacts: Object.freeze({
-        inventory: snapshot.artifacts.inventory,
-        towerSlots: snapshot.artifacts.towerSlots,
-        management: this.artifactManagementSnapshot()
-      })
-    });
+    if (snapshot?.schemaVersion === 3) {
+      return Object.freeze({
+        schemaVersion: 3 as const,
+        synergies: snapshot.synergies,
+        artifacts: Object.freeze({
+          inventory: snapshot.artifacts.inventory,
+          towerSlots: snapshot.artifacts.towerSlots,
+          management: this.artifactManagementSnapshot()
+        })
+      });
+    }
+    if (snapshot?.schemaVersion === 4 && snapshot.artifacts) {
+      return Object.freeze({
+        schemaVersion: 4 as const,
+        synergies: snapshot.synergies,
+        draft: snapshot.draft,
+        artifacts: Object.freeze({
+          inventory: snapshot.artifacts.inventory,
+          towerSlots: snapshot.artifacts.towerSlots,
+          management: this.artifactManagementSnapshot()
+        })
+      });
+    }
+    return snapshot;
   }
 
   private artifactManagementSnapshot(): RogueliteArtifactManagementSnapshotV1 {
@@ -8736,6 +9075,7 @@ export class TowerDefenseGame {
         && (tower.hp === undefined || tower.hp > 0));
     if (sourceTower) {
       modifiers.push(...(this.artifactDamageModifiersByTowerId.get(sourceTower.id) ?? []));
+      modifiers.push(...this.draftDamageModifiersForTower(sourceTower));
       const damageBonusBasisPoints = this.highGroundPair(sourceTower, enemy)?.damageBonusBasisPoints ?? 0;
       if (damageBonusBasisPoints > 0) {
         modifiers.push({
@@ -8787,6 +9127,31 @@ export class TowerDefenseGame {
         ...(legacyArmor === undefined ? {} : { legacyArmor })
       }
     });
+  }
+
+  private draftDamageModifiersForTower(tower: TowerState): readonly ModifierSpec[] {
+    const active = this.activeRogueliteMechanics;
+    if (!active?.draft || this.draftSelections.length === 0) return [];
+    const tags = new Set(active.towerTagsByTypeId[tower.typeId] ?? []);
+    const modifiers: ModifierSpec[] = [];
+    for (const selection of this.draftSelections) {
+      const definition = active.draft.definitions[selection.cardId];
+      if (!definition) throw new Error(`Draft selection references unknown card "${selection.cardId}".`);
+      definition.effects.forEach((effect, effectIndex) => {
+        const matches = effect.scope.kind === "all_towers"
+          || (effect.scope.kind === "tower_type" && effect.scope.towerTypeId === tower.typeId)
+          || (effect.scope.kind === "tower_tag" && tags.has(effect.scope.tag));
+        if (!matches) return;
+        modifiers.push(Object.freeze({
+          id: `roguelite:draft:${selection.sequence}:${selection.cardId.length}:${selection.cardId}:modifier:${String(effectIndex).padStart(2, "0")}`,
+          target: effect.modifier.target,
+          stage: "run",
+          operation: effect.modifier.operation,
+          value: effect.modifier.value
+        }));
+      });
+    }
+    return modifiers;
   }
 
   /** The (author-defined) damage type a tower deals; defaults to "physical". */
@@ -9483,6 +9848,26 @@ export class TowerDefenseGame {
     }
   }
 
+  private createDraftOfferAfterWave(afterWaveIndex: number): void {
+    const draft = this.activeRogueliteMechanics?.draft;
+    const rng = this.draftRng;
+    if (!draft || !rng || this.pendingDraftOffer || afterWaveIndex + 1 >= this.mission.waves.length) return;
+    const poolId = draft.defaultPoolId;
+    if (this.nextDraftOfferSequence !== afterWaveIndex + 1) return;
+    const selected = sampleDraftOfferCardIds(draft, poolId, rng);
+    const sequence = this.nextDraftOfferSequence;
+    this.nextDraftOfferSequence += 1;
+    this.pendingDraftOffer = Object.freeze({
+      offerId: `draft_offer_${sequence}`,
+      afterWaveIndex,
+      poolId,
+      cardIds: selected
+    });
+    this.nextWaveStartAt = null;
+    this.prepRemaining = 0;
+    this.rebuildRogueliteSynergies();
+  }
+
   private removeDeadEnemies(): void {
     const survivors: EnemyState[] = [];
     const spawned: EnemyState[] = [];
@@ -9528,7 +9913,7 @@ export class TowerDefenseGame {
   private settleArtifactLoot(enemy: EnemyState): void {
     const active = this.activeRogueliteMechanics;
     const rng = this.artifactRng;
-    if (active?.schemaVersion !== 2 || !rng) return;
+    if (!active?.artifacts || !rng) return;
     const table = active.artifacts.bossLootTables[enemy.typeId];
     if (!table) return;
     const noDropWeight = table.noDropWeight ?? 0;
@@ -9665,6 +10050,9 @@ export class TowerDefenseGame {
       }
       this.lastEvents.push({ type: "victory" });
       return;
+    }
+    if (battlefieldClear && this.clearedWaveCount > 0) {
+      this.createDraftOfferAfterWave(this.clearedWaveCount - 1);
     }
   }
 

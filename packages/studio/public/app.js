@@ -740,7 +740,20 @@ function normalizeRogueliteMechanicsDraft(profile) {
   const draft = { synergies };
   const artifacts = normalizeRogueliteArtifactDraft(source?.artifacts);
   if (artifacts) draft.artifacts = artifacts;
+  const waveDraft = normalizeRogueliteDraft(source?.draft);
+  if (waveDraft) draft.draft = waveDraft;
   return draft;
+}
+
+function normalizeRogueliteDraft(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const definitions = ownDataValue(value, "definitions");
+  const pools = ownDataValue(value, "pools");
+  return {
+    definitions: definitions && typeof definitions === "object" && !Array.isArray(definitions) ? deep(definitions) : {},
+    pools: pools && typeof pools === "object" && !Array.isArray(pools) ? deep(pools) : {},
+    defaultPoolId: typeof ownDataValue(value, "defaultPoolId") === "string" ? ownDataValue(value, "defaultPoolId") : ""
+  };
 }
 
 function normalizeRogueliteArtifactDraft(value) {
@@ -942,6 +955,11 @@ function mechanicsRogueliteArtifactLimits() {
   return source && typeof source === "object" && !Array.isArray(source) ? source : {};
 }
 
+function mechanicsRogueliteDraftLimits() {
+  const source = MechanicsUI.capabilities?.roguelite?.authoring?.limits?.draft;
+  return source && typeof source === "object" && !Array.isArray(source) ? source : {};
+}
+
 function mechanicsBoundedEntries(record, limit) {
   const entries = Object.entries(record ?? {});
   return Number.isInteger(limit) && limit >= 0 ? entries.slice(0, limit) : entries;
@@ -961,9 +979,16 @@ function mechanicsAuthoredMatrixEntryCount() {
 
 function mechanicsEffectiveModuleSchemaVersion() {
   if (MechanicsUI.selectedModuleId === "roguelite") {
+    const authoredVersion = Math.max(
+      mechanicsProjectModuleVersion(),
+      Number.isInteger(MechanicsUI.moduleSchemaVersion) ? MechanicsUI.moduleSchemaVersion : 1
+    );
+    if (MechanicsUI.draft?.draft) {
+      return Math.max(authoredVersion, 3);
+    }
     return MechanicsUI.draft?.artifacts
-      ? Math.max(mechanicsProjectModuleVersion(), MechanicsUI.moduleSchemaVersion ?? 1, 2)
-      : 1;
+      ? Math.max(authoredVersion, 2)
+      : authoredVersion;
   }
   if (MechanicsUI.selectedModuleId === "terraforming") return 1;
   if (MechanicsUI.selectedModuleId === "elevation") {
@@ -1146,8 +1171,8 @@ async function newMechanicsProfile() {
 }
 
 async function materializeRogueliteRecipeDraft(recipe) {
-  if (mechanicsProjectModuleVersion() > 2) {
-    throw new Error("Future roguelite module versions are preserved read-only and cannot be materialized as v1/v2.");
+  if (mechanicsProjectModuleVersion() > 3) {
+    throw new Error("Future roguelite module versions are preserved read-only and cannot be materialized as v1/v2/v3.");
   }
   if (!recipe || !ROGUELITE_RECIPE_IDS.has(recipe.id)) {
     throw new Error("The selected roguelite recipe is unavailable.");
@@ -2710,7 +2735,7 @@ function rogueliteKnownTags() {
 
 function refreshRogueliteKnownTagControls() {
   const knownTags = rogueliteKnownTags();
-  const supportedVersion = mechanicsProjectModuleVersion() <= 2;
+  const supportedVersion = mechanicsProjectModuleVersion() <= 3;
   const synergies = MechanicsUI.draft?.synergies ?? {};
   $("mechanics-roguelite-synergy-rows")?.querySelectorAll("[data-synergy-id]").forEach((row) => {
     const definition = ownDataValue(synergies, row.dataset.synergyId);
@@ -2730,7 +2755,7 @@ function renderRogueliteMechanicsEditor() {
   if (MechanicsUI.selectedModuleId !== "roguelite" || !MechanicsUI.draft) return;
   MechanicsUI.draft = normalizeRogueliteMechanicsDraft(MechanicsUI.draft);
   const limits = mechanicsRogueliteLimits();
-  const supportedVersion = mechanicsProjectModuleVersion() <= 2;
+  const supportedVersion = mechanicsProjectModuleVersion() <= 3;
   const towerRows = $("mechanics-roguelite-tower-tag-rows");
   if (towerRows) {
     towerRows.innerHTML = Object.entries(S.project?.towers ?? {})
@@ -2845,6 +2870,7 @@ function renderRogueliteMechanicsEditor() {
     };
   }
   renderRogueliteArtifactEditor(supportedVersion);
+  renderRogueliteDraft(supportedVersion);
 }
 
 function renderRogueliteArtifactEditor(supportedVersion) {
@@ -2872,7 +2898,7 @@ function renderRogueliteArtifactEditor(supportedVersion) {
         if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Use one JSON object.");
         artifacts[field] = value;
         input.setCustomValidity("");
-        MechanicsUI.moduleSchemaVersion = 2;
+        MechanicsUI.moduleSchemaVersion = Math.max(MechanicsUI.moduleSchemaVersion || 1, artifacts ? 2 : 1);
         MechanicsUI.preview = null;
         renderMechanicsPreviewResult();
       } catch {
@@ -2909,10 +2935,120 @@ function renderRogueliteArtifactEditor(supportedVersion) {
         entries: [{ artifactId, weight: 1 }]
       });
     }
-    MechanicsUI.moduleSchemaVersion = 2;
+    MechanicsUI.moduleSchemaVersion = Math.max(MechanicsUI.moduleSchemaVersion || 1, 2);
     MechanicsUI.preview = null;
     renderMechanicsHub();
   };
+}
+
+function renderRogueliteDraft(supportedVersion) {
+  const waveDraft = MechanicsUI.draft?.draft;
+  const limits = mechanicsRogueliteDraftLimits();
+  const cardRows = $("mechanics-roguelite-draft-card-rows");
+  const poolRows = $("mechanics-roguelite-draft-pool-rows");
+  const defaultPool = $("mechanics-roguelite-draft-default-pool");
+  if (cardRows) {
+    cardRows.innerHTML = waveDraft
+      ? `<label>Draft card definitions JSON<textarea data-role="draft-card-json" class="mono" spellcheck="false"></textarea></label>`
+      : `<div class="workbench-empty">No roguelite v3 wave draft in this profile.</div>`;
+    const input = cardRows.querySelector('[data-role="draft-card-json"]');
+    if (input) {
+      input.value = JSON.stringify(waveDraft.definitions, null, 2);
+      input.disabled = !supportedVersion;
+      input.onchange = () => {
+        try {
+          const value = JSON.parse(input.value);
+          if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Use one JSON object.");
+          waveDraft.definitions = value;
+          input.setCustomValidity("");
+          MechanicsUI.moduleSchemaVersion = Math.max(MechanicsUI.moduleSchemaVersion || 1, 3);
+          MechanicsUI.preview = null;
+          renderMechanicsPreviewResult();
+        } catch {
+          input.setCustomValidity("Draft definitions must be a valid JSON object.");
+          input.reportValidity();
+        }
+      };
+    }
+  }
+  if (poolRows) {
+    poolRows.innerHTML = waveDraft
+      ? `<label>Weighted draft pools JSON<textarea data-role="draft-pool-json" class="mono" spellcheck="false"></textarea></label>`
+      : `<div class="workbench-empty">Add a draft card or pool to enable this optional slice.</div>`;
+    const input = poolRows.querySelector('[data-role="draft-pool-json"]');
+    if (input) {
+      input.value = JSON.stringify(waveDraft.pools, null, 2);
+      input.disabled = !supportedVersion;
+      input.onchange = () => {
+        try {
+          const value = JSON.parse(input.value);
+          if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Use one JSON object.");
+          waveDraft.pools = value;
+          input.setCustomValidity("");
+          MechanicsUI.moduleSchemaVersion = Math.max(MechanicsUI.moduleSchemaVersion || 1, 3);
+          MechanicsUI.preview = null;
+          renderMechanicsPreviewResult();
+        } catch {
+          input.setCustomValidity("Draft pools must be a valid JSON object.");
+          input.reportValidity();
+        }
+      };
+    }
+  }
+  if (defaultPool) {
+    defaultPool.value = waveDraft?.defaultPoolId ?? "";
+    defaultPool.disabled = !supportedVersion || !waveDraft;
+    defaultPool.oninput = () => {
+      if (!MechanicsUI.draft?.draft) return;
+      MechanicsUI.draft.draft.defaultPoolId = defaultPool.value;
+      MechanicsUI.moduleSchemaVersion = Math.max(MechanicsUI.moduleSchemaVersion || 1, 3);
+      MechanicsUI.preview = null;
+      renderMechanicsPreviewResult();
+    };
+  }
+  const addCard = $("btn-mechanics-add-draft-card");
+  if (addCard) {
+    addCard.disabled = !supportedVersion
+      || Object.keys(waveDraft?.definitions ?? {}).length >= (limits.definitions ?? 256);
+    addCard.onclick = () => {
+      MechanicsUI.draft.draft ??= { definitions: {}, pools: {}, defaultPoolId: "starter" };
+      const next = MechanicsUI.draft.draft;
+      let suffix = Object.keys(next.definitions).length + 1;
+      let cardId = `card_${suffix}`;
+      while (ownDataValue(next.definitions, cardId)) cardId = `card_${++suffix}`;
+      defineOwnDataValue(next.definitions, cardId, {
+        label: `Draft card ${suffix}`,
+        effects: [{
+          kind: "modifier",
+          scope: { kind: "all_towers" },
+          modifier: { target: "damage", operation: "additive_ratio", value: 0.1 }
+        }]
+      });
+      MechanicsUI.moduleSchemaVersion = Math.max(MechanicsUI.moduleSchemaVersion || 1, 3);
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    };
+  }
+  const addPool = $("btn-mechanics-add-draft-pool");
+  if (addPool) {
+    addPool.disabled = !supportedVersion
+      || Object.keys(waveDraft?.pools ?? {}).length >= (limits.pools ?? 32);
+    addPool.onclick = () => {
+      MechanicsUI.draft.draft ??= { definitions: {}, pools: {}, defaultPoolId: "starter" };
+      const next = MechanicsUI.draft.draft;
+      let suffix = Object.keys(next.pools).length + 1;
+      let poolId = suffix === 1 ? "starter" : `pool_${suffix}`;
+      while (ownDataValue(next.pools, poolId)) poolId = `pool_${++suffix}`;
+      defineOwnDataValue(next.pools, poolId, {
+        entries: Object.keys(next.definitions).sort().slice(0, limits.entriesPerPool ?? 128)
+          .map((cardId) => ({ cardId, weight: 1 }))
+      });
+      if (!next.defaultPoolId) next.defaultPoolId = poolId;
+      MechanicsUI.moduleSchemaVersion = Math.max(MechanicsUI.moduleSchemaVersion || 1, 3);
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    };
+  }
 }
 
 function renderTerraformingMechanicsEditor() {
@@ -3443,8 +3579,8 @@ function renderMechanicsPreviewResult() {
 }
 
 function mechanicsRequest(enabled) {
-  if (MechanicsUI.selectedModuleId === "roguelite" && mechanicsProjectModuleVersion() > 2) {
-    throw new Error("Future roguelite schemaVersion 3 modules are read-only in this Studio version.");
+  if (MechanicsUI.selectedModuleId === "roguelite" && mechanicsProjectModuleVersion() > 3) {
+    throw new Error("Future roguelite schemaVersion 4 modules are read-only in this Studio version.");
   }
   if (MechanicsUI.selectedModuleId === "terraforming" && mechanicsProjectModuleVersion() !== 1) {
     throw new Error("Future terraforming module versions are read-only in this Studio version.");
@@ -3549,7 +3685,7 @@ function renderMechanicsHub() {
           : MechanicsUI.selectedModuleId === "terraforming"
             ? "Author detached terrain transitions and optional bounded elevation mutation, then explicitly enable the profile for this mission."
             : MechanicsUI.selectedModuleId === "roguelite"
-              ? "Author tower tags, global synergies, and optional v2 artifact loot as one opt-in profile transaction."
+              ? "Author tower tags, global synergies, optional v2 artifact loot, and independent v3 wave draft choices as one opt-in profile transaction."
               : "Author a reusable combat profile, then explicitly select it for this mission.";
   missionSelect.innerHTML = Object.entries(S.project.missions ?? {}).map(([id, mission]) =>
     `<option value="${esc(id)}" ${id === MechanicsUI.missionId ? "selected" : ""}>${esc(mission.label ?? id)}</option>`).join("");
@@ -3694,7 +3830,7 @@ function renderMechanicsHub() {
   }
   const busy = MechanicsUI.loading || MechanicsUI.applying || MechanicsUI.terraformingRecipeLoading;
   const supportedTerraformingVersion = MechanicsUI.selectedModuleId !== "terraforming" || mechanicsProjectModuleVersion() === 1;
-  const supportedRogueliteVersion = MechanicsUI.selectedModuleId !== "roguelite" || mechanicsProjectModuleVersion() <= 2;
+  const supportedRogueliteVersion = MechanicsUI.selectedModuleId !== "roguelite" || mechanicsProjectModuleVersion() <= 3;
   const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion && supportedRogueliteVersion && !busy;
   const dirtyWriteGuard = Boolean(S.dirty);
   if ($("btn-mechanics-preview")) $("btn-mechanics-preview").disabled = !writable;
@@ -3715,6 +3851,8 @@ function renderMechanicsHub() {
   if ($("btn-mechanics-add-terraforming-transition")) $("btn-mechanics-add-terraforming-transition").disabled ||= !writable;
   if ($("btn-mechanics-add-synergy")) $("btn-mechanics-add-synergy").disabled ||= !writable;
   if ($("btn-mechanics-add-artifact")) $("btn-mechanics-add-artifact").disabled ||= !writable;
+  if ($("btn-mechanics-add-draft-card")) $("btn-mechanics-add-draft-card").disabled ||= !writable;
+  if ($("btn-mechanics-add-draft-pool")) $("btn-mechanics-add-draft-pool").disabled ||= !writable;
   $("btn-mechanics-reload").disabled = dirtyWriteGuard || busy;
   if ($("mechanics-profile-id")) $("mechanics-profile-id").disabled = !writable;
   $("btn-mechanics-load-profile").onclick = loadMechanicsProfile;
@@ -8934,8 +9072,38 @@ function recordPlaytestEvents(events, snapshot) {
 
 function renderPlaytestArtifacts(snapshot = PT.game?.getSnapshot()) {
   const panel = $("pt-artifact-inventory");
-  if (!panel || !snapshot || !PT.rmod?.projectRoguelitePresentation) return;
+  const draftPanel = $("pt-wave-draft");
+  if (!panel || !draftPanel || !snapshot || !PT.rmod?.projectRoguelitePresentation) return;
   const presentation = PT.rmod.projectRoguelitePresentation(snapshot);
+  draftPanel.replaceChildren();
+  const pendingOffer = presentation && presentation.draft?.pendingOffer;
+  draftPanel.hidden = !presentation?.active || !pendingOffer;
+  if (!draftPanel.hidden) {
+    const title = document.createElement("div");
+    title.className = "form-section-title pt-debug-title";
+    title.textContent = "Choose a wave upgrade";
+    draftPanel.append(title);
+    for (const option of pendingOffer.options) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "btn btn-outline";
+      button.setAttribute("data-pt-draft-card-id", option.cardId);
+      button.textContent = option.label;
+      button.addEventListener("click", () => {
+        const result = PT.mod.dispatchGameCommand(PT.game, {
+          schemaVersion: 3, type: "chooseDraftOption",
+          offerId: pendingOffer.offerId,
+          cardId: option.cardId
+        });
+        ptMsg(result, "Wave upgrade selected.");
+        if (result.ok) {
+          PT.artifactUiDirty = true;
+          renderPlaytestArtifacts(PT.game.getSnapshot());
+        }
+      });
+      draftPanel.append(button);
+    }
+  }
   panel.replaceChildren();
   panel.hidden = !presentation?.active || !presentation.artifacts;
   if (panel.hidden) return;

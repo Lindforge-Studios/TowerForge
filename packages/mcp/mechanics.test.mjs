@@ -151,10 +151,10 @@ describe("R1 combat mechanics MCP contract", () => {
     };
     const rogueliteSurface = {
       authoring: engine.ROGUELITE_MECHANICS_SCHEMA,
-      snapshot: { field: "roguelite", optional: true, supportedSchemaVersions: [1, 2, 3] },
+      snapshot: { field: "roguelite", optional: true, supportedSchemaVersions: [1, 2, 3, 4] },
       events: ["artifactDropped", "artifactSocketed", "artifactUnsocketed"],
       commands: {
-        schemaVersion: 2,
+        schemaVersion: 3,
         phase: "between",
         socketArtifact: {
           requiredFields: ["artifactInstanceId", "towerId", "slotId"],
@@ -163,6 +163,11 @@ describe("R1 combat mechanics MCP contract", () => {
         },
         unsocketArtifact: {
           requiredFields: ["artifactInstanceId", "towerId", "slotId"],
+          optionalFields: [],
+          additionalProperties: false
+        },
+        chooseDraftOption: {
+          requiredFields: ["offerId", "cardId"],
           optionalFields: [],
           additionalProperties: false
         }

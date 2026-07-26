@@ -229,6 +229,58 @@ describe("R4.1A shared rogue-lite synergy presentation", () => {
     expect(projected.artifacts.management.allowed).toBe(true);
   });
 
+  it("projects a detached v4 pending wave draft without inventing artifact state", () => {
+    const snapshot = {
+      roguelite: {
+        schemaVersion: 4,
+        synergies: [],
+        draft: {
+          pendingOffer: {
+            offerId: "draft_2",
+            afterWaveIndex: 0,
+            poolId: "starter",
+            options: [
+              { cardId: "damage", label: "Sharpened bolts" },
+              { cardId: "tech", label: "Tech calibration" },
+              { cardId: "nature", label: "Living roots" }
+            ]
+          },
+          selections: [
+            { cardId: "tech", label: "Tech calibration", count: 1 },
+            { cardId: "damage", label: "Sharpened bolts", count: 2 }
+          ]
+        }
+      }
+    };
+
+    const projected = projector()(snapshot);
+
+    expect(projected).toEqual({
+      active: true,
+      synergies: [],
+      draft: {
+        pendingOffer: {
+          offerId: "draft_2",
+          afterWaveIndex: 0,
+          poolId: "starter",
+          options: [
+            { cardId: "damage", label: "Sharpened bolts" },
+            { cardId: "tech", label: "Tech calibration" },
+            { cardId: "nature", label: "Living roots" }
+          ]
+        },
+        selections: [
+          { cardId: "damage", label: "Sharpened bolts", count: 2 },
+          { cardId: "tech", label: "Tech calibration", count: 1 }
+        ]
+      }
+    });
+    expect(projected).not.toHaveProperty("artifacts");
+    expectDeeplyFrozen(projected);
+    snapshot.roguelite.draft.pendingOffer.options[0].label = "mutated";
+    expect(projected.draft.pendingOffer.options[0].label).toBe("Sharpened bolts");
+  });
+
   it("fails closed on future, malformed, sparse, accessor, duplicate, and over-budget sections", () => {
     const row = {
       synergyId: "elemental",
@@ -240,7 +292,7 @@ describe("R4.1A shared rogue-lite synergy presentation", () => {
     };
     const sparse = new Array(1);
     const invalid = [
-      { schemaVersion: 4, synergies: [] },
+      { schemaVersion: 5, synergies: [] },
       { schemaVersion: 1 },
       { schemaVersion: 1, synergies: [], extra: true },
       { schemaVersion: 1, synergies: sparse },

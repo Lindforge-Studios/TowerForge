@@ -771,6 +771,21 @@
               <div id="mechanics-roguelite-tower-slot-rows" class="mechanics-definition-rows"></div>
               <div id="mechanics-roguelite-boss-loot-table-rows" class="mechanics-definition-rows"></div>
             </div>
+            <div class="mechanics-shield-section mechanics-roguelite-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Wave draft cards</h4>
+                  <p>Roguelite v3 offers three seeded choices between waves. Cards, weighted pools, and the default pool remain an independent opt-in slice.</p>
+                </div>
+                <div class="mechanics-inline-actions">
+                  <button id="btn-mechanics-add-draft-card" class="btn btn-outline" type="button">+ Add draft card</button>
+                  <button id="btn-mechanics-add-draft-pool" class="btn btn-outline" type="button">+ Add draft pool</button>
+                </div>
+              </div>
+              <label>Default pool ID<input id="mechanics-roguelite-draft-default-pool" type="text" autocomplete="off" spellcheck="false" placeholder="starter"></label>
+              <div id="mechanics-roguelite-draft-card-rows" class="mechanics-definition-rows"></div>
+              <div id="mechanics-roguelite-draft-pool-rows" class="mechanics-definition-rows"></div>
+            </div>
           </div>
           <div class="mechanics-actions">
             <button id="btn-mechanics-preview" class="btn btn-outline" type="button">Preview</button>
@@ -968,6 +983,7 @@
           <div class="pt-stat"><span class="k">Objectives</span><span class="v" id="pt-objectives">—</span></div>
           <div class="form-section-title pt-debug-title">Inspector</div>
           <div id="pt-inspector" class="pt-inspector">Click Inspect, then choose a tower or enemy.</div>
+          <div id="pt-wave-draft" class="pt-artifact-inventory" hidden></div>
           <div id="pt-artifact-inventory" class="pt-artifact-inventory" hidden></div>
           <div class="form-section-title pt-debug-title">Event timeline</div>
           <div id="pt-event-timeline" class="pt-event-timeline"></div>

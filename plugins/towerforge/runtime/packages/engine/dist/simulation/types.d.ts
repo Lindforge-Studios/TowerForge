@@ -905,7 +905,30 @@ export interface RogueliteSnapshotV3 {
         readonly management: RogueliteArtifactManagementSnapshotV1;
     };
 }
-export type RogueliteSnapshot = RogueliteSnapshotV1 | RogueliteSnapshotV2 | RogueliteSnapshotV3;
+export interface RogueliteDraftOfferSnapshotV1 {
+    readonly offerId: string;
+    readonly afterWaveIndex: number;
+    readonly poolId: string;
+    readonly options: readonly {
+        readonly cardId: string;
+        readonly label: string;
+    }[];
+}
+export interface RogueliteDraftSnapshotV1 {
+    readonly pendingOffer: RogueliteDraftOfferSnapshotV1 | null;
+    readonly selections: readonly {
+        readonly cardId: string;
+        readonly label: string;
+        readonly count: number;
+    }[];
+}
+export interface RogueliteSnapshotV4 {
+    readonly schemaVersion: 4;
+    readonly synergies: readonly RogueliteSynergySnapshotV1[];
+    readonly draft: RogueliteDraftSnapshotV1;
+    readonly artifacts?: RogueliteSnapshotV3["artifacts"];
+}
+export type RogueliteSnapshot = RogueliteSnapshotV1 | RogueliteSnapshotV2 | RogueliteSnapshotV3 | RogueliteSnapshotV4;
 export interface GameSnapshot {
     mapId: string;
     grid: GridDefinition;

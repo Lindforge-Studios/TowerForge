@@ -33,7 +33,7 @@ function fixture() {
 }
 
 describe("R4.1A/R4.2E roguelite MCP and AI authoring contract", () => {
-  it("describes v1-v3 runtime sockets and exact v2 management commands for AI agents", async () => {
+  it("describes v1-v4 runtime state and preserves exact v2 artifact management commands for AI agents", async () => {
     const engine = await loadEngine();
     const projectDir = fixture();
     const roguelite = await callTool("describe_schema", { domain: "roguelite" }, {});
@@ -41,14 +41,14 @@ describe("R4.1A/R4.2E roguelite MCP and AI authoring contract", () => {
     const capabilities = await callTool("get_capabilities", { projectDir, missionId: "tutorial_01" }, {});
 
     expect(roguelite).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       requestedDomain: "roguelite",
       roguelite: {
         authoring: engine.ROGUELITE_MECHANICS_SCHEMA,
-        snapshot: { field: "roguelite", optional: true, supportedSchemaVersions: [1, 2, 3] },
+        snapshot: { field: "roguelite", optional: true, supportedSchemaVersions: [1, 2, 3, 4] },
         events: ["artifactDropped", "artifactSocketed", "artifactUnsocketed"],
         commands: {
-          schemaVersion: 2,
+          schemaVersion: 3,
           phase: "between",
           socketArtifact: {
             requiredFields: ["artifactInstanceId", "towerId", "slotId"],
@@ -72,6 +72,38 @@ describe("R4.1A/R4.2E roguelite MCP and AI authoring contract", () => {
         towerTagsByTowerId: { arrow_tower: ["sniper"] }
       }
     });
+  });
+
+  it("describes v3 draft authoring, the v4 snapshot, and exact chooseDraftOption command without a new writer", async () => {
+    const engine = await loadEngine();
+    const roguelite = await callTool("describe_schema", { domain: "roguelite" }, {});
+
+    expect(roguelite).toMatchObject({
+      schemaVersion: 3,
+      requestedDomain: "roguelite",
+      roguelite: {
+        authoring: engine.ROGUELITE_MECHANICS_SCHEMA,
+        snapshot: { field: "roguelite", optional: true, supportedSchemaVersions: [1, 2, 3, 4] },
+        commands: {
+          schemaVersion: 3,
+          chooseDraftOption: {
+            requiredFields: ["offerId", "cardId"],
+            optionalFields: [],
+            additionalProperties: false
+          }
+        }
+      }
+    });
+    expect(roguelite.roguelite.authoring).toMatchObject({
+      schemaVersion: 3,
+      supportedModuleSchemaVersions: [1, 2, 3],
+      profileVersions: { 3: { requiredFields: ["synergies"], optionalFields: ["artifacts", "draft"] } }
+    });
+    expect(TOOLS.map((tool) => tool.name)).not.toContain("apply_roguelite_draft");
+    for (const toolName of ["preview_mechanics_module", "apply_mechanics_module"]) {
+      expect(TOOLS.find((tool) => tool.name === toolName)?.inputSchema.properties.moduleSchemaVersion.enum)
+        .toContain(3);
+    }
   });
 
   it("materializes detached boss loot and applies its v2 profile only through the guarded transaction", async () => {
@@ -223,6 +255,7 @@ describe("R4.1A/R4.2E roguelite MCP and AI authoring contract", () => {
     );
     expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/towerTypeIds[\s\S]*towerTags/i);
     expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/inert|never auto[- ]?enable|does not enable/i);
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/wave draft[\s\S]*GameCommand v3[\s\S]*chooseDraftOption/i);
     expect(TOOLS.map((tool) => tool.name)).not.toContain("analyze_roguelite");
   });
 });

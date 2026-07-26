@@ -86,6 +86,27 @@ export interface ArtifactCheckpointStateV2 {
     readonly inventory: readonly ArtifactCheckpointInventoryEntryV2[];
 }
 export type ArtifactCheckpointState = ArtifactCheckpointStateV1 | ArtifactCheckpointStateV2;
+export interface DraftCheckpointPendingOfferV1 {
+    readonly offerId: string;
+    readonly afterWaveIndex: number;
+    readonly poolId: string;
+    readonly cardIds: readonly [string, string, string];
+}
+export interface DraftCheckpointSelectionV1 {
+    readonly sequence: number;
+    readonly offerId: string;
+    readonly cardId: string;
+}
+export interface DraftCheckpointStateV1 {
+    readonly schemaVersion: 1;
+    readonly rng: {
+        readonly initial: SeededRngStateV1;
+        readonly current: SeededRngStateV1;
+    };
+    readonly nextOfferSequence: number;
+    readonly pendingOffer: DraftCheckpointPendingOfferV1 | null;
+    readonly selections: readonly DraftCheckpointSelectionV1[];
+}
 /** Authoritative mutable simulation state. Map occupancy and water cues are rebuilt derivatives. */
 export interface GameCheckpointStateV1 {
     readonly coreHp: number;
@@ -122,6 +143,7 @@ export interface GameCheckpointStateV1 {
     readonly combat?: CombatState;
     readonly reactions?: ReactionStateV1;
     readonly artifacts?: ArtifactCheckpointState;
+    readonly draft?: DraftCheckpointStateV1;
 }
 export interface GameCheckpointV1 {
     readonly schemaVersion: typeof GAME_CHECKPOINT_SCHEMA_VERSION;

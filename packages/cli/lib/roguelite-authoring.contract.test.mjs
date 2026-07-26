@@ -49,6 +49,45 @@ const artifactProfile = Object.freeze({
     })
   })
 });
+const draftProfile = Object.freeze({
+  synergies: profile.synergies,
+  draft: Object.freeze({
+    definitions: Object.freeze({
+      sharpened_bolts: Object.freeze({
+        label: "Sharpened bolts",
+        effects: Object.freeze([Object.freeze({
+          kind: "modifier",
+          scope: Object.freeze({ kind: "tower_tag", tag: "sniper" }),
+          modifier: Object.freeze({ target: "damage", operation: "additive_ratio", value: 0.1 })
+        })])
+      }),
+      calibrated_sights: Object.freeze({
+        label: "Calibrated sights",
+        effects: Object.freeze([Object.freeze({
+          kind: "modifier",
+          scope: Object.freeze({ kind: "tower_type", towerTypeId: "arrow_tower" }),
+          modifier: Object.freeze({ target: "damage", operation: "multiplier", value: 1.1 })
+        })])
+      }),
+      field_training: Object.freeze({
+        label: "Field training",
+        effects: Object.freeze([Object.freeze({
+          kind: "modifier",
+          scope: Object.freeze({ kind: "all_towers" }),
+          modifier: Object.freeze({ target: "damage", operation: "flat", value: 1 })
+        })])
+      })
+    }),
+    pools: Object.freeze({
+      starter: Object.freeze({ entries: Object.freeze([
+        Object.freeze({ cardId: "sharpened_bolts", weight: 3 }),
+        Object.freeze({ cardId: "calibrated_sights", weight: 2 }),
+        Object.freeze({ cardId: "field_training", weight: 1 })
+      ]) })
+    }),
+    defaultPoolId: "starter"
+  })
+});
 
 afterEach(() => {
   for (const projectDir of tempProjects.splice(0)) fs.rmSync(projectDir, { recursive: true, force: true });
@@ -224,6 +263,29 @@ describe("R4.1A roguelite CLI and recipe authoring contract", () => {
       ...authored,
       ifRevision: preview.revision
     });
+    expect(applied).toMatchObject({ ok: true, written: true, rolledBack: false });
+    expect(readRawProjectFiles(projectDir).mechanics.modules.roguelite)
+      .toEqual(preview.candidate.mechanics.modules.roguelite);
+  });
+
+  it("previews and applies a draft-only roguelite v3 profile without materializing artifacts", async () => {
+    const projectDir = fixture();
+    const authored = request({
+      moduleSchemaVersion: 3,
+      profileId: "wave_draft",
+      profile: draftProfile
+    });
+
+    const preview = await previewMechanicsModule(projectDir, authored);
+    expect(preview).toMatchObject({ ok: true, dryRun: true, written: false });
+    expect(preview.candidate.mechanics.modules.roguelite).toEqual({
+      schemaVersion: 3,
+      enabled: true,
+      profiles: { wave_draft: draftProfile }
+    });
+    expect(preview.candidate.mechanics.modules.roguelite.profiles.wave_draft).not.toHaveProperty("artifacts");
+
+    const applied = await applyMechanicsModule(projectDir, { ...authored, ifRevision: preview.revision });
     expect(applied).toMatchObject({ ok: true, written: true, rolledBack: false });
     expect(readRawProjectFiles(projectDir).mechanics.modules.roguelite)
       .toEqual(preview.candidate.mechanics.modules.roguelite);

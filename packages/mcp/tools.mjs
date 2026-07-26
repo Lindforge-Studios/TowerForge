@@ -500,7 +500,7 @@ export const TOOLS = [
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
         moduleId: { type: "string", description: "Engine-owned mechanics module id." },
-        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3], description: "Module contract version: navigation, physics, and terraforming support v1; roguelite supports v1 for synergies and v2 for artifact loot; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Omitted edits preserve an existing version and new modules default to v1." },
+        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3], description: "Module contract version: navigation, physics, and terraforming support v1; roguelite supports v1 for synergies, v2 for artifact loot, and v3 for optional wave draft; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Omitted edits preserve an existing version and new modules default to v1." },
         missionId: { type: "string", description: "Mission that would select the profile; defaults to the project's default mission." },
         profileId: { type: "string", description: "Profile id to preview." },
         profile: { type: "object", description: "Versioned module profile payload." },
@@ -522,7 +522,7 @@ export const TOOLS = [
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
         moduleId: { type: "string", description: "Engine-owned mechanics module id." },
-        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3], description: "Module contract version: navigation, physics, and terraforming support v1; roguelite supports v1 for synergies and v2 for artifact loot; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Upgrades are guarded and version downgrades are rejected." },
+        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3], description: "Module contract version: navigation, physics, and terraforming support v1; roguelite supports v1 for synergies, v2 for artifact loot, and v3 for optional wave draft; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Upgrades are guarded and version downgrades are rejected." },
         missionId: { type: "string", description: "Mission that would select the profile; defaults to the project's default mission." },
         profileId: { type: "string", description: "Profile id to enable." },
         profile: { type: "object", description: "Versioned module profile payload." },
@@ -1361,10 +1361,10 @@ export async function callTool(name, args = {}, ctx = {}) {
     };
     const roguelite = {
       authoring: engine.ROGUELITE_MECHANICS_SCHEMA,
-      snapshot: { field: "roguelite", optional: true, supportedSchemaVersions: [1, 2, 3] },
+      snapshot: { field: "roguelite", optional: true, supportedSchemaVersions: [1, 2, 3, 4] },
       events: ["artifactDropped", "artifactSocketed", "artifactUnsocketed"],
       commands: {
-        schemaVersion: 2,
+        schemaVersion: 3,
         phase: "between",
         socketArtifact: {
           requiredFields: ["artifactInstanceId", "towerId", "slotId"],
@@ -1375,11 +1375,16 @@ export async function callTool(name, args = {}, ctx = {}) {
           requiredFields: ["artifactInstanceId", "towerId", "slotId"],
           optionalFields: [],
           additionalProperties: false
+        },
+        chooseDraftOption: {
+          requiredFields: ["offerId", "cardId"],
+          optionalFields: [],
+          additionalProperties: false
         }
       }
     };
     return {
-      schemaVersion: 2,
+      schemaVersion: 3,
       agentGuideVersion: TOWERFORGE_AGENT_GUIDE_VERSION,
       requestedDomain: domain,
       availableDomains: SCHEMA_DOMAINS,

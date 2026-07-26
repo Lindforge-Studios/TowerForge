@@ -58,6 +58,11 @@ export declare class TowerDefenseGame {
     private nextArtifactInstanceSequence;
     /** Preserve historic artifact checkpoint v1 until a socket assignment first changes. */
     private artifactCheckpointForm;
+    private draftInitialRngState;
+    private draftRng;
+    private nextDraftOfferSequence;
+    private pendingDraftOffer;
+    private draftSelections;
     private readonly navigationMandatoryPairs;
     private readonly navigationKnownPairs;
     private navigationResolver;
@@ -127,6 +132,7 @@ export declare class TowerDefenseGame {
     socketArtifact(artifactInstanceId: string, towerId: string, slotId: string): ActionResult;
     canUnsocketArtifact(artifactInstanceId: string, towerId: string, slotId: string): ActionResult;
     unsocketArtifact(artifactInstanceId: string, towerId: string, slotId: string): ActionResult;
+    chooseDraftOption(offerId: string, cardId: string): ActionResult;
     getTowerSellRefund(towerOrId: TowerState | string): ResourceBag | null;
     canSellTower(towerId: string): ActionResult;
     sellTower(towerId: string): ActionResult;
@@ -197,6 +203,7 @@ export declare class TowerDefenseGame {
     private buildNavigationSnapshot;
     private buildElevationSnapshot;
     private buildArtifactCheckpointState;
+    private buildDraftCheckpointState;
     private buildCheckpointState;
     private static validateCheckpointIdentity;
     private static validateCheckpointState;
@@ -333,6 +340,7 @@ export declare class TowerDefenseGame {
     private updateEnemyExposures;
     private applyTowerDamage;
     private applyResolvedTowerDamage;
+    private draftDamageModifiersForTower;
     /** The (author-defined) damage type a tower deals; defaults to "physical". */
     private damageTypeOf;
     /** "pierce_only" armor is fully pierced by any sniper-kind weapon, regardless of its tower id. */
@@ -379,6 +387,7 @@ export declare class TowerDefenseGame {
     private dependentsKeepSupportAfterRemoval;
     private applyPassiveIncome;
     private awardClearedWaveIncome;
+    private createDraftOfferAfterWave;
     private removeDeadEnemies;
     private settleArtifactLoot;
     private dynamicEnemyAtGoal;

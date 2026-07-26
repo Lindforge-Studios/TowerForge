@@ -189,7 +189,7 @@ function rogueliteInput(options: {
         schemaVersion: 1,
         modules: {
           roguelite: {
-            schemaVersion: mode === "v1" ? 1 : mode === "future" ? 3 : 2,
+            schemaVersion: mode === "v1" ? 1 : mode === "future" ? 4 : 2,
             enabled: mode !== "disabled",
             profiles: { run: mode === "v1" ? { synergies: {} } : selectedProfile }
           }
@@ -255,10 +255,11 @@ describe("R4.2A roguelite v2 artifact authoring contract", () => {
       artifacts?: Record<string, unknown>;
       limits?: Record<string, unknown>;
     } | undefined;
-    expect(descriptor?.supportedModuleSchemaVersions).toEqual([1, 2]);
+    expect(descriptor?.supportedModuleSchemaVersions).toEqual([1, 2, 3]);
     expect(descriptor?.profileVersions).toMatchObject({
       1: { requiredFields: ["synergies"], optionalFields: [], additionalProperties: false },
-      2: { requiredFields: ["synergies", "artifacts"], optionalFields: [], additionalProperties: false }
+      2: { requiredFields: ["synergies", "artifacts"], optionalFields: [], additionalProperties: false },
+      3: { requiredFields: ["synergies"], optionalFields: ["artifacts", "draft"], additionalProperties: false }
     });
     expect(descriptor?.artifacts).toMatchObject({
       requiredFields: ["definitions", "towerSlots", "bossLootTables"],
@@ -371,7 +372,7 @@ describe("R4.2A roguelite v2 artifact authoring contract", () => {
     expect(hasIssue(inactive, "error", /definitions\.scope/i, /unknown|closed|field/i)).toBe(true);
   });
 
-  it("rejects future v3 but treats its profile as opaque instead of applying v2 semantics", () => {
+  it("rejects future v4 but treats its profile as opaque instead of applying v2 semantics", () => {
     const futureProfile = {
       futureOnlyPayload: {
         deliberatelyNotV2: true,

@@ -277,7 +277,71 @@ test.describe("R4.1A Studio rogue-lite synergy lifecycle", () => {
     expect(errors()).toEqual([]);
   });
 
-  test("keeps a future roguelite v3 module visible, byte-identical, and read-only", async ({ page }) => {
+  test("authors a v3 draft through enable, edit, reload, disable, and re-enable without materializing artifacts", async ({ page }) => {
+    test.setTimeout(90_000);
+    const errors = captureBrowserErrors(page);
+    await openStudio(page);
+    await openRogueliteMechanics(page);
+    await materializeElementalRecipe(page);
+
+    for (let index = 0; index < 4; index += 1) {
+      await page.locator("#btn-mechanics-add-draft-card").click();
+    }
+    await page.locator("#btn-mechanics-add-draft-pool").click();
+    await expect(page.locator('#mechanics-roguelite-draft-card-rows [data-role="draft-card-json"]'))
+      .toHaveValue(/Draft card 4/);
+    await expect(page.locator('#mechanics-roguelite-draft-pool-rows [data-role="draft-pool-json"]'))
+      .toHaveValue(/card_4/);
+    await expect(page.locator("#mechanics-roguelite-draft-default-pool")).toHaveValue("starter");
+    await expect(page.locator('#mechanics-roguelite-artifact-definition-rows [data-role="artifact-json"]'))
+      .toHaveCount(0);
+
+    await page.locator("#btn-mechanics-enable").click();
+    const initialState = {
+      projectSchemaVersion: 3,
+      moduleSchemaVersion: 3,
+      enabled: true,
+      selectedProfileId: "basic_elemental_synergy",
+      towerTagsByTowerId: {
+        arrow_tower: ["elemental", "sniper"],
+        cannon_tower: ["elemental"]
+      },
+      profile: { ...elementalProfile(), draft: authoredDraftBlock() }
+    };
+    await expect.poll(() => readRogueliteStateIfPresent(projectDir)).toEqual(initialState);
+    expect(initialState.profile).not.toHaveProperty("artifacts");
+
+    await page.reload();
+    await openRogueliteMechanics(page);
+    const definitionInput = page.locator('#mechanics-roguelite-draft-card-rows [data-role="draft-card-json"]');
+    const editedDraft = authoredDraftBlock();
+    editedDraft.definitions.card_1.label = "Focused Volley";
+    await definitionInput.fill(JSON.stringify(editedDraft.definitions, null, 2));
+    await definitionInput.press("Tab");
+    await page.locator("#btn-mechanics-save").click();
+    const editedState = {
+      ...initialState,
+      profile: { ...elementalProfile(), draft: editedDraft }
+    };
+    await expect.poll(() => readRogueliteStateIfPresent(projectDir)).toEqual(editedState);
+    expect(editedState.profile).not.toHaveProperty("artifacts");
+
+    await page.reload();
+    await openRogueliteMechanics(page);
+    await expect(page.locator('#mechanics-roguelite-draft-card-rows [data-role="draft-card-json"]'))
+      .toHaveValue(/Focused Volley/);
+    await expect(page.locator('#mechanics-roguelite-artifact-definition-rows [data-role="artifact-json"]'))
+      .toHaveCount(0);
+
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.locator("#btn-mechanics-disable").click();
+    await expect.poll(() => readRogueliteStateIfPresent(projectDir)).toEqual({ ...editedState, enabled: false });
+    await page.locator("#btn-mechanics-enable").click();
+    await expect.poll(() => readRogueliteStateIfPresent(projectDir)).toEqual(editedState);
+    expect(errors()).toEqual([]);
+  });
+
+  test("keeps a future roguelite v4 module visible, byte-identical, and read-only", async ({ page }) => {
     writeFutureRogueliteFixture(projectDir);
     const before = authoringBytes(projectDir);
     const errors = captureBrowserErrors(page);
@@ -379,6 +443,26 @@ function bossArtifactProfile() {
   };
 }
 
+function authoredDraftBlock() {
+  const cardIds = ["card_1", "card_2", "card_3", "card_4"];
+  return {
+    definitions: Object.fromEntries(cardIds.map((cardId, index) => [cardId, {
+      label: `Draft card ${index + 1}`,
+      effects: [{
+        kind: "modifier",
+        scope: { kind: "all_towers" },
+        modifier: { target: "damage", operation: "additive_ratio", value: 0.1 }
+      }]
+    }])),
+    pools: {
+      starter: {
+        entries: cardIds.map((cardId) => ({ cardId, weight: 1 }))
+      }
+    },
+    defaultPoolId: "starter"
+  };
+}
+
 function readRogueliteState(root) {
   const manifest = readJson(path.join(root, "project.json"));
   const balance = readJson(path.join(root, "content", "balance.json"));
@@ -398,6 +482,11 @@ function readRogueliteState(root) {
   };
 }
 
+function readRogueliteStateIfPresent(root) {
+  if (!fs.existsSync(path.join(root, "content", "mechanics.json"))) return null;
+  return readRogueliteState(root);
+}
+
 function writeFutureRogueliteFixture(root) {
   const manifestPath = path.join(root, "project.json");
   const manifest = readJson(manifestPath);
@@ -412,7 +501,7 @@ function writeFutureRogueliteFixture(root) {
     schemaVersion: 1,
     modules: {
       roguelite: {
-        schemaVersion: 3,
+        schemaVersion: 4,
         enabled: true,
         profiles: {
           future_profile: {

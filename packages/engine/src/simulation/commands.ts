@@ -12,7 +12,8 @@ export {
   GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS,
   type GameCommand,
   type GameCommandV1,
-  type GameCommandV2
+  type GameCommandV2,
+  type GameCommandV3
 } from "./command-internal.js";
 
 /** Validate and dispatch one deterministic simulation command. Invalid input never mutates the game. */

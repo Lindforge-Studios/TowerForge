@@ -40,6 +40,22 @@ export const ROGUELITE_ARTIFACT_LIMITS = Object.freeze({
 
 export const ROGUELITE_ARTIFACT_INVENTORY_LIMIT = 10_000;
 
+/** Closed authoring/runtime budgets for opt-in roguelite v3 wave draft. */
+export const ROGUELITE_DRAFT_LIMITS = Object.freeze({
+  definitions: 256,
+  pools: 32,
+  entriesPerPool: 128,
+  effectsPerCard: 4,
+  totalEffects: 1_024,
+  offerSize: 3,
+  selections: 10_000,
+  weight: 1_000_000,
+  totalPoolWeight: 0xffff_ffff,
+  idUtf8Bytes: 128,
+  tagUtf8Bytes: 128,
+  labelUtf8Bytes: 256
+});
+
 export const ROGUELITE_DAMAGE_MODIFIER_RESERVE = Object.freeze({
   towerUpgrade: 0,
   meta: 1,
@@ -50,6 +66,8 @@ export const ROGUELITE_DAMAGE_MODIFIER_RESERVE = Object.freeze({
 
 const REQUIRED_PROFILE_V1_FIELDS = Object.freeze(["synergies"] as const);
 const REQUIRED_PROFILE_V2_FIELDS = Object.freeze(["synergies", "artifacts"] as const);
+const REQUIRED_PROFILE_V3_FIELDS = Object.freeze(["synergies"] as const);
+const OPTIONAL_PROFILE_V3_FIELDS = Object.freeze(["artifacts", "draft"] as const);
 const REQUIRED_SYNERGY_FIELDS = Object.freeze(["label", "tag", "tiers"] as const);
 const OPTIONAL_SYNERGY_FIELDS = Object.freeze(["tierMode"] as const);
 const REQUIRED_TIER_FIELDS = Object.freeze(["requiredCount", "modifiers"] as const);
@@ -60,15 +78,20 @@ const REQUIRED_TOWER_SLOT_FIELDS = Object.freeze(["slotId", "slotType"] as const
 const REQUIRED_LOOT_TABLE_FIELDS = Object.freeze(["rolls", "entries"] as const);
 const OPTIONAL_LOOT_TABLE_FIELDS = Object.freeze(["noDropWeight"] as const);
 const REQUIRED_LOOT_ENTRY_FIELDS = Object.freeze(["artifactId", "weight"] as const);
+const REQUIRED_DRAFT_FIELDS = Object.freeze(["definitions", "pools", "defaultPoolId"] as const);
+const REQUIRED_DRAFT_DEFINITION_FIELDS = Object.freeze(["label", "effects"] as const);
+const REQUIRED_DRAFT_EFFECT_FIELDS = Object.freeze(["kind", "scope", "modifier"] as const);
+const REQUIRED_DRAFT_POOL_FIELDS = Object.freeze(["entries"] as const);
+const REQUIRED_DRAFT_POOL_ENTRY_FIELDS = Object.freeze(["cardId", "weight"] as const);
 
 /** Capability-aware descriptor shared by validation, Studio, and MCP. */
 export const ROGUELITE_MECHANICS_SCHEMA = Object.freeze({
-  schemaVersion: 2,
+  schemaVersion: 3,
   moduleId: "roguelite" as const,
-  supportedModuleSchemaVersions: Object.freeze([1, 2] as const),
+  supportedModuleSchemaVersions: Object.freeze([1, 2, 3] as const),
   profile: Object.freeze({
-    requiredFields: REQUIRED_PROFILE_V2_FIELDS,
-    optionalFields: Object.freeze([] as const),
+    requiredFields: REQUIRED_PROFILE_V3_FIELDS,
+    optionalFields: OPTIONAL_PROFILE_V3_FIELDS,
     additionalProperties: false
   }),
   profileVersions: Object.freeze({
@@ -80,6 +103,11 @@ export const ROGUELITE_MECHANICS_SCHEMA = Object.freeze({
     2: Object.freeze({
       requiredFields: REQUIRED_PROFILE_V2_FIELDS,
       optionalFields: Object.freeze([] as const),
+      additionalProperties: false
+    }),
+    3: Object.freeze({
+      requiredFields: REQUIRED_PROFILE_V3_FIELDS,
+      optionalFields: OPTIONAL_PROFILE_V3_FIELDS,
       additionalProperties: false
     })
   }),
@@ -133,9 +161,41 @@ export const ROGUELITE_MECHANICS_SCHEMA = Object.freeze({
       additionalProperties: false
     })
   }),
+  draft: Object.freeze({
+    requiredFields: REQUIRED_DRAFT_FIELDS,
+    optionalFields: Object.freeze([] as const),
+    additionalProperties: false,
+    definition: Object.freeze({
+      requiredFields: REQUIRED_DRAFT_DEFINITION_FIELDS,
+      optionalFields: Object.freeze([] as const),
+      additionalProperties: false
+    }),
+    effect: Object.freeze({
+      requiredFields: REQUIRED_DRAFT_EFFECT_FIELDS,
+      optionalFields: Object.freeze([] as const),
+      additionalProperties: false,
+      kinds: Object.freeze(["modifier"] as const)
+    }),
+    scope: Object.freeze({
+      kinds: Object.freeze(["all_towers", "tower_type", "tower_tag"] as const)
+    }),
+    pool: Object.freeze({
+      requiredFields: REQUIRED_DRAFT_POOL_FIELDS,
+      optionalFields: Object.freeze([] as const),
+      additionalProperties: false
+    }),
+    poolEntry: Object.freeze({
+      requiredFields: REQUIRED_DRAFT_POOL_ENTRY_FIELDS,
+      optionalFields: Object.freeze([] as const),
+      additionalProperties: false
+    }),
+    offerSize: ROGUELITE_DRAFT_LIMITS.offerSize,
+    sampling: "weighted_without_replacement" as const
+  }),
   limits: Object.freeze({
     synergies: ROGUELITE_SYNERGY_LIMITS,
     artifacts: ROGUELITE_ARTIFACT_LIMITS,
+    draft: ROGUELITE_DRAFT_LIMITS,
     damageResolution: Object.freeze({
       maximum: MAX_MODIFIERS_PER_RESOLUTION,
       reserved: ROGUELITE_DAMAGE_MODIFIER_RESERVE
@@ -143,12 +203,16 @@ export const ROGUELITE_MECHANICS_SCHEMA = Object.freeze({
   }),
   runtimeSnapshot: Object.freeze({
     path: "snapshot.roguelite" as const,
-    supportedSchemaVersions: Object.freeze([1, 2, 3] as const),
+    supportedSchemaVersions: Object.freeze([1, 2, 3, 4] as const),
     optionalUnlessActive: true,
     fieldsByVersion: Object.freeze({
       1: Object.freeze(["schemaVersion", "synergies"] as const),
       2: Object.freeze(["schemaVersion", "synergies", "artifacts"] as const),
-      3: Object.freeze(["schemaVersion", "synergies", "artifacts"] as const)
+      3: Object.freeze(["schemaVersion", "synergies", "artifacts"] as const),
+      4: Object.freeze(["schemaVersion", "synergies", "draft"] as const)
+    }),
+    optionalFieldsByVersion: Object.freeze({
+      4: Object.freeze(["artifacts"] as const)
     })
   })
 });
@@ -210,19 +274,67 @@ export interface RogueliteMechanicsProfileV2 extends RogueliteMechanicsProfileV1
   readonly artifacts: RogueliteArtifactsDefinitionV2;
 }
 
+export type DraftScopeV3 =
+  | { readonly kind: "all_towers" }
+  | { readonly kind: "tower_type"; readonly towerTypeId: string }
+  | { readonly kind: "tower_tag"; readonly tag: string };
+
+export interface DraftModifierEffectV3 {
+  readonly kind: "modifier";
+  readonly scope: DraftScopeV3;
+  readonly modifier: SynergyModifierV1;
+}
+
+export interface DraftCardDefinitionV3 {
+  readonly label: string;
+  readonly effects: readonly DraftModifierEffectV3[];
+}
+
+export interface DraftPoolEntryV3 {
+  readonly cardId: string;
+  readonly weight: number;
+}
+
+export interface DraftPoolV3 {
+  readonly entries: readonly DraftPoolEntryV3[];
+}
+
+export interface RogueliteDraftDefinitionV3 {
+  readonly definitions: Readonly<Record<string, DraftCardDefinitionV3>>;
+  readonly pools: Readonly<Record<string, DraftPoolV3>>;
+  readonly defaultPoolId: string;
+}
+
+export interface RogueliteMechanicsProfileV3 extends RogueliteMechanicsProfileV1 {
+  readonly artifacts?: RogueliteArtifactsDefinitionV2;
+  readonly draft?: RogueliteDraftDefinitionV3;
+}
+
 export interface ActiveRogueliteMechanicsV1 extends RogueliteMechanicsProfileV1 {
   readonly schemaVersion: 1;
   readonly profileId: string;
   readonly towerTagsByTypeId: Readonly<Record<string, readonly string[]>>;
+  readonly artifacts?: undefined;
+  readonly draft?: undefined;
 }
 
 export interface ActiveRogueliteMechanicsV2 extends RogueliteMechanicsProfileV2 {
   readonly schemaVersion: 2;
   readonly profileId: string;
   readonly towerTagsByTypeId: Readonly<Record<string, readonly string[]>>;
+  readonly draft?: undefined;
 }
 
-export type ActiveRogueliteMechanics = ActiveRogueliteMechanicsV1 | ActiveRogueliteMechanicsV2;
+export interface ActiveRogueliteMechanicsV3 extends RogueliteMechanicsProfileV3 {
+  readonly schemaVersion: 3;
+  readonly profileId: string;
+  readonly towerTagsByTypeId: Readonly<Record<string, readonly string[]>>;
+}
+
+export type ActiveRogueliteMechanics =
+  | ActiveRogueliteMechanicsV1
+  | ActiveRogueliteMechanicsV2
+  | ActiveRogueliteMechanicsV3;
 
 export function rogueliteSynergyWorstCaseModifierCount(
   synergies: Readonly<Record<string, SynergyDefinitionV1>>
@@ -243,6 +355,50 @@ export function assertRogueliteV2ModifierBudget(profile: RogueliteMechanicsProfi
       "profile.synergies",
       "Roguelite v2 worst-case synergy modifiers exceed the shared damage resolution budget."
     );
+  }
+}
+
+/** Guard the shared resolver against the worst authored v3 run stack for one mission. */
+export function assertRogueliteV3ModifierBudget(
+  profile: RogueliteMechanicsProfileV3,
+  content: GameContentRegistry,
+  missionId: string
+): void {
+  const mission = content.missions[missionId];
+  if (!mission) return;
+  if (profile.draft && Math.max(0, mission.waves.length - 1) > ROGUELITE_DRAFT_LIMITS.selections) {
+    throw new RogueliteProfileValidationError(
+      "profile.draft",
+      `Draft mission "${missionId}" can require more than ${ROGUELITE_DRAFT_LIMITS.selections} interwave selections.`
+    );
+  }
+  const synergyWorstCase = rogueliteSynergyWorstCaseModifierCount(profile.synergies);
+  for (const towerTypeId of mission.buildTowerIds) {
+    const tags = new Set(normalizeTowerTagsV1(ownData(content.towers[towerTypeId], "tags")));
+    const artifactWorstCase = (profile.artifacts?.towerSlots[towerTypeId] ?? []).reduce((total, slot) => {
+      const maximum = Object.values(profile.artifacts?.definitions ?? {}).reduce((best, definition) => (
+        definition.slotType === slot.slotType ? Math.max(best, definition.modifiers.length) : best
+      ), 0);
+      return total + maximum;
+    }, 0);
+    const draftWorstPerChoice = Object.values(profile.draft?.definitions ?? {}).reduce((maximum, definition) => {
+      const matching = definition.effects.filter((effect) => (
+        effect.scope.kind === "all_towers"
+        || (effect.scope.kind === "tower_type" && effect.scope.towerTypeId === towerTypeId)
+        || (effect.scope.kind === "tower_tag" && tags.has(effect.scope.tag))
+      )).length;
+      return Math.max(maximum, matching);
+    }, 0);
+    const total = synergyWorstCase
+      + artifactWorstCase
+      + Math.max(0, mission.waves.length - 1) * draftWorstPerChoice
+      + ROGUELITE_DAMAGE_MODIFIER_RESERVE.total;
+    if (total > MAX_MODIFIERS_PER_RESOLUTION) {
+      throw new RogueliteProfileValidationError(
+        "profile",
+        `Roguelite v3 worst-case modifiers exceed the shared damage resolution budget for tower "${towerTypeId}".`
+      );
+    }
   }
 }
 
@@ -787,6 +943,227 @@ export function normalizeRogueliteProfileV2(value: unknown): RogueliteMechanicsP
   });
 }
 
+/** Validate and detach the exact closed wave-draft domain nested in roguelite v3. */
+export function normalizeRogueliteDraftV3(value: unknown): RogueliteDraftDefinitionV3 {
+  const draft = inspectRecord(value, "profile.draft", "Roguelite wave draft");
+  rejectUnknownFields(draft, REQUIRED_DRAFT_FIELDS, "profile.draft", "Roguelite wave draft");
+  requireFields(draft, REQUIRED_DRAFT_FIELDS, "profile.draft", "Roguelite wave draft");
+
+  const authoredDefinitions = inspectRecord(
+    draft.definitions,
+    "profile.draft.definitions",
+    "Draft card definitions"
+  );
+  const definitionIds = Object.keys(authoredDefinitions).sort();
+  if (definitionIds.length > ROGUELITE_DRAFT_LIMITS.definitions) {
+    throw new RogueliteProfileValidationError(
+      "profile.draft.definitions",
+      `Draft card definition count exceeds the ${ROGUELITE_DRAFT_LIMITS.definitions} item limit.`
+    );
+  }
+  const definitions = Object.create(null) as Record<string, DraftCardDefinitionV3>;
+  let totalEffects = 0;
+  for (const cardId of definitionIds) {
+    boundedString(cardId, `profile.draft.definitions.${cardId}`, "Draft card id", ROGUELITE_DRAFT_LIMITS.idUtf8Bytes);
+    const path = `profile.draft.definitions.${cardId}`;
+    const definition = inspectRecord(authoredDefinitions[cardId], path, `Draft card "${cardId}"`);
+    rejectUnknownFields(definition, REQUIRED_DRAFT_DEFINITION_FIELDS, path, `Draft card "${cardId}"`);
+    requireFields(definition, REQUIRED_DRAFT_DEFINITION_FIELDS, path, `Draft card "${cardId}"`);
+    const authoredEffects = inspectArray(
+      definition.effects,
+      `${path}.effects`,
+      ROGUELITE_DRAFT_LIMITS.effectsPerCard,
+      "Draft card effects"
+    );
+    if (authoredEffects.length === 0) {
+      throw new RogueliteProfileValidationError(`${path}.effects`, "Draft card must define at least one effect.");
+    }
+    totalEffects += authoredEffects.length;
+    if (totalEffects > ROGUELITE_DRAFT_LIMITS.totalEffects) {
+      throw new RogueliteProfileValidationError(
+        `${path}.effects`,
+        `Draft effect count exceeds the ${ROGUELITE_DRAFT_LIMITS.totalEffects} item budget.`
+      );
+    }
+    const effects = authoredEffects.map((effectValue, effectIndex): DraftModifierEffectV3 => {
+      const effectPath = `${path}.effects[${effectIndex}]`;
+      const effect = inspectRecord(effectValue, effectPath, "Draft card effect");
+      rejectUnknownFields(effect, REQUIRED_DRAFT_EFFECT_FIELDS, effectPath, "Draft card effect");
+      requireFields(effect, REQUIRED_DRAFT_EFFECT_FIELDS, effectPath, "Draft card effect");
+      if (effect.kind !== "modifier") {
+        throw new RogueliteProfileValidationError(`${effectPath}.kind`, "Draft card effect kind must be modifier.");
+      }
+      const scopePath = `${effectPath}.scope`;
+      const authoredScope = inspectRecord(effect.scope, scopePath, "Draft modifier scope");
+      let scope: DraftScopeV3;
+      if (authoredScope.kind === "all_towers") {
+        rejectUnknownFields(authoredScope, ["kind"], scopePath, "All-towers draft modifier scope");
+        requireFields(authoredScope, ["kind"], scopePath, "All-towers draft modifier scope");
+        scope = Object.freeze({ kind: "all_towers" as const });
+      } else if (authoredScope.kind === "tower_type") {
+        rejectUnknownFields(authoredScope, ["kind", "towerTypeId"], scopePath, "Tower-type draft modifier scope");
+        requireFields(authoredScope, ["kind", "towerTypeId"], scopePath, "Tower-type draft modifier scope");
+        scope = Object.freeze({
+          kind: "tower_type" as const,
+          towerTypeId: boundedString(
+            authoredScope.towerTypeId,
+            `${scopePath}.towerTypeId`,
+            "Draft tower type id",
+            ROGUELITE_DRAFT_LIMITS.idUtf8Bytes
+          )
+        });
+      } else if (authoredScope.kind === "tower_tag") {
+        rejectUnknownFields(authoredScope, ["kind", "tag"], scopePath, "Tower-tag draft modifier scope");
+        requireFields(authoredScope, ["kind", "tag"], scopePath, "Tower-tag draft modifier scope");
+        scope = Object.freeze({
+          kind: "tower_tag" as const,
+          tag: boundedString(
+            authoredScope.tag,
+            `${scopePath}.tag`,
+            "Draft tower tag",
+            ROGUELITE_DRAFT_LIMITS.tagUtf8Bytes
+          )
+        });
+      } else {
+        throw new RogueliteProfileValidationError(`${scopePath}.kind`, "Draft modifier scope kind is unsupported.");
+      }
+      return Object.freeze({
+        kind: "modifier" as const,
+        scope,
+        modifier: normalizeModifier(effect.modifier, `${effectPath}.modifier`)
+      });
+    });
+    Object.defineProperty(definitions, cardId, {
+      value: Object.freeze({
+        label: boundedString(
+          definition.label,
+          `${path}.label`,
+          "Draft card label",
+          ROGUELITE_DRAFT_LIMITS.labelUtf8Bytes
+        ),
+        effects: Object.freeze(effects)
+      }),
+      enumerable: true
+    });
+  }
+
+  const authoredPools = inspectRecord(draft.pools, "profile.draft.pools", "Draft pools");
+  const poolIds = Object.keys(authoredPools).sort();
+  if (poolIds.length > ROGUELITE_DRAFT_LIMITS.pools) {
+    throw new RogueliteProfileValidationError(
+      "profile.draft.pools",
+      `Draft pool count exceeds the ${ROGUELITE_DRAFT_LIMITS.pools} item limit.`
+    );
+  }
+  const pools = Object.create(null) as Record<string, DraftPoolV3>;
+  for (const poolId of poolIds) {
+    boundedString(poolId, `profile.draft.pools.${poolId}`, "Draft pool id", ROGUELITE_DRAFT_LIMITS.idUtf8Bytes);
+    const path = `profile.draft.pools.${poolId}`;
+    const pool = inspectRecord(authoredPools[poolId], path, `Draft pool "${poolId}"`);
+    rejectUnknownFields(pool, REQUIRED_DRAFT_POOL_FIELDS, path, `Draft pool "${poolId}"`);
+    requireFields(pool, REQUIRED_DRAFT_POOL_FIELDS, path, `Draft pool "${poolId}"`);
+    const authoredEntries = inspectArray(
+      pool.entries,
+      `${path}.entries`,
+      ROGUELITE_DRAFT_LIMITS.entriesPerPool,
+      "Draft pool entries"
+    );
+    const seenCardIds = new Set<string>();
+    let totalWeight = 0;
+    const entries = authoredEntries.map((entryValue, entryIndex): DraftPoolEntryV3 => {
+      const entryPath = `${path}.entries[${entryIndex}]`;
+      const entry = inspectRecord(entryValue, entryPath, "Draft pool entry");
+      rejectUnknownFields(entry, REQUIRED_DRAFT_POOL_ENTRY_FIELDS, entryPath, "Draft pool entry");
+      requireFields(entry, REQUIRED_DRAFT_POOL_ENTRY_FIELDS, entryPath, "Draft pool entry");
+      const cardId = boundedString(
+        entry.cardId,
+        `${entryPath}.cardId`,
+        "Draft card id",
+        ROGUELITE_DRAFT_LIMITS.idUtf8Bytes
+      );
+      if (seenCardIds.has(cardId)) {
+        throw new RogueliteProfileValidationError(`${entryPath}.cardId`, `Duplicate draft pool card "${cardId}".`);
+      }
+      seenCardIds.add(cardId);
+      const weight = boundedInteger(
+        entry.weight,
+        `${entryPath}.weight`,
+        "Draft pool weight",
+        1,
+        ROGUELITE_DRAFT_LIMITS.weight
+      );
+      totalWeight += weight;
+      return Object.freeze({ cardId, weight });
+    }).sort((left, right) => left.cardId < right.cardId ? -1 : left.cardId > right.cardId ? 1 : 0);
+    if (entries.length < ROGUELITE_DRAFT_LIMITS.offerSize) {
+      throw new RogueliteProfileValidationError(
+        `${path}.entries`,
+        `Draft pool must contain at least ${ROGUELITE_DRAFT_LIMITS.offerSize} unique cards.`
+      );
+    }
+    if (totalWeight > ROGUELITE_DRAFT_LIMITS.totalPoolWeight) {
+      throw new RogueliteProfileValidationError(
+        `${path}.entries`,
+        `Draft pool total weight exceeds the ${ROGUELITE_DRAFT_LIMITS.totalPoolWeight} budget.`
+      );
+    }
+    Object.defineProperty(pools, poolId, {
+      value: Object.freeze({ entries: Object.freeze(entries) }),
+      enumerable: true
+    });
+  }
+  return Object.freeze({
+    definitions: Object.freeze(definitions),
+    pools: Object.freeze(pools),
+    defaultPoolId: boundedString(
+      draft.defaultPoolId,
+      "profile.draft.defaultPoolId",
+      "Default draft pool id",
+      ROGUELITE_DRAFT_LIMITS.idUtf8Bytes
+    )
+  });
+}
+
+/** Validate and detach an exact closed roguelite v3 profile. */
+export function normalizeRogueliteProfileV3(value: unknown): RogueliteMechanicsProfileV3 {
+  const profile = inspectRecord(value, "profile", "Roguelite profile");
+  rejectUnknownFields(
+    profile,
+    [...REQUIRED_PROFILE_V3_FIELDS, ...OPTIONAL_PROFILE_V3_FIELDS],
+    "profile",
+    "Roguelite profile"
+  );
+  requireFields(profile, REQUIRED_PROFILE_V3_FIELDS, "profile", "Roguelite profile");
+  const synergies = normalizeRogueliteProfileV1({ synergies: profile.synergies }).synergies;
+  return Object.freeze({
+    synergies,
+    ...(Object.prototype.hasOwnProperty.call(profile, "artifacts")
+      ? { artifacts: normalizeRogueliteArtifactsV2(profile.artifacts) }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(profile, "draft")
+      ? { draft: normalizeRogueliteDraftV3(profile.draft) }
+      : {})
+  });
+}
+
+function hasValidDraftReferences(
+  draft: RogueliteDraftDefinitionV3,
+  content: GameContentRegistry,
+  towerTagsByTypeId: Readonly<Record<string, readonly string[]>>
+): boolean {
+  if (!draft.pools[draft.defaultPoolId]) return false;
+  const knownTags = new Set(Object.values(towerTagsByTypeId).flat());
+  for (const definition of Object.values(draft.definitions)) {
+    for (const effect of definition.effects) {
+      if (effect.scope.kind === "tower_type" && !content.towers[effect.scope.towerTypeId]) return false;
+      if (effect.scope.kind === "tower_tag" && !knownTags.has(effect.scope.tag)) return false;
+    }
+  }
+  return Object.values(draft.pools).every((pool) => (
+    pool.entries.every((entry) => draft.definitions[entry.cardId] !== undefined)
+  ));
+}
+
 function normalizeTowerTagsByTypeId(content: GameContentRegistry): Readonly<Record<string, readonly string[]>> {
   const result = Object.create(null) as Record<string, readonly string[]>;
   let taggedTowerTypes = 0;
@@ -821,7 +1198,8 @@ export function resolveActiveRogueliteMechanics(
       "module",
       "Roguelite mechanics module"
     );
-    if ((module.schemaVersion !== 1 && module.schemaVersion !== 2) || module.enabled !== true) return undefined;
+    if ((module.schemaVersion !== 1 && module.schemaVersion !== 2 && module.schemaVersion !== 3)
+      || module.enabled !== true) return undefined;
     rejectUnknownFields(module, ["schemaVersion", "enabled", "profiles"], "module", "Roguelite mechanics module");
     const profiles = inspectRecord(module.profiles, "module.profiles", "Roguelite mechanics profiles");
     const towerTagsByTypeId = normalizeTowerTagsByTypeId(content);
@@ -834,13 +1212,27 @@ export function resolveActiveRogueliteMechanics(
         towerTagsByTypeId
       });
     }
-    const profile = normalizeRogueliteProfileV2(ownData(profiles, capability.profileId));
-    assertRogueliteV2ModifierBudget(profile);
+    if (module.schemaVersion === 2) {
+      const profile = normalizeRogueliteProfileV2(ownData(profiles, capability.profileId));
+      assertRogueliteV2ModifierBudget(profile);
+      return Object.freeze({
+        schemaVersion: 2 as const,
+        profileId: capability.profileId,
+        synergies: profile.synergies,
+        artifacts: profile.artifacts,
+        towerTagsByTypeId
+      });
+    }
+    const profile = normalizeRogueliteProfileV3(ownData(profiles, capability.profileId));
+    if (profile.artifacts) assertRogueliteV2ModifierBudget({ synergies: profile.synergies, artifacts: profile.artifacts });
+    if (profile.draft && !hasValidDraftReferences(profile.draft, content, towerTagsByTypeId)) return undefined;
+    assertRogueliteV3ModifierBudget(profile, content, missionId);
     return Object.freeze({
-      schemaVersion: 2 as const,
+      schemaVersion: 3 as const,
       profileId: capability.profileId,
       synergies: profile.synergies,
-      artifacts: profile.artifacts,
+      ...(profile.artifacts === undefined ? {} : { artifacts: profile.artifacts }),
+      ...(profile.draft === undefined ? {} : { draft: profile.draft }),
       towerTagsByTypeId
     });
   } catch {
