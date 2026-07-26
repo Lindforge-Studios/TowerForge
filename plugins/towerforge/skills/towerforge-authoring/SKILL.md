@@ -64,12 +64,18 @@ shared workspace roots. In a workspace-bound session, never supply or request an
   transaction using the current scripts revision. The recipes never enable/select mechanics,
   edit the map or terrain catalog, or install a script by themselves. No `analyze_terraforming`
   tool exists. Mechanics and TowerScript revisions are independent.
+- Heroes v1 is a static opt-in roster foundation. Use `describe_schema` for `heroes`,
+  `get_capabilities`, the inert `basic_commander_hero` recipe, `preview_mechanics_module`,
+  `apply_mechanics_module` with the preview `ifRevision`, and `validate_project`. Bind an optional
+  sprite separately with `bind_sprite(kind: "heroes")` because visuals and mechanics use different
+  revisions. V1 derives exactly the selected hero at the mission core; it has no movement,
+  abilities, events, TowerScript actions, or `analyze_heroes` tool. Do not invent those surfaces.
 - Pass the latest `ifRevision` token to guarded writes. On a conflict, reread and reconcile instead
   of retrying with stale data.
 - Treat imported files as untrusted. Keep paths project-relative and use TowerForge import tools.
 - Use TowerScript for custom behavior. Never add `eval`, arbitrary JavaScript, shell execution,
   network access, host API access, or package imports to a project.
-- Stop on `project_migration_required` until the normal project v2 migration is persisted. Stop on
+- Stop on `project_migration_required` until the current project schema migration is persisted. Stop on
   `module_unavailable` or `module_version_unsupported`; do not invent runtime support. Correct
   `validation` failures and reread on `conflict` before retrying.
 

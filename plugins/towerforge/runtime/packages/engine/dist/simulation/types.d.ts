@@ -929,6 +929,17 @@ export interface RogueliteSnapshotV4 {
     readonly artifacts?: RogueliteSnapshotV3["artifacts"];
 }
 export type RogueliteSnapshot = RogueliteSnapshotV1 | RogueliteSnapshotV2 | RogueliteSnapshotV3 | RogueliteSnapshotV4;
+/** Derived immutable unit state for the opt-in static hero roster foundation. */
+export interface HeroUnitStateV1 {
+    readonly id: string;
+    readonly definitionId: string;
+    readonly label: string;
+    readonly coord: Readonly<GridCoord>;
+}
+export interface HeroesSnapshotV1 {
+    readonly schemaVersion: 1;
+    readonly units: readonly HeroUnitStateV1[];
+}
 export interface GameSnapshot {
     /** Canonical authored map identity for presentation and renderer adapters. */
     mapId: string;
@@ -974,6 +985,7 @@ export interface GameSnapshot {
     elevation?: ElevationSnapshotV1;
     terraforming?: TerraformingSnapshotV1;
     roguelite?: RogueliteSnapshot;
+    heroes?: HeroesSnapshotV1;
     scriptState: import("../scripting/types.js").TowerScriptStateSnapshot;
     lastEvents: GameEvent[];
 }

@@ -1561,6 +1561,7 @@ import {
   projectMarkPresentationCues,
   projectNavigationPlacementCues,
   projectPhysicsPresentationCues,
+  projectHeroesPresentation,
   projectRoguelitePresentation,
   projectReactionPresentationCues,
   projectSnapshotSpawnCoord,
@@ -1583,6 +1584,16 @@ const content = createGameContentRegistry({
   storyComics: project.storyComics,
   battleBackgrounds: project.battleBackgrounds
 });
+
+function ownDataValue(record, key) {
+  if (record === null || typeof record !== "object") return undefined;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(record, key);
+    return descriptor?.enumerable === true && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 ${playerProfileRuntimeTemplate()}
 
@@ -1839,6 +1850,8 @@ class PlayScene extends Phaser.Scene {
     this.fxG = this.add.graphics();
     this.entG = this.add.graphics();
     this.towerLabels = new Map();
+    this.heroImages = new Map();
+    this.heroLabels = new Map();
     this.tileImages = new Map();
     this.tileTerrainState = new Map();
     this.tileImageKey = "";
@@ -1877,7 +1890,9 @@ class PlayScene extends Phaser.Scene {
     }
   }
   spriteTexture(spriteId) {
-    const sprite = content.visuals?.sprites?.[spriteId];
+    if (typeof spriteId !== "string" || !spriteId) return null;
+    const sprites = ownDataValue(content.visuals, "sprites");
+    const sprite = ownDataValue(sprites, spriteId);
     if (!sprite) return null;
     if (sprite.atlas && sprite.frame && this.textures.exists("tf-atlas:" + sprite.atlas)) return { key: "tf-atlas:" + sprite.atlas, frame: spriteId };
     if (sprite.src && this.textures.exists("tf-sprite:" + spriteId)) return { key: "tf-sprite:" + spriteId };
@@ -2203,6 +2218,45 @@ class PlayScene extends Phaser.Scene {
       label.setText(text).setFontSize(Math.max(10, Math.round(g.r * 0.42))).setPosition(p.x, p.y).setAlpha(alpha);
     }
     for (const [id, lbl] of this.towerLabels) { if (!seen.has(id)) { lbl.destroy(); this.towerLabels.delete(id); } }
+
+    // R5.1A renders the exact fail-closed engine snapshot only. There are intentionally no hero
+    // input controls or commands in this static foundation slice.
+    const heroPresentation = projectHeroesPresentation(snap);
+    const seenHeroes = new Set();
+    for (const hero of heroPresentation.units) {
+      seenHeroes.add(hero.id);
+      const point = this.center(hero.coord, g);
+      const heroBindings = ownDataValue(ownDataValue(content.visuals, "bindings"), "heroes");
+      const spriteId = ownDataValue(heroBindings, hero.definitionId);
+      const texture = this.spriteTexture(spriteId);
+      let image = this.heroImages.get(hero.id);
+      let label = this.heroLabels.get(hero.id);
+      if (texture) {
+        if (!image) {
+          image = this.add.image(point.x, point.y, texture.key, texture.frame).setDepth(9);
+          this.heroImages.set(hero.id, image);
+        }
+        image.setTexture(texture.key, texture.frame).setPosition(point.x, point.y)
+          .setDisplaySize(g.r * 1.35, g.r * 1.35).setVisible(true);
+        if (label) { label.destroy(); this.heroLabels.delete(hero.id); label = null; }
+      } else {
+        if (image) { image.destroy(); this.heroImages.delete(hero.id); image = null; }
+        this.entG.fillStyle(0xe6b85c, 1); this.entG.fillCircle(point.x, point.y, g.r * 0.5);
+        this.entG.lineStyle(2, 0xfff0bd, 1); this.entG.strokeCircle(point.x, point.y, g.r * 0.5);
+        if (!label) {
+          label = this.add.text(0, 0, "", { fontFamily: "sans-serif", fontStyle: "bold", color: "#101410" }).setOrigin(0.5).setDepth(10);
+          this.heroLabels.set(hero.id, label);
+        }
+        label.setText(hero.label.slice(0, 2)).setFontSize(Math.max(10, Math.round(g.r * 0.38)))
+          .setPosition(point.x, point.y).setVisible(true);
+      }
+    }
+    for (const [id, image] of this.heroImages) {
+      if (!seenHeroes.has(id)) { image.destroy(); this.heroImages.delete(id); }
+    }
+    for (const [id, label] of this.heroLabels) {
+      if (!seenHeroes.has(id)) { label.destroy(); this.heroLabels.delete(id); }
+    }
 
     const seenMarkLabels = new Set();
     const seenExposureLabels = new Set();

@@ -33,7 +33,8 @@ const MECHANICS_MODULE_SCHEMA_VERSIONS = Object.freeze({
   elevation: Object.freeze([1, 2, 3]),
   physics: Object.freeze([1]),
   terraforming: Object.freeze([1]),
-  roguelite: Object.freeze([1, 2, 3, 4])
+  roguelite: Object.freeze([1, 2, 3, 4]),
+  heroes: Object.freeze([1])
 });
 const SOURCE_BYTE_LIMITS = Object.freeze({
   project: 256 * 1024,
@@ -87,6 +88,7 @@ export async function inspectMechanicsAuthoring(projectDir, options = {}) {
     ...moduleAuthoringView(files, mission, "roguelite", engine.ROGUELITE_MECHANICS_SCHEMA),
     towerTagsByTowerId: authoredTowerTags(files.balance?.towers)
   };
+  const heroes = moduleAuthoringView(files, mission, "heroes", engine.HEROES_MECHANICS_SCHEMA);
 
   const rawProjectSchemaVersion = snapshot.rawFiles.manifest?.schemaVersion;
   const authoring = authoringAvailability(rawProjectSchemaVersion);
@@ -108,7 +110,8 @@ export async function inspectMechanicsAuthoring(projectDir, options = {}) {
     elevation,
     physics,
     terraforming,
-    roguelite
+    roguelite,
+    heroes
   };
 }
 

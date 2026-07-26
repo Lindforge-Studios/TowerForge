@@ -29,6 +29,7 @@ export * from "./content/elevation-mechanics.js";
 export * from "./content/physics-mechanics.js";
 export * from "./content/terraforming-mechanics.js";
 export * from "./content/roguelite-mechanics.js";
+export * from "./content/heroes-mechanics.js";
 export * from "./content/reaction-mechanics.js";
 export * from "./content/validate.js";
 export * from "./content/schema-descriptor.js";

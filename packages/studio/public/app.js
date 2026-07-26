@@ -71,7 +71,7 @@ const MECHANICS_MODULES = [
   { id: "physics", title: "Physics", description: "Bounded push/pull displacement, immunities, and explicit fall hazards." },
   { id: "terraforming", title: "Terraforming", description: "Transactional terrain transitions and bounded elevation edits authored as an independent opt-in profile." },
   { id: "roguelite", title: "Rogue-lite", description: "Synergies, artifacts, draft choices, and campaign runs." },
-  { id: "heroes", title: "Heroes", description: "Command units, abilities, auras, and skill trees." },
+  { id: "heroes", title: "Heroes", description: "Static opt-in hero roster and core spawn; later active control arrives in separate slices." },
   { id: "logistics", title: "Logistics", description: "Power grids, inventories, ammunition, and production." },
   { id: "director", title: "AI Director", description: "Deterministic adaptation and generative Studio hooks." },
   { id: "scriptingDx", title: "TowerScript DX", description: "Visual graphs, structured traces, and step debugging." },
@@ -689,6 +689,7 @@ function mechanicsSelectedProfile() {
 }
 
 function normalizeMechanicsDraft(profile) {
+  if (MechanicsUI.selectedModuleId === "heroes") return normalizeHeroesMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "roguelite") return normalizeRogueliteMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "terraforming") {
     const moduleSchemaVersion = mechanicsProjectModuleVersion();
@@ -835,6 +836,44 @@ function normalizePhysicsMechanicsDraft(profile) {
   if (fallImmuneEnemyTypeIds.length) draft.fallImmuneEnemyTypeIds = fallImmuneEnemyTypeIds;
   if (fallHazardTerrainTags.length) draft.fallHazardTerrainTags = fallHazardTerrainTags;
   return draft;
+}
+
+function normalizeHeroesMechanicsDraft(profile) {
+  // Closed R5.1A limits mirror HEROES_MECHANICS_SCHEMA while capability metadata is loading.
+  const definitionsLimit = 32;
+  const idUtf8Bytes = 128;
+  const labelUtf8Bytes = 128;
+  const source = profile && typeof profile === "object" && !Array.isArray(profile) ? profile : {};
+  const authoredDefinitions = ownDataValue(source, "definitions");
+  const definitions = {};
+  let descriptors = {};
+  try {
+    if (authoredDefinitions && typeof authoredDefinitions === "object" && !Array.isArray(authoredDefinitions)
+      && [Object.prototype, null].includes(Object.getPrototypeOf(authoredDefinitions))) {
+      descriptors = Object.getOwnPropertyDescriptors(authoredDefinitions);
+    }
+  } catch {
+    descriptors = {};
+  }
+  for (const heroId of Object.keys(descriptors).sort().slice(0, definitionsLimit)) {
+    const descriptor = descriptors[heroId];
+    if (!descriptor?.enumerable || !("value" in descriptor)
+      || !heroId || new TextEncoder().encode(heroId).length > idUtf8Bytes) continue;
+    const definition = descriptor.value;
+    if (!definition || typeof definition !== "object" || Array.isArray(definition)) continue;
+    const label = ownDataValue(definition, "label");
+    const spawn = ownDataValue(definition, "spawn");
+    if (typeof label !== "string" || !label || new TextEncoder().encode(label).length > labelUtf8Bytes) continue;
+    defineOwnDataValue(definitions, heroId, { label, spawn: spawn === "core" ? "core" : "core" });
+  }
+  if (Object.keys(definitions).length === 0) {
+    defineOwnDataValue(definitions, "commander", { label: "Commander", spawn: "core" });
+  }
+  const selected = ownDataValue(source, "selectedHeroId");
+  const selectedHeroId = typeof selected === "string" && ownDataValue(definitions, selected)
+    ? selected
+    : Object.keys(definitions).sort()[0];
+  return { selectedHeroId, definitions };
 }
 
 function normalizeElevationLineOfSightDraft(profile) {
@@ -990,6 +1029,15 @@ function mechanicsRogueliteDraftLimits() {
   return source && typeof source === "object" && !Array.isArray(source) ? source : {};
 }
 
+function mechanicsHeroesAuthoringLimits() {
+  const source = MechanicsUI.capabilities?.heroes?.authoring?.limits;
+  return {
+    definitions: Number.isSafeInteger(source?.definitions) ? source.definitions : 32,
+    idUtf8Bytes: Number.isSafeInteger(source?.idUtf8Bytes) ? source.idUtf8Bytes : 128,
+    labelUtf8Bytes: Number.isSafeInteger(source?.labelUtf8Bytes) ? source.labelUtf8Bytes : 128
+  };
+}
+
 function mechanicsBoundedEntries(record, limit) {
   const entries = Object.entries(record ?? {});
   return Number.isInteger(limit) && limit >= 0 ? entries.slice(0, limit) : entries;
@@ -1008,6 +1056,7 @@ function mechanicsAuthoredMatrixEntryCount() {
 }
 
 function mechanicsEffectiveModuleSchemaVersion() {
+  if (MechanicsUI.selectedModuleId === "heroes") return 1;
   if (MechanicsUI.selectedModuleId === "roguelite") {
     const authoredVersion = Math.max(
       mechanicsProjectModuleVersion(),
@@ -1076,6 +1125,8 @@ function initializeMechanicsDraft() {
             ? "basic_displacement_physics"
             : MechanicsUI.selectedModuleId === "terraforming"
               ? "tagged_flood"
+              : MechanicsUI.selectedModuleId === "heroes"
+                ? "basic_commander_hero"
               : MechanicsUI.selectedModuleId === "roguelite" ? "basic_elemental_synergy" : "basic_regenerating_shields");
   MechanicsUI.draft = normalizeMechanicsDraft(selectedProfile ?? mechanicsRecipeProfile());
   if (MechanicsUI.selectedModuleId === "roguelite") initializeRogueliteTowerTags();
@@ -1146,6 +1197,8 @@ function loadMechanicsProfile() {
     : mechanicsProjectModuleVersion();
   MechanicsUI.draft = MechanicsUI.selectedModuleId === "navigation"
     ? normalizeNavigationMechanicsDraft(profile)
+    : MechanicsUI.selectedModuleId === "heroes"
+      ? normalizeHeroesMechanicsDraft(profile)
     : normalizeMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "roguelite") initializeRogueliteTowerTags();
   MechanicsUI.preview = null;
@@ -1166,6 +1219,9 @@ function nextMechanicsProfileId(suggestedId) {
 
 async function newMechanicsProfile() {
   try {
+    if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() !== 1) {
+      throw new Error("Future heroes schemaVersion 2+ modules are read-only in this Studio version.");
+    }
     await loadMechanicsRecipe();
     const selectedRecipeId = $("mechanics-recipe-select")?.value || MechanicsUI.recipeId;
     const recipe = MechanicsUI.recipes.find((candidate) => candidate.id === selectedRecipeId) ?? MechanicsUI.recipe;
@@ -2727,6 +2783,102 @@ function renderPhysicsMechanicsEditor() {
   }
 }
 
+function renderHeroesMechanicsEditor() {
+  if (MechanicsUI.selectedModuleId !== "heroes" || !MechanicsUI.draft) return;
+  const limits = mechanicsHeroesAuthoringLimits();
+  const descriptor = MechanicsUI.capabilities?.heroes?.authoring;
+  const supportedVersion = mechanicsProjectModuleVersion() === 1
+    && descriptor?.supportedModuleSchemaVersions?.includes(1) !== false;
+  const notice = $("mechanics-heroes-read-only");
+  if (notice) {
+    notice.classList.toggle("hidden", supportedVersion);
+    notice.textContent = supportedVersion
+      ? ""
+      : "Future heroes schemaVersion 2+ is preserved read-only by this Studio version.";
+  }
+
+  const definitions = MechanicsUI.draft.definitions ?? {};
+  const entries = mechanicsBoundedEntries(definitions, limits.definitions)
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
+  const selectedInput = $("mechanics-heroes-selected-id");
+  if (selectedInput) {
+    selectedInput.innerHTML = entries.map(([heroId, definition]) => (
+      `<option value="${esc(heroId)}">${esc(definition?.label ?? heroId)} (${esc(heroId)})</option>`
+    )).join("");
+    selectedInput.value = MechanicsUI.draft.selectedHeroId;
+    selectedInput.disabled = !supportedVersion;
+    selectedInput.onchange = () => {
+      MechanicsUI.draft.selectedHeroId = selectedInput.value;
+      MechanicsUI.preview = null;
+      renderMechanicsPreviewResult();
+    };
+  }
+
+  const rows = $("mechanics-heroes-definition-rows");
+  if (rows) {
+    rows.innerHTML = entries.map(([heroId, definition]) => `<div class="mechanics-definition-row" data-hero-definition-id="${esc(heroId)}">
+      <label>Hero ID<input data-hero-id type="text" autocomplete="off" spellcheck="false" maxlength="${esc(limits.idUtf8Bytes)}" value="${esc(heroId)}" ${supportedVersion ? "" : "disabled"}></label>
+      <label>Label<input data-hero-label type="text" autocomplete="off" maxlength="${esc(limits.labelUtf8Bytes)}" value="${esc(definition?.label ?? heroId)}" ${supportedVersion ? "" : "disabled"}></label>
+      <label>Spawn<select data-hero-spawn ${supportedVersion ? "" : "disabled"}><option value="core">Core</option></select></label>
+      <button type="button" class="btn btn-danger" data-remove-hero ${supportedVersion && entries.length > 1 ? "" : "disabled"}>Remove</button>
+    </div>`).join("");
+    rows.querySelectorAll("[data-hero-definition-id]").forEach((row) => {
+      const heroId = row.dataset.heroDefinitionId;
+      const definition = ownDataValue(MechanicsUI.draft.definitions, heroId);
+      row.querySelector("[data-hero-id]")?.addEventListener("change", (event) => {
+        const nextId = String(event.target.value ?? "").trim();
+        if (!nextId || new TextEncoder().encode(nextId).length > limits.idUtf8Bytes
+          || (nextId !== heroId && ownDataValue(MechanicsUI.draft.definitions, nextId))) {
+          toast("Hero ID must be unique and fit the authoring byte limit.", "err");
+          return renderMechanicsHub();
+        }
+        if (nextId !== heroId) {
+          delete MechanicsUI.draft.definitions[heroId];
+          defineOwnDataValue(MechanicsUI.draft.definitions, nextId, definition);
+          if (MechanicsUI.draft.selectedHeroId === heroId) MechanicsUI.draft.selectedHeroId = nextId;
+        }
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      });
+      row.querySelector("[data-hero-label]")?.addEventListener("input", (event) => {
+        const label = String(event.target.value ?? "");
+        if (!label || new TextEncoder().encode(label).length > limits.labelUtf8Bytes) return;
+        definition.label = label;
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-spawn]")?.addEventListener("change", () => {
+        definition.spawn = "core";
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-remove-hero]")?.addEventListener("click", () => {
+        if (Object.keys(MechanicsUI.draft.definitions).length <= 1) return;
+        delete MechanicsUI.draft.definitions[heroId];
+        if (MechanicsUI.draft.selectedHeroId === heroId) {
+          MechanicsUI.draft.selectedHeroId = Object.keys(MechanicsUI.draft.definitions).sort()[0];
+        }
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      });
+    });
+  }
+
+  const add = $("btn-mechanics-add-hero");
+  if (add) {
+    add.disabled = !supportedVersion || entries.length >= limits.definitions;
+    add.onclick = () => {
+      if (!supportedVersion || Object.keys(MechanicsUI.draft.definitions).length >= limits.definitions) return;
+      let suffix = Object.keys(MechanicsUI.draft.definitions).length + 1;
+      let heroId = `hero_${suffix}`;
+      while (ownDataValue(MechanicsUI.draft.definitions, heroId)) heroId = `hero_${++suffix}`;
+      defineOwnDataValue(MechanicsUI.draft.definitions, heroId, { label: "Commander", spawn: "core" });
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    };
+  }
+}
+
 function rogueliteTierLines(definition) {
   return (definition?.tiers ?? []).flatMap((tier) => (tier?.modifiers ?? []).map((modifier) => (
     `${tier.requiredCount} ${modifier.operation} ${modifier.value}`
@@ -3756,6 +3908,9 @@ function renderMechanicsPreviewResult() {
 }
 
 function mechanicsRequest(enabled) {
+  if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() !== 1) {
+    throw new Error("Future heroes schemaVersion 2+ modules are read-only in this Studio version.");
+  }
   if (MechanicsUI.selectedModuleId === "roguelite" && mechanicsProjectModuleVersion() > 4) {
     throw new Error("Future roguelite schemaVersion 5+ modules are read-only in this Studio version.");
   }
@@ -3861,6 +4016,8 @@ function renderMechanicsHub() {
           ? "Author a closed physics v1 profile for bounded push/pull immunity and explicit fall hazards."
           : MechanicsUI.selectedModuleId === "terraforming"
             ? "Author detached terrain transitions and optional bounded elevation mutation, then explicitly enable the profile for this mission."
+            : MechanicsUI.selectedModuleId === "heroes"
+              ? "Author a closed static hero roster and core spawn, then explicitly enable the profile for this mission."
             : MechanicsUI.selectedModuleId === "roguelite"
               ? "Author tower tags, global synergies, optional v2 artifact loot, and independent v3 wave draft choices as one opt-in profile transaction."
               : "Author a reusable combat profile, then explicitly select it for this mission.";
@@ -3941,6 +4098,7 @@ function renderMechanicsHub() {
   $("mechanics-physics-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "physics");
   $("mechanics-terraforming-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "terraforming");
   $("mechanics-roguelite-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "roguelite");
+  $("mechanics-heroes-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "heroes");
   const state = $("mechanics-hub-state");
   if (state) state.textContent = MechanicsUI.loading ? "Loading capabilities…"
     : MechanicsUI.error ? "Mechanics unavailable"
@@ -4002,6 +4160,8 @@ function renderMechanicsHub() {
       renderRogueliteMechanicsEditor();
       renderCampaignAuthoring();
       if (!CampaignUI.loaded && !CampaignUI.loading) void loadCampaignAuthoring();
+    } else if (MechanicsUI.selectedModuleId === "heroes") {
+      renderHeroesMechanicsEditor();
     }
     // Recipe prerequisites are shared authoring metadata. Keep them visible for every module,
     // including elevation recipes, instead of hiding them inside the reactions-only editor.
@@ -4013,7 +4173,9 @@ function renderMechanicsHub() {
     mechanicsProjectModuleVersion() <= 4
     && !hasUnsupportedRogueliteCampaignMarker(MechanicsUI.draft)
   );
-  const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion && supportedRogueliteVersion && !busy;
+  const supportedHeroesVersion = MechanicsUI.selectedModuleId !== "heroes" || mechanicsProjectModuleVersion() === 1;
+  const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion
+    && supportedRogueliteVersion && supportedHeroesVersion && !busy;
   const dirtyWriteGuard = Boolean(S.dirty);
   if ($("btn-mechanics-preview")) $("btn-mechanics-preview").disabled = !writable;
   $("btn-mechanics-enable").disabled = dirtyWriteGuard || !writable || Boolean(capability?.active);
@@ -4021,7 +4183,8 @@ function renderMechanicsHub() {
   $("btn-mechanics-disable").disabled = dirtyWriteGuard || !writable || !capability?.moduleEnabled;
   $("btn-mechanics-load-profile").disabled = busy || mechanicsProfileIds().length === 0;
   $("btn-mechanics-new-profile").disabled = busy || !MechanicsUI.recipe
-    || ((MechanicsUI.selectedModuleId === "terraforming" || MechanicsUI.selectedModuleId === "roguelite") && !writable);
+    || ((MechanicsUI.selectedModuleId === "terraforming" || MechanicsUI.selectedModuleId === "roguelite"
+      || MechanicsUI.selectedModuleId === "heroes") && !writable);
   if ($("mechanics-recipe-select")) $("mechanics-recipe-select").disabled = busy || MechanicsUI.recipes.length === 0;
   if ($("btn-mechanics-add-damage-type")) $("btn-mechanics-add-damage-type").disabled = !writable;
   if ($("btn-mechanics-add-armor-type")) $("btn-mechanics-add-armor-type").disabled = !writable;
@@ -4035,6 +4198,7 @@ function renderMechanicsHub() {
   if ($("btn-mechanics-add-artifact")) $("btn-mechanics-add-artifact").disabled ||= !writable;
   if ($("btn-mechanics-add-draft-card")) $("btn-mechanics-add-draft-card").disabled ||= !writable;
   if ($("btn-mechanics-add-draft-pool")) $("btn-mechanics-add-draft-pool").disabled ||= !writable;
+  if ($("btn-mechanics-add-hero")) $("btn-mechanics-add-hero").disabled ||= !writable;
   $("btn-mechanics-reload").disabled = dirtyWriteGuard || busy;
   if ($("mechanics-profile-id")) $("mechanics-profile-id").disabled = !writable;
   $("btn-mechanics-load-profile").onclick = loadMechanicsProfile;

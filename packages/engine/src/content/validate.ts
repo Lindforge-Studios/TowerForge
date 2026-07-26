@@ -42,6 +42,10 @@ import {
   normalizeTowerTagsV1
 } from "./roguelite-mechanics.js";
 import {
+  HeroesProfileValidationError,
+  normalizeHeroesProfileV1
+} from "./heroes-mechanics.js";
+import {
   normalizeAuthoredWorldCampaign,
   WorldCampaignValidationError
 } from "../run/campaign-world.js";
@@ -2460,6 +2464,139 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
   };
 
   validatePhysicsMechanics();
+
+  const validateHeroesMechanics = () => {
+    type DescriptorMap = Record<PropertyKey, PropertyDescriptor>;
+    const inspect = (
+      value: unknown,
+      entityId: string,
+      fieldPath: string,
+      label: string
+    ): Record<string, unknown> | undefined => {
+      let prototype: object | null;
+      let descriptors: DescriptorMap;
+      let array = false;
+      try {
+        array = value !== null && typeof value === "object" && Array.isArray(value);
+        if (value !== null && typeof value === "object" && !array) {
+          prototype = Object.getPrototypeOf(value);
+          descriptors = Object.getOwnPropertyDescriptors(value) as DescriptorMap;
+          array = Array.isArray(value);
+        } else {
+          prototype = null;
+          descriptors = {};
+        }
+      } catch {
+        err("mechanics", entityId, fieldPath, `${label} could not be inspected safely.`);
+        return undefined;
+      }
+      if (value === null || typeof value !== "object" || array || prototype !== Object.prototype) {
+        err("mechanics", entityId, fieldPath, `${label} must be a plain own-data object.`);
+        return undefined;
+      }
+      if (Object.getOwnPropertySymbols(descriptors).length > 0) {
+        err("mechanics", entityId, fieldPath, `${label} must not contain symbol fields.`);
+      }
+      const result: Record<string, unknown> = {};
+      for (const key of Object.keys(descriptors)) {
+        const descriptor = descriptors[key];
+        if (!descriptor?.enumerable || !("value" in descriptor)) {
+          err("mechanics", entityId, `${fieldPath}.${key}`, `${label} fields must be enumerable own data.`);
+          continue;
+        }
+        Object.defineProperty(result, key, { value: descriptor.value, enumerable: true });
+      }
+      return result;
+    };
+    const unknownFields = (
+      value: Record<string, unknown>,
+      allowed: readonly string[],
+      entityId: string,
+      fieldPath: string
+    ) => {
+      const allowlist = new Set(allowed);
+      for (const key of Object.keys(value)) {
+        if (!allowlist.has(key)) {
+          err("mechanics", entityId, `${fieldPath}.${key}`, `Unknown heroes mechanics field "${key}".`);
+        }
+      }
+    };
+
+    const catalog = inspect(content.mechanics, "heroes", "mechanics", "Mechanics catalog");
+    if (!catalog) return;
+    const modules = inspect(catalog.modules, "heroes", "mechanics.modules", "Mechanics modules");
+    if (!modules) return;
+    const selections = new Map<string, string>();
+    for (const [missionId, mission] of Object.entries(content.missions)) {
+      const profileId = mission.mechanics?.profiles?.heroes;
+      if (typeof profileId === "string") selections.set(missionId, profileId);
+    }
+    if (modules.heroes === undefined) {
+      for (const [missionId, profileId] of selections) {
+        warn(
+          "mission",
+          missionId,
+          "mechanics.profiles.heroes",
+          `Mission selects heroes profile "${profileId}" from a missing inactive module.`
+        );
+      }
+      return;
+    }
+    const module = inspect(modules.heroes, "heroes", "modules.heroes", "Heroes mechanics module");
+    if (!module) return;
+    unknownFields(module, ["schemaVersion", "enabled", "profiles"], "heroes", "modules.heroes");
+    if (module.schemaVersion !== 1) {
+      err(
+        "mechanics",
+        "heroes",
+        "modules.heroes.schemaVersion",
+        "Heroes future or unsupported schemaVersion; only version 1 is supported."
+      );
+    }
+    if (typeof module.enabled !== "boolean") {
+      err("mechanics", "heroes", "modules.heroes.enabled", "Heroes mechanics enabled must be boolean.");
+    }
+    const profiles = inspect(module.profiles, "heroes", "modules.heroes.profiles", "Heroes mechanics profiles");
+    if (!profiles) return;
+    for (const [missionId, profileId] of selections) {
+      if (Object.prototype.hasOwnProperty.call(profiles, profileId)) continue;
+      const active = module.enabled === true && module.schemaVersion === 1;
+      (active ? err : warn)(
+        "mission",
+        missionId,
+        "mechanics.profiles.heroes",
+        `Mission selects missing heroes profile "${profileId}"${active ? "" : " from an inactive module"}.`
+      );
+    }
+    const selectedProfileIds = new Set(selections.values());
+    for (const profileId of Object.keys(profiles).sort()) {
+      const root = `modules.heroes.profiles.${profileId}`;
+      let profile;
+      try {
+        profile = normalizeHeroesProfileV1(profiles[profileId], root);
+      } catch (error) {
+        err(
+          "mechanics",
+          profileId,
+          error instanceof HeroesProfileValidationError ? error.fieldPath : root,
+          error instanceof Error ? error.message : `Heroes profile "${profileId}" is invalid.`
+        );
+        continue;
+      }
+      if (Object.prototype.hasOwnProperty.call(profile.definitions, profile.selectedHeroId)) continue;
+      const active = module.enabled === true
+        && module.schemaVersion === 1
+        && selectedProfileIds.has(profileId);
+      (active ? err : warn)(
+        "mechanics",
+        profileId,
+        `${root}.selectedHeroId`,
+        `Heroes selectedHeroId "${profile.selectedHeroId}" references a missing definition${active ? "" : " in this inactive or unselected profile"}.`
+      );
+    }
+  };
+
+  validateHeroesMechanics();
 
   const validateTerraformingMechanics = () => {
     type DescriptorMap = Record<PropertyKey, PropertyDescriptor>;

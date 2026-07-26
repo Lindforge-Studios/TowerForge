@@ -147,7 +147,7 @@ export function validateProjectSchemas(files) {
   }
   validateMapSources(files.mapSources ?? {}, err, warn);
   issues.push(...compileMapSources(files.mapSources ?? {}, files.balance?.terrainTypes ?? {}).issues);
-  validateVisuals(files.visuals, err, warn, files.balance, files.maps);
+  validateVisuals(files.visuals, err, warn, files.balance, files.maps, files.mechanics);
   validateNarrative(files, err, warn);
   validateBuildTargets(files.buildTargets, err);
 
@@ -512,7 +512,7 @@ export function listVisualAssetPaths(visuals) {
   return paths;
 }
 
-function validateVisuals(visuals, err, warn, balance, maps = {}) {
+function validateVisuals(visuals, err, warn, balance, maps = {}, mechanics = {}) {
   if (!visuals || typeof visuals !== "object") {
     err("visuals", "content/visuals.json", "root", "visuals.json must be an object.");
     return;
@@ -653,6 +653,31 @@ function validateVisuals(visuals, err, warn, balance, maps = {}) {
   for (const [mapId, tileSetId] of Object.entries(tileBindings.maps ?? {})) {
     if (!maps?.[mapId]) err("visuals", "content/visuals.json", `bindings.tileSets.maps.${mapId}`, `Map binding references unknown map "${mapId}".`);
     if (!visuals.tileSets?.[tileSetId]) err("visuals", "content/visuals.json", `bindings.tileSets.maps.${mapId}`, `Map binding references unknown tileset "${String(tileSetId)}".`);
+  }
+
+  // Hero bindings are optional and are deliberately absent from defaultVisuals. When authored,
+  // validate them against every closed heroes-v1 definition rather than synthesizing a roster
+  // from visuals or a mission selection.
+  const heroBindings = visuals.bindings?.heroes;
+  if (heroBindings !== undefined) {
+    if (!heroBindings || typeof heroBindings !== "object" || Array.isArray(heroBindings)) {
+      err("visuals", "content/visuals.json", "bindings.heroes", "bindings.heroes must be an object keyed by authored hero definition ID.");
+    } else {
+      const heroDefinitionIds = new Set();
+      const heroesModule = mechanics?.modules?.heroes;
+      for (const profile of Object.values(heroesModule?.profiles ?? {})) {
+        for (const heroId of Object.keys(profile?.definitions ?? {})) heroDefinitionIds.add(heroId);
+      }
+      for (const [heroId, spriteId] of Object.entries(heroBindings)) {
+        const fieldPath = `bindings.heroes.${heroId}`;
+        if (!heroDefinitionIds.has(heroId)) {
+          err("visuals", heroId, fieldPath, `Hero binding references unknown hero definition "${heroId}".`);
+        }
+        if (typeof spriteId !== "string" || !Object.hasOwn(visuals.sprites ?? {}, spriteId)) {
+          err("visuals", heroId, fieldPath, `Hero binding references unknown sprite "${String(spriteId)}".`);
+        }
+      }
+    }
   }
 
   const sounds = visuals.audio?.sounds ?? {};

@@ -30,6 +30,7 @@
 | R4.4A — campaign graph + run lifecycle | Завершён; code + constructor sign-off; ADR Accepted | Opt-in typed DAG, отдельные run/profile reducers, guarded Studio/MCP и explicit player import/export без battle-state coupling |
 | R4.4B — structural campaign choices | Завершён; code + constructor sign-off; ADR Accepted | Campaign graph v2, declared run resources и атомарные merchant/event choices без battle-state coupling |
 | R4.4C — campaign battle handoff | Завершён; code + constructor sign-off; ADR Accepted | Marker v2 переносит run deck/artifacts через deterministic prepare/checkpoint/atomic settlement; marker v1 остаётся legacy |
+| R5.1A — static hero roster foundation | Завершён; code + constructor sign-off; ADR Accepted | Opt-in `heroes` v1: bounded roster, один selected unit на core, optional snapshot и shared presentation без commands/checkpoint |
 | R5–R8 | Запланированы | Каждый срез закрывает engine, Studio, AI/MCP, renderers/player, docs и два независимых sign-off |
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Поставленные версии `combat`, `reactions`, `navigation` и `elevation` уже прошли полные вертикальные срезы. Остальные модули Mechanics Hub остаются planned, а preview/apply отклоняют их включение без записи.
@@ -181,6 +182,12 @@ R4.4C независимо версионирует только campaign marker
 ### R5 — Heroes и Logistics
 
 Два независимых трека. Heroes получают детерминированное движение, HP/shield, mana/cooldowns, active abilities, skill tree, passive auras и optional blocking только при dynamic navigation. Logistics сначала вводит power components/brownout ordering, затем bounded inventory/ammo/production graph. Без logistics profile сохраняется бесконечное штатное снабжение.
+
+R5.1A отдельно вводит только статический foundation-контракт `heroes` v1. Профиль закрытой формы `{selectedHeroId, definitions}` выбирает одного героя из 1–32 определений `{label, spawn:"core"}`; ID и label ограничены 128 реальными UTF-8 bytes. Активная миссия выводит один immutable unit в `map.coreCoord` и публикует optional `snapshot.heroes` v1 с полями `id`, `definitionId`, `label`, `coord`. Engine остаётся единственным источником selection/spawn, а Canvas и Phaser используют общий fail-closed projector и необязательный `visuals.bindings.heroes` с shape fallback.
+
+В R5.1A намеренно нет `moveHero`, hero HP/shield, mana, cooldowns, abilities, skills, auras, blocking, TowerScript scope/events/actions, RNG или mutable runtime state. Поэтому outer checkpoint v1, `towerforge-sim-v2`, GameCommand/Journal v3 и TowerScript v6 не меняются, а checkpoint не получает hero-секцию: restore повторно выводит unit из уже привязанного content digest и map core. Missing selected-definition reference является error только для active-selected профиля и warning в выключенном/невыбранном профиле; future `heroes` v2 остаётся opaque/read-only. Движение, GameCommand/Journal v4 и nested hero checkpoint принадлежат отдельному R5.1B RED/GREEN циклу.
+
+R5.1A принят 2026-07-26. Начальный независимый RED дал 29 падений из 36 contracts в восьми файлах; verifier-циклы отдельно закрепили revoked/self-revoking Proxy, exact `{q,r}`, own-safe `__proto__` bind/remove и sprite lookup, inherited renderer bindings, Phaser `undefined` coercion и запрет преждевременно рекламировать active hero mechanics. Финальный focused набор — 50/50, full Vitest — 2 042/2 042 в 179 файлах, full Playwright — 49/49. Typecheck, engine/build, validate, sim, balance, maps, web build и plugin build/validate/smoke прошли; source↔plugin parity подтверждена. Независимая constructor-проверка также подтвердила Studio lifecycle, Canvas/Phaser × hex/square, 4 templates × 2 grids × 2 renderers, PWA/single-file/file-URL boot, web-package и `.tdpack` export/import/validate. Code verifier и constructor-integration verifier выдали PASS без открытых P0–P3 findings. Контракт описан в [ADR 0037](adr/0037-opt-in-static-hero-roster-foundation.md), copyable fixture — `docs/examples/opt-in-hero-roster/`; следующий отдельный RED/GREEN срез — R5.1B movement/commands/checkpoint.
 
 ### R6 — TowerScript DX 2.0
 

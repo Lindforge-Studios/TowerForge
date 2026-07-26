@@ -135,6 +135,24 @@ enforce this boundary. A future nested campaign marker (v3+) is opaque and read-
 `preview_mechanics_module`, and `preview_campaign` reject writes rather than dropping or
 downgrading it; disabling such a marker also requires a compatible runtime.
 
+For R5.1A, enable a static hero roster only through Mechanics Hub or the ordinary guarded mechanics
+flow: `describe_schema({domain:"heroes"})` -> `get_capabilities` ->
+`get_recipe({collection:"mechanics",recipeId:"basic_commander_hero"})` ->
+`preview_mechanics_module` -> `apply_mechanics_module` with the preview revision ->
+`validate_project`. The recipe stages one `heroes` v1 profile and never enables the module or
+selects a mission by itself. The profile must contain 1–32 definitions, one own
+`selectedHeroId`, and exact definitions `{label,spawn:"core"}`. IDs and labels are limited to 128
+UTF-8 bytes.
+
+An active profile displays exactly one engine-derived hero at the map core through
+`snapshot.heroes` v1. Renderers may use an explicitly authored `visuals.bindings.heroes` sprite or
+their built-in shape fallback. Do not infer roster activation from `mechanics.json`, add a hero to
+the checkpoint, or attempt to dispatch `moveHero`: R5.1A has no hero command, event, mutable state,
+HP, mana, ability, aura, blocking, or TowerScript extension. Disabling or unselecting removes the
+snapshot and presentation without rewriting the roster. Future heroes module versions are
+read-only. Use `docs/examples/opt-in-hero-roster/`; movement and GameCommand/Journal v4 belong to
+R5.1B.
+
 Combat v1 accepts only `shields`. A target definition requires positive bounded `capacity` and may add `{ ratePerUnit, delayAfterDamage }` regeneration. Tower shields require a tower with `maxHp`. At runtime shield state is keyed by entity instance ID and appears only under active `snapshot.combat`; Canvas and Phaser consume the same presentation projection. A copyable v1 reference is under `docs/examples/opt-in-basic-shields/`.
 
 Combat v2 retains shields and adds `damageTypes`, `armorTypes`, and `armorAssignments.enemies`. Every assigned enemy requires an existing armor type, and any non-empty assignment set requires a declared `physical` damage type because an untyped packet falls back to `physical`. Multipliers are finite numbers from `0` through `1,000,000`; `0` is a valid immunity, an absent explicit/default multiplier means `1`, and per-enemy `resistances` apply after the matrix. The fixed order is `source modifiers → armor matrix → entity resistance → legacy pierce_only → shield → HP`. `armor_piercing` bypasses only legacy `pierce_only`, not the matrix.

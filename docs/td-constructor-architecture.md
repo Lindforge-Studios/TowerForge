@@ -489,6 +489,31 @@ boundaries; constructor verification covered guarded Studio/AI authoring, future
 both renderers/grids/input families, packaging, legacy paths, and plugin parity. Both sign-offs are
 PASS with no open P0–P3.
 
+### R5.1A static hero roster foundation
+
+R5.1A activates the planned `heroes` module as schema v1 while keeping active control in a later
+increment. A closed profile contains `selectedHeroId` and 1–32 binary-keyed definitions. Every
+definition is exactly `{label, spawn:"core"}`; definition IDs and labels are bounded to 128 real
+UTF-8 bytes. Structural shape and budgets are always validated. A missing selected definition is a
+semantic cross-reference: it is an error for an active selected profile and a warning while the
+profile is inactive.
+
+The simulation derives one immutable selected unit from content and the map core. Only an active
+capability publishes `snapshot.heroes` schema v1, whose exact unit fields are `id`, `definitionId`,
+`label`, and `coord`. The roster is presentation-visible but has no mutable simulation behavior.
+There is no RNG stream, command, event, TowerScript surface, HP, mana, ability, aura, blocking, or
+navigation allocation. Checkpoint v1 and `towerforge-sim-v2` remain unchanged and contain no hero
+state; restore safely re-derives the unit because the checkpoint content digest already binds the
+profile and map.
+
+Studio authors the roster only in Mechanics Hub through the existing revision-guarded three-file
+mechanics transaction. MCP/AI uses the same descriptor and `describe -> capabilities -> recipe ->
+preview -> guarded apply -> validate` flow. Canvas and Phaser consume one shared fail-closed hero
+projection. `visuals.bindings.heroes` is optional and no empty binding is synthesized for legacy
+projects. Missing, disabled, unselected, and future-version modules publish no hero snapshot or UI.
+`moveHero`, GameCommand/Journal v4, mutable movement state, checkpointing, and input replay are
+explicitly deferred to R5.1B. See [ADR 0037](adr/0037-opt-in-static-hero-roster-foundation.md).
+
 ## Done Criteria For Constructor Changes
 
 - Engine changes pass `npm run typecheck`.

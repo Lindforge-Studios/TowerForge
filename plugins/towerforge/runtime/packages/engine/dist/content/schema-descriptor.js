@@ -7,6 +7,7 @@ export { NAVIGATION_MECHANICS_SCHEMA } from "./navigation-mechanics.js";
 export { ELEVATION_MECHANICS_SCHEMA } from "./elevation-mechanics.js";
 export { TERRAFORMING_MECHANICS_SCHEMA } from "./terraforming-mechanics.js";
 export { ROGUELITE_MECHANICS_SCHEMA } from "./roguelite-mechanics.js";
+export { HEROES_MECHANICS_SCHEMA } from "./heroes-mechanics.js";
 export const TARGET_MODE_SCHEMA = Object.freeze({
     selectable: TOWER_TARGET_MODES.filter((mode) => mode !== "fastest_ahead" && mode !== "largest_hp"),
     legacyAliases: { fastest_ahead: "first (armored first)", largest_hp: "strongest" },

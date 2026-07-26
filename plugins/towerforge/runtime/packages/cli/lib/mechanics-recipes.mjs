@@ -15,6 +15,7 @@ const TAGGED_MOAT_ID = "tagged_moat";
 const TAGGED_DESTRUCTIBLE_BRIDGE_ID = "tagged_destructible_bridge";
 const BASIC_ELEMENTAL_SYNERGY_ID = "basic_elemental_synergy";
 const BASIC_BOSS_ARTIFACT_LOOT_ID = "basic_boss_artifact_loot";
+const BASIC_COMMANDER_HERO_ID = "basic_commander_hero";
 const TERRAFORMING_RECIPE_IDS = Object.freeze([
   TAGGED_FLOOD_ID,
   TAGGED_MOAT_ID,
@@ -204,6 +205,14 @@ const RECIPES = Object.freeze([
     suggestedId: BASIC_BOSS_ARTIFACT_LOOT_ID,
     moduleSchemaVersion: 2,
     parameterSchema: ROGUELITE_ARTIFACT_PARAMETER_SCHEMA
+  }),
+  Object.freeze({
+    id: BASIC_COMMANDER_HERO_ID,
+    moduleId: "heroes",
+    label: "Basic Commander Hero",
+    description: "Inert heroes v1 profile with one static commander spawned at the authored mission core.",
+    suggestedId: BASIC_COMMANDER_HERO_ID,
+    moduleSchemaVersion: 1
   })
 ]);
 
@@ -270,6 +279,23 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
   }
   if (recipeId === BASIC_DYNAMIC_NAVIGATION_ID) {
     return materializeDynamicNavigationRecipe(recipe, missionId);
+  }
+  if (recipeId === BASIC_COMMANDER_HERO_ID) {
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "heroes",
+        moduleSchemaVersion: 1,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: {
+          selectedHeroId: "commander",
+          definitions: {
+            commander: { label: "Commander", spawn: "core" }
+          }
+        }
+      }
+    };
   }
   if (recipeId === BASIC_AUTHORED_ELEVATION_ID) {
     return {

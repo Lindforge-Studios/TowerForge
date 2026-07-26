@@ -64,7 +64,7 @@ const BALANCE_PATCH_KEYS = [
   "enemies", "towers", "waveSets", "missions", "abilities", "constants", "currencies", "defaultMissionId",
   "defaultDifficultyId", "difficulties", "metaProgression", "terrainTypes"
 ];
-const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
+const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
 
 // Maps an upsert_entity/delete_entity `collection` to (a) the balance.json key, (b) the shape
 // (a map keyed by id, or an array of {id,...} items — currencies only), and (c) the
@@ -1102,12 +1102,12 @@ export const TOOLS = [
   },
   {
     name: "bind_sprite",
-    description: "Bind an existing sprite id to a tower, enemy, tile, or UI id in content/visuals.json and validate before writing.",
+    description: "Bind an existing sprite id to a tower, enemy, static hero definition, tile, or UI id in content/visuals.json and validate before writing.",
     inputSchema: {
       type: "object",
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory." },
-        kind: { type: "string", enum: ["towers", "enemies", "tiles", "ui"] },
+        kind: { type: "string", enum: ["towers", "enemies", "heroes", "tiles", "ui"] },
         entityId: { type: "string" },
         spriteId: { type: "string", description: "Existing sprite id. Empty string removes the binding." },
         ifRevision: { ...IF_REVISION_PROPERTY, description: "Optional. The visuals revision (not the balance one) last read, to guard against a concurrent visuals.json edit." }
@@ -1453,6 +1453,11 @@ export async function callTool(name, args = {}, ctx = {}) {
         }
       }
     };
+    const heroes = {
+      authoring: engine.HEROES_MECHANICS_SCHEMA,
+      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1] },
+      events: []
+    };
     return {
       schemaVersion: 4,
       agentGuideVersion: TOWERFORGE_AGENT_GUIDE_VERSION,
@@ -1496,6 +1501,7 @@ export async function callTool(name, args = {}, ctx = {}) {
       ...(includes("physics") ? { physics } : {}),
       ...(includes("terraforming") ? { terraforming } : {}),
       ...(includes("roguelite") ? { roguelite } : {}),
+      ...(includes("heroes") ? { heroes } : {}),
       ...(includes("assets") ? {
         assetAuthoring: {
           themePacks: "Call list_theme_packs, preview_theme_pack, then apply_theme_pack with ifRevision.",
@@ -1512,7 +1518,7 @@ export async function callTool(name, args = {}, ctx = {}) {
           schemaVersion: 1,
           moduleIds: [...engine.MECHANICS_MODULE_IDS],
           implementedModuleIds: [...engine.IMPLEMENTED_MECHANICS_MODULE_IDS],
-          modules: { combat: combatShields, reactions, navigation, elevation, physics, terraforming, roguelite }
+          modules: { combat: combatShields, reactions, navigation, elevation, physics, terraforming, roguelite, heroes }
         }
       } : {})
     };
@@ -1663,7 +1669,7 @@ export async function callTool(name, args = {}, ctx = {}) {
           engine.ELEVATION_MECHANICS_SCHEMA
         );
       }
-      for (const moduleId of ["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite"]) {
+      for (const moduleId of ["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes"]) {
         if (!Number.isSafeInteger(result[moduleId]?.moduleSchemaVersion)) continue;
         result.capabilities = {
           ...result.capabilities,
@@ -2605,7 +2611,7 @@ function setPngPixel(image, x, y, color) {
 
 async function bindSprite(projectDir, args) {
   const { kind, entityId, spriteId, ifRevision } = args;
-  if (!["towers", "enemies", "tiles", "ui"].includes(kind)) throw new Error("bind_sprite kind must be towers, enemies, tiles, or ui.");
+  if (!["towers", "enemies", "heroes", "tiles", "ui"].includes(kind)) throw new Error("bind_sprite kind must be towers, enemies, heroes, tiles, or ui.");
   if (typeof entityId !== "string" || !entityId) throw new Error("bind_sprite requires entityId.");
   if (typeof spriteId !== "string") throw new Error("bind_sprite requires spriteId.");
   // Raw is the write source (persist only the author's delta, not normalizeVisuals defaults);
@@ -2615,7 +2621,14 @@ async function bindSprite(projectDir, args) {
   const files = normalizeProjectFiles(raw);
   if (kind === "towers" && !files.balance.towers?.[entityId]) throw new Error(`Tower "${entityId}" not found.`);
   if (kind === "enemies" && !files.balance.enemies?.[entityId]) throw new Error(`Enemy "${entityId}" not found.`);
-  if (spriteId && !files.visuals?.sprites?.[spriteId]) throw new Error(`Sprite "${spriteId}" not found.`);
+  if (kind === "heroes") {
+    const definitions = new Set();
+    for (const profile of Object.values(files.mechanics?.modules?.heroes?.profiles ?? {})) {
+      for (const heroId of Object.keys(profile?.definitions ?? {})) definitions.add(heroId);
+    }
+    if (!definitions.has(entityId)) throw new Error(`Hero definition "${entityId}" not found.`);
+  }
+  if (spriteId && !Object.hasOwn(files.visuals?.sprites ?? {}, spriteId)) throw new Error(`Sprite "${spriteId}" not found.`);
 
   const beforeRevision = computeRevision(files.visuals);
   if (ifRevision && beforeRevision !== ifRevision) {
@@ -2623,10 +2636,18 @@ async function bindSprite(projectDir, args) {
   }
 
   const visuals = structuredCloneCompat(raw.visuals ?? {});
-  visuals.bindings ??= {};
-  visuals.bindings[kind] ??= {};
-  if (spriteId) visuals.bindings[kind][entityId] = spriteId;
-  else delete visuals.bindings[kind][entityId];
+  let bindings = ownDataValue(visuals, "bindings");
+  if (!bindings || typeof bindings !== "object" || Array.isArray(bindings)) {
+    bindings = {};
+    defineOwnData(visuals, "bindings", bindings);
+  }
+  let kindBindings = ownDataValue(bindings, kind);
+  if (!kindBindings || typeof kindBindings !== "object" || Array.isArray(kindBindings)) {
+    kindBindings = {};
+    defineOwnData(bindings, kind, kindBindings);
+  }
+  if (spriteId) defineOwnData(kindBindings, entityId, spriteId);
+  else Reflect.deleteProperty(kindBindings, entityId);
 
   // Validate the EFFECTIVE (normalized) result of writing this raw payload.
   const candidate = normalizeProjectFiles({ ...raw, visuals });
@@ -3405,6 +3426,25 @@ function mechanicsToolError(code, message) {
   const error = new Error(message);
   error.code = code;
   return error;
+}
+
+function ownDataValue(record, key) {
+  if (record === null || typeof record !== "object") return undefined;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(record, key);
+    return descriptor?.enumerable === true && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function defineOwnData(record, key, value) {
+  Object.defineProperty(record, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true
+  });
 }
 
 function mechanicsModuleAuthoringView(files, missionId, moduleId, authoring) {

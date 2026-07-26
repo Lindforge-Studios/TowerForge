@@ -24,7 +24,8 @@ export const IMPLEMENTED_MECHANICS_MODULE_IDS = [
   "elevation",
   "physics",
   "terraforming",
-  "roguelite"
+  "roguelite",
+  "heroes"
 ] as const satisfies readonly MechanicsModuleId[];
 
 export const SHIELD_LIMITS = Object.freeze({

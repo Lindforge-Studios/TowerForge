@@ -39,6 +39,7 @@ import {
   type ActiveRogueliteMechanics,
   type RogueliteDraftDefinitionV3
 } from "../content/roguelite-mechanics.js";
+import { resolveActiveHeroesMechanics } from "../content/heroes-mechanics.js";
 import { CAMPAIGN_RUN_LIMITS } from "../run/campaign-run.js";
 import { campaignBattleWorstCaseModifierCount } from "../run/campaign-battle-policy.js";
 import { evaluateTowerScriptExpression } from "../scripting/expression.js";
@@ -792,6 +793,7 @@ export class TowerDefenseGame {
   private readonly activePhysicsMechanics: ActivePhysicsMechanicsV1 | undefined;
   private readonly activeTerraformingMechanics: ActiveTerraformingMechanicsV1 | undefined;
   private readonly activeRogueliteMechanics: ActiveRogueliteMechanics | undefined;
+  private readonly heroesSnapshot: GameSnapshot["heroes"];
   private rogueliteSnapshot: GameSnapshot["roguelite"];
   private rogueliteDamageModifiers: readonly ModifierSpec[] = Object.freeze([]);
   private artifactDamageModifiersByTowerId: ReadonlyMap<string, readonly ModifierSpec[]> = new Map();
@@ -897,6 +899,22 @@ export class TowerDefenseGame {
     this.activePhysicsMechanics = resolveActivePhysicsMechanics(this.content, missionId);
     this.activeTerraformingMechanics = resolveActiveTerraformingMechanics(this.content, missionId);
     this.activeRogueliteMechanics = resolveActiveRogueliteMechanics(this.content, missionId);
+    const activeHeroes = resolveActiveHeroesMechanics(this.content, missionId);
+    if (activeHeroes) {
+      const definition = activeHeroes.definitions[activeHeroes.selectedHeroId]!;
+      const coord = Object.freeze({ q: this.map.coreCoord.q, r: this.map.coreCoord.r });
+      this.heroesSnapshot = Object.freeze({
+        schemaVersion: 1 as const,
+        units: Object.freeze([Object.freeze({
+          id: activeHeroes.selectedHeroId,
+          definitionId: activeHeroes.selectedHeroId,
+          label: definition.label,
+          coord
+        })])
+      });
+    } else {
+      this.heroesSnapshot = undefined;
+    }
     if (options.campaignBattle !== undefined) {
       this.campaignBattle = normalizeCampaignBattleLoadout(
         options.campaignBattle,
@@ -5496,6 +5514,7 @@ export class TowerDefenseGame {
       ...(elevation === undefined ? {} : { elevation }),
       ...(terraforming === undefined ? {} : { terraforming }),
       ...(roguelite === undefined ? {} : { roguelite }),
+      ...(this.heroesSnapshot === undefined ? {} : { heroes: this.heroesSnapshot }),
       scriptState: {
         values: this.cloneScriptValues(),
         diagnostics: this.scriptDiagnostics.map((diagnostic) => ({ ...diagnostic }))

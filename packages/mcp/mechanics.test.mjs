@@ -21,7 +21,7 @@ const R0A_MODULE_IDS = [
   "scriptingDx",
   "multiplayer"
 ];
-const IMPLEMENTED_MODULE_IDS = ["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite"];
+const IMPLEMENTED_MODULE_IDS = ["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes"];
 const UNAVAILABLE_MODULE_IDS = R0A_MODULE_IDS.filter(
   (moduleId) => !IMPLEMENTED_MODULE_IDS.includes(moduleId)
 );
@@ -193,6 +193,11 @@ describe("R1 combat mechanics MCP contract", () => {
         }
       }
     };
+    const heroesSurface = {
+      authoring: engine.HEROES_MECHANICS_SCHEMA,
+      snapshot: { field: "heroes", optional: true, supportedSchemaVersions: [1] },
+      events: []
+    };
 
     expect(engine.COMBAT_MECHANICS_SCHEMA).toMatchObject({
       schemaVersion: 3,
@@ -222,7 +227,8 @@ describe("R1 combat mechanics MCP contract", () => {
         elevation: elevationSurface,
         physics: physicsSurface,
         terraforming: terraformingSurface,
-        roguelite: rogueliteSurface
+        roguelite: rogueliteSurface,
+        heroes: heroesSurface
       }
     });
     expect(mechanics.mechanics.moduleIds).toHaveLength(12);

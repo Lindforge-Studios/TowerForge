@@ -79,6 +79,7 @@ export declare class TowerDefenseGame {
     private readonly activePhysicsMechanics;
     private readonly activeTerraformingMechanics;
     private readonly activeRogueliteMechanics;
+    private readonly heroesSnapshot;
     private rogueliteSnapshot;
     private rogueliteDamageModifiers;
     private artifactDamageModifiersByTowerId;

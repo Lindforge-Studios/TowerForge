@@ -807,6 +807,23 @@
               <pre id="campaign-preview-result" class="mechanics-preview-result" aria-live="polite">Load or preview the campaign graph.</pre>
             </div>
           </div>
+          <div id="mechanics-heroes-editor" class="hidden">
+            <div class="mechanics-heroes-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Hero definitions</h4>
+                  <p>Choose one static commander definition. The v1 unit spawns at the mission core only after this profile is enabled.</p>
+                </div>
+                <button id="btn-mechanics-add-hero" class="btn btn-outline" type="button">+ Add hero</button>
+              </div>
+              <div id="mechanics-heroes-read-only" class="mechanics-notice warning hidden" role="status"></div>
+              <label>Selected hero
+                <select id="mechanics-heroes-selected-id"></select>
+              </label>
+              <div id="mechanics-heroes-definition-rows" class="mechanics-definition-rows"></div>
+            </div>
+          </div>
+          <div id="mechanics-logistics-editor" class="hidden" hidden></div>
           <div class="mechanics-actions">
             <button id="btn-mechanics-preview" class="btn btn-outline" type="button">Preview</button>
             <button id="btn-mechanics-enable" class="btn btn-primary" type="button">Enable for mission</button>
