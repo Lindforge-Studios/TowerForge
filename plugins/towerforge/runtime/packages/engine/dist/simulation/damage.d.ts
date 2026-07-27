@@ -35,6 +35,10 @@ export type DamageTargetRef = {
     readonly towerId: string;
     readonly towerTypeId: string;
 } | {
+    readonly kind: "hero";
+    readonly heroId: string;
+    readonly heroDefinitionId: string;
+} | {
     readonly kind: "core";
 };
 export declare const DAMAGE_TAGS: readonly ["area", "over_time", "armor_piercing", "reaction"];

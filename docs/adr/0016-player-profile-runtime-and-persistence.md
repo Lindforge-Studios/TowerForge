@@ -3,6 +3,8 @@
 - Status: Accepted
 - Date: 2026-07-24
 
+R4.0A promotes the canonical schema from v2 to v3 without adding fields; see [ADR 0028](0028-player-profile-v3-migration.md). The v2 names below describe the originally accepted R0C contract.
+
 ## Context
 
 Canvas and Phaser generated players historically embedded equivalent mutable progress helpers for cleared missions, stars, meta currencies, upgrades, difficulty, rewards, and unlocks. That duplication let renderer templates drift, mixed browser persistence with gameplay rules, and could silently reinterpret or overwrite a profile written by a newer TowerForge version.
@@ -42,14 +44,14 @@ Web builds copy the runtime source bytes, precache them for offline use, and inl
 ## Consequences
 
 - Canvas and Phaser load, migrate, save, reset, warn, and recover identically; renderer selection cannot change profile bytes or rules.
-- Reading legacy data has no persistence side effect. The next explicit profile-changing action writes canonical v2.
+- Reading legacy data has no persistence side effect. Since R4.0A, the next explicit profile-changing action writes canonical v3.
 - A future profile remains protected even when the player changes difficulty in the in-memory fallback session. The UI reports that the saved profile belongs to a newer version.
-- Corrupt data does not block play; an explicit profile action may replace it with canonical v2.
+- Corrupt data does not block play; an explicit profile action may replace it with canonical v3.
 - Project, mechanics, profile, checkpoint, command journal/replay, and multiplayer protocol versions continue to evolve independently.
 - Changes to profile rules require engine tests; changes to persistence require player-runtime tests; generated-player changes require Canvas/Phaser, PWA, single-file, plugin, desktop-bundle, and browser acceptance coverage.
 
 ## Non-goals
 
 - Multiple tabs, cloud sync, compare-and-swap, merge resolution, save slots, and account ownership are not part of R0C.
-- Profile v3 and rogue-lite run state remain the separate R4 contract.
+- Rogue-lite run state remains the separate R4.0B `CampaignRun` contract; profile v3 itself contains no run state.
 - The renderer and Studio do not acquire profile gameplay rules or direct storage ownership.

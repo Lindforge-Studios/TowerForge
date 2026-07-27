@@ -31,6 +31,10 @@ export type SimulationAction = {
     abilityId: MissionAbilityId;
     center: HexCoord;
 } | {
+    type: "moveHero";
+    heroId: string;
+    target: HexCoord;
+} | {
     type: "emitSignal";
     signal: string;
     payload?: TowerScriptJson;

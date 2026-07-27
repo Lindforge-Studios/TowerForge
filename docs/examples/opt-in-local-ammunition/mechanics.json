@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "logistics": {
+      "schemaVersion": 2,
+      "enabled": true,
+      "profiles": {
+        "basic_local_ammunition": {
+          "power": null,
+          "ammunition": {
+            "types": {
+              "shell": {
+                "label": "Shell"
+              }
+            },
+            "towerInventories": {
+              "cannon_tower": {
+                "ammoTypeId": "shell",
+                "capacity": 30,
+                "startingAmount": 12,
+                "consumptionPerActivation": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

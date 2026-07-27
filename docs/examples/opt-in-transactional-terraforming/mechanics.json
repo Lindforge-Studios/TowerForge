@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "terraforming": {
+      "schemaVersion": 1,
+      "enabled": true,
+      "profiles": {
+        "tagged_flood": {
+          "terrainTransitions": {
+            "flood": {
+              "fromTerrainTags": ["floodable"],
+              "toTerrainId": "water"
+            }
+          }
+        },
+        "tagged_moat": {
+          "terrainTransitions": {
+            "moat": {
+              "fromTerrainTags": ["moat_candidate"],
+              "toTerrainId": "moat_water"
+            }
+          }
+        },
+        "tagged_destructible_bridge": {
+          "terrainTransitions": {
+            "destroy_bridge": {
+              "fromTerrainTags": ["destructible_bridge"],
+              "toTerrainId": "chasm"
+            }
+          }
+        }
+      }
+    }
+  }
+}

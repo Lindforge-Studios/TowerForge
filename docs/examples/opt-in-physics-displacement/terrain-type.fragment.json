@@ -1,0 +1,10 @@
+{
+  "chasm": {
+    "id": "chasm",
+    "label": "Chasm",
+    "buildable": false,
+    "walkable": false,
+    "groundSpeedMultiplier": 1,
+    "tags": ["fall_hazard"]
+  }
+}

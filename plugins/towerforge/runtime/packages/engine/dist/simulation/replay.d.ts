@@ -1,5 +1,5 @@
 import type { GameContentRegistry } from "../content/registry.js";
-import { type GameCommandJournalResultV1, type GameCommandJournalV1 } from "./journal.js";
+import { type GameCommandJournalResultV1, type GameCommandJournal } from "./journal.js";
 import { TowerDefenseGame } from "./TowerDefenseGame.js";
 export type GameCommandReplayDivergenceKind = "result" | "postStateDigest";
 type GameCommandReplayDivergenceDetails = {
@@ -38,6 +38,6 @@ export interface GameCommandReplayResult {
  */
 export declare function replayGameCommandJournal(options: {
     content: GameContentRegistry;
-    journal: GameCommandJournalV1;
+    journal: GameCommandJournal;
 }): GameCommandReplayResult;
 export {};

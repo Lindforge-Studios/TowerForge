@@ -2,6 +2,14 @@ import { TowerDefenseGame } from "./TowerDefenseGame.js";
 import { dispatchGameCommand } from "./commands.js";
 /** @deprecated Use dispatchGameCommand with a versioned GameCommand. */
 export function applySimulationAction(game, action) {
+    if (action.type === "moveHero") {
+        return dispatchGameCommand(game, {
+            schemaVersion: 4,
+            type: "moveHero",
+            heroId: action.heroId,
+            target: action.target
+        });
+    }
     const payload = action.type === "emitSignal" && action.payload === undefined
         ? { schemaVersion: 1, type: action.type, signal: action.signal }
         : { schemaVersion: 1, ...action };
