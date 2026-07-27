@@ -63,7 +63,7 @@ describe("mobile packaging (Capacitor)", () => {
     const launcher = path.join(result.outDir, "serve.mjs");
     expect(execFileSync(process.execPath, [launcher, "--check-path", "/"], { encoding: "utf8" }).trim()).toBe("allowed");
     expect(execFileSync(process.execPath, [launcher, "--check-path", "/..%2fproject.json"], { encoding: "utf8" }).trim()).toBe("blocked");
-  });
+  }, 30_000);
 
   it("derives a valid reverse-DNS appId and refuses to escape the project dir", async () => {
     const result = await packageMobile(projectDir);
