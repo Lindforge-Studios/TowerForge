@@ -2,6 +2,9 @@ import { type TowerAttackKind } from "../simulation/types.js";
 export { NAVIGATION_MECHANICS_SCHEMA } from "./navigation-mechanics.js";
 export { ELEVATION_MECHANICS_SCHEMA } from "./elevation-mechanics.js";
 export { TERRAFORMING_MECHANICS_SCHEMA } from "./terraforming-mechanics.js";
+export { ROGUELITE_MECHANICS_SCHEMA } from "./roguelite-mechanics.js";
+export { HEROES_MECHANICS_SCHEMA } from "./heroes-mechanics.js";
+export { LOGISTICS_MECHANICS_SCHEMA } from "./logistics-mechanics.js";
 /**
  * A machine-readable description of the content schema's closed sets and per-shape field
  * constraints — the single source of truth for what `validateGameContentRegistry` (validate.ts)
@@ -86,7 +89,7 @@ export declare const DAMAGE_PACKET_SCHEMA: Readonly<{
     requiredFields: readonly ["amount", "source", "target"];
     optionalFields: readonly ["damageType", "tags", "modifiers"];
     sourceKinds: readonly ["tower", "ability", "tower_script", "status", "enemy", "leak", "reaction"];
-    targetKinds: readonly ["enemy", "tower", "core"];
+    targetKinds: readonly ["enemy", "tower", "hero", "core"];
     tags: ("reaction" | "area" | "over_time" | "armor_piercing")[];
     pipelineOrder: readonly ["modifiers", "marks", "armor_matrix", "entity_resistance", "legacy_pierce_only", "shield", "entity_hp", "reactions"];
 }>;

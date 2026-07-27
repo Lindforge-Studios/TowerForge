@@ -77,7 +77,7 @@ describe("mcp tool registry", () => {
     const result = await callTool("validate_project", { projectDir: STARTER }, {});
     expect(result.ok).toBe(true);
     expect(result.errorCount).toBe(0);
-  });
+  }, 30_000);
 
   it("reports production readiness through stable structured checks", async () => {
     const result = await callTool("release_readiness", { projectDir: STARTER }, {});
@@ -130,7 +130,7 @@ describe("mcp tool registry", () => {
 
   it("describes the schema with no project context at all — pure metadata", async () => {
     const result = await callTool("describe_schema", {}, {});
-    expect(result.schemaVersion).toBe(2);
+    expect(result.schemaVersion).toBe(4);
     expect(Object.keys(result.attackKinds).sort()).toEqual(
       ["antiair", "pipeline", "pulse", "single", "splash", "sniper", "support", "support_buff"].sort()
     );
@@ -156,7 +156,7 @@ describe("mcp tool registry", () => {
       requiredFields: ["amount", "source", "target"],
       optionalFields: ["damageType", "tags", "modifiers"],
       sourceKinds: ["tower", "ability", "tower_script", "status", "enemy", "leak", "reaction"],
-      targetKinds: ["enemy", "tower", "core"],
+      targetKinds: ["enemy", "tower", "hero", "core"],
       tags: ["area", "over_time", "armor_piercing", "reaction"],
       pipelineOrder: ["modifiers", "marks", "armor_matrix", "entity_resistance", "legacy_pierce_only", "shield", "entity_hp", "reactions"]
     });

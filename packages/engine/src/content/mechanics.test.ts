@@ -66,7 +66,8 @@ describe("mechanics capability resolution", () => {
 
   it("implements the shipped mechanics while leaving later modules unavailable", () => {
     expect(IMPLEMENTED_MECHANICS_MODULE_IDS).toEqual([
-      "combat", "reactions", "navigation", "elevation", "physics", "terraforming"
+      "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes",
+      "logistics"
     ]);
 
     const capabilities = resolveCapabilitySet(

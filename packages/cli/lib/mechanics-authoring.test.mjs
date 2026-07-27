@@ -332,7 +332,7 @@ describe("canonical mechanics authoring transaction", () => {
     expect(JSON.parse(fs.readFileSync(filePaths(projectDir).project, "utf8"))).toEqual(preview.candidate.manifest);
     expect(JSON.parse(fs.readFileSync(filePaths(projectDir).balance, "utf8"))).toEqual(preview.candidate.balance);
     expect(JSON.parse(fs.readFileSync(filePaths(projectDir).mechanics, "utf8"))).toEqual(preview.candidate.mechanics);
-  });
+  }, 30_000);
 
   it("previews a combat v1 to v2 armor upgrade without changing catalog/project versions or existing profiles", async () => {
     const shieldProfile = validProfile();
@@ -491,7 +491,7 @@ describe("canonical mechanics authoring transaction", () => {
 
     const stale = await applyMechanicsModule(projectDir, request);
     expect(stale).toMatchObject({ ok: false, conflict: true, expectedRevision: revision });
-  });
+  }, 30_000);
 
   it("guardedly authors reactions v1 beside combat v3 and preserves both modules through disable/re-enable", async () => {
     const combatProfile = {

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "heroes": {
+      "schemaVersion": 2,
+      "enabled": true,
+      "profiles": {
+        "field_commander": {
+          "selectedHeroId": "commander",
+          "definitions": {
+            "commander": {
+              "label": "Field Commander",
+              "spawn": "core",
+              "movement": {
+                "movementProfileId": "ground",
+                "speed": 2
+              }
+            }
+          },
+          "movementProfiles": {
+            "ground": {
+              "label": "Ground",
+              "terrainMode": "respect_walkable",
+              "towerOccupancy": "blocked",
+              "defaultTerrainCost": 1000
+            }
+          }
+        }
+      }
+    }
+  }
+}

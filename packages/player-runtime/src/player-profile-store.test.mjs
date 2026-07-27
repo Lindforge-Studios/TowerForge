@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import {
+  PLAYER_PROFILE_LIMITS,
   createEmptyPlayerProfile,
   createGameContentRegistry,
   parsePlayerProfileJson,
@@ -307,7 +308,15 @@ describe("player profile load contract", () => {
   });
 
   it.each([
-    ["current v2", (content) => serializePlayerProfile(createEmptyPlayerProfile(content)), "profile_loaded", "v2"],
+    ["current v3", (content) => serializePlayerProfile(createEmptyPlayerProfile(content)), "profile_loaded", "v3"],
+    ["version 2", () => JSON.stringify({
+      version: 2,
+      clearedMissionIds: ["alpha"],
+      starsByMission: { alpha: 1 },
+      metaResources: { crystals: 7 },
+      upgradeLevels: {},
+      selectedDifficultyId: "normal"
+    }), "profile_migrated", "v2"],
     ["legacy array", () => JSON.stringify(["alpha"]), "profile_migrated", "legacy-array"],
     ["unversioned legacy", () => JSON.stringify({ clearedMissionIds: ["alpha"] }), "profile_migrated", "legacy-object"],
     ["version 1 legacy", () => JSON.stringify({ version: 1, clearedMissionIds: ["alpha"] }), "profile_migrated", "legacy-object"]
@@ -379,7 +388,7 @@ describe("player profile load contract", () => {
 describe("player profile explicit save contract", () => {
   it("serializes before storage access and rejects invalid profiles without any calls", () => {
     const storage = new RecordingStorage();
-    const result = createStore(storage).save({ version: 2, private: "invalid-save-token" });
+    const result = createStore(storage).save({ version: 3, private: "invalid-save-token" });
 
     expect(result.code).toBe("profile_invalid");
     expect(storage.calls).toEqual([]);
@@ -399,7 +408,78 @@ describe("player profile explicit save contract", () => {
     expectSafeResult(result, "future-save-token");
   });
 
-  it.each(["legacy", "corrupt"])("explicitly replaces existing %s bytes with canonical v2", (kind) => {
+  it("preserves exact future bytes when nested data exceeds the current codec collection budget", () => {
+    const key = `${PLAYER_PROFILE_STORAGE_PREFIX}oversized-future`;
+    const secret = "oversized-future-save-token";
+    const raw = JSON.stringify({
+      version: 4,
+      opaque: Array.from({ length: PLAYER_PROFILE_LIMITS.collectionEntries + 1 }, () => null),
+      private: secret
+    });
+    const storage = new RecordingStorage({ [key]: raw });
+    const result = createStore(storage, key).save(createEmptyPlayerProfile(createContent()));
+
+    expect(result.code).toBe("profile_version_unsupported");
+    expect(result.unsupportedVersion).toBe(4);
+    expect(storage.calls).toEqual([["getItem", key]]);
+    expect(storage.values.get(key)).toBe(raw);
+    expectSafeResult(result, secret);
+  });
+
+  it("preserves exact future bytes when the payload exceeds the current codec byte budget", () => {
+    const key = `${PLAYER_PROFILE_STORAGE_PREFIX}oversized-future-bytes`;
+    const secret = "oversized-future-byte-save-token";
+    const raw = JSON.stringify({
+      version: 4,
+      opaque: "x".repeat(PLAYER_PROFILE_LIMITS.jsonBytes + 1),
+      private: secret
+    });
+    expect(Buffer.byteLength(raw, "utf8")).toBeGreaterThan(PLAYER_PROFILE_LIMITS.jsonBytes);
+    const storage = new RecordingStorage({ [key]: raw });
+    const result = createStore(storage, key).save(createEmptyPlayerProfile(createContent()));
+
+    expect(result.code).toBe("profile_version_unsupported");
+    expect(result.unsupportedVersion).toBe(4);
+    expect(storage.calls).toEqual([["getItem", key]]);
+    expect(storage.values.get(key)).toBe(raw);
+    expectSafeResult(result, secret);
+  });
+
+  it("uses the final duplicate root version when protecting oversized future bytes", () => {
+    const key = `${PLAYER_PROFILE_STORAGE_PREFIX}oversized-duplicate-future`;
+    const secret = "oversized-duplicate-future-token";
+    const raw = `{"version":3,"opaque":${JSON.stringify("x".repeat(PLAYER_PROFILE_LIMITS.jsonBytes + 1))},"private":${JSON.stringify(secret)},"version":4}`;
+    const storage = new RecordingStorage({ [key]: raw });
+    const result = createStore(storage, key).save(createEmptyPlayerProfile(createContent()));
+
+    expect(result).toMatchObject({ code: "profile_version_unsupported", unsupportedVersion: 4 });
+    expect(storage.calls).toEqual([["getItem", key]]);
+    expect(storage.values.get(key)).toBe(raw);
+    expectSafeResult(result, secret);
+  });
+
+  it.each([
+    ["nested-only future version", () => JSON.stringify({
+      opaque: { version: 4, private: "nested-future-token" },
+      padding: "x".repeat(PLAYER_PROFILE_LIMITS.jsonBytes + 1)
+    })],
+    ["malformed root future candidate", () => `{"version":4,"opaque":${JSON.stringify("x".repeat(PLAYER_PROFILE_LIMITS.jsonBytes + 1))}`],
+    ["duplicate root version ending in current v3", () => `{"version":4,"opaque":${JSON.stringify("x".repeat(PLAYER_PROFILE_LIMITS.jsonBytes + 1))},"version":3}`]
+  ])("allows explicit replacement of oversized %s bytes", (_label, makeRaw) => {
+    const content = createContent();
+    const key = `${PLAYER_PROFILE_STORAGE_PREFIX}oversized-not-future`;
+    const raw = makeRaw();
+    const profile = createEmptyPlayerProfile(content);
+    const canonical = serializePlayerProfile(profile);
+    const storage = new RecordingStorage({ [key]: raw });
+    const result = createStore(storage, key).save(profile);
+
+    expect(result.code).toBe("profile_saved");
+    expect(storage.calls).toEqual([["getItem", key], ["setItem", key, canonical]]);
+    expect(storage.values.get(key)).toBe(canonical);
+  });
+
+  it.each(["legacy", "corrupt"])("explicitly replaces existing %s bytes with canonical v3", (kind) => {
     const content = createContent();
     const key = `${PLAYER_PROFILE_STORAGE_PREFIX}${kind}`;
     const oldRaw = kind === "legacy" ? JSON.stringify(["alpha"]) : "{corrupt";
@@ -415,7 +495,7 @@ describe("player profile explicit save contract", () => {
     expect(Object.isFrozen(result)).toBe(true);
   });
 
-  it("preflights missing and current-v2 data and writes identical canonical bytes for reordered profiles", () => {
+  it("preflights missing and current-v3 data and writes identical canonical bytes for reordered profiles", () => {
     const content = createContent();
     const key = `${PLAYER_PROFILE_STORAGE_PREFIX}canonical`;
     const storage = new RecordingStorage();
@@ -447,6 +527,39 @@ describe("player profile explicit save contract", () => {
     expect(secondBytes).toBe(firstBytes);
     expect(Object.isFrozen(missingResult)).toBe(true);
     expect(Object.isFrozen(currentResult)).toBe(true);
+  });
+
+  it("keeps v2 load read-only and writes canonical v3 only after an explicit save", () => {
+    const content = createContent();
+    const key = `${PLAYER_PROFILE_STORAGE_PREFIX}explicit-v2-migration`;
+    const v2 = JSON.stringify({
+      version: 2,
+      clearedMissionIds: ["alpha"],
+      starsByMission: { alpha: 1 },
+      metaResources: { crystals: 7 },
+      upgradeLevels: {},
+      selectedDifficultyId: "normal"
+    });
+    const storage = new RecordingStorage({ [key]: v2 });
+    const store = createPlayerProfileStore({ storage, key, content, codec });
+
+    const loaded = store.load();
+    expect(loaded).toMatchObject({ code: "profile_migrated", source: "v2" });
+    expect(loaded.migrations.map(({ id }) => id)).toEqual(["player-profile-v2-to-v3"]);
+    expect(loaded.profile.version).toBe(3);
+    expect(storage.calls).toEqual([["getItem", key]]);
+    expect(storage.values.get(key)).toBe(v2);
+
+    const saved = store.save(loaded.profile);
+    const canonicalV3 = serializePlayerProfile(loaded.profile);
+    expect(saved.code).toBe("profile_saved");
+    expect(storage.calls).toEqual([
+      ["getItem", key],
+      ["getItem", key],
+      ["setItem", key, canonicalV3]
+    ]);
+    expect(JSON.parse(storage.values.get(key))).toEqual(loaded.profile);
+    expect(JSON.parse(storage.values.get(key)).version).toBe(3);
   });
 
   it.each([

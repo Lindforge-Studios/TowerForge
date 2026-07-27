@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "roguelite": {
+      "schemaVersion": 1,
+      "enabled": true,
+      "profiles": {
+        "basic_elemental_synergy": {
+          "synergies": {
+            "elemental_convergence": {
+              "label": "Elemental Convergence",
+              "tag": "elemental",
+              "tiers": [
+                {
+                  "requiredCount": 2,
+                  "modifiers": [
+                    { "target": "damage", "operation": "additive_ratio", "value": 0.1 }
+                  ]
+                },
+                {
+                  "requiredCount": 4,
+                  "modifiers": [
+                    { "target": "damage", "operation": "additive_ratio", "value": 0.2 }
+                  ]
+                },
+                {
+                  "requiredCount": 6,
+                  "modifiers": [
+                    { "target": "damage", "operation": "additive_ratio", "value": 0.3 }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

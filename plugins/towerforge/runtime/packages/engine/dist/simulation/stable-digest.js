@@ -1,3 +1,4 @@
+import { normalizeRogueliteProfileV4 } from "../content/roguelite-mechanics.js";
 const DEFAULT_MAX_DEPTH = 128;
 const DEFAULT_MAX_NODES = 1_000_000;
 const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
@@ -357,6 +358,39 @@ function projectMissionDefinition(value) {
 function projectMissions(value) {
     return projectRecord(value, "Simulation missions", projectMissionDefinition);
 }
+function projectMechanics(value) {
+    return projectDefinition(value, "Mechanics catalog", new Set(), {
+        modules: (modulesValue) => {
+            const moduleDescriptors = plainObjectDescriptors(modulesValue, "Mechanics modules");
+            const modules = {};
+            for (const moduleId of Object.keys(moduleDescriptors)) {
+                const descriptor = moduleDescriptors[moduleId];
+                if (!("value" in descriptor) || !descriptor.enumerable) {
+                    throw new Error(`Mechanics module "${moduleId}" must be an enumerable data property.`);
+                }
+                const moduleValue = descriptor.value;
+                const moduleFields = plainObjectDescriptors(moduleValue, `Mechanics module ${moduleId}`);
+                const schemaDescriptor = moduleFields.schemaVersion;
+                const schemaVersion = schemaDescriptor && "value" in schemaDescriptor ? schemaDescriptor.value : undefined;
+                if (moduleId !== "roguelite" || schemaVersion !== 4) {
+                    defineProjectedProperty(modules, moduleId, moduleValue);
+                    continue;
+                }
+                defineProjectedProperty(modules, moduleId, projectDefinition(moduleValue, "Roguelite mechanics module", new Set(), {
+                    profiles: (profilesValue) => projectRecord(profilesValue, "Roguelite v4 profiles", (profileValue) => {
+                        try {
+                            return JSON.parse(JSON.stringify(normalizeRogueliteProfileV4(profileValue)));
+                        }
+                        catch {
+                            return profileValue;
+                        }
+                    })
+                }));
+            }
+            return modules;
+        }
+    });
+}
 function projectKnownDomain(key, value) {
     switch (key) {
         case "currencies":
@@ -377,6 +411,8 @@ function projectKnownDomain(key, value) {
             return projectRecord(value, "Wave sets", (waves) => projectArray(waves, "Wave set", projectWaveDefinition));
         case "missions":
             return projectMissions(value);
+        case "mechanics":
+            return projectMechanics(value);
         default:
             return value;
     }

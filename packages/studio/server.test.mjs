@@ -62,6 +62,32 @@ describe("studio server origin/host guard", () => {
     expect(JSON.parse(fs.readFileSync(manifestPath, "utf8")).schemaVersion).toBe(authoredSchemaVersion);
   });
 
+  it("lists parameterized terraforming recipes as inert metadata without breaking existing mechanics recipes", async () => {
+    const response = await fetch(`${BASE}/api/recipes?collection=mechanics`);
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.collection).toBe("mechanics");
+    expect(payload.recipes.find((recipe) => recipe.id === "basic_regenerating_shields"))
+      .toMatchObject({ entity: { moduleId: "combat", moduleSchemaVersion: 1 } });
+
+    const terraforming = payload.recipes.filter((recipe) => recipe.moduleId === "terraforming");
+    expect(terraforming.map((recipe) => recipe.id)).toEqual([
+      "tagged_flood",
+      "tagged_moat",
+      "tagged_destructible_bridge"
+    ]);
+    for (const recipe of terraforming) {
+      expect(recipe.parameterSchema).toMatchObject({
+        type: "object",
+        required: ["sourceTerrainTag", "destinationTerrainId"],
+        additionalProperties: false
+      });
+      expect(recipe).not.toHaveProperty("entity");
+      expect(recipe).not.toHaveProperty("towerScriptSnippet");
+    }
+  });
+
   it("keeps mechanics absent and the authored project schema unchanged on an ordinary Studio save", async () => {
     const manifestPath = path.join(projectDir, "project.json");
     const mechanicsPath = path.join(projectDir, "content", "mechanics.json");

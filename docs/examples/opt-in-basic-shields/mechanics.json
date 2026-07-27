@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "combat": {
+      "schemaVersion": 1,
+      "enabled": true,
+      "profiles": {
+        "basic_regenerating_shields": {
+          "shields": {
+            "enemies": {
+              "basic_grunt": {
+                "capacity": 25,
+                "regeneration": {
+                  "ratePerUnit": 1,
+                  "delayAfterDamage": 3
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

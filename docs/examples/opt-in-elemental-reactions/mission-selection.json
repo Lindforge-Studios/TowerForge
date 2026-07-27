@@ -1,0 +1,8 @@
+{
+  "mechanics": {
+    "profiles": {
+      "combat": "elemental_damage_types",
+      "reactions": "elemental_shatter"
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "elevation": {
+      "schemaVersion": 3,
+      "enabled": true,
+      "profiles": {
+        "basic_elevation_high_ground": {
+          "highGround": {
+            "maximumEffectiveElevationDelta": 3,
+            "rangeBonusPerElevation": 1,
+            "damageBonusBasisPointsPerElevation": 1000
+          }
+        }
+      }
+    }
+  }
+}

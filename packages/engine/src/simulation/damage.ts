@@ -18,6 +18,7 @@ export type DamageSourceRef =
 export type DamageTargetRef =
   | { readonly kind: "enemy"; readonly enemyId: string; readonly enemyTypeId: string }
   | { readonly kind: "tower"; readonly towerId: string; readonly towerTypeId: string }
+  | { readonly kind: "hero"; readonly heroId: string; readonly heroDefinitionId: string }
   | { readonly kind: "core" };
 
 export const DAMAGE_TAGS = Object.freeze(["area", "over_time", "armor_piercing", "reaction"] as const);
@@ -335,6 +336,10 @@ function validateTarget(target: DamageTargetRef): void {
     case "tower":
       validateId(target.towerId, "Tower target towerId");
       validateId(target.towerTypeId, "Tower target towerTypeId");
+      return;
+    case "hero":
+      validateId(target.heroId, "Hero target heroId");
+      validateId(target.heroDefinitionId, "Hero target heroDefinitionId");
       return;
     case "core":
       return;

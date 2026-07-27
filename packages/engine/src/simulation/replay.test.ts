@@ -161,7 +161,9 @@ function recordJournal(
   const game = createGame(content);
   const session = new JournaledGameSession(game);
   for (const command of commands) session.dispatch(command);
-  return { game, journal: session.exportJournal() };
+  const journal = session.exportJournal();
+  if (journal.schemaVersion !== 1) throw new Error("V1-only commands must keep journal v1.");
+  return { game, journal };
 }
 
 function installMapFactorySpy(content: GameContentRegistry): ReturnType<typeof vi.fn> {
@@ -374,7 +376,7 @@ describe("replayGameCommandJournal", () => {
     const content = createContent();
     const { journal } = recordJournal(content, [PLACE]);
     let entryReads = 0;
-    const future = { ...journal, schemaVersion: 2 } as Record<string, unknown>;
+    const future = { ...journal, schemaVersion: 7 } as Record<string, unknown>;
     Object.defineProperty(future, "entries", {
       enumerable: true,
       get() {

@@ -1,7 +1,8 @@
 import type { TowerScriptJson } from "../scripting/types.js";
 import type { TowerDefenseGame } from "./TowerDefenseGame.js";
 import { type ActionResult, type GridCoord, type MissionAbilityId, type TowerTargetMode } from "./types.js";
-export declare const GAME_COMMAND_SCHEMA_VERSION: 1;
+export declare const GAME_COMMAND_SCHEMA_VERSION: 6;
+export declare const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS: readonly [1, 2, 3, 4, 5, 6];
 export type GameCommandV1 = {
     readonly schemaVersion: 1;
     readonly type: "tick";
@@ -43,12 +44,96 @@ export type GameCommandV1 = {
     readonly signal: string;
     readonly payload?: TowerScriptJson;
 };
-export type GameCommand = GameCommandV1;
+export type GameCommandV2 = {
+    readonly schemaVersion: 2;
+    readonly type: "tick";
+    readonly units: number;
+} | {
+    readonly schemaVersion: 2;
+    readonly type: "startWave";
+} | {
+    readonly schemaVersion: 2;
+    readonly type: "placeTower";
+    readonly towerTypeId: string;
+    readonly coord: Readonly<GridCoord>;
+} | {
+    readonly schemaVersion: 2;
+    readonly type: "moveTower";
+    readonly towerId: string;
+    readonly coord: Readonly<GridCoord>;
+} | {
+    readonly schemaVersion: 2;
+    readonly type: "sellTower";
+    readonly towerId: string;
+} | {
+    readonly schemaVersion: 2;
+    readonly type: "upgradeTower";
+    readonly towerId: string;
+} | {
+    readonly schemaVersion: 2;
+    readonly type: "setTargetMode";
+    readonly towerId: string;
+    readonly mode: TowerTargetMode;
+} | {
+    readonly schemaVersion: 2;
+    readonly type: "useAbility";
+    readonly abilityId: MissionAbilityId;
+    readonly center: Readonly<GridCoord>;
+} | {
+    readonly schemaVersion: 2;
+    readonly type: "emitSignal";
+    readonly signal: string;
+    readonly payload?: TowerScriptJson;
+} | {
+    readonly schemaVersion: 2;
+    readonly type: "socketArtifact";
+    readonly artifactInstanceId: string;
+    readonly towerId: string;
+    readonly slotId: string;
+} | {
+    readonly schemaVersion: 2;
+    readonly type: "unsocketArtifact";
+    readonly artifactInstanceId: string;
+    readonly towerId: string;
+    readonly slotId: string;
+};
+type WithCommandSchemaVersion<T, Version extends number> = T extends {
+    readonly schemaVersion: number;
+} ? Omit<T, "schemaVersion"> & {
+    readonly schemaVersion: Version;
+} : never;
+export type GameCommandV3 = WithCommandSchemaVersion<GameCommandV2, 3> | {
+    readonly schemaVersion: 3;
+    readonly type: "chooseDraftOption";
+    readonly offerId: string;
+    readonly cardId: string;
+};
+export type GameCommandV4 = WithCommandSchemaVersion<GameCommandV3, 4> | {
+    readonly schemaVersion: 4;
+    readonly type: "moveHero";
+    readonly heroId: string;
+    readonly target: Readonly<GridCoord>;
+};
+export type GameCommandV5 = WithCommandSchemaVersion<GameCommandV4, 5> | {
+    readonly schemaVersion: 5;
+    readonly type: "useHeroAbility";
+    readonly heroId: string;
+    readonly abilityId: string;
+    readonly targetEnemyId: string;
+};
+export type GameCommandV6 = WithCommandSchemaVersion<GameCommandV5, 6> | {
+    readonly schemaVersion: 6;
+    readonly type: "unlockHeroSkill";
+    readonly heroId: string;
+    readonly skillId: string;
+};
+export type GameCommand = GameCommandV1 | GameCommandV2 | GameCommandV3 | GameCommandV4 | GameCommandV5 | GameCommandV6;
 export declare function invalidGameCommandResult(): ActionResult;
 /**
  * Strict descriptor-safe parser shared by direct dispatch and command journals.
  * The returned command is a detached canonical data object.
  */
-export declare function parseGameCommand(input: unknown): GameCommandV1 | undefined;
+export declare function parseGameCommand(input: unknown): GameCommand | undefined;
 /** Execute a command that has already passed the strict parser exactly once. */
-export declare function executeParsedGameCommand(game: TowerDefenseGame, command: GameCommandV1): ActionResult;
+export declare function executeParsedGameCommand(game: TowerDefenseGame, command: GameCommand): ActionResult;
+export {};

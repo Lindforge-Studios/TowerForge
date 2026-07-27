@@ -53,7 +53,11 @@ export declare class GridMap {
     getTile(coord: GridCoord): GridTile | undefined;
     getBaseTerrain(coord: GridCoord): Terrain | undefined;
     elevationAt(coord: GridCoord): number | undefined;
+    getBaseElevation(coord: GridCoord): number | undefined;
     getElevationOverrides(): GridMapElevationOverride[];
+    getEffectiveElevationOverrides(): GridMapElevationOverride[];
+    /** Attach the authoritative simulation-owned runtime projection without copying it. */
+    useRuntimeElevationOverrides(overrides: ReadonlyMap<string, GridMapElevationOverride>): void;
     setTerrain(coord: GridCoord, terrain: Terrain): boolean;
     restoreTerrain(coord: GridCoord): boolean;
     restoreAllTerrain(): void;

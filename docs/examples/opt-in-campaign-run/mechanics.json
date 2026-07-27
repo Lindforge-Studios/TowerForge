@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "roguelite": {
+      "schemaVersion": 4,
+      "enabled": true,
+      "profiles": {
+        "campaign_run": {
+          "synergies": {},
+          "campaign": {
+            "schemaVersion": 1
+          }
+        }
+      }
+    }
+  }
+}

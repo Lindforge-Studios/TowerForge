@@ -1,0 +1,33 @@
+{
+  "campaign": {
+    "schemaVersion": 1,
+    "rogueliteProfileId": "campaign_run",
+    "entryNodeIds": [
+      "first_battle"
+    ],
+    "nodes": [
+      {
+        "id": "first_battle",
+        "type": "battle",
+        "missionId": "tutorial_01",
+        "regionId": "forest",
+        "x": 200,
+        "y": 300,
+        "difficulty": 1,
+        "nextNodeIds": [
+          "strange_signal"
+        ]
+      },
+      {
+        "id": "strange_signal",
+        "type": "event",
+        "label": "A strange signal",
+        "regionId": "forest",
+        "x": 420,
+        "y": 300,
+        "difficulty": 2,
+        "nextNodeIds": []
+      }
+    ]
+  }
+}

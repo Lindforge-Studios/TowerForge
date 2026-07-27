@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "roguelite": {
+      "schemaVersion": 3,
+      "enabled": true,
+      "profiles": {
+        "deterministic_wave_draft": {
+          "synergies": {},
+          "draft": {
+            "definitions": {
+              "reinforced_volley": {
+                "label": "Reinforced Volley",
+                "effects": [
+                  {
+                    "kind": "modifier",
+                    "scope": { "kind": "all_towers" },
+                    "modifier": { "target": "damage", "operation": "additive_ratio", "value": 0.1 }
+                  }
+                ]
+              },
+              "sniper_focus": {
+                "label": "Sniper Focus",
+                "effects": [
+                  {
+                    "kind": "modifier",
+                    "scope": { "kind": "tower_type", "towerTypeId": "arrow_tower" },
+                    "modifier": { "target": "damage", "operation": "multiplier", "value": 1.15 }
+                  }
+                ]
+              },
+              "elemental_rhythm": {
+                "label": "Elemental Rhythm",
+                "effects": [
+                  {
+                    "kind": "modifier",
+                    "scope": { "kind": "tower_tag", "tag": "elemental" },
+                    "modifier": { "target": "damage", "operation": "flat", "value": 1 }
+                  }
+                ]
+              },
+              "storm_doctrine": {
+                "label": "Storm Doctrine",
+                "effects": [
+                  {
+                    "kind": "modifier",
+                    "scope": { "kind": "all_towers" },
+                    "modifier": { "target": "damage", "operation": "additive_ratio", "value": 0.2 }
+                  }
+                ]
+              }
+            },
+            "pools": {
+              "default": {
+                "entries": [
+                  { "cardId": "reinforced_volley", "weight": 4 },
+                  { "cardId": "sniper_focus", "weight": 3 },
+                  { "cardId": "elemental_rhythm", "weight": 2 },
+                  { "cardId": "storm_doctrine", "weight": 1 }
+                ]
+              }
+            },
+            "defaultPoolId": "default"
+          }
+        }
+      }
+    }
+  }
+}

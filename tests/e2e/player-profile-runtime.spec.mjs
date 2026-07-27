@@ -138,7 +138,26 @@ for (const renderer of renderers) {
       await waitForBoot(page);
       await expect(page.locator("#difficulty-select")).toHaveValue("normal");
 
-      const futureRaw = '{"version":7,"opaque":"future bytes stay exact"}';
+      const migrationV2 = JSON.stringify({
+        version: 2,
+        clearedMissionIds: ["tutorial_01"],
+        starsByMission: { tutorial_01: 1 },
+        metaResources: { forge_shards: 3 },
+        upgradeLevels: { sharpened_tools: 1, reinforced_core: 0 },
+        selectedDifficultyId: "story"
+      });
+      await seedStorage(page, { [profileKey]: migrationV2, [storyKey]: "1" });
+      await bootPlayer(page, playerUrl);
+      expect(await readStorage(page, profileKey)).toBe(migrationV2);
+      await expect(page.locator("#difficulty-select")).toHaveValue("story");
+      await page.locator("#difficulty-select").selectOption("veteran");
+      await expectCanonicalProfile(page, profileKey, "veteran");
+
+      const futureRaw = JSON.stringify({
+        version: 7,
+        opaque: "x".repeat(1_048_577),
+        marker: "future bytes stay exact"
+      });
       await seedStorage(page, { [profileKey]: futureRaw, [storyKey]: "1" });
       await bootPlayer(page, playerUrl);
       await expect(page.locator("#message")).toContainText(NEWER_VERSION_WARNING);
@@ -247,14 +266,14 @@ async function expectCanonicalProfile(page, key, difficultyId) {
   await expect.poll(() => readStorage(page, key)).not.toBeNull();
   const raw = await readStorage(page, key);
   const parsed = JSON.parse(raw);
-  expect(parsed.version).toBe(2);
+  expect(parsed.version).toBe(3);
   expect(parsed.selectedDifficultyId).toBe(difficultyId);
   expect(raw).toBe(JSON.stringify(parsed));
 }
 
 function canonicalProfile(selectedDifficultyId, clearedMissionIds = []) {
   return JSON.stringify({
-    version: 2,
+    version: 3,
     clearedMissionIds,
     starsByMission: {},
     metaResources: { forge_shards: 0 },

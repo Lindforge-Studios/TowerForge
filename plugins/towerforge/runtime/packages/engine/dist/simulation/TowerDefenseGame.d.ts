@@ -6,6 +6,34 @@ import { type LineOfSightAnalysisRequestV1, type LineOfSightAnalysisV1 } from ".
 import { type GameCheckpointV1 } from "./checkpoint.js";
 import { type GameSeed } from "./rng.js";
 import type { ActionResult, CurrencyDefinition, DifficultyDefinition, EnemyState, GameEvent, GameSnapshot, HexCoord, MissionAbilityId, ResourceBag, ResourceCost, TowerTargetMode, TowerState, WaveState } from "./types.js";
+export interface CampaignBattleLoadoutV1 {
+    readonly schemaVersion: 1;
+    readonly launchId: string;
+    readonly nodeId: string;
+    readonly maxNewArtifactInstances: number;
+    readonly deck: readonly {
+        readonly instanceId: string;
+        readonly cardId: string;
+    }[];
+    readonly artifacts: readonly {
+        readonly instanceId: string;
+        readonly artifactId: string;
+    }[];
+}
+export interface CampaignBattleSettlementV1 {
+    readonly schemaVersion: 1;
+    readonly launchId: string;
+    readonly nodeId: string;
+    readonly missionId: string;
+    readonly deck: readonly {
+        readonly instanceId: string;
+        readonly cardId: string;
+    }[];
+    readonly artifacts: readonly {
+        readonly instanceId: string;
+        readonly artifactId: string;
+    }[];
+}
 export interface TowerDefenseGameOptions {
     missionId: string;
     content: GameContentRegistry;
@@ -14,6 +42,8 @@ export interface TowerDefenseGameOptions {
     metaUpgradeLevels?: Record<string, number>;
     /** Deterministic simulation seed. Omitted legacy games use the stable numeric seed 0. */
     seed?: GameSeed;
+    /** Optional, already content-validated campaign run loadout. Legacy games omit it. */
+    campaignBattle?: CampaignBattleLoadoutV1;
 }
 interface TowerDefenseGameInternalOptions {
     skipGameStarted?: boolean;
@@ -48,6 +78,45 @@ export declare class TowerDefenseGame {
     private readonly activeHighGroundProfile;
     private readonly activePhysicsMechanics;
     private readonly activeTerraformingMechanics;
+    private readonly activeRogueliteMechanics;
+    private readonly activeHeroesMechanics;
+    private readonly activeLogisticsPower;
+    private readonly activeLogisticsAmmunition;
+    private readonly activeLogisticsSupply;
+    private readonly activeLogisticsSchemaVersion;
+    private readonly activeHeroPassiveAura;
+    private readonly activeHeroBlocking;
+    private readonly heroesSnapshotV1;
+    private heroStateV2;
+    private heroMovementField;
+    private readonly heroMovementLookupCache;
+    private heroMovementDirty;
+    private logisticsPowerSnapshotCache;
+    private logisticsPoweredConsumerIds;
+    private logisticsPowerDirty;
+    private logisticsTopologyCounts;
+    private logisticsLiveParticipantIds;
+    private logisticsAmmunitionAmounts;
+    private logisticsSupplyProducers;
+    private logisticsSupplyStorages;
+    private logisticsSupplyTopologyCache;
+    private logisticsSupplyDirty;
+    private rogueliteSnapshot;
+    private rogueliteDamageModifiers;
+    private artifactDamageModifiersByTowerId;
+    private artifactInitialRngState;
+    private artifactRng;
+    private artifactInventory;
+    private nextArtifactInstanceSequence;
+    /** Preserve historic artifact checkpoint v1 until a socket assignment first changes. */
+    private artifactCheckpointForm;
+    private draftInitialRngState;
+    private draftRng;
+    private nextDraftOfferSequence;
+    private pendingDraftOffer;
+    private draftSelections;
+    private campaignBattle;
+    private campaignDeck;
     private readonly navigationMandatoryPairs;
     private readonly navigationKnownPairs;
     private navigationResolver;
@@ -72,6 +141,11 @@ export declare class TowerDefenseGame {
     private abilityCooldowns;
     private temporaryWaterTiles;
     private runtimeTerrainOverrides;
+    private runtimeElevationOverrides;
+    private pendingTerraformExpiryGroups;
+    private nextTerraformExpirySequence;
+    /** Preserve the nested checkpoint source form until native timed state is first committed. */
+    private terraformingCheckpointForm;
     private readonly sunlightPathKeys;
     private readonly sunlightTilesSnapshot;
     private readonly directFlightLine;
@@ -108,11 +182,17 @@ export declare class TowerDefenseGame {
     canUpgradeTower(towerId: string): ActionResult;
     getTowerUpgradeCost(towerOrId: TowerState | string): ResourceCost | null;
     upgradeTower(towerId: string): ActionResult;
+    canSocketArtifact(artifactInstanceId: string, towerId: string, slotId: string): ActionResult;
+    socketArtifact(artifactInstanceId: string, towerId: string, slotId: string): ActionResult;
+    canUnsocketArtifact(artifactInstanceId: string, towerId: string, slotId: string): ActionResult;
+    unsocketArtifact(artifactInstanceId: string, towerId: string, slotId: string): ActionResult;
+    chooseDraftOption(offerId: string, cardId: string): ActionResult;
     getTowerSellRefund(towerOrId: TowerState | string): ResourceBag | null;
     canSellTower(towerId: string): ActionResult;
     sellTower(towerId: string): ActionResult;
     setTowerTargetMode(towerId: string, mode: TowerTargetMode): ActionResult;
     usePathWaterAbility(center: HexCoord): ActionResult;
+    private useActivePathWaterAbility;
     /**
      * The `strike`/`freeze` engine presets, expressed as the same composable effects a custom
      * ability declares via `MissionAbilityDefinition.effects`. Returns undefined for any other id
@@ -138,9 +218,22 @@ export declare class TowerDefenseGame {
      */
     emitScriptSignal(signal: string, payload?: TowerScriptJson): ActionResult;
     getTowerIdAt(coord: HexCoord): string | undefined;
+    /** Retarget the single opt-in v2 hero through a canonical shared flow field. */
+    moveHero(heroId: string, target: HexCoord): ActionResult;
+    /** Use the single deterministic enemy-targeted ability authored by an active heroes v4 profile. */
+    useHeroAbility(heroId: string, abilityId: string, targetEnemyId: string): ActionResult;
+    /** Atomically spend battle-local points on one authored v5 hero skill. */
+    unlockHeroSkill(heroId: string, skillId: string): ActionResult;
     tick(deltaUnits: number): void;
     getSnapshot(): GameSnapshot;
     getRenderSnapshot(): GameSnapshot;
+    /** Export only the portable run-owned result; sockets and other battle state never cross missions. */
+    exportCampaignBattleSettlement(): CampaignBattleSettlementV1 | undefined;
+    getCampaignBattleBinding(): Readonly<{
+        launchId: string;
+        nodeId: string;
+        missionId: string;
+    }> | undefined;
     /** Pure, bounded diagnostics for active opt-in elevation v2 line of sight. */
     analyzeLineOfSight(request: LineOfSightAnalysisRequestV1): LineOfSightAnalysisV1 | undefined;
     /** Pure, bounded diagnostics for active opt-in dynamic-flow navigation. */
@@ -176,6 +269,8 @@ export declare class TowerDefenseGame {
     private buildNavigationFieldDiagnostics;
     private buildNavigationSnapshot;
     private buildElevationSnapshot;
+    private buildArtifactCheckpointState;
+    private buildDraftCheckpointState;
     private buildCheckpointState;
     private static validateCheckpointIdentity;
     private static validateCheckpointState;
@@ -191,14 +286,18 @@ export declare class TowerDefenseGame {
     private scriptStateFor;
     private scriptExpressionContext;
     private applyScriptAction;
+    private applyActiveLegacyTerrainAction;
     private resolveScriptTileTarget;
     private applyTerraformTilesAction;
+    private applyResolvedPersistentOperations;
+    private isNativeTerraformTargetOwned;
     private inspectTerraformOperationArray;
     private inspectTerraformOperation;
     private resolveTerraformTarget;
     private planPersistentTerrainCandidate;
+    private planPersistentElevationCandidate;
     private planDynamicPersistentTerrainNavigation;
-    private publishPersistentTerrainCandidate;
+    private publishPersistentTerraformCandidate;
     private applyTerrainOverride;
     private restoreTerrainOverride;
     private restoreTerrainOverrideByKey;
@@ -215,6 +314,16 @@ export declare class TowerDefenseGame {
     /** Resolve one opt-in displacement effect without adding persistent physics state. */
     private applyDisplacementEffect;
     private navigationMovementProfileId;
+    private activeHeroesV2;
+    private heroSkillManagementAvailable;
+    private heroAbilitySkillModifiers;
+    private heroPassiveAuraActive;
+    private heroPassiveAuraAffectedTowerIds;
+    private heroPassiveAuraModifiersForTower;
+    private buildHeroMovementField;
+    private stabilizeHeroMovement;
+    private moveHeroUnit;
+    private updateHeroAbility;
     private navigationField;
     private createEnemyNavigationState;
     private createDynamicChildEnemyState;
@@ -234,12 +343,17 @@ export declare class TowerDefenseGame {
     private consumeResolvedMarks;
     private applySourceMarkBindings;
     private updateShieldRegeneration;
+    private advanceNativeTerraformingExpiry;
     private updateAbilities;
     private updateEnemyStatuses;
     private buildAbilitySnapshot;
     private buildSunlightTilesSnapshot;
     private moveEnemies;
     private moveDynamicEnemies;
+    private heroBlockingActive;
+    private heroBlockingCandidate;
+    private deriveHeroBlockedEnemyIds;
+    private tryAcquireHeroBlock;
     private leakDynamicEnemy;
     private applyDotDamage;
     private isPulseTower;
@@ -249,9 +363,28 @@ export declare class TowerDefenseGame {
     private applyHealAuras;
     /** Boss pattern: enemies with `towerDisrupt` periodically silence towers within radius. */
     private updateTowerDisruptions;
-    /** Boss pattern: enemies with `towerAttack` periodically damage the nearest tower with hp; destroy it at 0. */
+    /** Boss pattern: enemies with `towerAttack` damage the nearest durable tower or opt-in durable hero. */
     private updateEnemyTowerAttacks;
+    private artifactManagementAvailability;
+    private replaceArtifactSocket;
+    private autoUnsocketTowerArtifacts;
+    private isLogisticsParticipantType;
+    private towerHasRequiredAmmunition;
+    private consumeTowerAmmunition;
+    private isLiveLogisticsParticipant;
+    private markLogisticsPowerDirty;
+    private isLogisticsSupplyTopologyParticipant;
+    private markLogisticsSupplyDirty;
+    private ensureLogisticsSupplyTopology;
+    private logisticsTowerPowered;
+    private logisticsTowerOperational;
+    private updateLogisticsSupply;
+    private ensureLogisticsPowerSnapshot;
+    private currentLogisticsPowerSnapshot;
     private destroyTower;
+    private rebuildRogueliteSynergies;
+    private currentRogueliteSnapshot;
+    private artifactManagementSnapshot;
     private updateTowers;
     private updateSingleTower;
     /**
@@ -295,12 +428,14 @@ export declare class TowerDefenseGame {
     private applyResolvedEnemyDamage;
     private applyResolvedCoreDamage;
     private applyResolvedTowerEntityDamage;
+    private applyResolvedHeroDamage;
     private resolveAndApplyDamage;
     private planAndApplyReactions;
     private applyEnemyExposure;
     private updateEnemyExposures;
     private applyTowerDamage;
     private applyResolvedTowerDamage;
+    private draftDamageModifiersForTower;
     /** The (author-defined) damage type a tower deals; defaults to "physical". */
     private damageTypeOf;
     /** "pierce_only" armor is fully pierced by any sniper-kind weapon, regardless of its tower id. */
@@ -326,6 +461,7 @@ export declare class TowerDefenseGame {
     private routePathKey;
     private isTemporaryWaterTile;
     private isInsideAnyPulse;
+    private logisticsPulseFieldActive;
     private isInsideSupportAura;
     private buildNavigationWavePairs;
     private buildNavigationMandatoryPairs;
@@ -342,12 +478,15 @@ export declare class TowerDefenseGame {
     private syncNavigationTerrain;
     private syncNavigationOccupancy;
     private syncNavigationResolver;
+    private revalidateHeroMovementAfterMapMutation;
     private canOccupyTowerFootprint;
     private dependentsKeepSupportAfterMove;
     private dependentsKeepSupportAfterRemoval;
     private applyPassiveIncome;
     private awardClearedWaveIncome;
+    private createDraftOfferAfterWave;
     private removeDeadEnemies;
+    private settleArtifactLoot;
     private dynamicEnemyAtGoal;
     private spawnOnDeathChildren;
     private resolveWaveState;

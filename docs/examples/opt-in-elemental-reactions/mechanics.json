@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "combat": {
+      "schemaVersion": 2,
+      "enabled": true,
+      "profiles": {
+        "elemental_damage_types": {
+          "damageTypes": {
+            "physical": { "label": "Physical" },
+            "fire": { "label": "Fire" },
+            "ice": { "label": "Ice" }
+          }
+        }
+      }
+    },
+    "reactions": {
+      "schemaVersion": 1,
+      "enabled": true,
+      "profiles": {
+        "elemental_shatter": {
+          "exposures": {
+            "definitions": {
+              "fire": { "label": "Fire", "duration": 4, "maxStacks": 1 },
+              "ice": { "label": "Ice", "duration": 4, "maxStacks": 1 }
+            },
+            "applications": {
+              "damageTypes": {
+                "fire": [{ "exposureId": "fire", "stacks": 1 }],
+                "ice": [{ "exposureId": "ice", "stacks": 1 }]
+              }
+            }
+          },
+          "reactions": {
+            "shatter_fire_into_ice": {
+              "label": "Shatter",
+              "trigger": { "damageTypes": ["fire"] },
+              "requirements": [
+                { "kind": "exposure", "exposureId": "ice", "consume": "all" }
+              ],
+              "suppressTriggerExposureApplications": true,
+              "effects": {
+                "critical": {
+                  "kind": "damage",
+                  "amount": { "kind": "source_after_modifiers", "multiplier": 2 },
+                  "damageType": "physical",
+                  "target": { "kind": "primary" },
+                  "allowReactions": false
+                }
+              }
+            },
+            "shatter_ice_into_fire": {
+              "label": "Shatter",
+              "trigger": { "damageTypes": ["ice"] },
+              "requirements": [
+                { "kind": "exposure", "exposureId": "fire", "consume": "all" }
+              ],
+              "suppressTriggerExposureApplications": true,
+              "effects": {
+                "critical": {
+                  "kind": "damage",
+                  "amount": { "kind": "source_after_modifiers", "multiplier": 2 },
+                  "damageType": "physical",
+                  "target": { "kind": "primary" },
+                  "allowReactions": false
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

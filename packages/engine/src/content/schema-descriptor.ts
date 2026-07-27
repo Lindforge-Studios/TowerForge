@@ -11,6 +11,9 @@ import { ARMOR_MATRIX_LIMITS, MARK_LIMITS, REACTION_LIMITS, SHIELD_LIMITS } from
 export { NAVIGATION_MECHANICS_SCHEMA } from "./navigation-mechanics.js";
 export { ELEVATION_MECHANICS_SCHEMA } from "./elevation-mechanics.js";
 export { TERRAFORMING_MECHANICS_SCHEMA } from "./terraforming-mechanics.js";
+export { ROGUELITE_MECHANICS_SCHEMA } from "./roguelite-mechanics.js";
+export { HEROES_MECHANICS_SCHEMA } from "./heroes-mechanics.js";
+export { LOGISTICS_MECHANICS_SCHEMA } from "./logistics-mechanics.js";
 
 /**
  * A machine-readable description of the content schema's closed sets and per-shape field
@@ -81,7 +84,7 @@ export const DAMAGE_PACKET_SCHEMA = Object.freeze({
   requiredFields: ["amount", "source", "target"] as const,
   optionalFields: ["damageType", "tags", "modifiers"] as const,
   sourceKinds: ["tower", "ability", "tower_script", "status", "enemy", "leak", "reaction"] as const,
-  targetKinds: ["enemy", "tower", "core"] as const,
+  targetKinds: ["enemy", "tower", "hero", "core"] as const,
   tags: [...DAMAGE_TAGS],
   pipelineOrder: [
     "modifiers",

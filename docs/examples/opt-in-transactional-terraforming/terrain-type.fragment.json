@@ -1,0 +1,50 @@
+{
+  "floodable_ground": {
+    "id": "floodable_ground",
+    "label": "Floodable Ground",
+    "buildable": true,
+    "walkable": true,
+    "groundSpeedMultiplier": 1,
+    "tags": ["floodable"]
+  },
+  "moat_ground": {
+    "id": "moat_ground",
+    "label": "Moat Candidate",
+    "buildable": true,
+    "walkable": true,
+    "groundSpeedMultiplier": 1,
+    "tags": ["moat_candidate"]
+  },
+  "wooden_bridge": {
+    "id": "wooden_bridge",
+    "label": "Wooden Bridge",
+    "buildable": false,
+    "walkable": true,
+    "groundSpeedMultiplier": 1,
+    "tags": ["destructible_bridge"]
+  },
+  "water": {
+    "id": "water",
+    "label": "Water",
+    "buildable": false,
+    "walkable": false,
+    "groundSpeedMultiplier": 1,
+    "tags": ["wet"]
+  },
+  "moat_water": {
+    "id": "moat_water",
+    "label": "Moat Water",
+    "buildable": false,
+    "walkable": false,
+    "groundSpeedMultiplier": 1,
+    "tags": ["wet"]
+  },
+  "chasm": {
+    "id": "chasm",
+    "label": "Collapsed Bridge",
+    "buildable": false,
+    "walkable": false,
+    "groundSpeedMultiplier": 1,
+    "tags": ["fall_hazard"]
+  }
+}
