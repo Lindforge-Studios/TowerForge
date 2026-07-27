@@ -4,7 +4,7 @@ import { TOOLS } from "./tools.mjs";
 
 describe("TowerForge shared agent instructions", () => {
   it("routes every shipped authoring layer through the safe workflow", () => {
-    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(30);
+    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(32);
     for (const phrase of ["universal pipeline", "TowerScript", "metaProgression", "list_theme_packs", "preview_tile_binding", "revision tokens", "validate_project", "list_workspace_projects", "get_capabilities", "content/mechanics.json", "basic_regenerating_shields", "basic_vulnerability_marks", "marks", "elemental_shatter", "wet_chain_shock", "poison_combustion", "prerequisites", "reactions", "basic_elemental_synergy", "towerTypeIds", "towerTags", "socketArtifact", "unsocketArtifact", "between-wave boundary", "get_campaign", "preview_campaign", "apply_campaign", "CampaignRun"]) {
       expect(TOWERFORGE_AGENT_INSTRUCTIONS).toContain(phrase);
     }
@@ -18,6 +18,9 @@ describe("TowerForge shared agent instructions", () => {
       expect(TOWERFORGE_AGENT_INSTRUCTIONS).toContain(code);
     }
     expect(TOWERFORGE_AGENT_INSTRUCTIONS).toContain("Never request or invent JavaScript");
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(
+      /describe_schema[\s\S]*scripts[\s\S]*get_tower_script_graph[\s\S]*preview_tower_script_graph[\s\S]*apply_tower_script_graph[\s\S]*ifRevision[\s\S]*validate_project/i
+    );
   });
 
   it("routes opt-in elevation LoS through the compute-only candidate analysis without map mutation", () => {

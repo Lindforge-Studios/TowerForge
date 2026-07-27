@@ -262,16 +262,17 @@ export const ATTACK_KIND_SCHEMA = {
             { name: "delivery", kind: "pipelineDelivery" },
             { name: "effects", kind: "towerEffectArray" }
         ],
-        otherFields: ["intervalByLevel", "rangeByLevel", "targeting", "upgradeCosts"]
+        otherFields: ["intervalByLevel", "rangeByLevel", "minRange", "targeting", "upgradeCosts"]
     }
 };
 export const TOWER_PIPELINE_SCHEMA = Object.freeze({
     semantics: "targeting selects primary enemies; delivery expands them; effects run in declaration order",
-    deliveryKinds: ["single", "multi", "area", "chain", "aura"],
+    deliveryKinds: ["single", "multi", "cone", "area", "chain", "aura"],
     targeting: { classes: ["ground", "flying"], mode: TOWER_TARGET_MODES, maxTargets: ">0 integer" },
     delivery: {
         single: {},
         multi: {},
+        cone: { angleDegrees: ">0 and <=360" },
         area: { radius: ">0", secondaryMultiplier: ">=0 optional" },
         chain: { maxJumps: ">0 integer", jumpRadius: ">0", damageFalloff: ">0 optional" },
         aura: {}

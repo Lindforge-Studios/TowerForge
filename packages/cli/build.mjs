@@ -272,7 +272,7 @@ function singleFileHtml(outDir, manifest, target, renderer, projectData, initial
     [path.resolve(outDir, "project-data.js"), `export default ${JSON.stringify(projectData)};\n`]
   ]);
   const entryPath = path.resolve(outDir, "player.mjs");
-  const entry = rewriteModuleImports(entryPath, outDir, virtual, new Map(), []);
+  const entry = singleFileModuleBootstrap(entryPath, outDir, virtual);
   let html = htmlTemplate(manifest, target, renderer, initialGridKind);
   html = html.replace(/\s*<link rel="manifest"[^>]*>/, "");
   html = html.replace('  <link rel="stylesheet" href="./styles.css">', `  <style>${escapeInlineStyle(cssTemplate(target))}</style>`);
@@ -281,30 +281,60 @@ function singleFileHtml(outDir, manifest, target, renderer, projectData, initial
     html = html.replace('  <script src="./vendor/phaser.min.js"></script>', `  <script>${escapeInlineScript(phaser)}</script>`);
   }
   html = html.replace('  <script src="./boot.js"></script>', `  <script>${escapeInlineScript(bootRecoveryTemplate(manifest, target, projectData.storyComics))}</script>`);
-  html = html.replace('  <script type="module" src="./player.mjs"></script>', `  <script type="module">${escapeInlineScript(entry)}</script>`);
+  html = html.replace('  <script type="module" src="./player.mjs"></script>', `  <script>${escapeInlineScript(entry)}</script>`);
   return html;
 }
 
-function rewriteModuleImports(filePath, moduleRoot, virtual, memo, stack) {
+function collectSingleFileModule(filePath, moduleRoot, virtual, memo, modules, stack) {
   const absolute = path.resolve(filePath);
   if (stack.includes(absolute)) throw new Error(`Single-file module graph contains a cycle: ${[...stack, absolute].map((item) => path.relative(moduleRoot, item)).join(" -> ")}`);
+  if (memo.has(absolute)) return memo.get(absolute);
+  const id = `m${memo.size}`;
+  memo.set(absolute, id);
   let source = virtual.get(absolute) ?? fs.readFileSync(absolute, "utf8");
   const nextStack = [...stack, absolute];
+  const dependencies = [];
   const importPattern = /\b(?:import|export)\s+(?:[^"']*?\s+from\s+)?(["'])([^"']+)\1/g;
   source = source.replace(importPattern, (statement, quote, specifier) => {
     if (!specifier.startsWith(".")) return statement;
     const dependency = path.resolve(path.dirname(absolute), specifier);
     const relative = path.relative(moduleRoot, dependency);
     if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`Single-file module escapes build output: ${specifier}`);
-    let url = memo.get(dependency);
-    if (!url) {
-      const rewritten = rewriteModuleImports(dependency, moduleRoot, virtual, memo, nextStack);
-      url = `data:text/javascript;base64,${Buffer.from(rewritten, "utf8").toString("base64")}`;
-      memo.set(dependency, url);
-    }
-    return statement.replace(`${quote}${specifier}${quote}`, `${quote}${url}${quote}`);
+    const dependencyId = collectSingleFileModule(dependency, moduleRoot, virtual, memo, modules, nextStack);
+    const token = `__TOWERFORGE_MODULE_URL_${id}_${dependencies.length}__`;
+    dependencies.push([token, dependencyId]);
+    return statement.replace(`${quote}${specifier}${quote}`, `${quote}${token}${quote}`);
   });
-  return source;
+  modules[id] = {
+    source: `data:text/javascript;base64,${Buffer.from(source, "utf8").toString("base64")}`,
+    dependencies
+  };
+  return id;
+}
+
+function singleFileModuleBootstrap(entryPath, moduleRoot, virtual) {
+  const modules = {};
+  const entryId = collectSingleFileModule(entryPath, moduleRoot, virtual, new Map(), modules, []);
+  return `(() => {
+  const modules = ${JSON.stringify(modules)};
+  const urls = Object.create(null);
+  const decode = (url) => {
+    const encoded = url.slice(url.indexOf(",") + 1);
+    const bytes = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  };
+  const materialize = (id) => {
+    if (urls[id]) return urls[id];
+    const module = modules[id];
+    let source = decode(module.source);
+    for (const [token, dependencyId] of module.dependencies) {
+      source = source.split(token).join(materialize(dependencyId));
+    }
+    urls[id] = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+    return urls[id];
+  };
+  void import(materialize(${JSON.stringify(entryId)}));
+})();`;
 }
 
 function escapeInlineScript(value) { return String(value).replace(/<\/script/gi, "<\\/script"); }

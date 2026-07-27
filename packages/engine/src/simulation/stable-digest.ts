@@ -10,6 +10,11 @@ export interface CanonicalStringifyOptions {
   readonly maxBytes?: number;
 }
 
+export interface CanonicalJsonMetrics {
+  readonly bytes: number;
+  readonly nodes: number;
+}
+
 const DEFAULT_MAX_DEPTH = 128;
 const DEFAULT_MAX_NODES = 1_000_000;
 const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
@@ -57,7 +62,10 @@ function utf8ByteLength(value: string): number {
  * Object properties are read from own data descriptors and sorted by binary
  * UTF-16 order so integer-like keys do not receive special enumeration order.
  */
-export function canonicalStringify(value: unknown, options: CanonicalStringifyOptions = {}): string {
+function serializeCanonicalJson(
+  value: unknown,
+  options: CanonicalStringifyOptions = {}
+): { readonly text: string; readonly bytes: number; readonly nodes: number } {
   const maxDepth = checkedBudget("maxDepth", options.maxDepth, DEFAULT_MAX_DEPTH);
   const maxNodes = checkedBudget("maxNodes", options.maxNodes, DEFAULT_MAX_NODES);
   const maxBytes = checkedBudget("maxBytes", options.maxBytes, DEFAULT_MAX_BYTES);
@@ -190,7 +198,20 @@ export function canonicalStringify(value: unknown, options: CanonicalStringifyOp
   };
 
   visit(value, 0);
-  return output.join("");
+  return { text: output.join(""), bytes, nodes };
+}
+
+export function canonicalStringify(value: unknown, options: CanonicalStringifyOptions = {}): string {
+  return serializeCanonicalJson(value, options).text;
+}
+
+/** Exact metrics from the same strict traversal used by canonicalStringify. */
+export function canonicalJsonMetrics(
+  value: unknown,
+  options: CanonicalStringifyOptions = {}
+): CanonicalJsonMetrics {
+  const result = serializeCanonicalJson(value, options);
+  return Object.freeze({ bytes: result.bytes, nodes: result.nodes });
 }
 
 function hashUtf8(value: string): string {

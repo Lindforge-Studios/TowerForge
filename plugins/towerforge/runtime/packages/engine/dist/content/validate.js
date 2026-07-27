@@ -3444,10 +3444,66 @@ export function validateGameContentRegistry(content) {
         if (tower.id !== towerId)
             err("tower", towerId, "id", `Tower key "${towerId}" has mismatched id "${tower.id}".`);
         requireFinite(tower.footprintRadius, "tower", towerId, "footprintRadius");
+        const footprintShape = tower.footprintShape;
+        if (footprintShape !== undefined && footprintShape !== "radius" && footprintShape !== "compact-4") {
+            err("tower", towerId, "footprintShape", `Tower "${towerId}" has unsupported footprint shape ${JSON.stringify(footprintShape)}.`, {
+                expected: '"radius" or "compact-4"',
+                got: JSON.stringify(footprintShape)
+            });
+        }
+        if (footprintShape === "compact-4" && (!Number.isInteger(tower.footprintRadius) || tower.footprintRadius < 1)) {
+            err("tower", towerId, "footprintRadius", `Tower "${towerId}" needs footprintRadius >= 1 for compact-4.`, {
+                expected: "integer >= 1",
+                got: String(tower.footprintRadius)
+            });
+        }
         requireFinite(tower.range, "tower", towerId, "range", { positive: true });
         if (tower.maxHp !== undefined)
             requireFinite(tower.maxHp, "tower", towerId, "maxHp", { positive: true });
         validateBag(tower.cost, "tower", towerId, "cost");
+        if (tower.upgradeBranches !== undefined) {
+            if (!Array.isArray(tower.upgradeBranches) || tower.upgradeBranches.length === 0) {
+                err("tower", towerId, "upgradeBranches", `Tower "${towerId}" upgradeBranches must be a non-empty array.`);
+            }
+            else {
+                const branchIds = new Set();
+                tower.upgradeBranches.forEach((branch, index) => {
+                    const base = `upgradeBranches[${index}]`;
+                    if (!branch || typeof branch !== "object" || Array.isArray(branch)) {
+                        err("tower", towerId, base, `Tower "${towerId}" branch must be an object.`);
+                        return;
+                    }
+                    if (typeof branch.id !== "string" || branch.id.length === 0 || branch.id !== branch.id.trim()) {
+                        err("tower", towerId, `${base}.id`, `Tower "${towerId}" branch needs a non-empty trimmed id.`);
+                    }
+                    else if (branchIds.has(branch.id)) {
+                        err("tower", towerId, `${base}.id`, `Tower "${towerId}" has duplicate branch id "${branch.id}".`);
+                    }
+                    else {
+                        branchIds.add(branch.id);
+                    }
+                    if (typeof branch.label !== "string" || branch.label.length === 0) {
+                        err("tower", towerId, `${base}.label`, `Tower "${towerId}" branch needs a non-empty label.`);
+                    }
+                    if (branch.description !== undefined && typeof branch.description !== "string") {
+                        err("tower", towerId, `${base}.description`, `Tower "${towerId}" branch description must be a string.`);
+                    }
+                    if (typeof branch.targetTowerId !== "string" || !towerIds.has(branch.targetTowerId)) {
+                        err("tower", towerId, `${base}.targetTowerId`, `Tower "${towerId}" branch references unknown tower "${String(branch.targetTowerId)}".`);
+                    }
+                    else if (branch.targetTowerId === towerId) {
+                        err("tower", towerId, `${base}.targetTowerId`, `Tower "${towerId}" branch target must differ from its base type.`);
+                    }
+                    else {
+                        const target = content.towers[branch.targetTowerId];
+                        if (target && (target.footprintRadius !== tower.footprintRadius || target.footprintShape !== tower.footprintShape)) {
+                            err("tower", towerId, `${base}.targetTowerId`, `Tower "${towerId}" branch target must preserve its footprint.`);
+                        }
+                    }
+                    validateBag(branch.cost, "tower", towerId, `${base}.cost`);
+                });
+            }
+        }
         if (tower.requiresAuraFrom && !towerIds.has(tower.requiresAuraFrom)) {
             err("tower", towerId, "requiresAuraFrom", `Tower "${towerId}" requires unknown aura tower "${tower.requiresAuraFrom}".`);
         }
@@ -3545,6 +3601,14 @@ export function validateGameContentRegistry(content) {
                 break;
             case "pipeline": {
                 requireFinite(attack.interval, "tower", towerId, "attack.interval", { positive: true });
+                if (attack.minRange !== undefined) {
+                    if (requireFinite(attack.minRange, "tower", towerId, "attack.minRange") && attack.minRange >= tower.range) {
+                        err("tower", towerId, "attack.minRange", `Tower "${towerId}" attack.minRange must be less than range.`, {
+                            expected: `0 <= minRange < ${tower.range}`,
+                            got: String(attack.minRange)
+                        });
+                    }
+                }
                 if (attack.intervalByLevel !== undefined) {
                     if (!Array.isArray(attack.intervalByLevel) || attack.intervalByLevel.length === 0)
                         err("tower", towerId, "attack.intervalByLevel", "attack.intervalByLevel must be a non-empty number array.");
@@ -3566,6 +3630,14 @@ export function validateGameContentRegistry(content) {
                 }
                 if (!attack.delivery || typeof attack.delivery !== "object") {
                     err("tower", towerId, "attack.delivery", "Pipeline attack needs a delivery object.");
+                }
+                else if (attack.delivery.kind === "cone") {
+                    if (!requireFinite(attack.delivery.angleDegrees, "tower", towerId, "attack.delivery.angleDegrees", { positive: true })
+                        || attack.delivery.angleDegrees > 360) {
+                        if (typeof attack.delivery.angleDegrees === "number" && Number.isFinite(attack.delivery.angleDegrees) && attack.delivery.angleDegrees > 360) {
+                            err("tower", towerId, "attack.delivery.angleDegrees", "Cone angleDegrees must be <= 360.");
+                        }
+                    }
                 }
                 else if (attack.delivery.kind === "area") {
                     requireFinite(attack.delivery.radius, "tower", towerId, "attack.delivery.radius", { positive: true });
@@ -3653,6 +3725,19 @@ export function validateGameContentRegistry(content) {
             requireFinite(enemy.towerDisrupt.interval, "enemy", enemyId, "towerDisrupt.interval", { positive: true });
             requireFinite(enemy.towerDisrupt.radius, "enemy", enemyId, "towerDisrupt.radius", { positive: true });
             requireFinite(enemy.towerDisrupt.duration, "enemy", enemyId, "towerDisrupt.duration", { positive: true });
+            if (enemy.towerDisrupt.telegraphLead !== undefined) {
+                if (requireFinite(enemy.towerDisrupt.telegraphLead, "enemy", enemyId, "towerDisrupt.telegraphLead", { positive: true })
+                    && enemy.towerDisrupt.telegraphLead > enemy.towerDisrupt.interval) {
+                    err("enemy", enemyId, "towerDisrupt.telegraphLead", "towerDisrupt.telegraphLead must be <= interval.");
+                }
+            }
+            if (enemy.towerDisrupt.telegraphKind !== undefined
+                && !["hussar_charge", "cossack_channel", "musketeer_aim"].includes(enemy.towerDisrupt.telegraphKind)) {
+                err("enemy", enemyId, "towerDisrupt.telegraphKind", `Unknown disruption telegraph kind "${String(enemy.towerDisrupt.telegraphKind)}".`);
+            }
+            if (enemy.towerDisrupt.maxTargets !== undefined && (!Number.isInteger(enemy.towerDisrupt.maxTargets) || enemy.towerDisrupt.maxTargets <= 0)) {
+                err("enemy", enemyId, "towerDisrupt.maxTargets", "towerDisrupt.maxTargets must be a positive integer.");
+            }
         }
         if (enemy.towerAttack) {
             requireFinite(enemy.towerAttack.interval, "enemy", enemyId, "towerAttack.interval", { positive: true });

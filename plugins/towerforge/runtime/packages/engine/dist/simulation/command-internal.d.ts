@@ -28,6 +28,7 @@ export type GameCommandV1 = {
     readonly schemaVersion: 1;
     readonly type: "upgradeTower";
     readonly towerId: string;
+    readonly branchId?: string;
 } | {
     readonly schemaVersion: 1;
     readonly type: "setTargetMode";
@@ -69,6 +70,7 @@ export type GameCommandV2 = {
     readonly schemaVersion: 2;
     readonly type: "upgradeTower";
     readonly towerId: string;
+    readonly branchId?: string;
 } | {
     readonly schemaVersion: 2;
     readonly type: "setTargetMode";

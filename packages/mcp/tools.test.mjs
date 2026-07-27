@@ -135,7 +135,7 @@ describe("mcp tool registry", () => {
       ["antiair", "pipeline", "pulse", "single", "splash", "sniper", "support", "support_buff"].sort()
     );
     expect(result.attackKinds.splash.requiredFields.some((f) => f.name === "slowFactor" && f.lessThanOne)).toBe(true);
-    expect(result.towerPipeline.deliveryKinds).toEqual(["single", "multi", "area", "chain", "aura"]);
+    expect(result.towerPipeline.deliveryKinds).toEqual(["single", "multi", "cone", "area", "chain", "aura"]);
     // Ability presets are 3 named, engine-implemented shortcuts, but the ability id space itself
     // is open — abilityEffects documents the primitives a custom (non-preset) ability composes.
     expect(Object.keys(result.abilityPresets).sort()).toEqual(["freeze", "path_water", "strike"].sort());

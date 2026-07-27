@@ -210,13 +210,26 @@ export function parseGameCommand(input) {
             return undefined;
         return { schemaVersion, type, towerId, coord };
     }
-    if (type === "sellTower" || type === "upgradeTower") {
+    if (type === "sellTower") {
         if (!hasClosedFields(fields, ["schemaVersion", "type", "towerId"]))
             return undefined;
         const towerId = fields.get("towerId");
         if (!isCommandId(schemaVersion, towerId))
             return undefined;
         return { schemaVersion, type, towerId };
+    }
+    if (type === "upgradeTower") {
+        if (!hasClosedFields(fields, ["schemaVersion", "type", "towerId"], ["branchId"]))
+            return undefined;
+        const towerId = fields.get("towerId");
+        if (!isCommandId(schemaVersion, towerId))
+            return undefined;
+        if (!fields.has("branchId"))
+            return { schemaVersion, type, towerId };
+        const branchId = fields.get("branchId");
+        if (!isCommandId(schemaVersion, branchId))
+            return undefined;
+        return { schemaVersion, type, towerId, branchId };
     }
     if (type === "setTargetMode") {
         if (!hasClosedFields(fields, ["schemaVersion", "type", "towerId", "mode"]))
@@ -318,7 +331,7 @@ export function executeParsedGameCommand(game, command) {
         case "sellTower":
             return game.sellTower(command.towerId);
         case "upgradeTower":
-            return game.upgradeTower(command.towerId);
+            return game.upgradeTower(command.towerId, command.branchId);
         case "setTargetMode":
             return game.setTowerTargetMode(command.towerId, command.mode);
         case "useAbility":

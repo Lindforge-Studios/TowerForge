@@ -46,7 +46,7 @@ function utf8ByteLength(value) {
  * Object properties are read from own data descriptors and sorted by binary
  * UTF-16 order so integer-like keys do not receive special enumeration order.
  */
-export function canonicalStringify(value, options = {}) {
+function serializeCanonicalJson(value, options = {}) {
     const maxDepth = checkedBudget("maxDepth", options.maxDepth, DEFAULT_MAX_DEPTH);
     const maxNodes = checkedBudget("maxNodes", options.maxNodes, DEFAULT_MAX_NODES);
     const maxBytes = checkedBudget("maxBytes", options.maxBytes, DEFAULT_MAX_BYTES);
@@ -174,7 +174,15 @@ export function canonicalStringify(value, options = {}) {
         }
     };
     visit(value, 0);
-    return output.join("");
+    return { text: output.join(""), bytes, nodes };
+}
+export function canonicalStringify(value, options = {}) {
+    return serializeCanonicalJson(value, options).text;
+}
+/** Exact metrics from the same strict traversal used by canonicalStringify. */
+export function canonicalJsonMetrics(value, options = {}) {
+    const result = serializeCanonicalJson(value, options);
+    return Object.freeze({ bytes: result.bytes, nodes: result.nodes });
 }
 function hashUtf8(value) {
     let hash = FNV1A_64_OFFSET;

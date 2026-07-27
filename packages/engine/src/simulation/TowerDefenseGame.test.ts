@@ -66,6 +66,15 @@ function buildContent(options: BuildContentOptions = {}): ReturnType<typeof crea
           footprintRadius: 0,
           range: 1,
           attack: { kind: "pulse", pulseRate: 2, pulseDamage: 1, dotDamagePerUnit: 5, dotDuration: 8 }
+        },
+        compactKeep: {
+          id: "compactKeep",
+          label: "Compact Keep",
+          cost: { coins: 4 },
+          footprintRadius: 1,
+          ...({ footprintShape: "compact-4" } as Record<string, unknown>),
+          range: 5,
+          attack: { kind: "single", fireRate: 1, damagePerStack: 2, startingStacks: 1, maxStacks: 3, upgradeCost: 2 }
         }
       },
       waveSets: {
@@ -97,7 +106,12 @@ function buildContent(options: BuildContentOptions = {}): ReturnType<typeof crea
         dot: mission("dot", "oneSponge", 50),
         blocker: mission("blocker", "blockerLine", 50),
         armored: mission("armored", "oneArmored", 3),
-        targeting: mission("targeting", "targetPair", 20)
+        targeting: mission("targeting", "targetPair", 20),
+        compact: {
+          ...mission("compact", "oneGrunt", 20),
+          mapId: "compact_arena",
+          buildTowerIds: ["compactKeep"]
+        }
       }
     },
     maps: {
@@ -109,6 +123,17 @@ function buildContent(options: BuildContentOptions = {}): ReturnType<typeof crea
         spawnCoord: { q: 0, r: 1 },
         coreCoord: { q: 8, r: 1 },
         pathCenterline: Array.from({ length: 9 }, (_, q) => ({ q, r: 1 })),
+        pathRoutes: [],
+        terrainOverrides: []
+      },
+      compact_arena: {
+        id: "compact_arena",
+        width: 7,
+        height: 7,
+        defaultTerrain: "buildable",
+        spawnCoord: { q: 0, r: 0 },
+        coreCoord: { q: 0, r: 6 },
+        pathCenterline: Array.from({ length: 7 }, (_, r) => ({ q: 0, r })),
         pathRoutes: [],
         terrainOverrides: []
       }
@@ -213,6 +238,27 @@ describe("TowerDefenseGame", () => {
     });
     expect(gameplay.grid).not.toBe(game.map.grid);
     expect(render.grid).not.toBe(game.map.grid);
+  });
+
+  it("occupies a compact four-tile foundation and rejects overlaps across every occupied tile", () => {
+    const game = new TowerDefenseGame({ missionId: "compact", content: buildContent() });
+
+    expect(game.placeTower("compactKeep", { q: 2, r: 2 })).toEqual({ ok: true });
+    expect(game.towers[0]?.footprint).toEqual([
+      { q: 2, r: 2 },
+      { q: 3, r: 2 },
+      { q: 2, r: 3 },
+      { q: 3, r: 3 }
+    ]);
+    expect(game.getTowerIdAt({ q: 3, r: 3 })).toBe("tower_1");
+    expect(game.canPlaceTower("compactKeep", { q: 3, r: 3 })).toMatchObject({
+      ok: false,
+      reasonKey: "reason.occupied"
+    });
+    expect(game.canPlaceTower("compactKeep", { q: 6, r: 6 })).toMatchObject({
+      ok: false,
+      reasonKey: "reason.noFit"
+    });
   });
 
   it.each(incoherentBoundaryCases)("rejects %s before resolution or mutation", (_label, makeCase) => {

@@ -383,11 +383,24 @@
         </aside>
         <div class="script-editor-pane">
           <div class="script-editor-bar">
+            <div class="script-view-toggle" role="group" aria-label="TowerScript projection">
+              <button id="script-view-json" class="btn btn-outline active" type="button" aria-pressed="true">JSON</button>
+              <button id="script-view-graph" class="btn btn-outline" type="button" aria-pressed="false">Graph</button>
+            </div>
             <span id="script-editor-path" class="mono" data-i18n>Select a file</span>
             <span id="script-editor-state" class="script-editor-state"></span>
             <button id="btn-script-save" class="btn btn-save" type="button" disabled>Save Script</button>
           </div>
           <textarea id="script-editor" class="script-code-editor mono" spellcheck="false" aria-label="TowerScript source" disabled></textarea>
+          <div id="script-graph-pane" class="script-graph-pane" hidden>
+            <aside class="script-graph-sidebar" aria-label="TowerScript node catalog">
+              <div class="pane-label">Node palette</div>
+              <div id="script-graph-node-palette" class="script-graph-node-palette"></div>
+              <div class="pane-label">Context help</div>
+              <div id="script-graph-help" class="script-graph-help">Select a node to inspect its descriptor.</div>
+            </aside>
+            <div id="script-graph-canvas" class="script-graph-canvas" role="application" aria-label="TowerScript visual graph"></div>
+          </div>
           <div id="script-diagnostics" class="script-diagnostics" aria-live="polite"></div>
         </div>
       </div>
@@ -1142,6 +1155,28 @@
           <div class="pt-stat"><span class="k">Towers</span><span class="v" id="pt-towers-count">—</span></div>
           <div class="pt-stat"><span class="k">Kills / Leaks</span><span class="v" id="pt-kills-leaks">—</span></div>
           <div class="pt-stat"><span class="k">Objectives</span><span class="v" id="pt-objectives">—</span></div>
+          <section id="script-debugger" class="script-debugger" aria-label="TowerScript tick debugger">
+            <label class="script-debug-enable"><input id="script-debug-enabled" type="checkbox"> TowerScript trace debugger</label>
+            <p class="text-muted">Opt-in authoring session. Enabling it resets this playtest and records a bounded deterministic trace.</p>
+            <div class="script-debug-controls">
+              <label>Step
+                <select id="script-debug-step-mode" disabled>
+                  <option value="tick">tick</option>
+                  <option value="event">event</option>
+                  <option value="handler">handler</option>
+                  <option value="action">action</option>
+                </select>
+              </label>
+              <button id="btn-script-debug-step" class="btn btn-outline" type="button" disabled>Step</button>
+              <button id="btn-script-debug-resume" class="btn btn-outline" type="button" disabled>Resume</button>
+            </div>
+            <div class="script-debug-controls">
+              <label>Rewind ticks <input id="script-debug-rewind-ticks" type="number" min="1" max="240" step="1" value="1" disabled></label>
+              <button id="btn-script-debug-rewind" class="btn btn-outline" type="button" disabled>Rewind</button>
+            </div>
+            <div id="script-debug-state" class="script-debug-state" aria-live="polite">Debugger disabled — legacy playtest path is active.</div>
+            <div id="script-debug-trace" class="script-debug-trace" aria-label="Structured TowerScript trace"></div>
+          </section>
           <div class="form-section-title pt-debug-title">Inspector</div>
           <div id="pt-inspector" class="pt-inspector">Click Inspect, then choose a tower or enemy.</div>
           <div id="pt-wave-draft" class="pt-artifact-inventory" hidden></div>

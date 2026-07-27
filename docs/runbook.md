@@ -35,6 +35,7 @@
 | Run packaged Studio shell | `npm run desktop:dev` | Prepares the bundled runtime and launches the Tauri desktop wrapper around Studio. |
 | Build desktop Studio installers | `npm run desktop:build` | Produces Tauri bundles under `packages/desktop/src-tauri/target/release/bundle`. |
 | Test desktop shell | `cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml` | Native menu/state/close lifecycle tests. |
+| Build and run native macOS Studio | `./script/build_and_run.sh --verify` | Kills the local shell, builds explicit ARM64, launches the app, and requires both shell and Studio sidecar readiness. |
 | E2E smoke | `npm run test:e2e` | Starts Studio against a temp project and verifies build/player interactions with Playwright. |
 
 Russian is the default Studio language. Switch between Russian and English under **Settings > Appearance > Language**; the choice is stored only on the current device as `towerforge:language`. In desktop builds the same setting also rebuilds the native menu. Project content is never translated or modified by this preference.
@@ -369,7 +370,7 @@ Open `Project > Scripts` or the **Scripts** sidebar item. The left pane is a fil
 TowerScript files:
 
 - live under `scripts/` and end in `.tower.json`;
-- declare `schemaVersion: 1`, `2`, or `3`, a unique `id`, one or more `bindings`, optional `initialState`, and lifecycle `handlers`; use v2 for terrain events/actions and v3 for shield events/actions;
+- declare supported `schemaVersion: 1..6`, a unique `id`, one or more `bindings`, optional `initialState`, and lifecycle `handlers`; v2 adds terrain events/actions, v3 shields, v4 marks, v5 elemental exposures/reactions, and v6 transactional terrain/elevation authoring;
 - bind to `global`, `mission`, `map`, `wave` (wave-set id), `tower` (tower-type id), `enemy` (enemy-type id), `ability` (ability id), or v2 `terrain` (terrain id);
 - read values with `{ "$get": "event.enemyTypeId" }` and compose conditions/math with `{ "$op": "eq", "args": [...] }`;
 - run typed actions such as resource/core/enemy changes, statuses, tower cooldown/stacks, enemy spawning, state updates, custom signals, v2 `setTileTerrain`/`restoreTileTerrain`, and v3 `restoreEnemyShield`/`restoreTowerShield`;
@@ -380,6 +381,30 @@ Save validates the candidate definition and all project references before an ato
 TowerScript deliberately cannot run JavaScript, import packages, access files/network/DOM/environment, read wall-clock time, or generate randomness. Add a missing capability as a typed engine event/action with deterministic tests; do not add `eval`, `Function`, or raw host bridges.
 
 Terrain changes are runtime-only. A duration restores authored terrain; no duration keeps the override until explicit restore or run end. Scripts may change at most 64 tiles per event transaction and hold 512 active overrides. Active route cells cannot become non-walkable; changing `buildable` never deletes an existing tower.
+
+### TowerScript DX 2.0
+
+TowerScript DX is an explicit authoring/debug mode, not a gameplay mechanic and not a `mission.mechanics` selection. Opening Graph or enabling the Playtest debugger does not change the project schema, TowerScript v6, snapshots, checkpoints, journals, digests, or generated games. Leaving both off uses the established editor/playtest path.
+
+In **Project > Scripts**, use **JSON** for the canonical source and **Graph** for its lossless visual projection. The graph palette, known-node property forms, and help come from `GET /api/towerscript/schema`, which projects the engine descriptor; do not maintain a separate event/action/operator/scope list. Create nodes from the palette, connect/reparent them through their typed controls, and drag them to store local positions. `GET /api/project/script/graph` reads the canonical AST, optional local layout, and their composite revision without creating `.towerforge`. Only unknown future nodes expose raw JSON, and it is read-only. If the installed engine cannot validate that canonical script, keep it read-only—do not downgrade its schema or replace a raw node with a guessed current node.
+
+Graph save is always two-phase:
+
+1. `POST /api/project/script/graph/preview` materializes the candidate canonical AST and validates it without writing.
+2. `POST /api/project/script/graph/apply` repeats the exact candidate with `ifRevision` from preview.
+3. Reload the graph and run project validation.
+
+The composite revision covers the script bytes and optional layout. A stale revision writes neither. The script uses the existing confined atomic writer, full-project validation, backup, and rollback. Node positions and viewport are stored separately under `.towerforge/towerscript-layouts/`; this local presentation state is traversal/symlink-safe and is excluded from PWA, single-file, web/native package, `.tdpack`, plugin project content, and gameplay hashes.
+
+For MCP/AI, use:
+
+`describe_schema({domain:"scripts"}) -> get_tower_script_graph -> preview_tower_script_graph -> apply_tower_script_graph(ifRevision=preview.revision) -> validate_project`.
+
+The tools are respectively read-only, compute-only, and guarded local-write operations. `get_tower_script` plus the existing dry-run/guarded `upsert_tower_script` remains the normal path for canonical JSON AST authoring; graph tools do not introduce a second scripting language.
+
+For a bounded behavior inspection, call `preview_tower_script_trace` with no more than 128 exact versioned `GameCommand` values plus `stepMode` and `stepSequence`. It runs a deterministic in-memory debug session, returns the structured trace, selected historical frame, and live-tail digest, and writes no project or `.towerforge` files.
+
+In **Playtest**, explicitly enable the TowerScript debugger before using its controls. Select `tick`, `event`, `handler`, or `action`, then step through the bounded structured trace. The trace follows actual execution order and reports binding/handler context, condition results, actions, TowerScript state diffs, and linked diagnostics. Every historical frame comes from the same checkpoint + deterministic replay-to-cursor boundary and is inspection-only; it never replaces the live game. Step pins Playtest speed at `0` so the frame remains visible. **Resume** clears the inspection cursor and restores the prior speed. **Rewind N ticks** restores a retained validated checkpoint, reconstructs the matching journal prefix, and discards the abandoned future. If the engine version, content digest, checkpoint, or replay result does not match, start a fresh debug session instead of forcing restore.
 
 ## Desktop Studio Navigation
 
@@ -442,6 +467,8 @@ AI Chat accepts up to eight JPEG/PNG/GIF/WebP images per turn, at most 4 MB each
 - MCP edits: call domain-scoped `describe_schema`, then prefer compact reads, `get_progression`, recipes, `dry_run_progression_patch`, `preview_theme_pack`, and granular commit tools such as `apply_progression_patch`, `upsert_tower_script`, `apply_theme_pack`, or entity/map/asset/narrative writes. Commits validate, accept revision guards, and keep rollback backups under `.towerforge/mcp-backups` or `.towerforge/backups`.
 - TowerScript load failures: run `npm run validate` and inspect the reported script file/field. Parse errors are associated with the source path; reference/schema errors identify the script id and field path.
 - TowerScript runtime issues: inspect Studio Playtest events or `snapshot.scriptState.diagnostics`. Budget errors usually indicate recursive signals, broad `allEnemies/allTowers` work, or an unbounded tick handler; add `when`/`every`, narrow the binding, or split the rule.
+- TowerScript Graph conflicts: reload `GET /api/project/script/graph` and repeat preview/apply with the new composite revision. Do not copy layout into the script or bypass a stale guard. A missing layout is normal and a graph read must not create one.
+- TowerScript debugger issues: confirm the debug session was explicitly enabled and inspect the structured `event -> binding -> handler -> condition -> action -> state_diff/diagnostic` trace. Rewind is limited to the retained checkpoint ring; an out-of-range request or content/engine mismatch must start a fresh session. Partial action frames are never resumable gameplay state.
 - MCP tool discovery: run `npm run mcp -- --project <project>` and issue `tools/list`; tools include `riskClass` and `sideEffect` metadata for permission decisions.
 - AI Chat direct-provider issues: verify the selected provider has a saved browser-local key and a tool-capable model, check `/api/ai/chat`, then reproduce the same action through `validate_project`, `simulate_mission`, or `balance_report`. OpenRouter model discovery uses `/api/ai/models?provider=openrouter`; Codex and Claude use the same endpoint with `provider=codex|claude-code`. Custom model IDs remain available when a live catalog is offline.
 - Codex/Claude account issues: use Disconnect, restart Studio, and Connect again. The safe status endpoint is `/api/ai/runtime/status?provider=codex` or `provider=claude-code`; it never returns tokens. A packaged build must contain compatible packages under `runtime/node_modules/@openai` and `runtime/node_modules/@anthropic-ai`. `TOWERFORGE_CODEX_BIN` and `TOWERFORGE_CLAUDE_BIN` are internal test/diagnostic overrides only and must point to an absolute trusted executable path.

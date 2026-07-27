@@ -95,6 +95,10 @@ export interface GameCommandJournalV6 {
     readonly entries: readonly GameCommandJournalEntryV6[];
 }
 export type GameCommandJournal = GameCommandJournalV1 | GameCommandJournalV2 | GameCommandJournalV3 | GameCommandJournalV4 | GameCommandJournalV5 | GameCommandJournalV6;
+export interface GameCommandJournalAcceptedTail {
+    readonly entryCount: number;
+    readonly entry?: GameCommandJournalEntryV6;
+}
 /**
  * Owns the command boundary around one simulation instance. Any mutation that
  * bypasses dispatch makes the journal ambiguous, so the session faults closed.
@@ -106,6 +110,10 @@ export declare class JournaledGameSession {
     private readonly contentDigest;
     private readonly entries;
     private journalSchemaVersion;
+    private journalEnvelopeBytes;
+    private journalEnvelopeNodes;
+    private journalEntryBytes;
+    private journalEntryNodes;
     private expectedStateDigest;
     private faulted;
     constructor(game: TowerDefenseGame);
@@ -113,7 +121,15 @@ export declare class JournaledGameSession {
     private fault;
     private assertExpectedState;
     private assertLiveCapacity;
+    private assertIncrementalCapacity;
+    private refreshJournalEnvelope;
     dispatch(input: unknown): ActionResult;
+    /**
+     * O(1) view used by deterministic wrappers that already own this session.
+     * It detaches only the latest accepted entry; complete journal cloning and
+     * budget validation remain exclusive to explicit exportJournal() calls.
+     */
+    getAcceptedTail(): GameCommandJournalAcceptedTail;
     exportJournal(): GameCommandJournal;
 }
 /**

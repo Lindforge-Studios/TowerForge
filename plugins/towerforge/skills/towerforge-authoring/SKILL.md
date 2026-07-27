@@ -15,7 +15,8 @@ when a project-aware tool exists.
 3. Call `describe_schema` for the relevant domain before inventing entity, map, terrain, tile, or
    TowerScript shapes.
 4. Read narrowly with `get_project_summary`, `list_entities`, `get_entity`, `list_project_tree`, or
-   `get_tower_script`.
+   `get_tower_script`. For Visual Graph work, use `get_tower_script_graph`; the graph is a lossless
+   projection of the same canonical TowerScript AST, not a second gameplay language.
 
 For optional mechanics, call `describe_schema` with domain `mechanics`, then `get_capabilities` for
 the target mission. An absent `content/mechanics.json` and disabled modules intentionally preserve
@@ -30,6 +31,17 @@ shared workspace roots. In a workspace-bound session, never supply or request an
 
 - Prefer granular tools such as `set_enemy_stat`, `upsert_tower`, `upsert_entity`, `write_map`,
   `upsert_tower_script`, and asset/binding tools.
+- TowerScript DX is an opt-in authoring/debug surface, not a mission mechanics module. Start with
+  `describe_schema(domain: "scripts")`. For canonical JSON, use `get_tower_script`, preview with
+  `upsert_tower_script(dryRun: true)`, apply with the returned revision, then `validate_project`.
+  For Visual Graph, use `get_tower_script_graph` -> `preview_tower_script_graph` ->
+  `apply_tower_script_graph` with exactly the preview `ifRevision` -> `validate_project`. Preserve
+  unknown future nodes as raw; never normalize, downgrade, or delete them. Optional graph layout is
+  local editor state under `.towerforge/towerscript-layouts`, is guarded with the source, and never
+  belongs in gameplay packages. Inspect behavior through compute-only `preview_tower_script_trace`
+  with at most 128 exact versioned `GameCommand` values and a `tick`, `event`, `handler`, or `action`
+  cursor. Trace/step/rewind state is session-local debug data and never project content, a normal
+  snapshot field, or a reason to create `content/mechanics.json`.
 - Use dry-run and preview tools first for balance, progression, map compilation, themes, tilesets,
   and imports.
 - Use the guarded mechanics flow: `get_capabilities`, `get_recipe` with collection `mechanics`

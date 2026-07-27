@@ -64,7 +64,7 @@ export const TOWER_SCRIPT_EVENT_FIELDS = Object.freeze({
     towerPlaced: ["type", "towerId", "towerTypeId"],
     towerSold: ["type", "towerId", "towerTypeId", "refund"],
     towerMoved: ["type", "towerId", "from", "to", "cost"],
-    towerUpgraded: ["type", "towerId", "level", "stacks"],
+    towerUpgraded: ["type", "towerId", "level", "stacks", "branchId", "baseTypeId", "typeId"],
     towerDestroyed: ["type", "towerId", "towerTypeId", "enemyId"],
     towerTargetModeChanged: ["type", "towerId", "mode"],
     towerFired: ["type", "towerId", "enemyId", "damage"],
@@ -119,10 +119,69 @@ export const TOWER_SCRIPT_LIMITS = Object.freeze({
     externalSignalPayloadBytes: 65_536,
     retainedDiagnostics: 32
 });
+export const TOWER_SCRIPT_GRAPH_DESCRIPTOR = Object.freeze({
+    schemaVersion: 1,
+    canonicalAst: true,
+    projection: "lossless",
+    unknownNodes: "raw_lossless",
+    layoutStorage: ".towerforge/towerscript-layouts",
+    layoutPattern: ".towerforge/towerscript-layouts/**/*.layout.json",
+    layoutInGameplayPackages: false
+});
+export const TOWER_SCRIPT_DEBUG_DESCRIPTOR = Object.freeze({
+    schemaVersion: 1,
+    optIn: true,
+    stepModes: Object.freeze(["tick", "event", "handler", "action"]),
+    actionStepping: "checkpoint_replay_to_cursor",
+    analysis: Object.freeze({
+        tool: "preview_tower_script_trace",
+        computeOnly: true,
+        maxCommands: 128,
+        writesProjectFiles: false
+    }),
+    rewind: Object.freeze({ bounded: true, maxCheckpointRingCapacity: 2_048 }),
+    trace: Object.freeze({
+        schemaVersion: 1,
+        phases: Object.freeze(["event", "binding", "handler", "condition", "action", "state_diff", "diagnostic"]),
+        retention: "bounded_in_memory",
+        maxEntries: 16_384,
+        persistedInSnapshot: false,
+        persistedInCheckpoint: false,
+        includedInStateDigest: false
+    }),
+    mismatchPolicy: "reject_engine_content_checkpoint_or_replay_mismatch"
+});
+export const TOWER_SCRIPT_COMPLETION_DESCRIPTOR = Object.freeze({
+    source: "engine_schema_descriptor",
+    catalog: Object.freeze({
+        events: Object.freeze(TOWER_SCRIPT_EVENTS.map((name) => Object.freeze({
+            name,
+            fields: TOWER_SCRIPT_EVENT_FIELDS[name]
+        }))),
+        actions: Object.freeze(Object.keys(TOWER_SCRIPT_ACTION_SCHEMA).sort().map((name) => Object.freeze({
+            name,
+            descriptor: TOWER_SCRIPT_ACTION_SCHEMA[name]
+        }))),
+        operators: Object.freeze(TOWER_SCRIPT_OPERATORS.map((name) => Object.freeze({ name }))),
+        scopes: Object.freeze(TOWER_SCRIPT_SCOPES.map((name) => Object.freeze({ name })))
+    })
+});
 export const TOWER_SCRIPT_SCHEMA = Object.freeze({
     schemaVersion: 6,
+    supportedSchemaVersions: Object.freeze([1, 2, 3, 4, 5, 6]),
     filePattern: "scripts/**/*.tower.json",
     semantics: "Deterministic JSON rules interpreted by the engine; never executable host code.",
+    graph: TOWER_SCRIPT_GRAPH_DESCRIPTOR,
+    debug: TOWER_SCRIPT_DEBUG_DESCRIPTOR,
+    completion: TOWER_SCRIPT_COMPLETION_DESCRIPTOR,
+    developerExperience: Object.freeze({
+        optIn: true,
+        gameplayCapability: false,
+        trace: TOWER_SCRIPT_DEBUG_DESCRIPTOR.trace,
+        debugger: TOWER_SCRIPT_DEBUG_DESCRIPTOR,
+        visualGraph: TOWER_SCRIPT_GRAPH_DESCRIPTOR,
+        completion: TOWER_SCRIPT_COMPLETION_DESCRIPTOR
+    }),
     bindingRules: {
         global: "ids forbidden",
         otherScopes: "ids optional; omitted means all objects in the scope; provided ids must exist"

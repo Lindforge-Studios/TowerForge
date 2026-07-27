@@ -7,14 +7,13 @@ export interface CanonicalStringifyOptions {
     /** Maximum UTF-8 byte length of the canonical result. */
     readonly maxBytes?: number;
 }
-/**
- * Serialize the strict JSON value subset used by deterministic simulation state.
- *
- * Unlike JSON.stringify, this function never coerces, drops, or invokes values.
- * Object properties are read from own data descriptors and sorted by binary
- * UTF-16 order so integer-like keys do not receive special enumeration order.
- */
+export interface CanonicalJsonMetrics {
+    readonly bytes: number;
+    readonly nodes: number;
+}
 export declare function canonicalStringify(value: unknown, options?: CanonicalStringifyOptions): string;
+/** Exact metrics from the same strict traversal used by canonicalStringify. */
+export declare function canonicalJsonMetrics(value: unknown, options?: CanonicalStringifyOptions): CanonicalJsonMetrics;
 export declare function stableDigest(value: unknown, options?: CanonicalStringifyOptions): string;
 /**
  * Digest every registry domain that can affect deterministic simulation.

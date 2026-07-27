@@ -146,6 +146,49 @@ fn parse_ready_line(line: &str) -> Option<u16> {
     (parsed.kind == "towerforge-studio-ready").then_some(parsed.port)
 }
 
+fn append_complete_lines(buffer: &mut String, chunk: &str) -> Vec<String> {
+    buffer.push_str(chunk);
+    let mut lines = Vec::new();
+    while let Some(newline) = buffer.find('\n') {
+        let line = buffer[..newline].trim_end_matches('\r').to_string();
+        buffer.drain(..=newline);
+        lines.push(line);
+    }
+    lines
+}
+
+fn startup_error_script(message: &str) -> String {
+    let encoded = serde_json::to_string(&format!("Studio failed to start: {message}"))
+        .unwrap_or_else(|_| "\"Studio failed to start.\"".to_string());
+    format!(
+        "document.body.dataset.startupState='error';const p=document.querySelector('p');if(p)p.textContent={encoded};"
+    )
+}
+
+fn show_startup_error(app: &tauri::AppHandle, message: &str) {
+    eprintln!("TowerForge Studio startup failed: {message}");
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.eval(startup_error_script(message));
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+fn defer_studio_startup(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let result = start_studio(&app, None);
+        let main_thread_app = app.clone();
+        let _ = app.run_on_main_thread(move || match result {
+            Ok(session) => {
+                if let Err(error) = navigate_to_studio(&main_thread_app, &session) {
+                    show_startup_error(&main_thread_app, &error);
+                }
+            }
+            Err(error) => show_startup_error(&main_thread_app, &error),
+        });
+    });
+}
+
 fn start_studio(
     app: &tauri::AppHandle,
     project_dir: Option<PathBuf>,
@@ -188,18 +231,23 @@ fn start_studio(
         user_data_dir.to_string_lossy().to_string(),
     );
     command = command.env("TOWERFORGE_SESSION_TOKEN", token.clone());
+    command = command.env(
+        "TOWERFORGE_DESKTOP_PARENT_PID",
+        std::process::id().to_string(),
+    );
 
     let (mut rx, child) = command.spawn().map_err(|error| error.to_string())?;
     let (ready_tx, ready_rx) = mpsc::channel::<u16>();
 
     tauri::async_runtime::spawn(async move {
+        let mut stdout_buffer = String::new();
         while let Some(event) = rx.recv().await {
             match event {
                 CommandEvent::Stdout(bytes) => {
                     let text = String::from_utf8_lossy(&bytes);
                     print!("{text}");
-                    for line in text.lines() {
-                        if let Some(port) = parse_ready_line(line) {
+                    for line in append_complete_lines(&mut stdout_buffer, &text) {
+                        if let Some(port) = parse_ready_line(&line) {
                             let _ = ready_tx.send(port);
                         }
                     }
@@ -210,9 +258,13 @@ fn start_studio(
         }
     });
 
-    let port = ready_rx
-        .recv_timeout(Duration::from_secs(20))
-        .map_err(|_| "Timed out waiting for TowerForge Studio sidecar.".to_string())?;
+    let port = match ready_rx.recv_timeout(Duration::from_secs(20)) {
+        Ok(port) => port,
+        Err(_) => {
+            let _ = child.kill();
+            return Err("Timed out waiting for TowerForge Studio sidecar.".to_string());
+        }
+    };
     *app.state::<StudioProcess>()
         .0
         .lock()
@@ -1075,11 +1127,18 @@ pub fn run() {
         ])
         .setup(|app| {
             app.on_menu_event(handle_menu_event);
-            let session = start_studio(app.handle(), None)
-                .map_err(|error| tauri::Error::Anyhow(anyhow::anyhow!(error)))?;
-            navigate_to_studio(app.handle(), &session)
-                .map_err(|error| tauri::Error::Anyhow(anyhow::anyhow!(error)))?;
-            install_menu(app.handle())?;
+            #[cfg(target_os = "macos")]
+            let _ = app
+                .handle()
+                .set_activation_policy(tauri::ActivationPolicy::Regular);
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            if let Err(error) = install_menu(app.handle()) {
+                show_startup_error(app.handle(), &error.to_string());
+            }
+            defer_studio_startup(app.handle().clone());
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -1145,8 +1204,8 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        format_window_title, is_allowed_external_url, is_valid_project_name,
-        parse_recent_menu_index, should_guard_values,
+        append_complete_lines, format_window_title, is_allowed_external_url, is_valid_project_name,
+        parse_ready_line, parse_recent_menu_index, should_guard_values, startup_error_script,
     };
 
     #[test]
@@ -1197,5 +1256,22 @@ mod tests {
         assert!(!is_allowed_external_url("http://lindforge.com"));
         assert!(!is_allowed_external_url("https://example.com"));
         assert!(!is_allowed_external_url("file:///tmp/project.json"));
+    }
+
+    #[test]
+    fn buffers_split_sidecar_ready_lines() {
+        let mut buffer = String::new();
+        assert!(append_complete_lines(&mut buffer, "{\"type\":\"towerforge-studio").is_empty());
+        let lines = append_complete_lines(&mut buffer, "-ready\",\"port\":4567}\nnext");
+        assert_eq!(lines.len(), 1);
+        assert_eq!(parse_ready_line(&lines[0]), Some(4567));
+        assert_eq!(buffer, "next");
+    }
+
+    #[test]
+    fn escapes_startup_errors_before_showing_them_in_the_loading_window() {
+        let script = startup_error_script("bad \"sidecar\"\nline");
+        assert!(script.contains("bad \\\"sidecar\\\"\\nline"));
+        assert!(script.contains("startupState='error'"));
     }
 }

@@ -5,7 +5,7 @@ TowerForge desktop artifacts are built and published through GitHub Actions. Unt
 ## Release Invariants
 
 - A release MUST point to the exact git tag and commit used for the build.
-- A macOS release MUST set Tauri `bundle.macOS.signingIdentity` to `-` until a Developer ID identity replaces it, and MUST pass strict deep `codesign` verification before upload.
+- A macOS release MUST set Tauri `bundle.macOS.signingIdentity` to `-` until a Developer ID identity replaces it, include the JIT entitlements required by the hardened bundled Node runtime, target `aarch64-apple-darwin`, and pass strict deep `codesign` verification before upload.
 - An unsigned release MUST be a GitHub pre-release and MUST include `Unsigned build` in its title and warning block.
 - Release assets MUST include every platform installer and a plain-text `SHA256SUMS` file.
 - Release notes MUST repeat the full SHA-256 value for every attached installer and link to both the tag and tagged source tree.
@@ -66,7 +66,7 @@ Write `SHA256SUMS` using the installer basename, not an absolute path:
 <sha256>  TowerForge_<version>_aarch64.dmg
 ```
 
-The verifier runs `codesign --verify --deep --strict` against `TowerForge.app` and `hdiutil verify` against the DMG. A valid ad-hoc signature prevents an incomplete bundle signature from being misreported as a damaged download, but it is not notarization. Users may install the app by moving it to Applications. If macOS blocks the first launch because the publisher is unidentified, the only supported override is **System Settings > Privacy & Security > Open Anyway** after verifying the checksum and release source.
+The verifier runs `codesign --verify --deep --strict` against `TowerForge.app`, requires an `arm64` main executable, starts the hardened bundled Node binary to prove V8 can initialize, and runs `hdiutil verify` against the DMG. A valid ad-hoc signature prevents an incomplete bundle signature from being misreported as a damaged download, but it is not notarization. Users may install the app by moving it to Applications. If macOS blocks the first launch because the publisher is unidentified, the only supported override is **System Settings > Privacy & Security > Open Anyway** after verifying the checksum and release source.
 
 ## Publication Checklist
 
