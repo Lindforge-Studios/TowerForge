@@ -132,6 +132,12 @@ export interface EnemyTowerDisruptDefinition {
     interval: number;
     radius: number;
     duration: number;
+    /** Optional authoritative wind-up window before the next pulse resolves. */
+    telegraphLead?: number;
+    /** Closed presentation cue selected by authored content. */
+    telegraphKind?: "hussar_charge" | "cossack_channel" | "musketeer_aim";
+    /** Maximum towers locked when the wind-up begins (or selected at resolve without a wind-up). */
+    maxTargets?: number;
 }
 /**
  * Composable delivery modifier: after a landed hit, the shot jumps hop-by-hop to the nearest
@@ -230,6 +236,9 @@ export type TowerPipelineDeliverySpec = {
 } | {
     kind: "multi";
 } | {
+    kind: "cone";
+    angleDegrees: number;
+} | {
     kind: "area";
     radius: number;
     secondaryMultiplier?: number;
@@ -271,10 +280,19 @@ export interface EffectPipelineAttackModel {
     interval: number;
     intervalByLevel?: number[];
     rangeByLevel?: number[];
+    /** Optional inner radius. Enemies closer than this distance are not eligible targets. */
+    minRange?: number;
     targeting?: TowerPipelineTargetingSpec;
     delivery: TowerPipelineDeliverySpec;
     effects: TowerEffectSpec[];
     upgradeCosts?: ResourceCost[];
+}
+export interface TowerUpgradeBranchDefinition {
+    id: string;
+    label: string;
+    description?: string;
+    targetTowerId: string;
+    cost: ResourceCost;
 }
 export interface TowerType {
     id: string;
@@ -283,7 +301,11 @@ export interface TowerType {
     tags?: readonly string[];
     cost: ResourceCost;
     footprintRadius: number;
+    /** Optional authored foundation. `compact-4` occupies a contiguous two-by-two tile rhombus. */
+    footprintShape?: "radius" | "compact-4";
     range: number;
+    /** Optional mutually-exclusive level-three transformations selected while the tower is level two. */
+    upgradeBranches?: TowerUpgradeBranchDefinition[];
     /** If set, the tower has this much health and can be destroyed by enemy `towerAttack`. Omit = indestructible. */
     maxHp?: number;
     requiresAuraFrom?: string;
@@ -540,6 +562,8 @@ export interface EnemyState {
     };
     /** Time until this enemy's next tower-disrupt pulse (lazily initialized from towerDisrupt.interval). */
     disruptCooldown?: number;
+    /** Authoritative tower ids locked when a telegraphed disruption enters its wind-up window. */
+    disruptTargetTowerIds?: string[];
     /** Time until this enemy's next tower-attack strike (lazily initialized from towerAttack.interval). */
     towerAttackCooldown?: number;
 }
@@ -566,6 +590,10 @@ export interface TowerState {
     coord: HexCoord;
     footprint: HexCoord[];
     level: number;
+    /** Original authored type for a transformed level-three tower. */
+    baseTypeId?: string;
+    /** Immutable branch selected from `baseTypeId.upgradeBranches`. */
+    upgradeBranchId?: string;
     targetMode?: TowerTargetMode;
     stacks: number;
     cooldown: number;
@@ -611,6 +639,9 @@ export type GameEvent = {
     towerId: string;
     level: number;
     stacks: number;
+    branchId?: string;
+    baseTypeId?: string;
+    typeId?: string;
 } | {
     type: "towerDisrupted";
     enemyId: string;

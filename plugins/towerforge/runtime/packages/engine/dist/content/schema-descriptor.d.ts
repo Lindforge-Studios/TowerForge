@@ -408,7 +408,7 @@ export declare const REACTIONS_MECHANICS_SCHEMA: Readonly<{
 export declare const ATTACK_KIND_SCHEMA: Record<TowerAttackKind, AttackKindDescriptor>;
 export declare const TOWER_PIPELINE_SCHEMA: Readonly<{
     semantics: "targeting selects primary enemies; delivery expands them; effects run in declaration order";
-    deliveryKinds: readonly ["single", "multi", "area", "chain", "aura"];
+    deliveryKinds: readonly ["single", "multi", "cone", "area", "chain", "aura"];
     targeting: {
         classes: string[];
         mode: readonly ["first", "last", "closest", "furthest", "strongest", "weakest", "fastest_ahead", "largest_hp"];
@@ -417,6 +417,9 @@ export declare const TOWER_PIPELINE_SCHEMA: Readonly<{
     delivery: {
         single: {};
         multi: {};
+        cone: {
+            angleDegrees: string;
+        };
         area: {
             radius: string;
             secondaryMultiplier: string;

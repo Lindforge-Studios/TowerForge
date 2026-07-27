@@ -1,11 +1,12 @@
 import { type GameContentRegistry } from "../content/registry.js";
+import { type TowerScriptTraceCollector } from "../scripting/trace.js";
 import type { TowerScriptJson } from "../scripting/types.js";
 import { GridMap } from "./map.js";
 import { type NavigationAnalysisRequestV1, type NavigationAnalysisV1 } from "./navigation-analysis.js";
 import { type LineOfSightAnalysisRequestV1, type LineOfSightAnalysisV1 } from "./line-of-sight.js";
 import { type GameCheckpointV1 } from "./checkpoint.js";
 import { type GameSeed } from "./rng.js";
-import type { ActionResult, CurrencyDefinition, DifficultyDefinition, EnemyState, GameEvent, GameSnapshot, HexCoord, MissionAbilityId, ResourceBag, ResourceCost, TowerTargetMode, TowerState, WaveState } from "./types.js";
+import type { ActionResult, CurrencyDefinition, DifficultyDefinition, EnemyState, GameEvent, GameSnapshot, HexCoord, MissionAbilityId, ResourceBag, ResourceCost, TowerTargetMode, TowerState, TowerType, WaveState } from "./types.js";
 export interface CampaignBattleLoadoutV1 {
     readonly schemaVersion: 1;
     readonly launchId: string;
@@ -44,6 +45,8 @@ export interface TowerDefenseGameOptions {
     seed?: GameSeed;
     /** Optional, already content-validated campaign run loadout. Legacy games omit it. */
     campaignBattle?: CampaignBattleLoadoutV1;
+    /** Explicit authoring-only trace sink. Omit for the literal legacy runtime path. */
+    towerScriptTrace?: TowerScriptTraceCollector;
 }
 interface TowerDefenseGameInternalOptions {
     skipGameStarted?: boolean;
@@ -163,13 +166,14 @@ export declare class TowerDefenseGame {
     private scriptActionsRemaining;
     private scriptTerrainChangesRemaining;
     private scriptSignalDepth;
+    private readonly towerScriptTrace;
     private displacementStepAttemptsThisTick;
     private initialRngState;
     private rng;
     constructor(options: TowerDefenseGameOptions, internal?: TowerDefenseGameInternalOptions);
     get coins(): number;
     set coins(value: number);
-    get towerTypes(): Record<string, import("./types.js").TowerType>;
+    get towerTypes(): Record<string, TowerType>;
     get enemyTypes(): Record<string, import("./types.js").EnemyType>;
     get waves(): import("./types.js").WaveDefinition[];
     reset(): void;
@@ -179,9 +183,9 @@ export declare class TowerDefenseGame {
     placeTower(typeId: string, coord: HexCoord): ActionResult;
     canMoveTower(towerId: string, coord: HexCoord): ActionResult;
     moveTower(towerId: string, coord: HexCoord): ActionResult;
-    canUpgradeTower(towerId: string): ActionResult;
-    getTowerUpgradeCost(towerOrId: TowerState | string): ResourceCost | null;
-    upgradeTower(towerId: string): ActionResult;
+    canUpgradeTower(towerId: string, branchId?: string): ActionResult;
+    getTowerUpgradeCost(towerOrId: TowerState | string, branchId?: string): ResourceCost | null;
+    upgradeTower(towerId: string, branchId?: string): ActionResult;
     canSocketArtifact(artifactInstanceId: string, towerId: string, slotId: string): ActionResult;
     socketArtifact(artifactInstanceId: string, towerId: string, slotId: string): ActionResult;
     canUnsocketArtifact(artifactInstanceId: string, towerId: string, slotId: string): ActionResult;
@@ -251,6 +255,7 @@ export declare class TowerDefenseGame {
     static fromCheckpoint(options: {
         content: GameContentRegistry;
         checkpoint: GameCheckpointV1;
+        towerScriptTrace?: TowerScriptTraceCollector;
     }): TowerDefenseGame;
     private captureDerivedMapIntegrityBaseline;
     /**
@@ -363,6 +368,7 @@ export declare class TowerDefenseGame {
     private applyHealAuras;
     /** Boss pattern: enemies with `towerDisrupt` periodically silence towers within radius. */
     private updateTowerDisruptions;
+    private selectDisruptionTargets;
     /** Boss pattern: enemies with `towerAttack` damage the nearest durable tower or opt-in durable hero. */
     private updateEnemyTowerAttacks;
     private artifactManagementAvailability;
@@ -415,6 +421,8 @@ export declare class TowerDefenseGame {
     private enemyInRange;
     private highGroundPair;
     private enemyInTowerAcquisitionRange;
+    private enemyInsideTowerCone;
+    private gridWorldPoint;
     private towerRange;
     private slipperyJackInterval;
     private towerPulseRate;
@@ -480,6 +488,7 @@ export declare class TowerDefenseGame {
     private syncNavigationResolver;
     private revalidateHeroMovementAfterMapMutation;
     private canOccupyTowerFootprint;
+    private towerFootprintTiles;
     private dependentsKeepSupportAfterMove;
     private dependentsKeepSupportAfterRemoval;
     private applyPassiveIncome;

@@ -1,6 +1,6 @@
 import { executeParsedGameCommand, invalidGameCommandResult, parseGameCommand } from "./command-internal.js";
 import { cloneCheckpointJson, checkpointDataField, checkpointObjectDescriptors, requireExactCheckpointKeys, SIMULATION_ENGINE_VERSION } from "./checkpoint.js";
-import { canonicalStringify, getSimulationContentDigest } from "./stable-digest.js";
+import { canonicalJsonMetrics, canonicalStringify, getSimulationContentDigest } from "./stable-digest.js";
 import { TowerDefenseGame } from "./TowerDefenseGame.js";
 import { GAME_COMMAND_JOURNAL_RESULT_LIMITS_INTERNAL, normalizeGameCommandJournalResult } from "./journal-result-internal.js";
 export const GAME_COMMAND_JOURNAL_SCHEMA_VERSION = 6;
@@ -12,6 +12,7 @@ export const GAME_COMMAND_JOURNAL_LIMITS = Object.freeze({
     reasonParams: GAME_COMMAND_JOURNAL_RESULT_LIMITS_INTERNAL.reasonParams
 });
 const STATE_DIGEST_RE = /^tf-state-v1:[0-9a-f]{16}$/;
+const GAME_COMMAND_JOURNAL_MAX_NODES = GAME_COMMAND_JOURNAL_LIMITS.entries * 64 + 100_000;
 function journalArrayItems(value, context) {
     if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
         throw new Error(`${context} must be a plain array.`);
@@ -42,10 +43,19 @@ function journalArrayItems(value, context) {
     }
     return items;
 }
-function assertJournalTotalBudget(value) {
-    canonicalStringify(value, {
+function journalCanonicalMetrics(value) {
+    return canonicalJsonMetrics(value, {
         maxBytes: GAME_COMMAND_JOURNAL_LIMITS.totalBytes,
-        maxNodes: GAME_COMMAND_JOURNAL_LIMITS.entries * 64 + 100_000
+        maxNodes: GAME_COMMAND_JOURNAL_MAX_NODES
+    });
+}
+function assertJournalTotalBudget(value) {
+    journalCanonicalMetrics(value);
+}
+function journalEntryCanonicalMetrics(entry) {
+    return canonicalJsonMetrics(entry, {
+        maxBytes: GAME_COMMAND_JOURNAL_LIMITS.totalBytes,
+        maxNodes: GAME_COMMAND_JOURNAL_MAX_NODES
     });
 }
 function decodeResult(value) {
@@ -130,6 +140,10 @@ export class JournaledGameSession {
     contentDigest;
     entries = [];
     journalSchemaVersion = 1;
+    journalEnvelopeBytes;
+    journalEnvelopeNodes;
+    journalEntryBytes = 0;
+    journalEntryNodes = 0;
     expectedStateDigest;
     faulted = false;
     constructor(game) {
@@ -138,7 +152,9 @@ export class JournaledGameSession {
         this.initialCheckpoint = game.createCheckpoint();
         this.contentDigest = this.initialCheckpoint.contentDigest;
         this.expectedStateDigest = this.initialCheckpoint.stateDigest;
-        assertJournalTotalBudget(detachedJournal(this.initialCheckpoint, this.contentDigest, [], 1));
+        const envelope = journalCanonicalMetrics(detachedJournal(this.initialCheckpoint, this.contentDigest, [], 1));
+        this.journalEnvelopeBytes = envelope.bytes;
+        this.journalEnvelopeNodes = envelope.nodes;
     }
     assertHealthy() {
         if (this.faulted) {
@@ -179,11 +195,28 @@ export class JournaledGameSession {
             postStateDigest: "tf-state-v1:0000000000000000"
         };
         try {
-            assertJournalTotalBudget(detachedJournal(this.initialCheckpoint, this.contentDigest, [...this.entries, capacityProbe], this.journalSchemaVersion));
+            const probe = journalEntryCanonicalMetrics(capacityProbe);
+            this.assertIncrementalCapacity(probe);
         }
         catch {
             this.fault("total byte capacity would be exceeded.");
         }
+    }
+    assertIncrementalCapacity(metrics) {
+        const separatorBytes = this.entries.length;
+        if (this.journalEnvelopeBytes + this.journalEntryBytes + metrics.bytes + separatorBytes
+            > GAME_COMMAND_JOURNAL_LIMITS.totalBytes) {
+            throw new Error("Game command journal total byte capacity would be exceeded.");
+        }
+        if (this.journalEnvelopeNodes + this.journalEntryNodes + metrics.nodes
+            > GAME_COMMAND_JOURNAL_MAX_NODES) {
+            throw new Error("Game command journal total node capacity would be exceeded.");
+        }
+    }
+    refreshJournalEnvelope() {
+        const envelope = journalCanonicalMetrics(detachedJournal(this.initialCheckpoint, this.contentDigest, [], this.journalSchemaVersion));
+        this.journalEnvelopeBytes = envelope.bytes;
+        this.journalEnvelopeNodes = envelope.nodes;
     }
     dispatch(input) {
         this.assertExpectedState();
@@ -196,8 +229,10 @@ export class JournaledGameSession {
         }
         if (!command)
             return invalidGameCommandResult();
-        if (command.schemaVersion > this.journalSchemaVersion)
+        if (command.schemaVersion > this.journalSchemaVersion) {
             this.journalSchemaVersion = command.schemaVersion;
+            this.refreshJournalEnvelope();
+        }
         this.assertLiveCapacity(command);
         let result;
         try {
@@ -218,8 +253,11 @@ export class JournaledGameSession {
                 result: durableResult,
                 postStateDigest
             };
-            assertJournalTotalBudget(detachedJournal(this.initialCheckpoint, this.contentDigest, [...this.entries, entry], this.journalSchemaVersion));
+            const entryMetrics = journalEntryCanonicalMetrics(entry);
+            this.assertIncrementalCapacity(entryMetrics);
             this.entries.push(entry);
+            this.journalEntryBytes += entryMetrics.bytes;
+            this.journalEntryNodes += entryMetrics.nodes;
             this.expectedStateDigest = postStateDigest;
         }
         catch (error) {
@@ -227,6 +265,26 @@ export class JournaledGameSession {
             throw error;
         }
         return result;
+    }
+    /**
+     * O(1) view used by deterministic wrappers that already own this session.
+     * It detaches only the latest accepted entry; complete journal cloning and
+     * budget validation remain exclusive to explicit exportJournal() calls.
+     */
+    getAcceptedTail() {
+        this.assertExpectedState();
+        const entry = this.entries.at(-1);
+        return Object.freeze({
+            entryCount: this.entries.length,
+            ...(entry === undefined ? {} : {
+                entry: Object.freeze({
+                    sequence: entry.sequence,
+                    command: cloneCheckpointJson(entry.command),
+                    result: cloneCheckpointJson(entry.result),
+                    postStateDigest: entry.postStateDigest
+                })
+            })
+        });
     }
     exportJournal() {
         this.assertExpectedState();

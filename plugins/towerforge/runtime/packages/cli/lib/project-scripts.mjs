@@ -74,30 +74,57 @@ export function resolveTowerScriptPath(projectDir, relativePath, { mustExist = f
 
 export function scriptFileRevision(filePath) {
   if (!fs.existsSync(filePath)) return "missing";
-  return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex").slice(0, 20);
+  return scriptBytesRevision(fs.readFileSync(filePath));
+}
+
+function scriptBytesRevision(source) {
+  return createHash("sha256").update(source).digest("hex").slice(0, 20);
 }
 
 export function writeTowerScriptAtomic(projectDir, relativePath, source, { ifRevision } = {}) {
   const definition = parseTowerScriptSource(source);
+  const canonicalSource = `${JSON.stringify(definition, null, 2)}\n`;
+  const nextRevision = scriptBytesRevision(canonicalSource);
   const absolutePath = resolveTowerScriptPath(projectDir, relativePath);
   const revision = scriptFileRevision(absolutePath);
   if (ifRevision !== undefined && ifRevision !== revision) return { ok: false, conflict: true, revision, path: relativePath };
   fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
   const backup = backupProjectEntry(projectDir, absolutePath);
-  const temporary = `${absolutePath}.tmp.${process.pid}`;
-  fs.writeFileSync(temporary, `${JSON.stringify(definition, null, 2)}\n`, "utf8");
-  fs.renameSync(temporary, absolutePath);
-  return { ok: true, path: relativePath, definition, backup, revision: scriptFileRevision(absolutePath), previousRevision: revision };
+  const temporary = `${absolutePath}.tmp.${process.pid}.${process.hrtime.bigint()}`;
+  let committed = false;
+  try {
+    fs.writeFileSync(temporary, canonicalSource, { encoding: "utf8", flag: "wx" });
+    fs.renameSync(temporary, absolutePath);
+    committed = true;
+  } finally {
+    if (!committed) fs.rmSync(temporary, { force: true });
+  }
+  return { ok: true, path: relativePath, definition, backup, revision: nextRevision, previousRevision: revision };
 }
 
-export function restoreTowerScriptWrite(projectDir, relativePath, backup) {
+export function restoreTowerScriptWrite(projectDir, relativePath, backup, { ifRevision } = {}) {
   const absolutePath = resolveTowerScriptPath(projectDir, relativePath);
-  if (backup && fs.existsSync(backup)) {
+  const actualRevision = scriptFileRevision(absolutePath);
+  if (ifRevision !== undefined && actualRevision !== ifRevision) {
+    return { ok: false, conflict: true, restored: false, expectedRevision: ifRevision, actualRevision };
+  }
+  const restoredSource = backup && fs.existsSync(backup) ? fs.readFileSync(backup) : null;
+  const restoredRevision = restoredSource === null ? "missing" : scriptBytesRevision(restoredSource);
+  if (restoredSource !== null) {
     fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
-    fs.copyFileSync(backup, absolutePath);
+    const temporary = `${absolutePath}.restore.${process.pid}.${process.hrtime.bigint()}`;
+    let committed = false;
+    try {
+      fs.writeFileSync(temporary, restoredSource, { flag: "wx" });
+      fs.renameSync(temporary, absolutePath);
+      committed = true;
+    } finally {
+      if (!committed) fs.rmSync(temporary, { force: true });
+    }
   } else {
     fs.rmSync(absolutePath, { force: true });
   }
+  return { ok: true, restored: true, revision: restoredRevision };
 }
 
 export function backupProjectEntry(projectDir, absolutePath) {
