@@ -48,13 +48,17 @@ function replaceTokens(file, values) {
   fs.writeFileSync(file, content, "utf8");
 }
 
+export function isPathOutside(baseDirectory, candidateDirectory, pathApi = path) {
+  const relative = pathApi.relative(baseDirectory, candidateDirectory);
+  return relative !== ""
+    && (pathApi.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${pathApi.sep}`));
+}
+
 function assertSafeOutput(outputDirectory) {
-  const relative = path.relative(root, outputDirectory);
-  if (relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..")) {
+  if (!isPathOutside(root, outputDirectory)) {
     throw new Error("Plugin repository export must be outside the TowerForge source tree.");
   }
-  const reverse = path.relative(outputDirectory, root);
-  if (reverse === "" || (!reverse.startsWith(`..${path.sep}`) && reverse !== "..")) {
+  if (!isPathOutside(outputDirectory, root)) {
     throw new Error("Plugin repository export cannot contain the TowerForge source tree.");
   }
 }

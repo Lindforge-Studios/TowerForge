@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { exportPluginRepository } from "../../scripts/export-codex-plugin-repository.mjs";
+import { exportPluginRepository, isPathOutside } from "../../scripts/export-codex-plugin-repository.mjs";
 import { verifyReleaseTree } from "../../distribution/codex-plugin/scripts/verify-release.mjs";
 
 const outputs = [];
@@ -12,6 +12,12 @@ afterEach(() => {
 });
 
 describe("Codex plugin repository exporter", () => {
+  it("treats a Windows directory on another drive as outside the source tree", () => {
+    expect(isPathOutside("D:\\a\\TowerForge\\TowerForge", "C:\\Users\\runner\\Temp", path.win32)).toBe(true);
+    expect(isPathOutside("D:\\a\\TowerForge", "D:\\a\\TowerForge\\dist", path.win32)).toBe(false);
+    expect(isPathOutside("D:\\a\\TowerForge\\TowerForge", "D:\\a", path.win32)).toBe(true);
+  });
+
   it("produces a complete checksummed mirror tied to one source commit", () => {
     const output = fs.mkdtempSync(path.join(os.tmpdir(), "towerforge-plugin-export-"));
     outputs.push(output);
