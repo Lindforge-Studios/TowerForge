@@ -8,6 +8,10 @@ export interface TowerScriptReferenceSets {
     abilityIds?: Set<string>;
     currencyIds?: Set<string>;
     terrainIds?: Set<string>;
+    markIds?: Set<string>;
+    exposureIds?: Set<string>;
+    reactionIds?: Set<string>;
+    terraformingTransitionIds?: Set<string>;
 }
 export interface TowerScriptValidationIssue {
     scriptId: string;

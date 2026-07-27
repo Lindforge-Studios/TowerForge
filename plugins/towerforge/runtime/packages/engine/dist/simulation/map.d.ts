@@ -3,6 +3,18 @@ import type { GridCoord, GridDefinition, GridPathRoute, GridTile, Terrain } from
 export interface GridMapTerrainOverride extends GridCoord {
     terrain: Terrain;
 }
+export interface GridMapElevationOverride extends GridCoord {
+    elevation: number;
+}
+export declare const ELEVATION_LIMITS: Readonly<{
+    overridesPerMap: 65536;
+    minimum: -1000000;
+    maximum: 1000000;
+}>;
+export declare class GridElevationValidationError extends Error {
+    readonly fieldPath: string;
+    constructor(fieldPath: string, message: string);
+}
 export interface GridMapDefinition {
     id: string;
     width: number;
@@ -15,7 +27,13 @@ export interface GridMapDefinition {
     spawnCoord: GridCoord;
     coreCoord: GridCoord;
     terrainOverrides: GridMapTerrainOverride[];
+    /** Sparse, signed authored elevation. Omitted and zero-valued cells both resolve to 0. */
+    elevationOverrides?: GridMapElevationOverride[];
 }
+/** Read the optional top-level field without evaluating accessors or inherited data. */
+export declare function inspectGridElevationOverrides(definition: unknown): unknown;
+/** Safely detaches and canonicalizes the closed sparse elevation representation. */
+export declare function normalizeGridElevationOverrides(value: unknown, width: number, height: number): GridMapElevationOverride[];
 export declare class GridMap {
     readonly id: string;
     readonly width: number;
@@ -34,6 +52,12 @@ export declare class GridMap {
     clone(): GridMap;
     getTile(coord: GridCoord): GridTile | undefined;
     getBaseTerrain(coord: GridCoord): Terrain | undefined;
+    elevationAt(coord: GridCoord): number | undefined;
+    getBaseElevation(coord: GridCoord): number | undefined;
+    getElevationOverrides(): GridMapElevationOverride[];
+    getEffectiveElevationOverrides(): GridMapElevationOverride[];
+    /** Attach the authoritative simulation-owned runtime projection without copying it. */
+    useRuntimeElevationOverrides(overrides: ReadonlyMap<string, GridMapElevationOverride>): void;
     setTerrain(coord: GridCoord, terrain: Terrain): boolean;
     restoreTerrain(coord: GridCoord): boolean;
     restoreAllTerrain(): void;

@@ -1,4 +1,19 @@
 import { TOWER_TARGET_MODES, type TowerAttackKind } from "../simulation/types.js";
+import {
+  MAX_MODIFIERS_PER_RESOLUTION,
+  MODIFIER_OPERATION_ORDER,
+  MODIFIER_STAGE_ORDER,
+  MODIFIER_TARGETS
+} from "../simulation/modifiers.js";
+import { DAMAGE_TAGS } from "../simulation/damage.js";
+import { TOWER_SCRIPT_EVENT_FIELDS, TOWER_SCRIPT_TARGETS } from "../scripting/schema-descriptor.js";
+import { ARMOR_MATRIX_LIMITS, MARK_LIMITS, REACTION_LIMITS, SHIELD_LIMITS } from "./mechanics.js";
+export { NAVIGATION_MECHANICS_SCHEMA } from "./navigation-mechanics.js";
+export { ELEVATION_MECHANICS_SCHEMA } from "./elevation-mechanics.js";
+export { TERRAFORMING_MECHANICS_SCHEMA } from "./terraforming-mechanics.js";
+export { ROGUELITE_MECHANICS_SCHEMA } from "./roguelite-mechanics.js";
+export { HEROES_MECHANICS_SCHEMA } from "./heroes-mechanics.js";
+export { LOGISTICS_MECHANICS_SCHEMA } from "./logistics-mechanics.js";
 
 /**
  * A machine-readable description of the content schema's closed sets and per-shape field
@@ -42,6 +57,179 @@ export const TARGET_MODE_SCHEMA = Object.freeze({
   legacyAliases: { fastest_ahead: "first (armored first)", largest_hp: "strongest" },
   supportedAttackKinds: ["single", "sniper", "antiair", "splash", "pipeline"] as const,
   tieBreak: "enemy id ascending"
+});
+
+/**
+ * Public, machine-readable R0B contract for the bounded modifier pipeline.
+ * Runtime allowlists and the per-resolution budget are imported directly from
+ * simulation/modifiers.ts so authoring discovery cannot drift from execution.
+ */
+export const MODIFIER_SPEC_SCHEMA = Object.freeze({
+  schemaVersion: 1,
+  requiredFields: ["id", "target", "stage", "operation", "value"] as const,
+  targets: [...MODIFIER_TARGETS],
+  stages: [...MODIFIER_STAGE_ORDER],
+  operations: [...MODIFIER_OPERATION_ORDER],
+  maxPerResolution: MAX_MODIFIERS_PER_RESOLUTION,
+  pipelineOrder: ["base", ...MODIFIER_STAGE_ORDER] as const,
+  withinStageOrder: [...MODIFIER_OPERATION_ORDER, "id_binary_ascending"] as const
+});
+
+/**
+ * Public damage envelope. The pure resolver applies authored armor before per-entity
+ * resistances; shields and HP remain at the entity mutation boundary.
+ */
+export const DAMAGE_PACKET_SCHEMA = Object.freeze({
+  schemaVersion: 1,
+  requiredFields: ["amount", "source", "target"] as const,
+  optionalFields: ["damageType", "tags", "modifiers"] as const,
+  sourceKinds: ["tower", "ability", "tower_script", "status", "enemy", "leak", "reaction"] as const,
+  targetKinds: ["enemy", "tower", "hero", "core"] as const,
+  tags: [...DAMAGE_TAGS],
+  pipelineOrder: [
+    "modifiers",
+    "marks",
+    "armor_matrix",
+    "entity_resistance",
+    "legacy_pierce_only",
+    "shield",
+    "entity_hp",
+    "reactions"
+  ] as const
+});
+
+/**
+ * Public R1 combat-module authoring contract. The compatibility fields at the end preserve the
+ * smaller R1.2a descriptor while the structured sections give Studio/MCP enough information to
+ * build an exact, capability-aware shield editor without duplicating engine rules.
+ */
+export const COMBAT_MECHANICS_SCHEMA = Object.freeze({
+  schemaVersion: 3,
+  moduleId: "combat",
+  supportedModuleSchemaVersions: [1, 2, 3] as const,
+  profile: {
+    additionalProperties: false,
+    optionalFields: ["shields", "damageTypes", "armorTypes", "armorAssignments", "marks"] as const,
+    shields: {
+      additionalProperties: false,
+      targetKinds: ["enemies", "towers"] as const,
+      enemies: "record keyed by existing enemy type id",
+      towers: "record keyed by existing destructible tower type id"
+    }
+  },
+  shieldDefinition: {
+    requiredFields: ["capacity"] as const,
+    optionalFields: ["regeneration"] as const,
+    additionalProperties: false
+  },
+  regeneration: {
+    requiredFields: ["ratePerUnit"] as const,
+    optionalFields: ["delayAfterDamage"] as const,
+    additionalProperties: false
+  },
+  semanticBounds: {
+    capacity: { exclusiveMinimum: 0, maximum: SHIELD_LIMITS.capacity },
+    ratePerUnit: { exclusiveMinimum: 0, maximum: SHIELD_LIMITS.ratePerUnit },
+    delayAfterDamage: { minimum: 0, maximum: SHIELD_LIMITS.delayAfterDamage }
+  },
+  runtimeSnapshot: {
+    path: "snapshot.combat",
+    optionalUnlessActive: true,
+    schemaVersion: 2,
+    legacyShieldOnlySchemaVersion: 1,
+    fields: ["schemaVersion", "shields", "marks"] as const,
+    targetStateFields: ["current", "capacity", "regenerationDelayRemaining"] as const,
+    keysAreRuntimeInstanceIds: true
+  },
+  events: {
+    enemyShieldChanged: TOWER_SCRIPT_EVENT_FIELDS.enemyShieldChanged.filter((field) => field !== "type"),
+    towerShieldChanged: TOWER_SCRIPT_EVENT_FIELDS.towerShieldChanged.filter((field) => field !== "type"),
+    causes: ["damage", "regeneration", "script"] as const
+  },
+  towerScript: {
+    minimumSchemaVersion: 3,
+    events: ["enemyShieldChanged", "towerShieldChanged"] as const,
+    actions: ["restoreEnemyShield", "restoreTowerShield"] as const,
+    enemyTargets: [...TOWER_SCRIPT_TARGETS.enemy],
+    towerTargets: [...TOWER_SCRIPT_TARGETS.tower],
+    amount: "finite expression >= 0; clamps at capacity; never creates a missing shield"
+  },
+  damageTypes: {
+    minimumModuleSchemaVersion: 2,
+    shape: "record keyed by author-defined damage type id",
+    definition: { requiredFields: ["label"] as const, additionalProperties: false },
+    fallbackDamageTypeId: "physical"
+  },
+  armorTypes: {
+    minimumModuleSchemaVersion: 2,
+    shape: "record keyed by author-defined armor type id",
+    definition: {
+      requiredFields: ["label", "multipliers"] as const,
+      optionalFields: ["defaultMultiplier"] as const,
+      additionalProperties: false,
+      multipliers: "record keyed only by declared damage type id"
+    }
+  },
+  armorAssignments: {
+    minimumModuleSchemaVersion: 2,
+    additionalProperties: false,
+    targetKinds: ["enemies"] as const,
+    enemies: "record keyed by existing enemy type id with a declared armor type id value"
+  },
+  armorMatrix: {
+    limits: ARMOR_MATRIX_LIMITS,
+    order: "source modifiers -> marks -> armor matrix -> entity resistance -> legacy pierce_only adapter -> shield -> HP",
+    armorPiercingCompatibility: "armor_piercing bypasses only legacy pierce_only and never bypasses the authored matrix"
+  },
+  marks: {
+    minimumModuleSchemaVersion: 3,
+    additionalProperties: false,
+    limits: MARK_LIMITS,
+    definitions: "record keyed by author-defined mark id",
+    definitionRequiredFields: ["label", "duration", "maxStacks", "multiplier", "consumePolicy"] as const,
+    definitionOptionalFields: ["damageTypes"] as const,
+    consumePolicies: ["retain", "consume_one", "consume_all"] as const,
+    bindingKinds: ["towers", "abilities", "towerScripts"] as const,
+    applicationRequiredFields: ["markId"] as const,
+    applicationOptionalFields: ["stacks"] as const
+  },
+
+  // R1.2a compatibility view. New consumers should prefer the structured sections above.
+  profileFields: ["shields", "damageTypes", "armorTypes", "armorAssignments", "marks"] as const,
+  targetKinds: ["enemies", "towers"] as const,
+  definitionFields: ["capacity", "regeneration"] as const,
+  regenerationFields: ["ratePerUnit", "delayAfterDamage"] as const,
+  limits: SHIELD_LIMITS,
+  runtimeStateFields: ["current", "capacity", "regenerationDelayRemaining"] as const,
+  changeCauses: ["damage", "regeneration", "script"] as const
+});
+
+/** @deprecated Use COMBAT_MECHANICS_SCHEMA. */
+export const COMBAT_SHIELD_SCHEMA = COMBAT_MECHANICS_SCHEMA;
+
+/** Public closed authoring contract for the independently versioned reactions v1 module. */
+export const REACTIONS_MECHANICS_SCHEMA = Object.freeze({
+  schemaVersion: 1,
+  moduleId: "reactions",
+  supportedModuleSchemaVersions: [1] as const,
+  dependency: {
+    moduleId: "combat",
+    supportedModuleSchemaVersions: [2, 3] as const
+  },
+  profile: {
+    additionalProperties: false,
+    requiredFields: ["reactions"] as const,
+    optionalFields: ["exposures"] as const
+  },
+  limits: REACTION_LIMITS,
+  runtimeSnapshot: {
+    path: "snapshot.reactions",
+    schemaVersion: 1,
+    optionalUnlessActive: true
+  },
+  towerScript: {
+    minimumSchemaVersion: 5
+  }
 });
 
 // Every damaging kind may additionally carry `damageType?: string` and `statusOnHit?: {...}`;
@@ -142,7 +330,13 @@ export const TOWER_PIPELINE_SCHEMA = Object.freeze({
   effects: {
     damage: { amount: ">=0", amountByLevel: "number[] optional", damageType: "string optional", armorPiercing: "boolean optional" },
     status: { status: "StatusEffectSpec" },
-    resource: { resources: "ResourceBag" }
+    resource: { resources: "ResourceBag" },
+    displacement: {
+      kind: "displacement",
+      mode: "push | pull",
+      distance: "positive safe integer <= 8",
+      stopAtBlocker: "boolean"
+    }
   }
 });
 
@@ -193,6 +387,12 @@ export const ABILITY_EFFECT_SCHEMA = {
   damage: { requiredFields: [{ name: "amount", kind: "number", positive: true } satisfies FieldConstraint] },
   status: {
     note: "status: { stun?: number; slow?: { factor: number (<1); duration: number }; poison?: { dps: number; duration: number }; slowAffectsClasses?: ('ground'|'flying')[] } — slow defaults to ground; stun/poison retain all-class behavior."
+  },
+  displacement: {
+    kind: "displacement",
+    mode: "push | pull",
+    distance: "positive safe integer <= 8",
+    stopAtBlocker: "boolean"
   }
 };
 

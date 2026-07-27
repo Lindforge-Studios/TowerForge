@@ -148,6 +148,7 @@ function listMutableProjectFiles() {
   const files = [
     path.join(PROJECT_DIR, "project.json"),
     path.join(CONTENT_DIR, "balance.json"),
+    path.join(CONTENT_DIR, "mechanics.json"),
     path.join(CONTENT_DIR, "visuals.json"),
     path.join(CONTENT_DIR, "story-comics.json"),
     path.join(CONTENT_DIR, "battle-backgrounds.json"),
@@ -388,6 +389,51 @@ function jsonResp(res, status, data) {
     "Cache-Control": "no-store",
   });
   res.end(body);
+}
+
+const MECHANICS_PRIVATE_RESPONSE_KEYS = new Set([
+  "projectDir",
+  "backup",
+  "backups",
+  "backupPath",
+  "backupPaths",
+  "writtenFiles",
+  "stagedFiles"
+]);
+
+/** Keep the browser authoring facade free of local paths and rollback internals. */
+function sanitizeMechanicsResponse(value, depth = 0) {
+  if (depth > 24) return "[truncated]";
+  if (typeof value === "string") return value.split(PROJECT_DIR).join("[project]");
+  if (Array.isArray(value)) return value.map((item) => sanitizeMechanicsResponse(item, depth + 1));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => !(depth === 0 && MECHANICS_PRIVATE_RESPONSE_KEYS.has(key)))
+    .map(([key, item]) => [key, sanitizeMechanicsResponse(item, depth + 1)]));
+}
+
+function mechanicsErrorResponse(error) {
+  const code = typeof error?.code === "string" ? error.code : "mechanics_request_failed";
+  const status = code === "revision_required"
+    ? 428
+    : ["revision_conflict", "stale_revision", "conflict", "commit_conflict", "rollback_conflict"].includes(code)
+      ? 409
+      : ["project_migration_required", "mechanics_validation_failed", "validation", "module_unavailable", "module_unknown", "candidate_validation_failed", "post_write_validation_failed"].includes(code)
+        ? 422
+        : ["invalid_request", "malformed_request"].includes(code)
+          ? 400
+          : 500;
+  const response = sanitizeMechanicsResponse({
+    code,
+    error: error instanceof Error ? error.message : String(error),
+    guidance: error?.guidance,
+    issues: error?.issues,
+    validation: error?.validation
+  });
+  if (code === "project_migration_required" && !response.guidance) {
+    response.guidance = "Migrate the project to schema v2 before enabling opt-in mechanics.";
+  }
+  return { status, response };
 }
 
 // ── Origin/Host guard ─────────────────────────────────────────────────────────
@@ -1103,6 +1149,202 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // ── Mechanics Hub: the Studio delegates all reads and writes to the same guarded
+  // MCP authoring contract used by agents. The browser never receives filesystem paths or
+  // backup implementation details.
+  if (req.method === "GET" && pathname === "/api/mechanics/capabilities") {
+    try {
+      const missionId = url.searchParams.get("missionId") || undefined;
+      const result = await callTool("get_capabilities", { projectDir: PROJECT_DIR, missionId }, { defaultProjectDir: PROJECT_DIR });
+      return jsonResp(res, 200, sanitizeMechanicsResponse(result));
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status, failure.response);
+    }
+  }
+
+  // The campaign editor has its own guarded four-file authoring boundary. It intentionally does
+  // not pass through the generic mechanics or project-save routes.
+  if (req.method === "GET" && pathname === "/api/campaign") {
+    try {
+      const result = await callTool("get_campaign", { projectDir: PROJECT_DIR }, { defaultProjectDir: PROJECT_DIR });
+      return jsonResp(res, 200, sanitizeMechanicsResponse(result));
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status, failure.response);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/campaign/preview") {
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { code: "malformed_request", error: "Invalid JSON body" }); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return jsonResp(res, 400, { code: "invalid_request", error: "Campaign preview request must be a JSON object." });
+    }
+    try {
+      const result = await callTool("preview_campaign", { ...body, projectDir: PROJECT_DIR }, { defaultProjectDir: PROJECT_DIR });
+      return jsonResp(res, 200, sanitizeMechanicsResponse(result));
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/campaign/apply") {
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { code: "malformed_request", error: "Invalid JSON body" }); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return jsonResp(res, 400, { code: "invalid_request", error: "Campaign apply request must be a JSON object." });
+    }
+    if (typeof body.ifRevision !== "string" || !body.ifRevision) {
+      return jsonResp(res, 428, {
+        code: "revision_required",
+        error: "Campaign apply requires ifRevision returned by preview."
+      });
+    }
+    try {
+      const result = await callTool("apply_campaign", { ...body, projectDir: PROJECT_DIR }, { defaultProjectDir: PROJECT_DIR });
+      return jsonResp(res, 200, sanitizeMechanicsResponse(result));
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/mechanics/recipe") {
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { code: "malformed_request", error: "Invalid JSON body" }); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return jsonResp(res, 400, { code: "invalid_request", error: "Mechanics recipe request must be a JSON object." });
+    }
+    const keys = Object.keys(body).sort();
+    if (keys.length !== 2 || keys[0] !== "parameters" || keys[1] !== "recipeId") {
+      return jsonResp(res, 400, {
+        code: "invalid_request",
+        error: "Mechanics recipe request accepts exactly recipeId and parameters."
+      });
+    }
+    if (typeof body.recipeId !== "string" || !body.recipeId
+      || !body.parameters || typeof body.parameters !== "object" || Array.isArray(body.parameters)) {
+      return jsonResp(res, 400, {
+        code: "invalid_request",
+        error: "Mechanics recipe request requires a recipeId and closed parameters object."
+      });
+    }
+    try {
+      const result = await callTool("get_recipe", {
+        collection: "mechanics",
+        recipeId: body.recipeId,
+        parameters: body.parameters
+      }, { defaultProjectDir: PROJECT_DIR });
+      return jsonResp(res, 200, sanitizeMechanicsResponse(result));
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/navigation/analyze") {
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { code: "malformed_request", error: "Invalid JSON body" }); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return jsonResp(res, 400, { code: "invalid_request", error: "Navigation analysis request must be a JSON object." });
+    }
+    try {
+      const result = await callTool(
+        "analyze_navigation",
+        { ...body, projectDir: PROJECT_DIR },
+        { defaultProjectDir: PROJECT_DIR }
+      );
+      return jsonResp(res, 200, sanitizeMechanicsResponse(result));
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/elevation/line-of-sight/analyze") {
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { code: "malformed_request", error: "Invalid JSON body" }); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return jsonResp(res, 400, { code: "invalid_request", error: "Line-of-sight analysis request must be a JSON object." });
+    }
+    if (typeof body.ifRevision !== "string" || !body.ifRevision) {
+      return jsonResp(res, 428, {
+        code: "revision_required",
+        error: "Line-of-sight analysis requires the revision returned by mechanics preview."
+      });
+    }
+    try {
+      const result = await callTool(
+        "analyze_line_of_sight",
+        { ...body, projectDir: PROJECT_DIR },
+        { defaultProjectDir: PROJECT_DIR }
+      );
+      return jsonResp(res, 200, sanitizeMechanicsResponse(result));
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      if (/revision|stale|conflict/i.test(error instanceof Error ? error.message : String(error))) {
+        failure.response.code = "revision_conflict";
+        return jsonResp(res, 409, failure.response);
+      }
+      return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
+    }
+  }
+
+  if (req.method === "POST" && ["/api/maps/elevation/preview", "/api/maps/elevation/apply"].includes(pathname)) {
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { code: "malformed_request", error: "Invalid JSON body" }); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return jsonResp(res, 400, { code: "invalid_request", error: "Elevation request must be a JSON object." });
+    }
+    const applying = pathname.endsWith("/apply");
+    if (applying && (typeof body.ifRevision !== "string" || !body.ifRevision)) {
+      return jsonResp(res, 428, {
+        code: "revision_required",
+        error: "Elevation apply requires the revision returned by preview."
+      });
+    }
+    try {
+      const toolName = applying ? "apply_map_elevations" : "preview_map_elevations";
+      const result = await callTool(toolName, { ...body, projectDir: PROJECT_DIR }, { defaultProjectDir: PROJECT_DIR });
+      return jsonResp(res, 200, sanitizeMechanicsResponse(result));
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status, failure.response);
+    }
+  }
+
+  if (req.method === "POST" && ["/api/mechanics/preview", "/api/mechanics/apply"].includes(pathname)) {
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { code: "malformed_request", error: "Invalid JSON body" }); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return jsonResp(res, 400, { code: "invalid_request", error: "Mechanics request must be a JSON object." });
+    }
+    const applying = pathname.endsWith("/apply");
+    if (applying && (typeof body.ifRevision !== "string" || !body.ifRevision)) {
+      return jsonResp(res, 428, {
+        code: "revision_required",
+        error: "Apply requires the revision returned by mechanics preview."
+      });
+    }
+    try {
+      const toolName = applying ? "apply_mechanics_module" : "preview_mechanics_module";
+      const result = await callTool(toolName, { ...body, projectDir: PROJECT_DIR }, { defaultProjectDir: PROJECT_DIR });
+      return jsonResp(res, 200, sanitizeMechanicsResponse(result));
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status, failure.response);
+    }
+  }
+
   if (req.method === "GET" && pathname === "/api/project/tree") {
     try { return jsonResp(res, 200, listProjectTree(PROJECT_DIR)); }
     catch (e) { return jsonResp(res, 500, { error: e.message }); }
@@ -1178,7 +1420,11 @@ const server = http.createServer(async (req, res) => {
       const collection = url.searchParams.get("collection");
       const files = loadProjectFiles(PROJECT_DIR);
       const context = contentRecipeContext(files);
-      const recipes = listContentRecipes(collection).map((item) => materializeContentRecipe(collection, item.id, context));
+      const recipes = listContentRecipes(collection).map((item) => (
+        item.parameterSchema
+          ? item
+          : materializeContentRecipe(collection, item.id, context)
+      ));
       return jsonResp(res, 200, { collection, recipes });
     } catch (error) {
       return jsonResp(res, 400, { error: error instanceof Error ? error.message : String(error) });
@@ -1345,9 +1591,23 @@ const server = http.createServer(async (req, res) => {
         writeJsonAtomic(buildTargetsPath, body.buildTargets);
       }
 
+      let manifestChanged = false;
       if (body.manifest !== undefined) {
-        backupFile(path.join(PROJECT_DIR, "project.json"));
-        writeJsonAtomic(path.join(PROJECT_DIR, "project.json"), body.manifest);
+        const manifestPath = path.join(PROJECT_DIR, "project.json");
+        const authoredManifest = readJson(manifestPath);
+        const normalizedManifest = loadProjectFiles(PROJECT_DIR).manifest;
+        if (JSON.stringify(body.manifest) !== JSON.stringify(normalizedManifest)) {
+          const candidate = { ...body.manifest };
+          // A legacy project may normalize to a newer runtime schema without having been
+          // migrated on disk. Ordinary Studio edits must preserve that authored version;
+          // mechanics activation owns the explicit v3 upgrade transaction in a later slice.
+          if (candidate.schemaVersion === normalizedManifest.schemaVersion) {
+            candidate.schemaVersion = authoredManifest.schemaVersion ?? candidate.schemaVersion;
+          }
+          backupFile(manifestPath);
+          writeJsonAtomic(manifestPath, candidate);
+          manifestChanged = true;
+        }
       }
 
       const response = { ok: true, newHash: projectHash() };
@@ -1363,7 +1623,7 @@ const server = http.createServer(async (req, res) => {
           battleBackgrounds: body.battleBackgrounds !== undefined,
           mapSources: body.mapSources !== undefined,
           buildTargets: body.buildTargets !== undefined,
-          manifest: body.manifest !== undefined
+          manifest: manifestChanged
         }
       });
       return jsonResp(res, 200, response);

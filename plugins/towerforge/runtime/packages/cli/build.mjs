@@ -66,6 +66,7 @@ try {
 
   await loadEngine();
   const files = loadProjectFiles(PROJECT_DIR);
+  const initialGridKind = resolveInitialGridKind(files);
   const tileCoverage = projectTileCoverage(files);
   if (!tileCoverage.ok) {
     const error = new Error(`Build stopped because ${tileCoverage.missingCount} reachable tileset signature(s) are missing.`);
@@ -86,6 +87,12 @@ try {
 
   const renderer = target.renderer === "phaser" ? "phaser" : "canvas";
   copyDir(path.join(repoRoot, "packages", "engine", "dist"), path.join(outDir, "engine"));
+  const playerRuntimeSource = path.join(repoRoot, "packages", "player-runtime", "src");
+  const playerRuntimeOutput = path.join(outDir, "player-runtime");
+  fs.mkdirSync(playerRuntimeOutput, { recursive: true });
+  for (const fileName of ["index.mjs", "player-profile-store.mjs"]) {
+    fs.copyFileSync(path.join(playerRuntimeSource, fileName), path.join(playerRuntimeOutput, fileName));
+  }
   // Renderer dir ships for both players — the canvas player needs index.mjs, both need audio.mjs.
   copyDir(path.join(repoRoot, "packages", "renderer", "src"), path.join(outDir, "renderer"));
   if (renderer === "phaser") {
@@ -104,14 +111,15 @@ try {
     worldMap: files.worldMap,
     maps: files.maps,
     scripts: files.scripts,
+    ...(files.mechanicsAuthored ? { mechanics: files.mechanics } : {}),
     visuals: files.visuals,
     storyComics: files.storyComics,
     battleBackgrounds: files.battleBackgrounds,
     buildTarget: target
   });
-  fs.writeFileSync(path.join(outDir, "index.html"), htmlTemplate(files.manifest, target, renderer), "utf8");
+  fs.writeFileSync(path.join(outDir, "index.html"), htmlTemplate(files.manifest, target, renderer, initialGridKind), "utf8");
   fs.writeFileSync(path.join(outDir, "styles.css"), cssTemplate(target), "utf8");
-  fs.writeFileSync(path.join(outDir, "boot.js"), bootRecoveryTemplate(), "utf8");
+  fs.writeFileSync(path.join(outDir, "boot.js"), bootRecoveryTemplate(files.manifest, target, files.storyComics), "utf8");
   fs.writeFileSync(path.join(outDir, "player.mjs"), renderer === "phaser" ? phaserPlayerTemplate() : playerTemplate(), "utf8");
   fs.writeFileSync(path.join(outDir, "manifest.webmanifest"), JSON.stringify(webManifest(files.manifest, target), null, 2) + "\n", "utf8");
 
@@ -139,12 +147,13 @@ try {
       worldMap: files.worldMap,
       maps: files.maps,
       scripts: files.scripts,
+      ...(files.mechanicsAuthored ? { mechanics: files.mechanics } : {}),
       visuals: embedVisualAssets(PROJECT_DIR, files.visuals),
       storyComics: files.storyComics,
       battleBackgrounds: files.battleBackgrounds,
       buildTarget: target
     };
-    fs.writeFileSync(singleFilePath, singleFileHtml(outDir, files.manifest, target, renderer, embeddedProject), "utf8");
+    fs.writeFileSync(singleFilePath, singleFileHtml(outDir, files.manifest, target, renderer, embeddedProject, initialGridKind), "utf8");
   }
 
   // Phaser now shares topology and terrain tileset resolution with Canvas. Entity sprites still use
@@ -258,20 +267,20 @@ function mimeType(filePath) {
   })[ext] ?? "application/octet-stream";
 }
 
-function singleFileHtml(outDir, manifest, target, renderer, projectData) {
+function singleFileHtml(outDir, manifest, target, renderer, projectData, initialGridKind) {
   const virtual = new Map([
     [path.resolve(outDir, "project-data.js"), `export default ${JSON.stringify(projectData)};\n`]
   ]);
   const entryPath = path.resolve(outDir, "player.mjs");
   const entry = rewriteModuleImports(entryPath, outDir, virtual, new Map(), []);
-  let html = htmlTemplate(manifest, target, renderer);
+  let html = htmlTemplate(manifest, target, renderer, initialGridKind);
   html = html.replace(/\s*<link rel="manifest"[^>]*>/, "");
   html = html.replace('  <link rel="stylesheet" href="./styles.css">', `  <style>${escapeInlineStyle(cssTemplate(target))}</style>`);
   if (renderer === "phaser") {
     const phaser = fs.readFileSync(path.join(outDir, "vendor", "phaser.min.js"), "utf8");
     html = html.replace('  <script src="./vendor/phaser.min.js"></script>', `  <script>${escapeInlineScript(phaser)}</script>`);
   }
-  html = html.replace('  <script src="./boot.js"></script>', `  <script>${escapeInlineScript(bootRecoveryTemplate())}</script>`);
+  html = html.replace('  <script src="./boot.js"></script>', `  <script>${escapeInlineScript(bootRecoveryTemplate(manifest, target, projectData.storyComics))}</script>`);
   html = html.replace('  <script type="module" src="./player.mjs"></script>', `  <script type="module">${escapeInlineScript(entry)}</script>`);
   return html;
 }
@@ -313,11 +322,19 @@ function webManifest(manifest, target) {
   };
 }
 
-function htmlTemplate(manifest, target, renderer = "canvas") {
+function resolveInitialGridKind(project) {
+  const missions = project.balance?.missions ?? {};
+  const missionId = project.balance?.defaultMissionId ?? Object.keys(missions)[0];
+  const mapId = missions[missionId]?.mapId;
+  return project.maps?.[mapId]?.grid?.kind === "square" ? "square" : "hex";
+}
+
+function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "hex") {
   const title = esc(target.appTitle ?? manifest.name ?? "TowerForge TD");
+  const battlefieldKind = initialGridKind === "square" ? "Square" : "Hex";
   const playfield = renderer === "phaser"
-    ? `<div id="playfield" tabindex="0" role="application" aria-label="Hex battlefield. Use arrow keys to move the tile cursor and Enter to act."></div>`
-    : `<canvas id="playfield" tabindex="0" role="application" aria-label="Hex battlefield. Use arrow keys to move the tile cursor and Enter to act."></canvas>`;
+    ? `<div id="playfield" tabindex="0" role="application" aria-label="${battlefieldKind} battlefield. Use arrow keys to move the tile cursor and Enter to act."></div>`
+    : `<canvas id="playfield" tabindex="0" role="application" aria-label="${battlefieldKind} battlefield. Use arrow keys to move the tile cursor and Enter to act."></canvas>`;
   const phaserScript = renderer === "phaser" ? `\n  <script src="./vendor/phaser.min.js"></script>` : "";
   return `<!doctype html>
 <html lang="en">
@@ -369,6 +386,20 @@ function htmlTemplate(manifest, target, renderer = "canvas") {
         <label class="speed">SFX <input id="sfx-volume" type="range" min="0" max="1" step="0.05" value="0.5"><span id="sfx-volume-label">50%</span></label>
         <label class="speed">Music <input id="music-volume" type="range" min="0" max="1" step="0.05" value="0.35"><span id="music-volume-label">35%</span></label>
         <div id="ability-bar" class="ability-bar"></div>
+        <section id="roguelite-status" class="roguelite-status" aria-label="Tower synergies" hidden></section>
+        <section id="wave-draft" class="roguelite-status" aria-label="Wave draft" hidden></section>
+        <section id="artifact-inventory" class="roguelite-status" aria-label="Artifact inventory" hidden></section>
+        <section id="logistics-status" class="roguelite-status" aria-label="Power grid" hidden></section>
+        <section id="campaign-run-panel" class="campaign-run-panel" aria-label="Campaign run" hidden>
+          <strong>Campaign run</strong>
+          <span id="campaign-run-summary"></span>
+          <div id="campaign-run-nodes" class="campaign-run-nodes"></div>
+          <div class="campaign-run-actions">
+            <button id="campaign-run-export" type="button">Export run</button>
+            <button id="campaign-run-import" type="button">Import run</button>
+            <input id="campaign-run-file" type="file" accept="application/json,.json" hidden>
+          </div>
+        </section>
         <section id="meta-panel" class="meta-panel" aria-label="Permanent upgrades" hidden>
           <div class="meta-title">Forge upgrades <span id="meta-resources"></span></div>
           <div id="meta-upgrades" class="meta-upgrades"></div>
@@ -408,7 +439,10 @@ function htmlTemplate(manifest, target, renderer = "canvas") {
 `;
 }
 
-function bootRecoveryTemplate() {
+function bootRecoveryTemplate(manifest = {}, target = {}, storyComics = {}) {
+  const scope = target.appId || manifest.name || "game";
+  const profileKey = `towerforge:progress:${scope}`;
+  const storyNamespace = `${storyComics.seenStoragePrefix || "story_seen_"}${scope}:`;
   return `(() => {
   const reveal = (reason) => {
     const overlay = document.getElementById("boot-error");
@@ -421,7 +455,7 @@ function bootRecoveryTemplate() {
       try {
         for (let i = localStorage.length - 1; i >= 0; i -= 1) {
           const key = localStorage.key(i) || "";
-          if (key.startsWith("towerforge:progress:") || key.startsWith("story_seen_")) localStorage.removeItem(key);
+          if (key === ${JSON.stringify(profileKey)} || key.startsWith(${JSON.stringify(storyNamespace)})) localStorage.removeItem(key);
         }
       } catch {}
       location.reload();
@@ -443,12 +477,208 @@ function cssTemplate(target) {
 body{overflow:hidden;overscroll-behavior:none;touch-action:manipulation;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
 .hud{padding-top:calc(12px + env(safe-area-inset-top))}
 .panel{padding-bottom:calc(14px + env(safe-area-inset-bottom))}
-button,select,input{font:inherit}button,select{border:1px solid var(--border);border-radius:6px;background:#111611;color:var(--text);padding:8px 10px}button{cursor:pointer}button:hover{border-color:var(--accent)}button:focus-visible,select:focus-visible,input:focus-visible,#playfield:focus-visible{outline:2px solid var(--accent);outline-offset:2px}button[aria-pressed="true"]{border-color:var(--danger);color:var(--danger)}#app{height:100%;display:flex;flex-direction:column}.hud{display:flex;gap:18px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface)}h1{font-size:18px;line-height:1.1;margin:0;color:var(--accent);letter-spacing:0}p{margin:4px 0 0;color:var(--muted)}.controls{margin-left:auto;display:flex;gap:10px;align-items:end;flex-wrap:wrap}.controls label{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:12px}.play-shell{min-height:0;flex:1;display:grid;grid-template-columns:minmax(0,1fr) 280px}#playfield{width:100%;height:100%;display:block;background:#101410;overflow:hidden;background-position:center;background-size:cover;background-repeat:no-repeat}#playfield canvas{display:block}.panel{border-left:1px solid var(--border);background:var(--panel);padding:14px;display:flex;flex-direction:column;gap:10px;overflow:auto}.stat{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)}.stat span{color:var(--muted)}.stat strong{font-variant-numeric:tabular-nums}.targeting{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:center;color:var(--muted);font-size:13px}.targeting select{min-width:0}.speed{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;color:var(--muted);margin-top:8px}#message{min-height:42px;padding:10px;border:1px solid var(--border);border-radius:6px;background:#161a16;color:var(--text)}.ability-bar{display:flex;flex-wrap:wrap;gap:6px}.ability-bar:empty{display:none}.ability-bar button{padding:6px 9px;font-size:12px}.ability-bar button.armed{border-color:var(--accent);color:var(--accent)}.ability-bar button:disabled{opacity:.45;cursor:default}.meta-panel{border-top:1px solid var(--border);padding-top:10px}.meta-title{display:flex;justify-content:space-between;gap:8px;color:var(--muted);font-size:12px;text-transform:uppercase}.meta-upgrades{display:grid;gap:6px;margin-top:8px}.meta-upgrade{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center;padding:7px;border:1px solid var(--border);border-radius:6px;background:#161a16}.meta-upgrade span{min-width:0;font-size:12px}.meta-upgrade button{padding:5px 7px;font-size:11px}.boot-error,.story-overlay{position:fixed;inset:0;z-index:20;display:grid;place-items:center;padding:24px;background:#0b0e0bdd}.boot-error[hidden],.story-overlay[hidden]{display:none}.boot-error-panel{width:min(460px,100%);padding:22px;border:1px solid var(--danger);border-radius:6px;background:var(--surface);box-shadow:0 20px 60px #0009}.boot-error-panel h2{margin:0 0 8px;font-size:20px}.boot-error-actions,.story-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}.story-panel{width:min(820px,100%);max-height:min(680px,90vh);display:grid;grid-template-columns:minmax(0,1.2fr) minmax(280px,.8fr);overflow:hidden;border:1px solid var(--border);border-radius:6px;background:var(--surface);box-shadow:0 20px 60px #0009}.story-art{min-height:360px;background-position:center;background-size:cover;background-repeat:no-repeat;background-color:#101410}.story-copy{padding:24px;align-self:end}.story-copy h2{margin:0 0 18px;font-size:24px}.story-speaker{min-height:18px;color:var(--accent);font-weight:700}.story-text{color:var(--text);font-size:16px;line-height:1.55;white-space:pre-wrap}@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}}@media(max-width:820px){body{overflow:auto}.hud{align-items:flex-start;flex-direction:column}.controls{margin-left:0}.play-shell{grid-template-columns:1fr;grid-template-rows:65vh auto}.panel{border-left:0;border-top:1px solid var(--border)}.story-panel{grid-template-columns:1fr}.story-art{min-height:220px}.story-copy{padding:18px}}`;
+.campaign-run-node{flex-wrap:wrap}.campaign-run-choices{flex-basis:100%;display:grid;gap:4px}.campaign-run-choice{display:flex;justify-content:space-between;gap:6px;padding:5px 7px;font-size:11px}
+button,select,input{font:inherit}button,select{border:1px solid var(--border);border-radius:6px;background:#111611;color:var(--text);padding:8px 10px}button{cursor:pointer}button:hover{border-color:var(--accent)}button:focus-visible,select:focus-visible,input:focus-visible,#playfield:focus-visible{outline:2px solid var(--accent);outline-offset:2px}button[aria-pressed="true"]{border-color:var(--danger);color:var(--danger)}#app{height:100%;display:flex;flex-direction:column}.hud{display:flex;gap:18px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface)}h1{font-size:18px;line-height:1.1;margin:0;color:var(--accent);letter-spacing:0}p{margin:4px 0 0;color:var(--muted)}.controls{margin-left:auto;display:flex;gap:10px;align-items:end;flex-wrap:wrap}.controls label{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:12px}.play-shell{min-height:0;flex:1;display:grid;grid-template-columns:minmax(0,1fr) 280px}#playfield{width:100%;height:100%;display:block;background:#101410;overflow:hidden;background-position:center;background-size:cover;background-repeat:no-repeat;touch-action:none}#playfield canvas{display:block}.panel{border-left:1px solid var(--border);background:var(--panel);padding:14px;display:flex;flex-direction:column;gap:10px;overflow:auto}.stat{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)}.stat span{color:var(--muted)}.stat strong{font-variant-numeric:tabular-nums}.targeting{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:center;color:var(--muted);font-size:13px}.targeting select{min-width:0}.speed{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;color:var(--muted);margin-top:8px}#message{min-height:42px;padding:10px;border:1px solid var(--border);border-radius:6px;background:#161a16;color:var(--text)}.ability-bar{display:flex;flex-wrap:wrap;gap:6px}.ability-bar:empty{display:none}.ability-bar button{padding:6px 9px;font-size:12px}.ability-bar button.armed{border-color:var(--accent);color:var(--accent)}.ability-bar button:disabled{opacity:.45;cursor:default}.roguelite-status{display:grid;gap:5px;border-top:1px solid var(--border);padding-top:10px}.roguelite-status[hidden]{display:none}.roguelite-status strong{font-size:12px;color:var(--accent)}.roguelite-status span{font-size:12px;color:var(--muted)}.campaign-run-panel{display:grid;gap:7px;border-top:1px solid var(--border);padding-top:10px}.campaign-run-panel[hidden]{display:none}.campaign-run-panel>strong{font-size:12px;color:var(--accent)}.campaign-run-panel>span,.campaign-run-nodes{font-size:12px;color:var(--muted)}.campaign-run-nodes{display:grid;gap:4px}.campaign-run-node{display:flex;justify-content:space-between;gap:8px}.campaign-run-node[data-state="available"]{color:var(--accent)}.campaign-run-node[data-state="current"]{color:var(--text);font-weight:700}.campaign-run-actions{display:flex;gap:6px;flex-wrap:wrap}.campaign-run-actions button{padding:5px 7px;font-size:11px}.meta-panel{border-top:1px solid var(--border);padding-top:10px}.meta-title{display:flex;justify-content:space-between;gap:8px;color:var(--muted);font-size:12px;text-transform:uppercase}.meta-upgrades{display:grid;gap:6px;margin-top:8px}.meta-upgrade{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center;padding:7px;border:1px solid var(--border);border-radius:6px;background:#161a16}.meta-upgrade span{min-width:0;font-size:12px}.meta-upgrade button{padding:5px 7px;font-size:11px}.boot-error,.story-overlay{position:fixed;inset:0;z-index:20;display:grid;place-items:center;padding:24px;background:#0b0e0bdd}.boot-error[hidden],.story-overlay[hidden]{display:none}.boot-error-panel{width:min(460px,100%);padding:22px;border:1px solid var(--danger);border-radius:6px;background:var(--surface);box-shadow:0 20px 60px #0009}.boot-error-panel h2{margin:0 0 8px;font-size:20px}.boot-error-actions,.story-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}.story-panel{width:min(820px,100%);max-height:min(680px,90vh);display:grid;grid-template-columns:minmax(0,1.2fr) minmax(280px,.8fr);overflow:hidden;border:1px solid var(--border);border-radius:6px;background:var(--surface);box-shadow:0 20px 60px #0009}.story-art{min-height:360px;background-position:center;background-size:cover;background-repeat:no-repeat;background-color:#101410}.story-copy{padding:24px;align-self:end}.story-copy h2{margin:0 0 18px;font-size:24px}.story-speaker{min-height:18px;color:var(--accent);font-weight:700}.story-text{color:var(--text);font-size:16px;line-height:1.55;white-space:pre-wrap}@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}}@media(max-width:820px){body{overflow:auto}.hud{align-items:flex-start;flex-direction:column}.controls{margin-left:0}.play-shell{grid-template-columns:1fr;grid-template-rows:65vh auto}.panel{border-left:0;border-top:1px solid var(--border)}.story-panel{grid-template-columns:1fr}.story-art{min-height:220px}.story-copy{padding:18px}}`;
+}
+
+function playerProfileRuntimeTemplate() {
+  return `// TOWERFORGE_PROFILE_RUNTIME_BEGIN
+const playerProfileCodec = Object.freeze({
+  createEmptyPlayerProfile,
+  parsePlayerProfileJson,
+  serializePlayerProfile
+});
+const playerProfileKey = derivePlayerProfileStorageKey({
+  appId: project.buildTarget && project.buildTarget.appId,
+  manifestName: project.manifest && project.manifest.name
+});
+const playerProfileScope = playerProfileKey.slice("towerforge:progress:".length);
+
+function createBrowserProfileStoragePort() {
+  let storage;
+  try { storage = globalThis.localStorage; } catch { return undefined; }
+  if (!storage) return undefined;
+  return Object.freeze({
+    getItem: (key) => storage.getItem(key),
+    setItem: (key, value) => storage.setItem(key, value),
+    removeItem: (key) => storage.removeItem(key)
+  });
+}
+
+const playerProfileStore = createPlayerProfileStore({
+  storage: createBrowserProfileStoragePort(),
+  key: playerProfileKey,
+  content,
+  codec: playerProfileCodec
+});
+const playerProfileLoadResult = playerProfileStore.load();
+let progress = playerProfileLoadResult.profile;
+let playerProfileStorageWarning = profileStorageWarningFor(playerProfileLoadResult.code);
+
+function profileStorageWarningFor(code) {
+  if (code === "profile_version_unsupported") return "Saved progress belongs to a newer game version; session changes will not overwrite it.";
+  if (code === "profile_corrupt") return "Saved progress could not be loaded; this session uses a safe profile.";
+  if (code === "storage_unavailable" || code === "storage_read_failed" || code === "storage_write_failed" || code === "storage_remove_failed") {
+    return "Progress storage is unavailable; changes remain available for this session only.";
+  }
+  return "";
+}
+
+function rememberProfileStorageResult(result) {
+  playerProfileStorageWarning = profileStorageWarningFor(result && result.code);
+  return result;
+}
+
+function playerProfileStatusText(text) {
+  return playerProfileStorageWarning ? String(text || "") + " " + playerProfileStorageWarning : String(text || "");
+}
+
+function persistPlayerProfile() {
+  return rememberProfileStorageResult(playerProfileStore.save(progress));
+}
+
+function currentPlayerLaunchOptions() {
+  return getPlayerProfileLaunchOptions(progress);
+}
+
+function profileRecordNumber(record, id) {
+  if (!record || !Object.prototype.hasOwnProperty.call(record, id)) return 0;
+  const value = record[id];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function isUnlocked(id) {
+  return isPlayerMissionUnlocked(progress, content, id);
+}
+
+function metaCostText(cost) {
+  return Object.entries(cost || {}).map(([id, amount]) => amount + " " + ((content.metaProgression.currencies || []).find((item) => item.id === id)?.label || id)).join(" · ");
+}
+
+function buyMetaUpgrade(id) {
+  const result = purchasePlayerMetaUpgrade(progress, content, id);
+  if (!result.ok) {
+    message = result.code === "insufficient_meta_resources"
+      ? "Not enough permanent currency."
+      : result.code === "upgrade_max_level" ? "Upgrade is at max level." : "Upgrade could not be purchased.";
+    renderMetaPanel();
+    return result;
+  }
+  progress = result.profile;
+  persistPlayerProfile();
+  game = createGame();
+  clearNavigationOverlay();
+  victoryRewarded = false;
+  selectedTowerId = null;
+  renderMetaPanel();
+  const upgrade = content.metaProgression.upgrades && content.metaProgression.upgrades[id];
+  message = ((upgrade && upgrade.label) || id) + " upgraded to level " + result.newLevel + ".";
+  return result;
+}
+
+function renderMetaPanel() {
+  const panel = $("meta-panel");
+  const upgrades = Object.values(content.metaProgression.upgrades || {});
+  const currencies = content.metaProgression.currencies || [];
+  if (!panel) return;
+  panel.hidden = upgrades.length === 0 && currencies.length === 0;
+  $("meta-resources").textContent = currencies.map((item) => profileRecordNumber(progress.metaResources, item.id) + " " + item.label).join(" · ");
+  $("meta-upgrades").innerHTML = upgrades.map((upgrade) => {
+    const level = profileRecordNumber(progress.upgradeLevels, upgrade.id);
+    const cost = upgrade.costs && upgrade.costs[level];
+    const preview = purchasePlayerMetaUpgrade(progress, content, upgrade.id);
+    return '<div class="meta-upgrade"><span><b>' + escapeHtml(upgrade.label || upgrade.id)
+      + '</b><br>Lv ' + level + '/' + upgrade.maxLevel + '</span><button type="button" data-meta-upgrade="'
+      + escapeHtml(upgrade.id) + '"' + (preview.ok ? "" : " disabled") + '>'
+      + (cost ? escapeHtml(metaCostText(cost)) : "Max") + '</button></div>';
+  }).join("");
+  for (const button of document.querySelectorAll("[data-meta-upgrade]")) button.onclick = () => buyMetaUpgrade(button.dataset.metaUpgrade);
+}
+
+function refreshMissionOptions() {
+  const select = $("mission-select");
+  if (!select) return;
+  select.innerHTML = Object.values(content.missions).map((mission) => {
+    const unlocked = isUnlocked(mission.id);
+    const cleared = progress.clearedMissionIds.includes(mission.id);
+    const mark = cleared ? "✓ " : (unlocked ? "" : "🔒 ");
+    return '<option value="' + escapeHtml(mission.id) + '"' + (unlocked ? "" : " disabled") + '>'
+      + mark + escapeHtml(mission.label || mission.id) + '</option>';
+  }).join("");
+  select.value = missionId;
+}
+
+function choosePlayerDifficulty(id) {
+  const result = selectPlayerDifficulty(progress, content, id);
+  if (!result.ok) return result;
+  progress = result.profile;
+  persistPlayerProfile();
+  return result;
+}
+
+function recordPlayerVictory(id, stars) {
+  const result = recordPlayerMissionClear(progress, content, id, stars);
+  if (!result.ok) {
+    message = "Mission clear could not be recorded.";
+    return result;
+  }
+  progress = result.profile;
+  persistPlayerProfile();
+  renderMetaPanel();
+  const unlocked = result.newlyUnlockedMissionIds.map((missionId) => (content.missions[missionId] && content.missions[missionId].label) || missionId);
+  message = (result.firstClear ? "Mission cleared!" : "Mission cleared again!") + (unlocked.length ? " Unlocked: " + unlocked.join(", ") : "");
+  return result;
+}
+
+function resetPlayerProgress() {
+  const result = rememberProfileStorageResult(playerProfileStore.reset());
+  progress = result.profile;
+  if (!isUnlocked(missionId)) missionId = Object.keys(content.missions).find(isUnlocked) || content.defaultMissionId;
+  towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
+  refreshMissionOptions();
+  initDifficultySelector();
+  initTowerSelector();
+  game = createGame();
+  clearNavigationOverlay();
+  initAbilityBar();
+  setSellMode(false);
+  applyBattleBackground();
+  selectMissionMusic();
+  renderMetaPanel();
+  selectedTowerId = null;
+  victoryRewarded = false;
+  message = "Campaign progress reset.";
+  return result;
+}
+// TOWERFORGE_PROFILE_RUNTIME_END`;
 }
 
 function playerTemplate() {
-  return `import { createGameContentRegistry, TowerDefenseGame } from "./engine/index.js";
-import { createCanvasRenderer } from "./renderer/index.mjs";
+  return `import {
+  createCampaignRun,
+  createEmptyPlayerProfile,
+  createGameContentRegistry,
+  dispatchGameCommand,
+  exportCampaignRun,
+  getAvailableCampaignNodeIds,
+  getPlayerProfileLaunchOptions,
+  importCampaignRun,
+  isPlayerMissionUnlocked,
+  parsePlayerProfileJson,
+  prepareCampaignBattle,
+  purchasePlayerMetaUpgrade,
+  recordCampaignBattleVictory,
+  recordPlayerMissionClear,
+  resolveCampaignStructuralChoice,
+  resolveWorldCampaign,
+  selectPlayerDifficulty,
+  serializePlayerProfile,
+  settleCampaignBattleVictory,
+  TowerDefenseGame,
+  validateCampaignRunAgainstContent
+} from "./engine/index.js";
+import { createPlayerProfileStore, derivePlayerProfileStorageKey } from "./player-runtime/index.mjs";
+import { createCanvasRenderer, hitTestHeroesPresentation, projectCampaignPresentation, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectRoguelitePresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
 import { createAudioPlayer } from "./renderer/audio.mjs";
 import project from "./project-data.js";
 
@@ -457,39 +687,47 @@ const content = createGameContentRegistry({
   maps: project.maps,
   worldMap: project.worldMap,
   scripts: project.scripts,
+  mechanics: project.mechanics,
   visuals: project.visuals,
   storyComics: project.storyComics,
   battleBackgrounds: project.battleBackgrounds
 });
 
+${playerProfileRuntimeTemplate()}
+
 const $ = (id) => document.getElementById(id);
 applyProjectTheme();
 const audio = createAudioPlayer({ audio: project.visuals && project.visuals.audio });
 const canvas = $("playfield");
-const PROGRESS_KEY = "towerforge:progress:" + ((project.buildTarget && project.buildTarget.appId) || (project.manifest && project.manifest.name) || "game");
-const PROGRESS_VERSION = 2;
-let progress = loadProgress();
-let cleared = new Set(progress.clearedMissionIds);
 let missionId = content.defaultMissionId || Object.keys(content.missions)[0];
-let difficultyId = content.difficulties.some((item) => item.id === progress.selectedDifficultyId) ? progress.selectedDifficultyId : content.defaultDifficultyId;
 let towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
 let game = createGame();
+const activeCampaign = resolveWorldCampaign(content);
+let campaignRun = activeCampaign ? createCampaignRun("campaign") : null;
+let pendingCampaignNodeId = null;
+let pendingCampaignBattle = false;
 const renderer = createCanvasRenderer({ canvas, content, theme: content.visuals?.theme?.renderer });
 let lastFrame = performance.now();
 let message = "Choose a tower, click a buildable tile, then start the wave.";
-let armedAbility = null;
-let sellMode = false;
+let targetingMode = { kind: "build" };
 let selectedTowerId = null;
 let keyboardCoord = null;
+let navigationHoverCoord = null;
+let navigationOverlayPlacementState = null;
+let navigationOverlayFieldState = null;
 let lastRunningSpeed = 1;
 let activeStory = null;
 let storyWasRunning = false;
 let victoryRewarded = false;
+let lastObservedEvents = [];
 const shownStories = new Set();
 
 initSelectors();
+syncKeyboardCursor(null);
 initAbilityBar();
 renderMetaPanel();
+setupCampaignRunControls();
+updateCampaignRun();
 resize();
 requestAnimationFrame(loop);
 window.addEventListener("resize", resize);
@@ -505,9 +743,9 @@ if ("serviceWorker" in navigator) {
 }
 $("start-wave").addEventListener("click", () => { audio.resume(); report(game.startNextWave()); });
 $("pause-run").addEventListener("click", () => setPaused(Number($("speed").value) > 0));
-$("sell-mode").addEventListener("click", () => setSellMode(!sellMode));
-$("reset-run").addEventListener("click", () => { game = createGame(); victoryRewarded = false; selectedTowerId = null; initAbilityBar(); setSellMode(false); message = "Run reset."; });
-$("reset-progress")?.addEventListener("click", () => { progress = emptyProgress(); cleared = new Set(); difficultyId = content.defaultDifficultyId; saveProgress(); refreshMissionOptions(); initDifficultySelector(); renderMetaPanel(); game = createGame(); victoryRewarded = false; message = "Campaign progress reset."; });
+$("sell-mode").addEventListener("click", () => setSellMode(targetingMode.kind !== "sell"));
+$("reset-run").addEventListener("click", () => { game.reset(); victoryRewarded = false; selectedTowerId = null; setTargetingMode({ kind: "build" }); initAbilityBar(); clearNavigationOverlay(); message = "Run reset."; });
+$("reset-progress")?.addEventListener("click", resetPlayerProgress);
 $("speed").addEventListener("input", syncSpeedUi);
 $("snd").addEventListener("change", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
 $("sfx-volume").addEventListener("input", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
@@ -520,54 +758,249 @@ $("story-next").addEventListener("click", advanceStory);
 $("story-skip").addEventListener("click", finishStory);
 document.addEventListener("keydown", (event) => {
   const tag = event.target?.tagName;
-  if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;
+  if (tag === "BUTTON" || tag === "A" || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;
   if (event.code === "Space") { event.preventDefault(); setPaused(Number($("speed").value) > 0); return; }
   if (document.activeElement !== canvas) return;
+  if (event.code === "Digit1") { event.preventDefault(); armCurrentHeroAbility(); return; }
   const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
   if (moves[event.key]) { event.preventDefault(); moveKeyboardCursor(moves[event.key][0], moves[event.key][1]); }
-  else if (event.key === "Enter") { event.preventDefault(); actAtCoord(ensureKeyboardCoord()); }
-  else if (event.key === "Escape") { event.preventDefault(); setArmed(null); setSellMode(false); message = "Build action cancelled."; }
+  else if (event.key === "Enter") { event.preventDefault(); const coord = ensureKeyboardCoord(); actAtCoord(coord, hitTestHeroAtCoord(coord), hitTestHeroAbilityEnemyAtCoord(coord)); }
+  else if (event.key === "Escape") { event.preventDefault(); setTargetingMode({ kind: "build" }); message = "Build action cancelled."; }
 });
 syncSpeedUi();
 syncAudioSettings();
 applyBattleBackground();
 selectMissionMusic();
 showStoryForMission("beforeMission");
-window.__towerforgeInspect = () => game.getRenderSnapshot();
+window.__towerforgeInspect = () => {
+  const snapshot = game.getRenderSnapshot();
+  if (snapshot.lastEvents.length === 0 && lastObservedEvents.length > 0) {
+    snapshot.lastEvents = lastObservedEvents;
+  }
+  return snapshot;
+};
+window.__towerforgeCampaignInspect = () => ({
+  active: Boolean(activeCampaign && campaignRun),
+  run: campaignRun ? JSON.parse(exportCampaignRun(campaignRun)) : null,
+  pendingNodeId: pendingCampaignNodeId,
+  availableNodeIds: activeCampaign && campaignRun ? [...getAvailableCampaignNodeIds(campaignRun, content)] : []
+});
 window.__towerforgeTilePoint = (coord) => {
   const snapshot = game.getRenderSnapshot();
   const point = renderer.center(coord, renderer.geometry(snapshot.tiles, snapshot.grid));
   const rect = canvas.getBoundingClientRect();
   return { x: rect.left + point.x * rect.width / canvas.width, y: rect.top + point.y * rect.height / canvas.height };
 };
+window.__towerforgeEnemyPoint = (enemyId) => {
+  const snapshot = game.getRenderSnapshot();
+  const enemy = snapshot.enemies.find((candidate) => candidate.id === enemyId);
+  if (!enemy) return null;
+  const geom = renderer.geometry(snapshot.tiles, snapshot.grid);
+  const point = renderer.enemyPoint(enemy, snapshot, geom);
+  const rect = canvas.getBoundingClientRect();
+  return { x: rect.left + point.x * rect.width / canvas.width, y: rect.top + point.y * rect.height / canvas.height };
+};
 window.__towerforgePickPoint = (point) => renderer.pickTile({ clientX: point.x, clientY: point.y }, game.getRenderSnapshot().tiles);
 window.__towerforgeBootOk = true;
+const bootError = document.getElementById("boot-error");
+if (bootError) bootError.hidden = true;
 canvas.addEventListener("focus", () => syncKeyboardCursor(ensureKeyboardCoord()));
-canvas.addEventListener("click", (event) => {
+canvas.addEventListener("pointermove", (event) => {
+  const coord = pickTile(event);
+  if (coord?.q === navigationHoverCoord?.q && coord?.r === navigationHoverCoord?.r) return;
+  navigationHoverCoord = coord;
+  refreshNavigationOverlay(navigationHoverCoord);
+});
+canvas.addEventListener("pointerleave", () => {
+  navigationHoverCoord = null;
+  refreshNavigationOverlay(keyboardCoord);
+});
+canvas.addEventListener("pointerdown", (event) => {
   audio.resume();
   const coord = pickTile(event);
   if (!coord) return;
   window.__towerforgeLastPointerCoord = coord;
   syncKeyboardCursor(coord);
-  actAtCoord(coord);
+  actAtCoord(coord, hitTestHeroAtPointer(event), hitTestHeroAbilityEnemyAtPointer(event));
 });
 
-function actAtCoord(coord) {
+function heroMovementPresentation() {
+  const snapshot = game.getRenderSnapshot();
+  const presentation = projectHeroesPresentation(snapshot);
+  return presentation.active && presentation.units.every((hero) => hero.movement)
+    ? { snapshot, presentation }
+    : null;
+}
+
+function hitTestHeroAtCoord(coord) {
+  const source = heroMovementPresentation();
+  if (!source || !coord) return null;
+  const geom = renderer.geometry(source.snapshot.tiles, source.snapshot.grid);
+  const point = renderer.center(coord, geom);
+  return hitTestHeroesPresentation(source.presentation, point, (candidate) => renderer.center(candidate, geom), geom.r * 0.7);
+}
+
+function hitTestHeroAtPointer(event) {
+  const source = heroMovementPresentation();
+  if (!source) return null;
+  const rect = canvas.getBoundingClientRect();
+  const geom = renderer.geometry(source.snapshot.tiles, source.snapshot.grid);
+  const point = { x: (event.clientX - rect.left) * canvas.width / rect.width, y: (event.clientY - rect.top) * canvas.height / rect.height };
+  return hitTestHeroesPresentation(source.presentation, point, (candidate) => renderer.center(candidate, geom), geom.r * 0.7);
+}
+
+function hitTestHeroAbilityEnemyAtCoord(coord) {
+  if (targetingMode.kind !== "heroAbility" || !coord) return null;
+  const snapshot = game.getRenderSnapshot();
+  const geom = renderer.geometry(snapshot.tiles, snapshot.grid);
+  return selectHeroAbilityEnemy(
+    snapshot.enemies,
+    renderer.center(coord, geom),
+    (enemy) => renderer.enemyPoint(enemy, snapshot, geom)
+  );
+}
+
+function hitTestHeroAbilityEnemyAtPointer(event) {
+  if (targetingMode.kind !== "heroAbility") return null;
+  const snapshot = game.getRenderSnapshot();
+  const rect = canvas.getBoundingClientRect();
+  const geom = renderer.geometry(snapshot.tiles, snapshot.grid);
+  const point = {
+    x: (event.clientX - rect.left) * canvas.width / rect.width,
+    y: (event.clientY - rect.top) * canvas.height / rect.height
+  };
+  return selectHeroAbilityEnemy(
+    snapshot.enemies,
+    point,
+    (enemy) => renderer.enemyPoint(enemy, snapshot, geom),
+    geom.r * 0.62
+  );
+}
+
+function clearNavigationOverlay() {
+  navigationOverlayPlacementState = null;
+  navigationOverlayFieldState = null;
+  projectNavigationPlacementCues(undefined);
+  renderer.clearNavigationOverlay();
+}
+
+function captureNavigationOverlayPlacementState(snapshot) {
+  // Allocation belongs to successful overlay refreshes, never animation-frame comparison.
+  navigationOverlayPlacementState = snapshot.towers.map((tower) => ({
+    id: tower.id,
+    typeId: tower.typeId,
+    q: tower.coord.q,
+    r: tower.coord.r
+  }));
+  navigationOverlayFieldState = snapshot.navigation.fields.map((field) => ({
+    movementProfileId: field.movementProfileId,
+    revision: field.revision
+  }));
+}
+
+function navigationSnapshotRevision(snapshot) {
+  if (snapshot?.navigation?.schemaVersion !== 1 || snapshot.navigation.mode !== "dynamic_flow") return "";
+  const fields = snapshot.navigation.fields;
+  if (navigationOverlayFieldState === null || fields.length !== navigationOverlayFieldState.length) return true;
+  for (let index = 0; index < fields.length; index += 1) {
+    const field = fields[index];
+    const retained = navigationOverlayFieldState[index];
+    if (field.movementProfileId !== retained.movementProfileId || field.revision !== retained.revision) return true;
+  }
+  const towers = snapshot.towers;
+  if (navigationOverlayPlacementState === null || towers.length !== navigationOverlayPlacementState.length) return true;
+  // Engine snapshot order is deterministic, so exact positional comparison is
+  // collision-free and catches create/destroy/move/type changes without allocation.
+  for (let index = 0; index < towers.length; index += 1) {
+    const tower = towers[index];
+    const retained = navigationOverlayPlacementState[index];
+    if (tower.id !== retained.id
+      || tower.typeId !== retained.typeId
+      || tower.coord.q !== retained.q
+      || tower.coord.r !== retained.r) return true;
+  }
+  return false;
+}
+
+function syncNavigationOverlaySnapshot(snapshot) {
+  if (snapshot.outcome !== "playing") { clearNavigationOverlay(); return; }
+  const revisionChanged = navigationSnapshotRevision(snapshot);
+  if (revisionChanged === "") {
+    if (navigationOverlayPlacementState !== null || navigationOverlayFieldState !== null) clearNavigationOverlay();
+    return;
+  }
+  if (revisionChanged && (navigationHoverCoord || keyboardCoord)) refreshNavigationOverlay();
+}
+
+function refreshNavigationOverlay(coord = navigationHoverCoord || keyboardCoord) {
+  if (!coord || !towerId || targetingMode.kind !== "build") {
+    clearNavigationOverlay();
+    return;
+  }
+  let analysis;
+  try {
+    analysis = game.analyzeNavigation({ towerTypeId: towerId, coordinates: [{ q: coord.q, r: coord.r }] });
+  } catch {
+    clearNavigationOverlay();
+    return;
+  }
+  const presentation = projectNavigationPlacementCues(analysis);
+  if (!presentation.active) {
+    clearNavigationOverlay();
+    return;
+  }
+  renderer.setNavigationOverlay(analysis);
+  captureNavigationOverlayPlacementState(game.getRenderSnapshot());
+  const blocked = presentation.cues.find((cue) => cue.state === "blocked");
+  if (blocked?.reasonKey === "reason.lastPathBlocked") message = "That tower would block the last path.";
+}
+
+function actAtCoord(coord, heroHitId = null, enemyHitId = null) {
   if (!coord) return;
-  if (sellMode) {
+  if (targetingMode.kind === "sell") {
     const towerAt = game.getTowerIdAt(coord);
     report(towerAt ? game.sellTower(towerAt) : { ok: false, reason: "Choose a tower tile." });
     if (towerAt === selectedTowerId) selectedTowerId = null;
     setSellMode(false);
     return;
   }
-  if (armedAbility) { report(game.useAbility(armedAbility, coord)); setArmed(null); return; }
+  if (targetingMode.kind === "missionAbility") {
+    report(game.useAbility(targetingMode.abilityId, coord));
+    setTargetingMode({ kind: "build" });
+    return;
+  }
+  if (targetingMode.kind === "heroAbility") {
+    if (!enemyHitId) { message = "Choose a live enemy target."; return; }
+    const result = dispatchGameCommand(game, {
+      schemaVersion: 5,
+      type: "useHeroAbility",
+      heroId: targetingMode.heroId,
+      abilityId: targetingMode.abilityId,
+      targetEnemyId: enemyHitId
+    });
+    report(result);
+    if (result.ok) setTargetingMode({ kind: "build" });
+    return;
+  }
+  if (targetingMode.kind === "heroMove") {
+    const result = dispatchGameCommand(game, {
+      schemaVersion: 4, type: "moveHero", heroId: targetingMode.heroId,
+      target: { q: coord.q, r: coord.r }
+    });
+    report(result);
+    if (result.ok) setTargetingMode({ kind: "build" });
+    return;
+  }
+  if (heroHitId) { setTargetingMode({ kind: "heroMove", heroId: heroHitId }); selectedTowerId = null; message = "Hero selected. Choose a destination."; return; }
   const towerAt = game.getTowerIdAt(coord);
   if (towerAt) { selectedTowerId = towerAt; message = "Tower selected."; return; }
   if (!towerId) return;
+  const preflight = game.canPlaceTower(towerId, coord);
+  if (!preflight.ok) { report(preflight); refreshNavigationOverlay(coord); return; }
   const result = game.placeTower(towerId, coord);
   report(result);
   if (result.ok) selectedTowerId = game.getTowerIdAt(coord);
+  refreshNavigationOverlay(coord);
 }
 
 function ensureKeyboardCoord() {
@@ -581,8 +1014,11 @@ function ensureKeyboardCoord() {
 function syncKeyboardCursor(coord) {
   keyboardCoord = coord ? { q: coord.q, r: coord.r } : null;
   renderer.setFocusCoord(keyboardCoord);
-  const tile = keyboardCoord && game.getSnapshot().tiles.find((item) => item.q === keyboardCoord.q && item.r === keyboardCoord.r);
-  canvas.setAttribute("aria-label", tile ? "Hex battlefield. Selected tile q " + tile.q + ", r " + tile.r + ", " + tile.terrain + ". Arrow keys move; Enter acts; Escape cancels." : "Hex battlefield.");
+  const snapshot = game.getSnapshot();
+  const tile = keyboardCoord && snapshot.tiles.find((item) => item.q === keyboardCoord.q && item.r === keyboardCoord.r);
+  const battlefieldLabel = snapshot.grid.kind === "square" ? "Square battlefield" : "Hex battlefield";
+  canvas.setAttribute("aria-label", tile ? battlefieldLabel + ". Selected tile q " + tile.q + ", r " + tile.r + ", " + tile.terrain + ". Arrow keys move; Enter acts; Escape cancels." : battlefieldLabel + ".");
+  refreshNavigationOverlay(keyboardCoord);
 }
 
 function moveKeyboardCursor(dq, dr) {
@@ -595,13 +1031,12 @@ function moveKeyboardCursor(dq, dr) {
 }
 
 function createGame() {
-  return new TowerDefenseGame({ missionId, content, difficultyId, metaUpgradeLevels: progress.upgradeLevels });
+  return new TowerDefenseGame({ missionId, content, ...currentPlayerLaunchOptions() });
 }
 
 function setSellMode(active) {
-  sellMode = Boolean(active);
-  $("sell-mode").setAttribute("aria-pressed", String(sellMode));
-  if (sellMode) { setArmed(null); message = "Click a tower to sell it."; }
+  setTargetingMode(active ? { kind: "sell" } : { kind: "build" });
+  if (active) message = "Click a tower to sell it.";
 }
 
 function setPaused(paused) {
@@ -647,9 +1082,14 @@ function initSelectors() {
   initDifficultySelector();
   missionSelect.addEventListener("change", () => {
     if (!isUnlocked(missionSelect.value)) { missionSelect.value = missionId; return; } // locked
+    pendingCampaignNodeId = null;
+    pendingCampaignBattle = false;
     missionId = missionSelect.value;
     towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
     game = createGame();
+    setTargetingMode({ kind: "build" });
+    syncKeyboardCursor(null);
+    clearNavigationOverlay();
     victoryRewarded = false;
     selectedTowerId = null;
     setSellMode(false);
@@ -666,16 +1106,18 @@ function initDifficultySelector() {
   const select = $("difficulty-select");
   if (!select) return;
   select.innerHTML = content.difficulties.map((item) => \`<option value="\${escapeHtml(item.id)}">\${escapeHtml(item.label || item.id)}</option>\`).join("");
-  select.value = difficultyId;
+  select.value = currentPlayerLaunchOptions().difficultyId;
   select.onchange = () => {
-    difficultyId = select.value;
-    progress.selectedDifficultyId = difficultyId;
-    saveProgress();
+    const result = choosePlayerDifficulty(select.value);
+    if (!result.ok) { select.value = currentPlayerLaunchOptions().difficultyId; return; }
     game = createGame();
+    setTargetingMode({ kind: "build" });
+    clearNavigationOverlay();
     victoryRewarded = false;
     selectedTowerId = null;
     initAbilityBar();
-    message = "Difficulty changed to " + (content.difficulties.find((item) => item.id === difficultyId)?.label || difficultyId) + ".";
+    const selectedDifficultyId = currentPlayerLaunchOptions().difficultyId;
+    message = "Difficulty changed to " + (content.difficulties.find((item) => item.id === selectedDifficultyId)?.label || selectedDifficultyId) + ".";
   };
 }
 
@@ -690,22 +1132,36 @@ function initTowerSelector() {
   towerId = ids[0] || "";
   towerSelect.value = towerId;
   // Assigning onchange (vs addEventListener) keeps a single handler when missions switch.
-  towerSelect.onchange = () => { towerId = towerSelect.value; };
+  towerSelect.onchange = () => { towerId = towerSelect.value; refreshNavigationOverlay(); };
 }
 
+function setTargetingMode(next) {
+  targetingMode = next;
+  $("sell-mode").setAttribute("aria-pressed", String(targetingMode.kind === "sell"));
+  for (const btn of document.querySelectorAll("#ability-bar button")) {
+    btn.classList.toggle("armed", targetingMode.kind === "missionAbility" && btn.dataset.aid === targetingMode.abilityId);
+  }
+  const heroButton = document.querySelector("#hero-action-bar button");
+  if (heroButton) heroButton.classList.toggle("armed", targetingMode.kind === "heroAbility");
+  if (targetingMode.kind === "build") refreshNavigationOverlay(); else clearNavigationOverlay();
+}
 function setArmed(id) {
-  armedAbility = id;
-  if (id) message = "Click the map to use " + ((game.getSnapshot().abilities[id] || {}).label || id) + ".";
-  for (const btn of document.querySelectorAll("#ability-bar button")) btn.classList.toggle("armed", btn.dataset.aid === id);
+  if (!id) { setTargetingMode({ kind: "build" }); return; }
+  setTargetingMode({ kind: "missionAbility", abilityId: id });
+  message = "Click the map to use " + ((game.getSnapshot().abilities[id] || {}).label || id) + ".";
 }
 function initAbilityBar() {
   const bar = $("ability-bar");
   if (!bar) return;
   const abilities = Object.values(game.getSnapshot().abilities || {});
   bar.innerHTML = abilities.map((a) => \`<button data-aid="\${escapeHtml(a.id)}" title="Radius \${a.radius}, cooldown \${a.cooldown}">\${escapeHtml(a.label || a.id)}</button>\`).join("");
-  armedAbility = null;
+  setTargetingMode({ kind: "build" });
   for (const btn of bar.querySelectorAll("button")) {
-    btn.onclick = () => { audio.resume(); setArmed(armedAbility === btn.dataset.aid ? null : btn.dataset.aid); };
+    btn.onclick = () => { audio.resume(); setArmed(
+      targetingMode.kind === "missionAbility" && targetingMode.abilityId === btn.dataset.aid
+        ? null
+        : btn.dataset.aid
+    ); };
   }
 }
 function updateAbilityBar(snap) {
@@ -715,105 +1171,297 @@ function updateAbilityBar(snap) {
     btn.disabled = !ready;
     const cd = Math.ceil((a && a.cooldownRemaining) || 0);
     btn.textContent = ((a && a.label) || btn.dataset.aid) + (cd > 0 ? " (" + cd + ")" : "");
-    if (!ready && armedAbility === btn.dataset.aid) setArmed(null);
+    if (!ready && targetingMode.kind === "missionAbility" && targetingMode.abilityId === btn.dataset.aid) setArmed(null);
   }
 }
 
-// ── Campaign progress (persisted per app in localStorage) ──────────────────────
-function emptyProgress() {
-  return { version: PROGRESS_VERSION, clearedMissionIds: [], starsByMission: {}, metaResources: {}, upgradeLevels: {}, selectedDifficultyId: content.defaultDifficultyId };
+function activeHeroAbilityUnit(snapshot = game.getRenderSnapshot()) {
+  const presentation = projectHeroesPresentation(snapshot);
+  const hero = presentation.active && presentation.units.length === 1
+    ? presentation.units[0]
+    : null;
+  return hero?.activeAbility && hero?.mana ? hero : null;
 }
-function loadProgress() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(PROGRESS_KEY) || "null");
-    const base = emptyProgress();
-    if (Array.isArray(saved)) base.clearedMissionIds = saved;
-    else if (saved && typeof saved === "object") Object.assign(base, saved);
-    base.version = PROGRESS_VERSION;
-    base.clearedMissionIds = (Array.isArray(base.clearedMissionIds) ? base.clearedMissionIds : []).filter((id) => typeof id === "string" && content.missions[id]);
-    base.starsByMission = base.starsByMission && typeof base.starsByMission === "object" ? base.starsByMission : {};
-    base.metaResources = normalizeMetaBag(base.metaResources);
-    base.upgradeLevels = normalizeUpgradeLevels(base.upgradeLevels);
-    return base;
-  } catch (e) { return emptyProgress(); }
+
+function armCurrentHeroAbility() {
+  const hero = activeHeroAbilityUnit();
+  if (!hero || !hero.activeAbility.ready) return;
+  setTargetingMode({ kind: "heroAbility", heroId: hero.id, abilityId: hero.activeAbility.id });
+  message = "Choose a live enemy for " + hero.activeAbility.label + ".";
 }
-function saveProgress() {
-  progress.clearedMissionIds = [...cleared];
-  progress.version = PROGRESS_VERSION;
-  try { localStorage.setItem(PROGRESS_KEY, JSON.stringify(progress)); }
-  catch (e) { /* storage unavailable */ }
+
+function updateHeroActionBar(snap) {
+  const hero = activeHeroAbilityUnit(snap);
+  let bar = document.getElementById("hero-action-bar");
+  if (!hero) {
+    if (bar) bar.remove();
+    if (targetingMode.kind === "heroAbility") setTargetingMode({ kind: "build" });
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement("section");
+    bar.id = "hero-action-bar";
+    bar.className = "ability-bar hero-action-bar";
+    bar.setAttribute("aria-label", "Hero actions");
+    $("message").before(bar);
+  }
+  let button = bar.querySelector("button");
+  if (!button) {
+    button = document.createElement("button");
+    button.type = "button";
+    button.addEventListener("click", () => {
+      audio.resume();
+      if (targetingMode.kind === "heroAbility") setTargetingMode({ kind: "build" });
+      else armCurrentHeroAbility();
+    });
+    bar.append(button);
+  }
+  let status = bar.querySelector("span");
+  if (!status) { status = document.createElement("span"); bar.append(status); }
+  const ability = hero.activeAbility;
+  button.disabled = !ability.ready;
+  button.dataset.heroId = hero.id;
+  button.dataset.abilityId = ability.id;
+  button.classList.toggle("armed", targetingMode.kind === "heroAbility");
+  const cooldown = Math.ceil(ability.cooldownRemaining);
+  button.textContent = ability.label + " [1]" + (cooldown > 0 ? " (" + cooldown + ")" : "");
+  button.title = "Mana " + hero.mana.current + "/" + hero.mana.max + " · Cost " + ability.manaCost;
+  status.textContent = "Mana " + hero.mana.current + "/" + hero.mana.max
+    + " (+" + hero.mana.regenerationPerUnit + ")";
+  bar.dataset.manaCurrent = String(hero.mana.current);
+  bar.dataset.manaMax = String(hero.mana.max);
+  bar.dataset.cooldownRemaining = String(ability.cooldownRemaining);
+  if (!ability.ready && targetingMode.kind === "heroAbility") setTargetingMode({ kind: "build" });
 }
-function normalizeMetaBag(input) {
-  const bag = {};
-  for (const currency of content.metaProgression.currencies || []) bag[currency.id] = Math.max(0, Number(input?.[currency.id]) || 0);
-  return bag;
+
+function updateHeroSkillTree(snap) {
+  const presentation = projectHeroesPresentation(snap);
+  const unit = presentation.active && presentation.units.length === 1
+    ? presentation.units[0]
+    : null;
+  const skills = unit?.skills;
+  let panel = document.getElementById("hero-skill-tree");
+  const panelCreated = !panel;
+  if (!skills) {
+    if (panel) panel.remove();
+    return;
+  }
+  if (!panel) {
+    panel = document.createElement("section");
+    panel.id = "hero-skill-tree";
+    panel.className = "roguelite-status hero-skill-tree";
+    panel.setAttribute("aria-label", "Hero skill tree");
+    const heading = document.createElement("strong");
+    heading.textContent = "Hero skills";
+    const status = document.createElement("span");
+    status.dataset.heroSkillPoints = "true";
+    const nodes = document.createElement("div");
+    nodes.dataset.heroSkillNodes = "true";
+    panel.append(heading, status, nodes);
+    $("message").before(panel);
+  }
+  const status = panel.querySelector("[data-hero-skill-points]");
+  panel.dataset.availablePoints = String(skills.availablePoints);
+  status.textContent = "Available points: " + skills.availablePoints;
+  const nodes = panel.querySelector("[data-hero-skill-nodes]");
+  const retained = new Set();
+  for (let nodeIndex = 0; nodeIndex < skills.nodes.length; nodeIndex += 1) {
+    const node = skills.nodes[nodeIndex];
+    retained.add(node.id);
+    let button = [...nodes.querySelectorAll("button")]
+      .find((candidate) => candidate.dataset.heroSkillId === node.id);
+    if (!button) {
+      button = document.createElement("button");
+      button.type = "button";
+      button.dataset.heroSkillId = node.id;
+      button.addEventListener("click", () => {
+        const result = dispatchGameCommand(game, {
+          schemaVersion: 6,
+          type: "unlockHeroSkill",
+          heroId: button.dataset.heroId,
+          skillId: button.dataset.heroSkillId
+        });
+        report(result);
+        updateHeroSkillTree(game.getRenderSnapshot());
+      });
+      button.addEventListener("touchend", (event) => {
+        event.preventDefault();
+        button.click();
+      }, { passive: false });
+    }
+    button.dataset.heroId = unit.id;
+    button.disabled = !skills.managementAvailable || !node.unlockable;
+    button.textContent = (node.unlocked ? "Unlocked: " : "Unlock: ")
+      + node.label + " (" + node.cost + ")";
+    button.title = node.description;
+    if (nodes.children[nodeIndex] !== button) {
+      nodes.insertBefore(button, nodes.children[nodeIndex] ?? null);
+    }
+  }
+  for (const button of [...nodes.querySelectorAll("button")]) {
+    if (!retained.has(button.dataset.heroSkillId)) button.remove();
+  }
+  if (panelCreated) panel.scrollIntoView({ block: "nearest" });
 }
-function normalizeUpgradeLevels(input) {
-  const levels = {};
-  for (const [id, upgrade] of Object.entries(content.metaProgression.upgrades || {})) levels[id] = Math.max(0, Math.min(upgrade.maxLevel || 0, Math.floor(Number(input?.[id]) || 0)));
-  return levels;
+
+function updateCampaignRun() {
+  const panel = $("campaign-run-panel");
+  if (!panel) return;
+  const presentation = projectCampaignPresentation(activeCampaign && campaignRun ? {
+    campaign: activeCampaign,
+    run: campaignRun,
+    availableNodeIds: getAvailableCampaignNodeIds(campaignRun, content)
+  } : undefined) || projectCampaignPresentation();
+  panel.hidden = !presentation.active;
+  if (!presentation.active) return;
+  const resourceSummary = (presentation.runResources || [])
+    .map((resource) => resource.label + ": " + resource.amount)
+    .join(" · ");
+  $("campaign-run-summary").textContent = (pendingCampaignNodeId
+    ? "Battle selected: " + pendingCampaignNodeId
+    : presentation.currentNodeId
+      ? "Current: " + presentation.currentNodeId
+      : "Choose an available entry node") + (resourceSummary ? " · " + resourceSummary : "");
+  const nodes = $("campaign-run-nodes");
+  nodes.replaceChildren();
+  for (const node of presentation.nodes) {
+    const hasChoices = Array.isArray(node.choices) && node.choices.length > 0;
+    const row = document.createElement(node.state === "available" && !hasChoices ? "button" : "div");
+    if (row instanceof HTMLButtonElement) {
+      row.type = "button";
+      row.addEventListener("click", () => selectCampaignNode(node.id));
+    }
+    row.className = "campaign-run-node";
+    row.setAttribute("data-state", node.state);
+    const title = document.createElement("span");
+    title.textContent = node.label || content.missions[node.missionId]?.label || node.missionId || node.id;
+    const state = document.createElement("span");
+    state.textContent = node.type + " · " + node.state;
+    row.append(title, state);
+    if (node.state === "available" && hasChoices) {
+      const choices = document.createElement("div");
+      choices.className = "campaign-run-choices";
+      for (const choice of node.choices) {
+        const choiceButton = document.createElement("button");
+        choiceButton.type = "button";
+        choiceButton.className = "campaign-run-choice";
+        choiceButton.setAttribute("data-campaign-choice-id", choice.id);
+        choiceButton.textContent = formatCampaignChoice(choice, presentation.runResources || []);
+        choiceButton.title = "Resolve campaign choice";
+        choiceButton.addEventListener("click", () => selectCampaignChoice(node.id, choice.id));
+        choices.append(choiceButton);
+      }
+      row.append(choices);
+    }
+    nodes.append(row);
+  }
 }
-function addMetaResources(bag, multiplier = 1) {
-  for (const currency of content.metaProgression.currencies || []) progress.metaResources[currency.id] = (progress.metaResources[currency.id] || 0) + (Number(bag?.[currency.id]) || 0) * multiplier;
+
+function formatCampaignChoice(choice, resources) {
+  const label = (resourceId) => resources.find((entry) => entry.id === resourceId)?.label || resourceId;
+  const costs = choice.costs.map((entry) => label(entry.resourceId) + ":" + entry.amount).join(", ") || "free";
+  const grants = choice.grants.map((entry) => label(entry.resourceId) + ":" + entry.amount).join(", ") || "none";
+  return choice.label + " · " + costs + " → " + grants;
 }
-function metaCostText(cost) {
-  return Object.entries(cost || {}).map(([id, amount]) => amount + " " + ((content.metaProgression.currencies || []).find((item) => item.id === id)?.label || id)).join(" · ");
+
+function selectCampaignChoice(nodeId, choiceId) {
+  if (!activeCampaign || !campaignRun) return;
+  const result = resolveCampaignStructuralChoice(campaignRun, content, nodeId, choiceId);
+  if (result.ok) {
+    campaignRun = result.run;
+    pendingCampaignNodeId = null;
+    pendingCampaignBattle = false;
+    message = "Campaign choice resolved: " + choiceId + ".";
+    updateCampaignRun();
+    return;
+  }
+  message = "Campaign choice rejected: " + result.code + ".";
+  updateCampaignRun();
 }
-function canAffordMeta(cost) { return Object.entries(cost || {}).every(([id, amount]) => (progress.metaResources[id] || 0) >= Number(amount || 0)); }
-function buyMetaUpgrade(id) {
-  const upgrade = content.metaProgression.upgrades?.[id];
-  if (!upgrade) return;
-  const level = progress.upgradeLevels[id] || 0;
-  const cost = upgrade.costs?.[level];
-  if (!cost || !canAffordMeta(cost)) { message = cost ? "Not enough permanent currency." : "Upgrade is at max level."; return; }
-  for (const [currencyId, amount] of Object.entries(cost)) progress.metaResources[currencyId] = (progress.metaResources[currencyId] || 0) - Number(amount || 0);
-  progress.upgradeLevels[id] = level + 1;
-  saveProgress();
-  game = createGame();
+
+function selectCampaignNode(nodeId) {
+  if (!activeCampaign || !campaignRun) return;
+  const prepared = prepareCampaignBattle(campaignRun, content, nodeId);
+  if (prepared.ok) {
+    pendingCampaignBattle = true;
+    pendingCampaignNodeId = prepared.nodeId;
+    missionId = prepared.missionId;
+    game = prepared.game;
+  } else if (prepared.code === "campaign_handoff_inactive") {
+    // Campaign marker v1 retains the legacy graph reducer without battle carry.
+    const availableNodeIds = getAvailableCampaignNodeIds(campaignRun, content);
+    const node = activeCampaign.nodes.find((candidate) => candidate.id === nodeId);
+    if (!availableNodeIds.includes(nodeId) || !node || node.type === "merchant" || node.type === "event") {
+      message = "Campaign node is not available.";
+      return;
+    }
+    pendingCampaignBattle = false;
+    pendingCampaignNodeId = node.id;
+    missionId = node.missionId;
+    game = createGame();
+  } else {
+    message = "Campaign battle could not be prepared: " + prepared.code + ".";
+    return;
+  }
+  towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
+  setTargetingMode({ kind: "build" });
+  refreshMissionOptions();
+  syncKeyboardCursor(null);
+  clearNavigationOverlay();
   victoryRewarded = false;
   selectedTowerId = null;
-  renderMetaPanel();
-  message = upgrade.label + " upgraded to level " + (level + 1) + ".";
+  setSellMode(false);
+  initTowerSelector();
+  initAbilityBar();
+  applyBattleBackground();
+  selectMissionMusic();
+  showStoryForMission("beforeMission");
+  message = "Campaign battle selected: " + nodeId + ".";
+  updateCampaignRun();
 }
-function renderMetaPanel() {
-  const panel = $("meta-panel");
-  const upgrades = Object.values(content.metaProgression.upgrades || {});
-  const currencies = content.metaProgression.currencies || [];
-  if (!panel) return;
-  panel.hidden = upgrades.length === 0 && currencies.length === 0;
-  $("meta-resources").textContent = currencies.map((item) => (progress.metaResources[item.id] || 0) + " " + item.label).join(" · ");
-  $("meta-upgrades").innerHTML = upgrades.map((upgrade) => {
-    const level = progress.upgradeLevels[upgrade.id] || 0;
-    const cost = upgrade.costs?.[level];
-    return \`<div class="meta-upgrade"><span><b>\${escapeHtml(upgrade.label || upgrade.id)}</b><br>Lv \${level}/\${upgrade.maxLevel}</span><button type="button" data-meta-upgrade="\${escapeHtml(upgrade.id)}"\${cost && canAffordMeta(cost) ? "" : " disabled"}>\${cost ? escapeHtml(metaCostText(cost)) : "Max"}</button></div>\`;
-  }).join("");
-  for (const button of document.querySelectorAll("[data-meta-upgrade]")) button.onclick = () => buyMetaUpgrade(button.dataset.metaUpgrade);
-}
-function unlockReqs(id) { const n = ((content.worldMap && content.worldMap.missionNodes) || []).find((x) => x.missionId === id); return (n && n.unlockRequiresMissionIds) || []; }
-function isUnlocked(id) { return unlockReqs(id).every((r) => cleared.has(r)); }
-function rewardMissionClear(id, stars) {
-  const firstClear = !cleared.has(id);
-  cleared.add(id);
-  const reward = content.metaProgression.rewardsByMission?.[id] || {};
-  addMetaResources(firstClear ? reward.firstClear : reward.repeatClear);
-  const previousStars = Math.max(0, Number(progress.starsByMission[id]) || 0);
-  const earnedStars = Math.max(previousStars, stars);
-  addMetaResources(reward.perStar, earnedStars - previousStars);
-  progress.starsByMission[id] = earnedStars;
-  saveProgress();
-  renderMetaPanel();
-  return firstClear;
-}
-function newlyUnlockedBy(id) { return Object.keys(content.missions).filter((mid) => !cleared.has(mid) && unlockReqs(mid).includes(id) && isUnlocked(mid)).map((mid) => (content.missions[mid] && content.missions[mid].label) || mid); }
-function refreshMissionOptions() {
-  const sel = $("mission-select");
-  if (!sel) return;
-  sel.innerHTML = Object.values(content.missions).map((mission) => {
-    const unlocked = isUnlocked(mission.id);
-    const mark = cleared.has(mission.id) ? "✓ " : (unlocked ? "" : "🔒 ");
-    return \`<option value="\${escapeHtml(mission.id)}"\${unlocked ? "" : " disabled"}>\${mark}\${escapeHtml(mission.label || mission.id)}</option>\`;
-  }).join("");
-  sel.value = missionId;
+
+function setupCampaignRunControls() {
+  const exportButton = $("campaign-run-export");
+  const importButton = $("campaign-run-import");
+  const fileInput = $("campaign-run-file");
+  if (!exportButton || !importButton || !fileInput) return;
+  exportButton.addEventListener("click", () => {
+    if (!campaignRun) return;
+    const source = exportCampaignRun(campaignRun);
+    const url = URL.createObjectURL(new Blob([source], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "towerforge-campaign-run.json";
+    link.click();
+    URL.revokeObjectURL(url);
+  });
+  importButton.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", async () => {
+    if (pendingCampaignNodeId) {
+      fileInput.value = "";
+      message = "Campaign run import cannot replace an active battle.";
+      return;
+    }
+    const file = fileInput.files?.[0];
+    fileInput.value = "";
+    if (!file || !activeCampaign) return;
+    if (file.size > 1_048_576) {
+      message = "Campaign run import failed: file exceeds 1 MiB.";
+      return;
+    }
+    try {
+      const decoded = importCampaignRun(await file.text()).run;
+      const validation = validateCampaignRunAgainstContent(decoded, content);
+      if (!validation.ok) throw new Error("Campaign run is incompatible with this project: " + validation.code);
+      pendingCampaignNodeId = null;
+      pendingCampaignBattle = false;
+      campaignRun = validation.run;
+      message = "Campaign run imported.";
+      updateCampaignRun();
+    } catch (error) {
+      message = "Campaign run import failed: " + error.message;
+    }
+  });
 }
 
 function resolveStandaloneSprite(spriteId) {
@@ -846,7 +1494,7 @@ function showStoryForMission(trigger) {
   const [comicId, comic] = entry;
   const runKey = trigger + ":" + comicId;
   if (shownStories.has(runKey)) return;
-  const seenKey = content.storySeenStoragePrefix + PROGRESS_KEY.slice("towerforge:progress:".length) + ":" + comicId;
+  const seenKey = content.storySeenStoragePrefix + playerProfileScope + ":" + comicId;
   if (comic.replay !== "always") {
     try { if (localStorage.getItem(seenKey) === "1") return; } catch {}
   }
@@ -906,7 +1554,9 @@ function loop(now) {
     game.tick((dtSeconds / timeUnitSeconds) * speed);
     snap = game.getRenderSnapshot();
   }
+  syncNavigationOverlaySnapshot(snap);
   const events = ticked ? pending.concat(snap.lastEvents) : pending;
+  if (events.length > 0) lastObservedEvents = events;
   game.lastEvents = []; // consumed this frame — clear so nothing replays on the next frame
   draw(snap, events);
   updateHud(snap);
@@ -919,18 +1569,40 @@ function resize() {
 
 function draw(snap, events) {
   snap.lastEvents = events;
+  projectPhysicsPresentationCues(snap);
   renderer.drawSnapshot(snap);
   if ($("snd")?.checked) audio.handleEvents(events);
 }
 
 function updateHud(snap) {
   updateAbilityBar(snap);
+  updateHeroActionBar(snap);
+  updateHeroSkillTree(snap);
   updateTargetMode(snap);
+  updateRogueliteStatus(snap);
+  updateLogisticsStatus(snap);
   if (snap.outcome === "victory" && !victoryRewarded) {
     victoryRewarded = true;
-    const firstClear = rewardMissionClear(missionId, (snap.stars || []).filter((item) => item.achieved).length);
-    const unlocked = firstClear ? newlyUnlockedBy(missionId) : [];
-    message = (firstClear ? "Mission cleared!" : "Mission cleared again!") + (unlocked.length ? " Unlocked: " + unlocked.join(", ") : "");
+    const earnedStars = (snap.stars || []).filter((item) => item.achieved).length;
+    if (activeCampaign && campaignRun && pendingCampaignNodeId) {
+      const result = pendingCampaignBattle
+        ? settleCampaignBattleVictory(campaignRun, progress, content, pendingCampaignNodeId, earnedStars, game)
+        : recordCampaignBattleVictory(campaignRun, progress, content, pendingCampaignNodeId, earnedStars);
+      if (result.ok) {
+        campaignRun = result.run;
+        progress = result.profile;
+        persistPlayerProfile();
+        renderMetaPanel();
+        message = "Campaign battle recorded. Available: " + (result.newlyAvailableNodeIds.join(", ") || "none");
+      } else {
+        message = "Campaign battle could not be recorded: " + result.code;
+      }
+      pendingCampaignNodeId = null;
+      pendingCampaignBattle = false;
+      updateCampaignRun();
+    } else {
+      recordPlayerVictory(missionId, earnedStars);
+    }
     refreshMissionOptions();
     showStoryForMission("afterVictory");
   }
@@ -945,7 +1617,212 @@ function updateHud(snap) {
   const stars = snap.stars || [];
   $("stat-objectives").textContent = objectives.filter((item) => item.complete).length + "/" + objectives.length
     + (stars.length ? " | " + stars.filter((item) => item.achieved).length + "/" + stars.length + " stars" : "");
-  $("message").textContent = message;
+  $("message").textContent = playerProfileStatusText(message);
+}
+
+function updateRogueliteStatus(snap) {
+  const panel = $("roguelite-status");
+  const draftPanel = $("wave-draft");
+  const artifactPanel = $("artifact-inventory");
+  if (!panel || !draftPanel || !artifactPanel) return;
+  const source = snap?.roguelite;
+  const nextCache = {
+    synergies: source?.synergies,
+    inventory: source?.artifacts?.inventory,
+    towerSlots: source?.artifacts?.towerSlots,
+    allowed: source?.artifacts?.management?.allowed,
+    reasonKey: source?.artifacts?.management?.reasonKey,
+    pendingOffer: source?.draft?.pendingOffer,
+    selections: source?.draft?.selections,
+    selectedTowerId
+  };
+  const previousCache = updateRogueliteStatus.lastRender;
+  if (previousCache
+    && previousCache.synergies === nextCache.synergies
+    && previousCache.inventory === nextCache.inventory
+    && previousCache.towerSlots === nextCache.towerSlots
+    && previousCache.allowed === nextCache.allowed
+    && previousCache.reasonKey === nextCache.reasonKey
+    && previousCache.pendingOffer === nextCache.pendingOffer
+    && previousCache.selections === nextCache.selections
+    && previousCache.selectedTowerId === nextCache.selectedTowerId) return;
+  updateRogueliteStatus.lastRender = nextCache;
+  const presentation = projectRoguelitePresentation(snap);
+  if (!presentation) { panel.hidden = true; panel.replaceChildren(); draftPanel.hidden = true; draftPanel.replaceChildren(); artifactPanel.hidden = true; artifactPanel.replaceChildren(); return; }
+  panel.hidden = !presentation.active;
+  panel.replaceChildren();
+  draftPanel.hidden = !presentation.active || !presentation.draft?.pendingOffer;
+  draftPanel.replaceChildren();
+  artifactPanel.hidden = !presentation.active || !presentation.artifacts;
+  artifactPanel.replaceChildren();
+  if (!presentation.active) return;
+  for (const synergy of presentation.synergies) {
+    const row = document.createElement("span");
+    const active = synergy.activeTierRequiredCounts.length
+      ? "active " + synergy.activeTierRequiredCounts.join("/")
+      : "inactive";
+    row.textContent = synergy.label + ": " + synergy.towerCount + " towers (" + active + ")";
+    panel.append(row);
+  }
+  const pendingOffer = presentation.draft?.pendingOffer;
+  if (pendingOffer) {
+    const title = document.createElement("strong");
+    title.textContent = "Choose a wave upgrade";
+    draftPanel.append(title);
+    for (const option of pendingOffer.options) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.setAttribute("data-draft-card-id", option.cardId);
+      button.textContent = option.label;
+      button.addEventListener("click", () => {
+        const result = dispatchGameCommand(game, {
+          schemaVersion: 3, type: "chooseDraftOption",
+          offerId: pendingOffer.offerId,
+          cardId: option.cardId
+        });
+        report(result);
+        if (result.ok) updateRogueliteStatus(game.getSnapshot());
+      });
+      draftPanel.append(button);
+    }
+  }
+  if (presentation.artifacts) {
+    const title = document.createElement("strong");
+    title.textContent = "Artifacts (" + presentation.artifacts.inventory.length + ")";
+    artifactPanel.append(title);
+    for (const artifact of presentation.artifacts.inventory) {
+      const row = document.createElement("div");
+      const label = document.createElement("span");
+      label.textContent = artifact.label + " · " + artifact.slotType
+        + (artifact.socket ? " → " + artifact.socket.towerId + "/" + artifact.socket.slotId : "");
+      row.append(label);
+      const addAction = (action, text, activate) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.setAttribute("data-artifact-action", action);
+        button.textContent = text;
+        button.disabled = presentation.artifacts.management?.allowed !== true;
+        button.addEventListener("click", () => {
+          const result = activate();
+          report(result);
+          if (result.ok) updateRogueliteStatus(game.getSnapshot());
+        });
+        row.append(button);
+      };
+      if (artifact.socket) {
+        addAction("unsocket", "Unsocket", () => dispatchGameCommand(game, {
+          schemaVersion: 2, type: "unsocketArtifact",
+          artifactInstanceId: artifact.instanceId,
+          towerId: artifact.socket.towerId,
+          slotId: artifact.socket.slotId
+        }));
+      } else {
+        const tower = presentation.artifacts.towerSlots?.find((item) => item.towerId === selectedTowerId);
+        for (const slot of tower?.slots ?? []) {
+          if (slot.slotType !== artifact.slotType || slot.artifactInstanceId !== null) continue;
+          addAction("socket", "Socket in " + slot.slotId, () => dispatchGameCommand(game, {
+            schemaVersion: 2, type: "socketArtifact",
+            artifactInstanceId: artifact.instanceId,
+            towerId: tower.towerId,
+            slotId: slot.slotId
+          }));
+        }
+      }
+      artifactPanel.append(row);
+    }
+  }
+}
+
+function updateLogisticsStatus(snapshot) {
+  const panel = $("logistics-status");
+  if (!panel) return;
+  const presentation = projectLogisticsPresentation(snapshot);
+  panel.replaceChildren();
+  panel.hidden = !presentation.active;
+  if (!presentation.active) return;
+  const heading = document.createElement("strong");
+  heading.textContent = "Logistics";
+  panel.append(heading);
+  if (presentation.power) {
+    for (const component of presentation.power.components) {
+      const row = document.createElement("span");
+      row.textContent = component.id + ": " + component.allocated + "/" + component.output
+        + " allocated · " + component.consumerIds.length + " consumers";
+      panel.append(row);
+    }
+    const brownout = presentation.power.consumers.filter((consumer) => !consumer.powered);
+    if (brownout.length) {
+      const row = document.createElement("span");
+      row.dataset.logisticsBrownout = "true";
+      row.textContent = "Brownout: " + brownout.map((consumer) => consumer.towerId).join(", ");
+      panel.append(row);
+    }
+    for (const node of presentation.power.nodes) {
+      for (const linkedTowerId of node.linkTowerIds) {
+        if (node.towerId >= linkedTowerId) continue;
+        const row = document.createElement("span");
+        row.className = "logistics-link-cue";
+        row.textContent = "Grid link: " + node.towerId + " ↔ " + linkedTowerId;
+        panel.append(row);
+      }
+      for (const consumerTowerId of node.coveredConsumerIds) {
+        const row = document.createElement("span");
+        row.className = "logistics-coverage-cue";
+        row.textContent = "Power coverage: " + node.towerId + " → " + consumerTowerId;
+        panel.append(row);
+      }
+    }
+  }
+  if (presentation.ammunition) {
+    for (const inventory of presentation.ammunition.inventories) {
+      const row = document.createElement("span");
+      row.className = "logistics-ammunition-cue";
+      row.textContent = inventory.towerId + ": " + inventory.amount + "/" + inventory.capacity
+        + " " + inventory.ammoTypeId;
+      panel.append(row);
+      if (!inventory.hasRequiredAmmo) {
+        const depleted = document.createElement("span");
+        depleted.className = "logistics-depleted-cue";
+        depleted.textContent = "Depleted: " + inventory.towerId;
+        panel.append(depleted);
+      }
+    }
+  }
+  if (presentation.supply) {
+    const supply = presentation.supply;
+    for (const source of [...supply.producers, ...supply.storages]) {
+      const stock = document.createElement("span");
+      stock.className = "logistics-supply-stock-cue";
+      stock.textContent = source.towerId + ": " + source.amount + "/" + source.capacity
+        + " " + source.ammoTypeId;
+      panel.append(stock);
+      const progress = document.createElement("span");
+      progress.className = "logistics-supply-progress-cue";
+      progress.textContent = "productionProgress" in source
+        ? source.towerId + ": production " + source.productionProgress + "/" + source.productionInterval
+          + ", transfer " + source.transferProgress + "/" + source.transferInterval
+        : source.towerId + ": transfer " + source.transferProgress + "/" + source.transferInterval;
+      panel.append(progress);
+      if (!source.operational) {
+        const paused = document.createElement("span");
+        paused.className = "logistics-supply-paused-cue";
+        paused.textContent = "Paused/brownout: " + source.towerId;
+        panel.append(paused);
+      }
+    }
+    for (const edge of supply.edges) {
+      const link = document.createElement("span");
+      link.className = "logistics-supply-link-cue";
+      link.textContent = "Supply link: " + edge.sourceTowerId + " → " + edge.destinationTowerId;
+      panel.append(link);
+      if (edge.destinationKind === "consumer") {
+        const refill = document.createElement("span");
+        refill.className = "logistics-refill-cue";
+        refill.textContent = "Refill: " + edge.sourceTowerId + " → " + edge.destinationTowerId;
+        panel.append(refill);
+      }
+    }
+  }
 }
 
 function updateTargetMode(snap) {
@@ -986,9 +1863,55 @@ function applyProjectTheme() {
 }
 
 function phaserPlayerTemplate() {
-  return `import { createGameContentRegistry, TowerDefenseGame } from "./engine/index.js";
+  return `import {
+  createCampaignRun,
+  createEmptyPlayerProfile,
+  createGameContentRegistry,
+  dispatchGameCommand,
+  exportCampaignRun,
+  getAvailableCampaignNodeIds,
+  getPlayerProfileLaunchOptions,
+  importCampaignRun,
+  isPlayerMissionUnlocked,
+  parsePlayerProfileJson,
+  prepareCampaignBattle,
+  purchasePlayerMetaUpgrade,
+  recordCampaignBattleVictory,
+  recordPlayerMissionClear,
+  resolveCampaignStructuralChoice,
+  resolveWorldCampaign,
+  selectPlayerDifficulty,
+  serializePlayerProfile,
+  settleCampaignBattleVictory,
+  TowerDefenseGame,
+  validateCampaignRunAgainstContent
+} from "./engine/index.js";
+import { createPlayerProfileStore, derivePlayerProfileStorageKey } from "./player-runtime/index.mjs";
 import { createAudioPlayer } from "./renderer/audio.mjs";
-import { resolveAutotile } from "./renderer/autotile.mjs";
+import {
+  projectCampaignPresentation,
+  projectElevationCues,
+  projectEnemyNavigationPoint,
+  projectLegacyPresentationEvents,
+  projectExposurePresentationCues,
+  projectMarkPresentationCues,
+  projectNavigationPlacementCues,
+  projectPhysicsPresentationCues,
+  hitTestHeroesPresentation,
+  projectHeroesPresentation,
+  projectHeroPresentationPoint,
+  projectLogisticsPresentation,
+  projectRoguelitePresentation,
+  projectReactionPresentationCues,
+  projectSnapshotSpawnCoord,
+  projectShieldPresentationCues,
+  projectTerraformingPresentation,
+  resolveExposurePresentation,
+  resolveMarkPresentation,
+  resolveShieldPresentation,
+  selectHeroAbilityEnemy
+} from "./renderer/index.mjs";
+import { expandAutotileInvalidations, resolveAutotile } from "./renderer/autotile.mjs";
 import project from "./project-data.js";
 
 const content = createGameContentRegistry({
@@ -996,31 +1919,47 @@ const content = createGameContentRegistry({
   maps: project.maps,
   worldMap: project.worldMap,
   scripts: project.scripts,
+  mechanics: project.mechanics,
   visuals: project.visuals,
   storyComics: project.storyComics,
   battleBackgrounds: project.battleBackgrounds
 });
 
+function ownDataValue(record, key) {
+  if (record === null || typeof record !== "object") return undefined;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(record, key);
+    return descriptor?.enumerable === true && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+${playerProfileRuntimeTemplate()}
+
 const $ = (id) => document.getElementById(id);
 applyProjectTheme();
 const audio = createAudioPlayer({ audio: project.visuals && project.visuals.audio });
-const PROGRESS_KEY = "towerforge:progress:" + ((project.buildTarget && project.buildTarget.appId) || (project.manifest && project.manifest.name) || "game");
-const PROGRESS_VERSION = 2;
-let progress = loadProgress();
-let cleared = new Set(progress.clearedMissionIds);
 let missionId = content.defaultMissionId || Object.keys(content.missions)[0];
-let difficultyId = content.difficulties.some((item) => item.id === progress.selectedDifficultyId) ? progress.selectedDifficultyId : content.defaultDifficultyId;
 let towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
 let game = createGame();
+const activeCampaign = resolveWorldCampaign(content);
+let campaignRun = activeCampaign ? createCampaignRun("campaign") : null;
+let pendingCampaignNodeId = null;
+let pendingCampaignBattle = false;
 let message = "Choose a tower, click a buildable tile, then start the wave.";
-let armedAbility = null;
-let sellMode = false;
+let targetingMode = { kind: "build" };
 let selectedTowerId = null;
 let keyboardCoord = null;
+let navigationHoverCoord = null;
+let navigationOverlay = projectNavigationPlacementCues(undefined);
+let navigationOverlayPlacementState = null;
+let navigationOverlayFieldState = null;
 let lastRunningSpeed = 1;
 let activeStory = null;
 let storyWasRunning = false;
 let victoryRewarded = false;
+let lastObservedEvents = [];
 const shownStories = new Set();
 
 const rendererTheme = content.visuals?.theme?.renderer ?? {};
@@ -1034,13 +1973,16 @@ const TERRAIN_COLORS = {
 };
 
 initSelectors();
+syncKeyboardCursor(null);
 initAbilityBar();
 renderMetaPanel();
+setupCampaignRunControls();
+updateCampaignRun();
 $("start-wave").addEventListener("click", () => { audio.resume(); report(game.startNextWave()); });
 $("pause-run").addEventListener("click", () => setPaused(Number($("speed").value) > 0));
-$("sell-mode").addEventListener("click", () => setSellMode(!sellMode));
-$("reset-run").addEventListener("click", () => { game = createGame(); victoryRewarded = false; selectedTowerId = null; initAbilityBar(); setSellMode(false); message = "Run reset."; });
-$("reset-progress")?.addEventListener("click", () => { progress = emptyProgress(); cleared = new Set(); difficultyId = content.defaultDifficultyId; saveProgress(); refreshMissionOptions(); initDifficultySelector(); renderMetaPanel(); game = createGame(); victoryRewarded = false; message = "Campaign progress reset."; });
+$("sell-mode").addEventListener("click", () => setSellMode(targetingMode.kind !== "sell"));
+$("reset-run").addEventListener("click", () => { game.reset(); victoryRewarded = false; selectedTowerId = null; setTargetingMode({ kind: "build" }); initAbilityBar(); clearNavigationOverlay(); message = "Run reset."; });
+$("reset-progress")?.addEventListener("click", resetPlayerProgress);
 $("speed").addEventListener("input", syncSpeedUi);
 $("snd").addEventListener("change", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
 $("sfx-volume").addEventListener("input", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
@@ -1053,13 +1995,14 @@ $("story-next").addEventListener("click", advanceStory);
 $("story-skip").addEventListener("click", finishStory);
 document.addEventListener("keydown", (event) => {
   const tag = event.target?.tagName;
-  if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;
+  if (tag === "BUTTON" || tag === "A" || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;
   if (event.code === "Space") { event.preventDefault(); setPaused(Number($("speed").value) > 0); return; }
   if (document.activeElement !== $("playfield")) return;
+  if (event.code === "Digit1") { event.preventDefault(); armCurrentHeroAbility(); return; }
   const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
   if (moves[event.key]) { event.preventDefault(); moveKeyboardCursor(moves[event.key][0], moves[event.key][1]); }
-  else if (event.key === "Enter") { event.preventDefault(); actAtCoord(ensureKeyboardCoord()); }
-  else if (event.key === "Escape") { event.preventDefault(); setArmed(null); setSellMode(false); message = "Build action cancelled."; }
+  else if (event.key === "Enter") { event.preventDefault(); const coord = ensureKeyboardCoord(); actAtCoord(coord, hitTestHeroAtCoord(coord), hitTestHeroAbilityEnemyAtCoord(coord)); }
+  else if (event.key === "Escape") { event.preventDefault(); setTargetingMode({ kind: "build" }); message = "Build action cancelled."; }
 });
 syncSpeedUi();
 syncAudioSettings();
@@ -1068,24 +2011,154 @@ selectMissionMusic();
 showStoryForMission("beforeMission");
 $("playfield").addEventListener("focus", () => syncKeyboardCursor(ensureKeyboardCoord()));
 
-function createGame() { return new TowerDefenseGame({ missionId, content, difficultyId, metaUpgradeLevels: progress.upgradeLevels }); }
+function createGame() { return new TowerDefenseGame({ missionId, content, ...currentPlayerLaunchOptions() }); }
 
-function actAtCoord(coord) {
+function hitTestHeroAtCoord(coord) {
+  const scene = typeof phaserGame === "undefined" ? null : phaserGame.scene.getScenes(true)[0];
+  if (!scene || !coord) return null;
+  const snapshot = game.getRenderSnapshot();
+  const presentation = projectHeroesPresentation(snapshot);
+  if (!presentation.active || !presentation.units.every((hero) => hero.movement)) return null;
+  const geom = scene.geometry(snapshot.tiles, snapshot.grid);
+  const point = scene.center(coord, geom);
+  return hitTestHeroesPresentation(presentation, point, (candidate) => scene.center(candidate, geom), geom.r * 0.7);
+}
+
+function hitTestHeroAbilityEnemyAtCoord(coord) {
+  if (targetingMode.kind !== "heroAbility" || !coord) return null;
+  const scene = typeof phaserGame === "undefined" ? null : phaserGame.scene.getScenes(true)[0];
+  if (!scene) return null;
+  const snapshot = game.getRenderSnapshot();
+  const geom = scene.geometry(snapshot.tiles, snapshot.grid);
+  return selectHeroAbilityEnemy(
+    snapshot.enemies,
+    scene.center(coord, geom),
+    (enemy) => scene.enemyPos(enemy, snapshot, geom)
+  );
+}
+
+function clearNavigationOverlay() {
+  navigationOverlay = projectNavigationPlacementCues(undefined);
+  navigationOverlayPlacementState = null;
+  navigationOverlayFieldState = null;
+}
+
+function captureNavigationOverlayPlacementState(snapshot) {
+  // Allocation belongs to successful overlay refreshes, never animation-frame comparison.
+  navigationOverlayPlacementState = snapshot.towers.map((tower) => ({
+    id: tower.id,
+    typeId: tower.typeId,
+    q: tower.coord.q,
+    r: tower.coord.r
+  }));
+  navigationOverlayFieldState = snapshot.navigation.fields.map((field) => ({
+    movementProfileId: field.movementProfileId,
+    revision: field.revision
+  }));
+}
+
+function navigationSnapshotRevision(snapshot) {
+  if (snapshot?.navigation?.schemaVersion !== 1 || snapshot.navigation.mode !== "dynamic_flow") return "";
+  const fields = snapshot.navigation.fields;
+  if (navigationOverlayFieldState === null || fields.length !== navigationOverlayFieldState.length) return true;
+  for (let index = 0; index < fields.length; index += 1) {
+    const field = fields[index];
+    const retained = navigationOverlayFieldState[index];
+    if (field.movementProfileId !== retained.movementProfileId || field.revision !== retained.revision) return true;
+  }
+  const towers = snapshot.towers;
+  if (navigationOverlayPlacementState === null || towers.length !== navigationOverlayPlacementState.length) return true;
+  // Engine snapshot order is deterministic, so exact positional comparison is
+  // collision-free and catches create/destroy/move/type changes without allocation.
+  for (let index = 0; index < towers.length; index += 1) {
+    const tower = towers[index];
+    const retained = navigationOverlayPlacementState[index];
+    if (tower.id !== retained.id
+      || tower.typeId !== retained.typeId
+      || tower.coord.q !== retained.q
+      || tower.coord.r !== retained.r) return true;
+  }
+  return false;
+}
+
+function syncNavigationOverlaySnapshot(snapshot) {
+  if (snapshot.outcome !== "playing") { clearNavigationOverlay(); return; }
+  const revisionChanged = navigationSnapshotRevision(snapshot);
+  if (revisionChanged === "") {
+    if (navigationOverlayPlacementState !== null || navigationOverlayFieldState !== null) clearNavigationOverlay();
+    return;
+  }
+  if (revisionChanged && (navigationHoverCoord || keyboardCoord)) refreshNavigationOverlay();
+}
+
+function refreshNavigationOverlay(coord = navigationHoverCoord || keyboardCoord) {
+  if (!coord || !towerId || targetingMode.kind !== "build") {
+    clearNavigationOverlay();
+    return;
+  }
+  let analysis;
+  try {
+    analysis = game.analyzeNavigation({ towerTypeId: towerId, coordinates: [{ q: coord.q, r: coord.r }] });
+  } catch {
+    clearNavigationOverlay();
+    return;
+  }
+  navigationOverlay = projectNavigationPlacementCues(analysis);
+  if (!navigationOverlay.active) {
+    clearNavigationOverlay();
+    return;
+  }
+  captureNavigationOverlayPlacementState(game.getRenderSnapshot());
+  const blocked = navigationOverlay.cues.find((cue) => cue.state === "blocked");
+  if (blocked?.reasonKey === "reason.lastPathBlocked") message = "That tower would block the last path.";
+}
+
+function actAtCoord(coord, heroHitId = null, enemyHitId = null) {
   if (!coord) return;
-  if (sellMode) {
+  if (targetingMode.kind === "sell") {
     const towerAt = game.getTowerIdAt(coord);
     report(towerAt ? game.sellTower(towerAt) : { ok: false, reason: "Choose a tower tile." });
     if (towerAt === selectedTowerId) selectedTowerId = null;
     setSellMode(false);
     return;
   }
-  if (armedAbility) { report(game.useAbility(armedAbility, coord)); setArmed(null); return; }
+  if (targetingMode.kind === "missionAbility") {
+    report(game.useAbility(targetingMode.abilityId, coord));
+    setTargetingMode({ kind: "build" });
+    return;
+  }
+  if (targetingMode.kind === "heroAbility") {
+    if (!enemyHitId) { message = "Choose a live enemy target."; return; }
+    const result = dispatchGameCommand(game, {
+      schemaVersion: 5,
+      type: "useHeroAbility",
+      heroId: targetingMode.heroId,
+      abilityId: targetingMode.abilityId,
+      targetEnemyId: enemyHitId
+    });
+    report(result);
+    if (result.ok) setTargetingMode({ kind: "build" });
+    return;
+  }
+  if (targetingMode.kind === "heroMove") {
+    const result = dispatchGameCommand(game, {
+      schemaVersion: 4, type: "moveHero", heroId: targetingMode.heroId,
+      target: { q: coord.q, r: coord.r }
+    });
+    report(result);
+    if (result.ok) setTargetingMode({ kind: "build" });
+    return;
+  }
+  if (heroHitId) { setTargetingMode({ kind: "heroMove", heroId: heroHitId }); selectedTowerId = null; message = "Hero selected. Choose a destination."; return; }
   const towerAt = game.getTowerIdAt(coord);
   if (towerAt) { selectedTowerId = towerAt; message = "Tower selected."; return; }
   if (!towerId) return;
+  const preflight = game.canPlaceTower(towerId, coord);
+  if (!preflight.ok) { report(preflight); refreshNavigationOverlay(coord); return; }
   const result = game.placeTower(towerId, coord);
   report(result);
   if (result.ok) selectedTowerId = game.getTowerIdAt(coord);
+  refreshNavigationOverlay(coord);
 }
 
 function ensureKeyboardCoord() {
@@ -1098,8 +2171,11 @@ function ensureKeyboardCoord() {
 
 function syncKeyboardCursor(coord) {
   keyboardCoord = coord ? { q: coord.q, r: coord.r } : null;
-  const tile = keyboardCoord && game.getSnapshot().tiles.find((item) => item.q === keyboardCoord.q && item.r === keyboardCoord.r);
-  $("playfield").setAttribute("aria-label", tile ? "Hex battlefield. Selected tile q " + tile.q + ", r " + tile.r + ", " + tile.terrain + ". Arrow keys move; Enter acts; Escape cancels." : "Hex battlefield.");
+  const snapshot = game.getSnapshot();
+  const tile = keyboardCoord && snapshot.tiles.find((item) => item.q === keyboardCoord.q && item.r === keyboardCoord.r);
+  const battlefieldLabel = snapshot.grid.kind === "square" ? "Square battlefield" : "Hex battlefield";
+  $("playfield").setAttribute("aria-label", tile ? battlefieldLabel + ". Selected tile q " + tile.q + ", r " + tile.r + ", " + tile.terrain + ". Arrow keys move; Enter acts; Escape cancels." : battlefieldLabel + ".");
+  refreshNavigationOverlay(keyboardCoord);
 }
 
 function moveKeyboardCursor(dq, dr) {
@@ -1111,9 +2187,8 @@ function moveKeyboardCursor(dq, dr) {
 }
 
 function setSellMode(active) {
-  sellMode = Boolean(active);
-  $("sell-mode").setAttribute("aria-pressed", String(sellMode));
-  if (sellMode) { setArmed(null); message = "Click a tower to sell it."; }
+  setTargetingMode(active ? { kind: "sell" } : { kind: "build" });
+  if (active) message = "Click a tower to sell it.";
 }
 
 function setPaused(paused) {
@@ -1165,18 +2240,68 @@ class PlayScene extends Phaser.Scene {
     this.fxG = this.add.graphics();
     this.entG = this.add.graphics();
     this.towerLabels = new Map();
+    this.heroImages = new Map();
+    this.heroLabels = new Map();
     this.tileImages = new Map();
     this.tileTerrainState = new Map();
     this.tileImageKey = "";
+    this.previousEnemyPositions = new Map();
+    this.previousTowerPositions = new Map();
+    this.previousCombat = null;
+    this.markLabels = new Map();
+    this.exposureLabels = new Map();
+    this.elevationLabels = new Map();
     this.registerAtlasFrames();
     this.input.on("pointerdown", (p) => {
       audio.resume();
-      const coord = this.pickTile(p.worldX, p.worldY);
+      const point = this.pointerScenePoint(p);
+      const coord = point && this.pickTile(point.x, point.y);
       if (!coord) return;
       window.__towerforgeLastPointerCoord = coord;
       syncKeyboardCursor(coord);
-      actAtCoord(coord);
+      actAtCoord(coord, this.hitTestHero(point.x, point.y), this.hitTestAbilityEnemy(point.x, point.y));
     });
+    this.input.on("pointermove", (p) => {
+      const point = this.pointerScenePoint(p);
+      const coord = point && this.pickTile(point.x, point.y);
+      if (coord?.q === navigationHoverCoord?.q && coord?.r === navigationHoverCoord?.r) return;
+      navigationHoverCoord = coord;
+      refreshNavigationOverlay(navigationHoverCoord);
+    });
+    this.input.on("pointerout", () => {
+      navigationHoverCoord = null;
+      refreshNavigationOverlay(keyboardCoord);
+    });
+  }
+  pointerScenePoint(pointer) {
+    const event = pointer && pointer.event;
+    const source = event && ((event.changedTouches && event.changedTouches[0])
+      || (event.touches && event.touches[0]) || event);
+    const rect = this.game.canvas.getBoundingClientRect();
+    if (!source || !Number.isFinite(source.clientX) || !Number.isFinite(source.clientY)
+      || !(rect.width > 0) || !(rect.height > 0)) return null;
+    return {
+      x: (source.clientX - rect.left) * this.scale.width / rect.width,
+      y: (source.clientY - rect.top) * this.scale.height / rect.height
+    };
+  }
+  hitTestHero(x, y) {
+    const snapshot = game.getRenderSnapshot();
+    const presentation = projectHeroesPresentation(snapshot);
+    if (!presentation.active || !presentation.units.every((hero) => hero.movement)) return null;
+    const geom = this.geometry(snapshot.tiles, snapshot.grid);
+    return hitTestHeroesPresentation(presentation, { x, y }, (coord) => this.center(coord, geom), geom.r * 0.7);
+  }
+  hitTestAbilityEnemy(x, y) {
+    if (targetingMode.kind !== "heroAbility") return null;
+    const snapshot = game.getRenderSnapshot();
+    const geom = this.geometry(snapshot.tiles, snapshot.grid);
+    return selectHeroAbilityEnemy(
+      snapshot.enemies,
+      { x, y },
+      (enemy) => this.enemyPos(enemy, snapshot, geom),
+      geom.r * 0.62
+    );
   }
   registerAtlasFrames() {
     for (const [spriteId, sprite] of Object.entries(content.visuals?.sprites || {})) {
@@ -1187,7 +2312,9 @@ class PlayScene extends Phaser.Scene {
     }
   }
   spriteTexture(spriteId) {
-    const sprite = content.visuals?.sprites?.[spriteId];
+    if (typeof spriteId !== "string" || !spriteId) return null;
+    const sprites = ownDataValue(content.visuals, "sprites");
+    const sprite = ownDataValue(sprites, spriteId);
     if (!sprite) return null;
     if (sprite.atlas && sprite.frame && this.textures.exists("tf-atlas:" + sprite.atlas)) return { key: "tf-atlas:" + sprite.atlas, frame: spriteId };
     if (sprite.src && this.textures.exists("tf-sprite:" + spriteId)) return { key: "tf-sprite:" + spriteId };
@@ -1222,7 +2349,9 @@ class PlayScene extends Phaser.Scene {
     const prog = Math.max(0, Math.min(track.length - 1, enemy.pathProgress));
     const i = Math.floor(prog), f = prog - i;
     const a = this.center(track[i], g), b = this.center(track[Math.min(i + 1, track.length - 1)], g);
-    return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+    const legacyPoint = { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+    // enemy.navigation stays opaque here; the shared renderer projector validates it.
+    return projectEnemyNavigationPoint(enemy, legacyPoint, (coord) => this.center(coord, g));
   }
   hex(gr, x, y, r, fill, alpha) {
     gr.fillStyle(fill, alpha == null ? 1 : alpha);
@@ -1241,9 +2370,20 @@ class PlayScene extends Phaser.Scene {
     }
     this.hex(gr, x, y, r, fill, alpha);
   }
-  syncTileImages(snap, g) {
+  shieldRing(gr, x, y, radius, shield) {
+    if (!shield) return;
+    const width = Math.max(2, radius * 0.12);
+    gr.lineStyle(width, 0x63d9ff, 0.2);
+    gr.strokeCircle(x, y, radius);
+    if (shield.ratio <= 0) return;
+    gr.lineStyle(width, 0x63d9ff, 0.95);
+    gr.beginPath();
+    gr.arc(x, y, radius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * shield.ratio, false);
+    gr.strokePath();
+  }
+  syncTileImages(snap, g, terraformingPresentation) {
     const stateKey = [snap.mapId, snap.grid?.kind, this.scale.width, this.scale.height].join("|");
-    const fullRedraw = stateKey !== this.tileImageKey;
+    let fullRedraw = stateKey !== this.tileImageKey;
     if (fullRedraw) {
       for (const images of this.tileImages.values()) for (const image of images) this.destroyTileImage(image);
       this.tileImages.clear();
@@ -1252,14 +2392,28 @@ class PlayScene extends Phaser.Scene {
     }
     const map = { id: snap.mapId || snap.missionId, grid: snap.grid, tiles: snap.tiles, pathRoutes: snap.pathRoutes || [] };
     const tileByKey = new Map(snap.tiles.map((tile) => [tile.q + "," + tile.r, tile]));
-    const dirty = new Set();
+    const changedRoots = [];
     for (const tile of snap.tiles) {
       const key = tile.q + "," + tile.r;
       if (fullRedraw || this.tileTerrainState.get(key) !== tile.terrain) {
-        dirty.add(key);
-        for (const neighbor of this.renderingNeighbors(tile, snap.grid)) dirty.add(neighbor.q + "," + neighbor.r);
+        changedRoots.push({ q: tile.q, r: tile.r });
       }
     }
+    if (changedRoots.length > 1_024) {
+      fullRedraw = true;
+      for (const images of this.tileImages.values()) for (const image of images) this.destroyTileImage(image);
+      this.tileImages.clear();
+      this.tileTerrainState.clear();
+    }
+    const roots = this.mergeAutotileRoots(changedRoots, terraformingPresentation?.terrainInvalidations);
+    const expanded = roots === null ? undefined : expandAutotileInvalidations({
+      gridType: snap.grid?.kind || "hex", coordinates: roots, tiles: snap.tiles
+    });
+    // The authoritative snapshot is the fallback whenever the bounded hint channel overflows
+    // or descriptor validation makes a partial redraw unsafe.
+    const dirty = roots === null || expanded === undefined
+      ? new Set(snap.tiles.map((tile) => tile.q + "," + tile.r))
+      : new Set(expanded.map((coord) => coord.q + "," + coord.r));
     for (const key of dirty) {
       for (const image of this.tileImages.get(key) || []) this.destroyTileImage(image);
       this.tileImages.delete(key);
@@ -1280,10 +2434,13 @@ class PlayScene extends Phaser.Scene {
     image.__towerforgeMaskShape?.destroy();
     image.destroy();
   }
-  renderingNeighbors(coord, grid) {
-    if (grid?.kind === "square") return [[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]].map(([q,r]) => ({ q: coord.q + q, r: coord.r + r }));
-    const offsets = coord.r % 2 === 0 ? [[-1,-1],[0,-1],[1,0],[0,1],[-1,1],[-1,0]] : [[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,0]];
-    return offsets.map(([q,r]) => ({ q: coord.q + q, r: coord.r + r }));
+  mergeAutotileRoots(changedRoots, hints) {
+    const unique = new Map();
+    for (const point of changedRoots) unique.set(point.q + "," + point.r, point);
+    if (Array.isArray(hints)) for (const point of hints) {
+      if (Number.isSafeInteger(point?.q) && Number.isSafeInteger(point?.r) && point.q >= 0 && point.r >= 0) unique.set(point.q + "," + point.r, { q: point.q, r: point.r });
+    }
+    return unique.size <= 1024 ? [...unique.values()] : null;
   }
   addTileImage(selected, p, g, sectorDirection, tileKey) {
     const texture = this.spriteTexture(selected?.spriteId);
@@ -1331,11 +2488,25 @@ class PlayScene extends Phaser.Scene {
       game.tick((Math.min(50, delta) / 1000 / tu) * speed);
       snap = game.getRenderSnapshot();
     }
+    syncNavigationOverlaySnapshot(snap);
     const events = ticked ? pending.concat(snap.lastEvents) : pending;
+    if (events.length > 0) lastObservedEvents = events;
     game.lastEvents = []; // consumed this frame — clear so nothing replays next frame
     if ($("snd")?.checked) audio.handleEvents(events);
     const g = this.geometry(snap.tiles, snap.grid);
-    this.syncTileImages(snap, g);
+    const enemyPositions = new Map();
+    for (const enemy of snap.enemies) {
+      const point = this.enemyPos(enemy, snap, g);
+      if (point) enemyPositions.set(enemy.id, point);
+    }
+    const towerPositions = new Map(snap.towers.map((tower) => [tower.id, this.center(tower.coord, g)]));
+    const presentationSnapshot = {
+      ...snap,
+      ...(snap.combat === undefined && this.previousCombat !== null ? { combat: this.previousCombat } : {}),
+      lastEvents: events
+    };
+    const terraformingPresentation = projectTerraformingPresentation(presentationSnapshot);
+    this.syncTileImages(snap, g, terraformingPresentation);
     const map = { id: snap.mapId || snap.missionId, grid: snap.grid, tiles: snap.tiles, pathRoutes: snap.pathRoutes || [] };
 
     this.tileG.clear();
@@ -1350,6 +2521,21 @@ class PlayScene extends Phaser.Scene {
       }
     }
     for (const w of snap.temporaryWaterTiles) { const p = this.center(w, g); this.cell(this.tileG, p.x, p.y, g.r * 0.74, 0x427b88, 0.55, g.grid); }
+    this.drawElevationPresentation(terraformingPresentation?.elevationPresentation || projectElevationCues(snap.elevation), g);
+    if (navigationOverlay.active) {
+      for (const cue of navigationOverlay.cues) {
+        const p = this.center(cue.coord, g);
+        this.cell(
+          this.tileG,
+          p.x,
+          p.y,
+          g.r * 0.76,
+          cue.state === "blocked" ? 0xdf6a59 : 0x8ac783,
+          cue.state === "blocked" ? 0.28 : 0.2,
+          g.grid
+        );
+      }
+    }
     if (keyboardCoord) {
       const p = this.center(keyboardCoord, g);
       this.tileG.lineStyle(Math.max(2, g.r * 0.12), 0xe8f4db, 1);
@@ -1358,11 +2544,79 @@ class PlayScene extends Phaser.Scene {
     }
 
     this.fxG.clear();
-    for (const ev of events) {
+    const presentationEvents = projectLegacyPresentationEvents(presentationSnapshot);
+    const placedTowerPositions = new Map();
+    for (const ev of presentationEvents) {
+      if (ev.type === "towerPlaced") {
+        placedTowerPositions.set(ev.towerId, this.center(ev.coord, g));
+        continue;
+      }
       if (ev.type !== "towerFired") continue;
       const tw = snap.towers.find((t) => t.id === ev.towerId);
       const en = snap.enemies.find((e) => e.id === ev.enemyId);
-      if (tw && en) { const a = this.center(tw.coord, g), b = this.enemyPos(en, snap, g); this.fxG.lineStyle(2, 0xffe2a8, 0.85); this.fxG.lineBetween(a.x, a.y, b.x, b.y); }
+      if (tw && en) { const a = this.center(tw.coord, g), b = this.enemyPos(en, snap, g); if (b) { this.fxG.lineStyle(2, 0xffe2a8, 0.85); this.fxG.lineBetween(a.x, a.y, b.x, b.y); } }
+    }
+    for (const cue of projectShieldPresentationCues(presentationSnapshot)) {
+      let p;
+      if (cue.kind === "enemy") {
+        p = enemyPositions.get(cue.runtimeId) || this.previousEnemyPositions.get(cue.runtimeId);
+        if (!p && cue.change === "break") {
+          const spawnCoord = projectSnapshotSpawnCoord(presentationSnapshot);
+          if (spawnCoord) p = this.center(spawnCoord, g);
+        }
+      } else {
+        p = towerPositions.get(cue.runtimeId)
+          || this.previousTowerPositions.get(cue.runtimeId)
+          || placedTowerPositions.get(cue.runtimeId);
+      }
+      if (!p) continue;
+      const color = cue.change === "break" ? 0xb6ebff
+        : cue.change === "damage" ? 0x5cc6ff
+          : cue.change === "regeneration" ? 0x6deed5 : 0xab8eff;
+      this.fxG.lineStyle(Math.max(2, g.r * 0.1), color, 0.9);
+      this.fxG.strokeCircle(p.x, p.y, g.r * (cue.kind === "tower" ? 0.78 : 0.62));
+    }
+    for (const cue of projectMarkPresentationCues(presentationSnapshot)) {
+      let p = enemyPositions.get(cue.runtimeId) || this.previousEnemyPositions.get(cue.runtimeId);
+      if (!p) {
+        const spawnCoord = projectSnapshotSpawnCoord(presentationSnapshot);
+        if (spawnCoord) p = this.center(spawnCoord, g);
+      }
+      if (!p) continue;
+      const color = cue.cause === "expiration" ? 0xbeafda
+        : cue.cause === "consume" ? 0xffbe70 : 0xc48bff;
+      this.fxG.lineStyle(Math.max(2, g.r * 0.09), color, 0.9);
+      this.fxG.strokeCircle(p.x, p.y, g.r * 0.68);
+    }
+    for (const cue of projectExposurePresentationCues(presentationSnapshot)) {
+      let p = enemyPositions.get(cue.runtimeId) || this.previousEnemyPositions.get(cue.runtimeId);
+      if (!p) {
+        const spawnCoord = projectSnapshotSpawnCoord(presentationSnapshot);
+        if (spawnCoord) p = this.center(spawnCoord, g);
+      }
+      if (!p) continue;
+      const color = cue.cause === "consume" ? 0xffd680
+        : cue.cause === "expiration" ? 0x97becd : 0x69d3ff;
+      this.fxG.lineStyle(Math.max(2, g.r * 0.09), color, 0.9);
+      this.fxG.strokeCircle(p.x, p.y, g.r * 0.74);
+    }
+    for (const cue of projectReactionPresentationCues(presentationSnapshot)) {
+      const p = enemyPositions.get(cue.originEnemyId)
+        || this.previousEnemyPositions.get(cue.originEnemyId)
+        || this.center(cue.originCoord, g);
+      this.fxG.lineStyle(Math.max(2, g.r * 0.13), 0xffe674, 0.92);
+      this.fxG.strokeCircle(p.x, p.y, g.r * 0.9);
+    }
+    for (const cue of projectPhysicsPresentationCues(presentationSnapshot)) {
+      const from = this.center(cue.from, g);
+      const to = this.center(cue.to, g);
+      if (cue.kind === "displacement") {
+        this.fxG.lineStyle(Math.max(2, g.r * 0.11), 0x7bdcff, 0.9);
+        this.fxG.lineBetween(from.x, from.y, to.x, to.y);
+      } else {
+        this.fxG.lineStyle(Math.max(2, g.r * 0.12), 0xff8b5c, 0.92);
+        this.fxG.strokeCircle(to.x, to.y, g.r * 0.78);
+      }
     }
 
     this.entG.clear();
@@ -1380,6 +2634,7 @@ class PlayScene extends Phaser.Scene {
         this.entG.fillStyle(0x1b1d18, 1); this.entG.fillRect(p.x - g.r * 0.45, p.y + g.r * 0.5, g.r * 0.9, 4);
         this.entG.fillStyle(frac > 0.35 ? 0x8ac783 : 0xdf6a59, 1); this.entG.fillRect(p.x - g.r * 0.45, p.y + g.r * 0.5, g.r * 0.9 * frac, 4);
       }
+      this.shieldRing(this.entG, p.x, p.y, g.r * 0.66, resolveShieldPresentation(snap, "tower", tw.id));
       let label = this.towerLabels.get(tw.id);
       const text = (content.towers[tw.typeId]?.label || tw.typeId).slice(0, 2);
       if (!label) { label = this.add.text(0, 0, text, { fontFamily: "sans-serif", color: "#101410" }).setOrigin(0.5).setDepth(10); this.towerLabels.set(tw.id, label); }
@@ -1387,14 +2642,146 @@ class PlayScene extends Phaser.Scene {
     }
     for (const [id, lbl] of this.towerLabels) { if (!seen.has(id)) { lbl.destroy(); this.towerLabels.delete(id); } }
 
+    // Every supported heroes schema renders from the exact fail-closed engine snapshot. V1 remains
+    // static; validated v2/v3 movement input dispatches GameCommandV4 while this scene only presents.
+    const heroPresentation = projectHeroesPresentation(snap);
+    const seenHeroes = new Set();
+    for (const hero of heroPresentation.units) {
+      seenHeroes.add(hero.id);
+      const point = projectHeroPresentationPoint(hero, (coord) => this.center(coord, g));
+      if (!point) continue;
+      const passiveAura = hero.passiveAura;
+      if (passiveAura?.active) {
+        this.entG.lineStyle(Math.max(2, g.r * 0.08), 0x7ae8d6, 0.55);
+        this.entG.strokeCircle(point.x, point.y, Math.max(g.r * 0.72, passiveAura.radius * g.r));
+        for (const towerId of passiveAura.affectedTowerIds) {
+          const towerPoint = towerPositions.get(towerId);
+          if (towerPoint) this.entG.strokeCircle(towerPoint.x, towerPoint.y, g.r * 0.62);
+        }
+      }
+      const heroBindings = ownDataValue(ownDataValue(content.visuals, "bindings"), "heroes");
+      const spriteId = ownDataValue(heroBindings, hero.definitionId);
+      const texture = this.spriteTexture(spriteId);
+      let image = this.heroImages.get(hero.id);
+      let label = this.heroLabels.get(hero.id);
+      const heroAlpha = hero.durability?.defeated ? 0.38 : 1;
+      if (texture) {
+        if (!image) {
+          image = this.add.image(point.x, point.y, texture.key, texture.frame).setDepth(9);
+          this.heroImages.set(hero.id, image);
+        }
+        image.setTexture(texture.key, texture.frame).setPosition(point.x, point.y)
+          .setDisplaySize(g.r * 1.35, g.r * 1.35).setAlpha(heroAlpha).setVisible(true);
+        if (label) { label.destroy(); this.heroLabels.delete(hero.id); label = null; }
+      } else {
+        if (image) { image.destroy(); this.heroImages.delete(hero.id); image = null; }
+        this.entG.fillStyle(0xe6b85c, heroAlpha); this.entG.fillCircle(point.x, point.y, g.r * 0.5);
+        this.entG.lineStyle(2, 0xfff0bd, heroAlpha); this.entG.strokeCircle(point.x, point.y, g.r * 0.5);
+        if (!label) {
+          label = this.add.text(0, 0, "", { fontFamily: "sans-serif", fontStyle: "bold", color: "#101410" }).setOrigin(0.5).setDepth(10);
+          this.heroLabels.set(hero.id, label);
+        }
+        label.setText(hero.label.slice(0, 2)).setFontSize(Math.max(10, Math.round(g.r * 0.38)))
+          .setPosition(point.x, point.y).setAlpha(heroAlpha).setVisible(true);
+      }
+      if (hero.durability) {
+        const width = g.r * 1.05;
+        const height = Math.max(3, g.r * 0.13);
+        const x = point.x - width / 2;
+        const y = point.y - g.r * 0.82;
+        const hpRatio = hero.durability.hp / hero.durability.maxHp;
+        this.entG.fillStyle(0x000000, 0.65);
+        this.entG.fillRect(x - 1, y - 1, width + 2, height + 2);
+        this.entG.fillStyle(hpRatio > 0.35 ? 0x73cf82 : 0xdf6a59, 1);
+        this.entG.fillRect(x, y, width * hpRatio, height);
+        if (hero.durability.shield) {
+          this.shieldRing(this.entG, point.x, point.y, g.r * 0.62, {
+            ratio: hero.durability.shield.current / hero.durability.shield.capacity
+          });
+        }
+        if (hero.durability.defeated) {
+          const radius = g.r * 0.38;
+          this.entG.lineStyle(Math.max(2, g.r * 0.1), 0xdf6a59, 1);
+          this.entG.lineBetween(point.x - radius, point.y - radius, point.x + radius, point.y + radius);
+          this.entG.lineBetween(point.x + radius, point.y - radius, point.x - radius, point.y + radius);
+        }
+      }
+    }
+    for (const [id, image] of this.heroImages) {
+      if (!seenHeroes.has(id)) { image.destroy(); this.heroImages.delete(id); }
+    }
+    for (const [id, label] of this.heroLabels) {
+      if (!seenHeroes.has(id)) { label.destroy(); this.heroLabels.delete(id); }
+    }
+
+    const seenMarkLabels = new Set();
+    const seenExposureLabels = new Set();
     for (const en of snap.enemies) {
       const p = this.enemyPos(en, snap, g);
+      if (!p) continue;
       const color = Number(content.enemies[en.typeId]?.color ?? 0xaaaaaa);
       this.entG.fillStyle(color, 1); this.entG.fillCircle(p.x, p.y, g.r * 0.38);
       this.entG.lineStyle(2, 0x111111, 1); this.entG.strokeCircle(p.x, p.y, g.r * 0.38);
       const ratio = Math.max(0, en.hp / en.maxHp);
       this.entG.fillStyle(0x1b1d18, 1); this.entG.fillRect(p.x - g.r * 0.45, p.y - g.r * 0.62, g.r * 0.9, 4);
       this.entG.fillStyle(ratio > 0.35 ? 0x8ac783 : 0xdf6a59, 1); this.entG.fillRect(p.x - g.r * 0.45, p.y - g.r * 0.62, g.r * 0.9 * ratio, 4);
+      this.shieldRing(this.entG, p.x, p.y, g.r * 0.52, resolveShieldPresentation(snap, "enemy", en.id));
+      const exposurePresentation = resolveExposurePresentation(snap, en.id);
+      const exposureBadges = exposurePresentation.entries.map((entry) => ({ key: entry.exposureId, label: String(entry.stacks) }));
+      if (exposurePresentation.overflowCount > 0) exposureBadges.push({ key: "overflow", label: "+" + exposurePresentation.overflowCount });
+      const exposureRadius = Math.max(3, g.r * 0.12), exposureStep = exposureRadius * 2.25;
+      for (let index = 0; index < exposureBadges.length; index += 1) {
+        const row = Math.floor(index / 4), rowCount = Math.min(4, exposureBadges.length - row * 4), column = index % 4;
+        const x = p.x + (column - (rowCount - 1) / 2) * exposureStep;
+        const y = p.y - g.r * 0.86 - row * exposureStep;
+        this.entG.fillStyle(0x1c6982, 0.94); this.entG.fillCircle(x, y, exposureRadius);
+        this.entG.lineStyle(Math.max(1, exposureRadius * 0.18), 0x9de9ff, 0.95); this.entG.strokeCircle(x, y, exposureRadius);
+        const labelKey = en.id + "|" + exposureBadges[index].key;
+        seenExposureLabels.add(labelKey);
+        let label = this.exposureLabels.get(labelKey);
+        if (!label) {
+          label = this.add.text(0, 0, "", { fontFamily: "sans-serif", fontStyle: "bold", color: "#effcff" }).setOrigin(0.5).setDepth(12);
+          this.exposureLabels.set(labelKey, label);
+        }
+        label.setText(exposureBadges[index].label).setFontSize(Math.max(7, Math.round(exposureRadius * 1.2))).setPosition(x, y).setVisible(true);
+      }
+      const markPresentation = resolveMarkPresentation(snap, en.id);
+      const badges = markPresentation.entries.map((entry) => ({ key: entry.markId, label: String(entry.stacks) }));
+      if (markPresentation.overflowCount > 0) badges.push({ key: "overflow", label: "+" + markPresentation.overflowCount });
+      const radius = Math.max(3, g.r * 0.13), step = radius * 2.25;
+      for (let index = 0; index < badges.length; index += 1) {
+        const row = Math.floor(index / 4), rowCount = Math.min(4, badges.length - row * 4), column = index % 4;
+        const x = p.x + (column - (rowCount - 1) / 2) * step;
+        const y = p.y + g.r * 0.64 + row * step;
+        this.entG.fillStyle(0x5b3580, 0.92); this.entG.fillCircle(x, y, radius);
+        this.entG.lineStyle(Math.max(1, radius * 0.18), 0xe0c4ff, 0.92); this.entG.strokeCircle(x, y, radius);
+        const labelKey = en.id + "|" + badges[index].key;
+        seenMarkLabels.add(labelKey);
+        let label = this.markLabels.get(labelKey);
+        if (!label) {
+          label = this.add.text(0, 0, "", { fontFamily: "sans-serif", fontStyle: "bold", color: "#fff5ff" }).setOrigin(0.5).setDepth(12);
+          this.markLabels.set(labelKey, label);
+        }
+        label.setText(badges[index].label).setFontSize(Math.max(7, Math.round(radius * 1.2))).setPosition(x, y).setVisible(true);
+      }
+    }
+    for (const [key, label] of this.markLabels) {
+      if (!seenMarkLabels.has(key)) { label.destroy(); this.markLabels.delete(key); }
+    }
+    for (const [key, label] of this.exposureLabels) {
+      if (!seenExposureLabels.has(key)) { label.destroy(); this.exposureLabels.delete(key); }
+    }
+
+    for (const hero of heroPresentation.units) {
+      const blocking = hero.blocking;
+      if (!blocking?.active) continue;
+      const heroPoint = projectHeroPresentationPoint(hero, (coord) => this.center(coord, g));
+      this.entG.lineStyle(Math.max(2, g.r * 0.11), 0xffbb5c, 0.92);
+      if (heroPoint) this.entG.strokeCircle(heroPoint.x, heroPoint.y, g.r * 0.72);
+      for (const enemyId of blocking.blockedEnemyIds) {
+        const enemyPoint = enemyPositions.get(enemyId);
+        if (enemyPoint) this.entG.strokeCircle(enemyPoint.x, enemyPoint.y, g.r * 0.54);
+      }
     }
 
     // Outcome banner (VICTORY/DEFEAT), matching the canvas renderer so the phaser build doesn't
@@ -1415,7 +2802,65 @@ class PlayScene extends Phaser.Scene {
       }
     }
 
+    this.previousEnemyPositions = enemyPositions;
+    this.previousTowerPositions = towerPositions;
+    this.previousCombat = snap.combat ?? null;
     updateHud(snap);
+  }
+
+  drawElevationPresentation(presentation, g) {
+    const retained = new Set();
+    if (presentation?.active) {
+      for (const cue of presentation.cues) {
+        const key = cue.coord.q + "," + cue.coord.r;
+        const p = this.center(cue.coord, g);
+        const color = cue.elevation > 0 ? 0xffdd84 : 0x75caf1;
+        retained.add(key);
+        this.tileG.lineStyle(Math.max(1, g.r * 0.08), color, 0.88);
+        if (g.grid.kind === "square") {
+          const size = g.r * 1.45;
+          this.tileG.strokeRect(p.x - size / 2, p.y - size / 2, size, size);
+        } else {
+          this.tileG.strokeCircle(p.x, p.y, g.r * 0.69);
+        }
+        let label = this.elevationLabels.get(key);
+        if (!label) {
+          label = this.add.text(0, 0, cue.label, {
+            fontFamily: "sans-serif",
+            fontStyle: "bold",
+            color: "#fff8df",
+            backgroundColor: cue.elevation > 0 ? "#5c4712" : "#14435b",
+            padding: { x: 3, y: 1 }
+          }).setOrigin(0.5).setDepth(4);
+          this.elevationLabels.set(key, label);
+        }
+        label.setText(cue.label).setPosition(p.x + g.r * 0.28, p.y - g.r * 0.7).setVisible(true);
+        label.setFontSize(Math.max(8, g.r * 0.3));
+      }
+      if (presentation.overflowCount > 0) {
+        const key = "__overflow__";
+        const text = "+" + presentation.overflowCount + " elevation cues";
+        retained.add(key);
+        let label = this.elevationLabels.get(key);
+        if (!label) {
+          label = this.add.text(0, 0, text, {
+            fontFamily: "sans-serif",
+            fontStyle: "bold",
+            color: "#fff8df",
+            backgroundColor: "#141814",
+            padding: { x: 6, y: 3 }
+          }).setOrigin(1, 0).setDepth(5);
+          this.elevationLabels.set(key, label);
+        }
+        label.setText(text).setPosition(this.scale.width - 12, 12).setVisible(true);
+        label.setFontSize(Math.max(10, g.r * 0.32));
+      }
+    }
+    for (const [key, label] of this.elevationLabels) {
+      if (retained.has(key)) continue;
+      label.destroy();
+      this.elevationLabels.delete(key);
+    }
   }
 }
 
@@ -1431,12 +2876,34 @@ const phaserGame = new Phaser.Game({
   scale: { mode: Phaser.Scale.RESIZE, width: "100%", height: "100%" },
   scene: PlayScene
 });
-window.__towerforgeInspect = () => game.getRenderSnapshot();
+window.__towerforgeInspect = () => {
+  const snapshot = game.getRenderSnapshot();
+  if (snapshot.lastEvents.length === 0 && lastObservedEvents.length > 0) {
+    snapshot.lastEvents = lastObservedEvents;
+  }
+  return snapshot;
+};
+window.__towerforgeCampaignInspect = () => ({
+  active: Boolean(activeCampaign && campaignRun),
+  run: campaignRun ? JSON.parse(exportCampaignRun(campaignRun)) : null,
+  pendingNodeId: pendingCampaignNodeId,
+  availableNodeIds: activeCampaign && campaignRun ? [...getAvailableCampaignNodeIds(campaignRun, content)] : []
+});
 window.__towerforgeTilePoint = (coord) => {
   const scene = phaserGame.scene.getScenes(true)[0];
   if (!scene) return null;
   const snapshot = game.getRenderSnapshot();
   const point = scene.center(coord, scene.geometry(snapshot.tiles, snapshot.grid));
+  const rect = phaserGame.canvas.getBoundingClientRect();
+  return { x: rect.left + point.x * rect.width / scene.scale.width, y: rect.top + point.y * rect.height / scene.scale.height };
+};
+window.__towerforgeEnemyPoint = (enemyId) => {
+  const scene = phaserGame.scene.getScenes(true)[0];
+  if (!scene) return null;
+  const snapshot = game.getRenderSnapshot();
+  const enemy = snapshot.enemies.find((candidate) => candidate.id === enemyId);
+  if (!enemy) return null;
+  const point = scene.enemyPos(enemy, snapshot, scene.geometry(snapshot.tiles, snapshot.grid));
   const rect = phaserGame.canvas.getBoundingClientRect();
   return { x: rect.left + point.x * rect.width / scene.scale.width, y: rect.top + point.y * rect.height / scene.scale.height };
 };
@@ -1447,6 +2914,8 @@ window.__towerforgePickPoint = (point) => {
   return scene.pickTile((point.x - rect.left) * scene.scale.width / rect.width, (point.y - rect.top) * scene.scale.height / rect.height);
 };
 window.__towerforgeBootOk = true;
+const bootError = document.getElementById("boot-error");
+if (bootError) bootError.hidden = true;
 
 // Free the audio hardware while the app is backgrounded (the scene's update() already bails on
 // document.hidden). Saves battery in a wrapped APK; no-op on desktop.
@@ -1469,9 +2938,14 @@ function initSelectors() {
   initDifficultySelector();
   missionSelect.addEventListener("change", () => {
     if (!isUnlocked(missionSelect.value)) { missionSelect.value = missionId; return; } // locked
+    pendingCampaignNodeId = null;
+    pendingCampaignBattle = false;
     missionId = missionSelect.value;
     towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
     game = createGame();
+    setTargetingMode({ kind: "build" });
+    syncKeyboardCursor(null);
+    clearNavigationOverlay();
     victoryRewarded = false;
     selectedTowerId = null;
     setSellMode(false);
@@ -1488,16 +2962,18 @@ function initDifficultySelector() {
   const select = $("difficulty-select");
   if (!select) return;
   select.innerHTML = content.difficulties.map((item) => \`<option value="\${escapeHtml(item.id)}">\${escapeHtml(item.label || item.id)}</option>\`).join("");
-  select.value = difficultyId;
+  select.value = currentPlayerLaunchOptions().difficultyId;
   select.onchange = () => {
-    difficultyId = select.value;
-    progress.selectedDifficultyId = difficultyId;
-    saveProgress();
+    const result = choosePlayerDifficulty(select.value);
+    if (!result.ok) { select.value = currentPlayerLaunchOptions().difficultyId; return; }
     game = createGame();
+    setTargetingMode({ kind: "build" });
+    clearNavigationOverlay();
     victoryRewarded = false;
     selectedTowerId = null;
     initAbilityBar();
-    message = "Difficulty changed to " + (content.difficulties.find((item) => item.id === difficultyId)?.label || difficultyId) + ".";
+    const selectedDifficultyId = currentPlayerLaunchOptions().difficultyId;
+    message = "Difficulty changed to " + (content.difficulties.find((item) => item.id === selectedDifficultyId)?.label || selectedDifficultyId) + ".";
   };
 }
 
@@ -1511,22 +2987,36 @@ function initTowerSelector() {
   }).join("");
   towerId = ids[0] || "";
   towerSelect.value = towerId;
-  towerSelect.onchange = () => { towerId = towerSelect.value; };
+  towerSelect.onchange = () => { towerId = towerSelect.value; refreshNavigationOverlay(); };
 }
 
+function setTargetingMode(next) {
+  targetingMode = next;
+  $("sell-mode").setAttribute("aria-pressed", String(targetingMode.kind === "sell"));
+  for (const btn of document.querySelectorAll("#ability-bar button")) {
+    btn.classList.toggle("armed", targetingMode.kind === "missionAbility" && btn.dataset.aid === targetingMode.abilityId);
+  }
+  const heroButton = document.querySelector("#hero-action-bar button");
+  if (heroButton) heroButton.classList.toggle("armed", targetingMode.kind === "heroAbility");
+  if (targetingMode.kind === "build") refreshNavigationOverlay(); else clearNavigationOverlay();
+}
 function setArmed(id) {
-  armedAbility = id;
-  if (id) message = "Click the map to use " + ((game.getSnapshot().abilities[id] || {}).label || id) + ".";
-  for (const btn of document.querySelectorAll("#ability-bar button")) btn.classList.toggle("armed", btn.dataset.aid === id);
+  if (!id) { setTargetingMode({ kind: "build" }); return; }
+  setTargetingMode({ kind: "missionAbility", abilityId: id });
+  message = "Click the map to use " + ((game.getSnapshot().abilities[id] || {}).label || id) + ".";
 }
 function initAbilityBar() {
   const bar = $("ability-bar");
   if (!bar) return;
   const abilities = Object.values(game.getSnapshot().abilities || {});
   bar.innerHTML = abilities.map((a) => \`<button data-aid="\${escapeHtml(a.id)}" title="Radius \${a.radius}, cooldown \${a.cooldown}">\${escapeHtml(a.label || a.id)}</button>\`).join("");
-  armedAbility = null;
+  setTargetingMode({ kind: "build" });
   for (const btn of bar.querySelectorAll("button")) {
-    btn.onclick = () => { audio.resume(); setArmed(armedAbility === btn.dataset.aid ? null : btn.dataset.aid); };
+    btn.onclick = () => { audio.resume(); setArmed(
+      targetingMode.kind === "missionAbility" && targetingMode.abilityId === btn.dataset.aid
+        ? null
+        : btn.dataset.aid
+    ); };
   }
 }
 function updateAbilityBar(snap) {
@@ -1536,105 +3026,297 @@ function updateAbilityBar(snap) {
     btn.disabled = !ready;
     const cd = Math.ceil((a && a.cooldownRemaining) || 0);
     btn.textContent = ((a && a.label) || btn.dataset.aid) + (cd > 0 ? " (" + cd + ")" : "");
-    if (!ready && armedAbility === btn.dataset.aid) setArmed(null);
+    if (!ready && targetingMode.kind === "missionAbility" && targetingMode.abilityId === btn.dataset.aid) setArmed(null);
   }
 }
 
-// ── Campaign progress (persisted per app in localStorage) ──────────────────────
-function emptyProgress() {
-  return { version: PROGRESS_VERSION, clearedMissionIds: [], starsByMission: {}, metaResources: {}, upgradeLevels: {}, selectedDifficultyId: content.defaultDifficultyId };
+function activeHeroAbilityUnit(snapshot = game.getRenderSnapshot()) {
+  const presentation = projectHeroesPresentation(snapshot);
+  const hero = presentation.active && presentation.units.length === 1
+    ? presentation.units[0]
+    : null;
+  return hero?.activeAbility && hero?.mana ? hero : null;
 }
-function loadProgress() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(PROGRESS_KEY) || "null");
-    const base = emptyProgress();
-    if (Array.isArray(saved)) base.clearedMissionIds = saved;
-    else if (saved && typeof saved === "object") Object.assign(base, saved);
-    base.version = PROGRESS_VERSION;
-    base.clearedMissionIds = (Array.isArray(base.clearedMissionIds) ? base.clearedMissionIds : []).filter((id) => typeof id === "string" && content.missions[id]);
-    base.starsByMission = base.starsByMission && typeof base.starsByMission === "object" ? base.starsByMission : {};
-    base.metaResources = normalizeMetaBag(base.metaResources);
-    base.upgradeLevels = normalizeUpgradeLevels(base.upgradeLevels);
-    return base;
-  } catch (e) { return emptyProgress(); }
+
+function armCurrentHeroAbility() {
+  const hero = activeHeroAbilityUnit();
+  if (!hero || !hero.activeAbility.ready) return;
+  setTargetingMode({ kind: "heroAbility", heroId: hero.id, abilityId: hero.activeAbility.id });
+  message = "Choose a live enemy for " + hero.activeAbility.label + ".";
 }
-function saveProgress() {
-  progress.clearedMissionIds = [...cleared];
-  progress.version = PROGRESS_VERSION;
-  try { localStorage.setItem(PROGRESS_KEY, JSON.stringify(progress)); }
-  catch (e) { /* storage unavailable */ }
+
+function updateHeroActionBar(snap) {
+  const hero = activeHeroAbilityUnit(snap);
+  let bar = document.getElementById("hero-action-bar");
+  if (!hero) {
+    if (bar) bar.remove();
+    if (targetingMode.kind === "heroAbility") setTargetingMode({ kind: "build" });
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement("section");
+    bar.id = "hero-action-bar";
+    bar.className = "ability-bar hero-action-bar";
+    bar.setAttribute("aria-label", "Hero actions");
+    $("message").before(bar);
+  }
+  let button = bar.querySelector("button");
+  if (!button) {
+    button = document.createElement("button");
+    button.type = "button";
+    button.addEventListener("click", () => {
+      audio.resume();
+      if (targetingMode.kind === "heroAbility") setTargetingMode({ kind: "build" });
+      else armCurrentHeroAbility();
+    });
+    bar.append(button);
+  }
+  let status = bar.querySelector("span");
+  if (!status) { status = document.createElement("span"); bar.append(status); }
+  const ability = hero.activeAbility;
+  button.disabled = !ability.ready;
+  button.dataset.heroId = hero.id;
+  button.dataset.abilityId = ability.id;
+  button.classList.toggle("armed", targetingMode.kind === "heroAbility");
+  const cooldown = Math.ceil(ability.cooldownRemaining);
+  button.textContent = ability.label + " [1]" + (cooldown > 0 ? " (" + cooldown + ")" : "");
+  button.title = "Mana " + hero.mana.current + "/" + hero.mana.max + " · Cost " + ability.manaCost;
+  status.textContent = "Mana " + hero.mana.current + "/" + hero.mana.max
+    + " (+" + hero.mana.regenerationPerUnit + ")";
+  bar.dataset.manaCurrent = String(hero.mana.current);
+  bar.dataset.manaMax = String(hero.mana.max);
+  bar.dataset.cooldownRemaining = String(ability.cooldownRemaining);
+  if (!ability.ready && targetingMode.kind === "heroAbility") setTargetingMode({ kind: "build" });
 }
-function normalizeMetaBag(input) {
-  const bag = {};
-  for (const currency of content.metaProgression.currencies || []) bag[currency.id] = Math.max(0, Number(input?.[currency.id]) || 0);
-  return bag;
+
+function updateHeroSkillTree(snap) {
+  const presentation = projectHeroesPresentation(snap);
+  const unit = presentation.active && presentation.units.length === 1
+    ? presentation.units[0]
+    : null;
+  const skills = unit?.skills;
+  let panel = document.getElementById("hero-skill-tree");
+  const panelCreated = !panel;
+  if (!skills) {
+    if (panel) panel.remove();
+    return;
+  }
+  if (!panel) {
+    panel = document.createElement("section");
+    panel.id = "hero-skill-tree";
+    panel.className = "roguelite-status hero-skill-tree";
+    panel.setAttribute("aria-label", "Hero skill tree");
+    const heading = document.createElement("strong");
+    heading.textContent = "Hero skills";
+    const status = document.createElement("span");
+    status.dataset.heroSkillPoints = "true";
+    const nodes = document.createElement("div");
+    nodes.dataset.heroSkillNodes = "true";
+    panel.append(heading, status, nodes);
+    $("message").before(panel);
+  }
+  const status = panel.querySelector("[data-hero-skill-points]");
+  panel.dataset.availablePoints = String(skills.availablePoints);
+  status.textContent = "Available points: " + skills.availablePoints;
+  const nodes = panel.querySelector("[data-hero-skill-nodes]");
+  const retained = new Set();
+  for (let nodeIndex = 0; nodeIndex < skills.nodes.length; nodeIndex += 1) {
+    const node = skills.nodes[nodeIndex];
+    retained.add(node.id);
+    let button = [...nodes.querySelectorAll("button")]
+      .find((candidate) => candidate.dataset.heroSkillId === node.id);
+    if (!button) {
+      button = document.createElement("button");
+      button.type = "button";
+      button.dataset.heroSkillId = node.id;
+      button.addEventListener("click", () => {
+        const result = dispatchGameCommand(game, {
+          schemaVersion: 6,
+          type: "unlockHeroSkill",
+          heroId: button.dataset.heroId,
+          skillId: button.dataset.heroSkillId
+        });
+        report(result);
+        updateHeroSkillTree(game.getRenderSnapshot());
+      });
+      button.addEventListener("touchend", (event) => {
+        event.preventDefault();
+        button.click();
+      }, { passive: false });
+    }
+    button.dataset.heroId = unit.id;
+    button.disabled = !skills.managementAvailable || !node.unlockable;
+    button.textContent = (node.unlocked ? "Unlocked: " : "Unlock: ")
+      + node.label + " (" + node.cost + ")";
+    button.title = node.description;
+    if (nodes.children[nodeIndex] !== button) {
+      nodes.insertBefore(button, nodes.children[nodeIndex] ?? null);
+    }
+  }
+  for (const button of [...nodes.querySelectorAll("button")]) {
+    if (!retained.has(button.dataset.heroSkillId)) button.remove();
+  }
+  if (panelCreated) panel.scrollIntoView({ block: "nearest" });
 }
-function normalizeUpgradeLevels(input) {
-  const levels = {};
-  for (const [id, upgrade] of Object.entries(content.metaProgression.upgrades || {})) levels[id] = Math.max(0, Math.min(upgrade.maxLevel || 0, Math.floor(Number(input?.[id]) || 0)));
-  return levels;
+
+function updateCampaignRun() {
+  const panel = $("campaign-run-panel");
+  if (!panel) return;
+  const presentation = projectCampaignPresentation(activeCampaign && campaignRun ? {
+    campaign: activeCampaign,
+    run: campaignRun,
+    availableNodeIds: getAvailableCampaignNodeIds(campaignRun, content)
+  } : undefined) || projectCampaignPresentation();
+  panel.hidden = !presentation.active;
+  if (!presentation.active) return;
+  const resourceSummary = (presentation.runResources || [])
+    .map((resource) => resource.label + ": " + resource.amount)
+    .join(" · ");
+  $("campaign-run-summary").textContent = (pendingCampaignNodeId
+    ? "Battle selected: " + pendingCampaignNodeId
+    : presentation.currentNodeId
+      ? "Current: " + presentation.currentNodeId
+      : "Choose an available entry node") + (resourceSummary ? " · " + resourceSummary : "");
+  const nodes = $("campaign-run-nodes");
+  nodes.replaceChildren();
+  for (const node of presentation.nodes) {
+    const hasChoices = Array.isArray(node.choices) && node.choices.length > 0;
+    const row = document.createElement(node.state === "available" && !hasChoices ? "button" : "div");
+    if (row instanceof HTMLButtonElement) {
+      row.type = "button";
+      row.addEventListener("click", () => selectCampaignNode(node.id));
+    }
+    row.className = "campaign-run-node";
+    row.setAttribute("data-state", node.state);
+    const title = document.createElement("span");
+    title.textContent = node.label || content.missions[node.missionId]?.label || node.missionId || node.id;
+    const state = document.createElement("span");
+    state.textContent = node.type + " · " + node.state;
+    row.append(title, state);
+    if (node.state === "available" && hasChoices) {
+      const choices = document.createElement("div");
+      choices.className = "campaign-run-choices";
+      for (const choice of node.choices) {
+        const choiceButton = document.createElement("button");
+        choiceButton.type = "button";
+        choiceButton.className = "campaign-run-choice";
+        choiceButton.setAttribute("data-campaign-choice-id", choice.id);
+        choiceButton.textContent = formatCampaignChoice(choice, presentation.runResources || []);
+        choiceButton.title = "Resolve campaign choice";
+        choiceButton.addEventListener("click", () => selectCampaignChoice(node.id, choice.id));
+        choices.append(choiceButton);
+      }
+      row.append(choices);
+    }
+    nodes.append(row);
+  }
 }
-function addMetaResources(bag, multiplier = 1) {
-  for (const currency of content.metaProgression.currencies || []) progress.metaResources[currency.id] = (progress.metaResources[currency.id] || 0) + (Number(bag?.[currency.id]) || 0) * multiplier;
+
+function formatCampaignChoice(choice, resources) {
+  const label = (resourceId) => resources.find((entry) => entry.id === resourceId)?.label || resourceId;
+  const costs = choice.costs.map((entry) => label(entry.resourceId) + ":" + entry.amount).join(", ") || "free";
+  const grants = choice.grants.map((entry) => label(entry.resourceId) + ":" + entry.amount).join(", ") || "none";
+  return choice.label + " · " + costs + " → " + grants;
 }
-function metaCostText(cost) {
-  return Object.entries(cost || {}).map(([id, amount]) => amount + " " + ((content.metaProgression.currencies || []).find((item) => item.id === id)?.label || id)).join(" · ");
+
+function selectCampaignChoice(nodeId, choiceId) {
+  if (!activeCampaign || !campaignRun) return;
+  const result = resolveCampaignStructuralChoice(campaignRun, content, nodeId, choiceId);
+  if (result.ok) {
+    campaignRun = result.run;
+    pendingCampaignNodeId = null;
+    pendingCampaignBattle = false;
+    message = "Campaign choice resolved: " + choiceId + ".";
+    updateCampaignRun();
+    return;
+  }
+  message = "Campaign choice rejected: " + result.code + ".";
+  updateCampaignRun();
 }
-function canAffordMeta(cost) { return Object.entries(cost || {}).every(([id, amount]) => (progress.metaResources[id] || 0) >= Number(amount || 0)); }
-function buyMetaUpgrade(id) {
-  const upgrade = content.metaProgression.upgrades?.[id];
-  if (!upgrade) return;
-  const level = progress.upgradeLevels[id] || 0;
-  const cost = upgrade.costs?.[level];
-  if (!cost || !canAffordMeta(cost)) { message = cost ? "Not enough permanent currency." : "Upgrade is at max level."; return; }
-  for (const [currencyId, amount] of Object.entries(cost)) progress.metaResources[currencyId] = (progress.metaResources[currencyId] || 0) - Number(amount || 0);
-  progress.upgradeLevels[id] = level + 1;
-  saveProgress();
-  game = createGame();
+
+function selectCampaignNode(nodeId) {
+  if (!activeCampaign || !campaignRun) return;
+  const prepared = prepareCampaignBattle(campaignRun, content, nodeId);
+  if (prepared.ok) {
+    pendingCampaignBattle = true;
+    pendingCampaignNodeId = prepared.nodeId;
+    missionId = prepared.missionId;
+    game = prepared.game;
+  } else if (prepared.code === "campaign_handoff_inactive") {
+    // Campaign marker v1 retains the legacy graph reducer without battle carry.
+    const availableNodeIds = getAvailableCampaignNodeIds(campaignRun, content);
+    const node = activeCampaign.nodes.find((candidate) => candidate.id === nodeId);
+    if (!availableNodeIds.includes(nodeId) || !node || node.type === "merchant" || node.type === "event") {
+      message = "Campaign node is not available.";
+      return;
+    }
+    pendingCampaignBattle = false;
+    pendingCampaignNodeId = node.id;
+    missionId = node.missionId;
+    game = createGame();
+  } else {
+    message = "Campaign battle could not be prepared: " + prepared.code + ".";
+    return;
+  }
+  towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
+  setTargetingMode({ kind: "build" });
+  refreshMissionOptions();
+  syncKeyboardCursor(null);
+  clearNavigationOverlay();
   victoryRewarded = false;
   selectedTowerId = null;
-  renderMetaPanel();
-  message = upgrade.label + " upgraded to level " + (level + 1) + ".";
+  setSellMode(false);
+  initTowerSelector();
+  initAbilityBar();
+  applyBattleBackground();
+  selectMissionMusic();
+  showStoryForMission("beforeMission");
+  message = "Campaign battle selected: " + nodeId + ".";
+  updateCampaignRun();
 }
-function renderMetaPanel() {
-  const panel = $("meta-panel");
-  const upgrades = Object.values(content.metaProgression.upgrades || {});
-  const currencies = content.metaProgression.currencies || [];
-  if (!panel) return;
-  panel.hidden = upgrades.length === 0 && currencies.length === 0;
-  $("meta-resources").textContent = currencies.map((item) => (progress.metaResources[item.id] || 0) + " " + item.label).join(" · ");
-  $("meta-upgrades").innerHTML = upgrades.map((upgrade) => {
-    const level = progress.upgradeLevels[upgrade.id] || 0;
-    const cost = upgrade.costs?.[level];
-    return \`<div class="meta-upgrade"><span><b>\${escapeHtml(upgrade.label || upgrade.id)}</b><br>Lv \${level}/\${upgrade.maxLevel}</span><button type="button" data-meta-upgrade="\${escapeHtml(upgrade.id)}"\${cost && canAffordMeta(cost) ? "" : " disabled"}>\${cost ? escapeHtml(metaCostText(cost)) : "Max"}</button></div>\`;
-  }).join("");
-  for (const button of document.querySelectorAll("[data-meta-upgrade]")) button.onclick = () => buyMetaUpgrade(button.dataset.metaUpgrade);
-}
-function unlockReqs(id) { const n = ((content.worldMap && content.worldMap.missionNodes) || []).find((x) => x.missionId === id); return (n && n.unlockRequiresMissionIds) || []; }
-function isUnlocked(id) { return unlockReqs(id).every((r) => cleared.has(r)); }
-function rewardMissionClear(id, stars) {
-  const firstClear = !cleared.has(id);
-  cleared.add(id);
-  const reward = content.metaProgression.rewardsByMission?.[id] || {};
-  addMetaResources(firstClear ? reward.firstClear : reward.repeatClear);
-  const previousStars = Math.max(0, Number(progress.starsByMission[id]) || 0);
-  const earnedStars = Math.max(previousStars, stars);
-  addMetaResources(reward.perStar, earnedStars - previousStars);
-  progress.starsByMission[id] = earnedStars;
-  saveProgress();
-  renderMetaPanel();
-  return firstClear;
-}
-function newlyUnlockedBy(id) { return Object.keys(content.missions).filter((mid) => !cleared.has(mid) && unlockReqs(mid).includes(id) && isUnlocked(mid)).map((mid) => (content.missions[mid] && content.missions[mid].label) || mid); }
-function refreshMissionOptions() {
-  const sel = $("mission-select");
-  if (!sel) return;
-  sel.innerHTML = Object.values(content.missions).map((mission) => {
-    const unlocked = isUnlocked(mission.id);
-    const mark = cleared.has(mission.id) ? "✓ " : (unlocked ? "" : "🔒 ");
-    return \`<option value="\${escapeHtml(mission.id)}"\${unlocked ? "" : " disabled"}>\${mark}\${escapeHtml(mission.label || mission.id)}</option>\`;
-  }).join("");
-  sel.value = missionId;
+
+function setupCampaignRunControls() {
+  const exportButton = $("campaign-run-export");
+  const importButton = $("campaign-run-import");
+  const fileInput = $("campaign-run-file");
+  if (!exportButton || !importButton || !fileInput) return;
+  exportButton.addEventListener("click", () => {
+    if (!campaignRun) return;
+    const source = exportCampaignRun(campaignRun);
+    const url = URL.createObjectURL(new Blob([source], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "towerforge-campaign-run.json";
+    link.click();
+    URL.revokeObjectURL(url);
+  });
+  importButton.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", async () => {
+    if (pendingCampaignNodeId) {
+      fileInput.value = "";
+      message = "Campaign run import cannot replace an active battle.";
+      return;
+    }
+    const file = fileInput.files?.[0];
+    fileInput.value = "";
+    if (!file || !activeCampaign) return;
+    if (file.size > 1_048_576) {
+      message = "Campaign run import failed: file exceeds 1 MiB.";
+      return;
+    }
+    try {
+      const decoded = importCampaignRun(await file.text()).run;
+      const validation = validateCampaignRunAgainstContent(decoded, content);
+      if (!validation.ok) throw new Error("Campaign run is incompatible with this project: " + validation.code);
+      pendingCampaignNodeId = null;
+      pendingCampaignBattle = false;
+      campaignRun = validation.run;
+      message = "Campaign run imported.";
+      updateCampaignRun();
+    } catch (error) {
+      message = "Campaign run import failed: " + error.message;
+    }
+  });
 }
 
 function resolveStandaloneSprite(spriteId) {
@@ -1667,7 +3349,7 @@ function showStoryForMission(trigger) {
   const [comicId, comic] = entry;
   const runKey = trigger + ":" + comicId;
   if (shownStories.has(runKey)) return;
-  const seenKey = content.storySeenStoragePrefix + PROGRESS_KEY.slice("towerforge:progress:".length) + ":" + comicId;
+  const seenKey = content.storySeenStoragePrefix + playerProfileScope + ":" + comicId;
   if (comic.replay !== "always") {
     try { if (localStorage.getItem(seenKey) === "1") return; } catch {}
   }
@@ -1713,12 +3395,33 @@ function finishStory() {
 
 function updateHud(snap) {
   updateAbilityBar(snap);
+  updateHeroActionBar(snap);
+  updateHeroSkillTree(snap);
   updateTargetMode(snap);
+  updateRogueliteStatus(snap);
+  updateLogisticsStatus(snap);
   if (snap.outcome === "victory" && !victoryRewarded) {
     victoryRewarded = true;
-    const firstClear = rewardMissionClear(missionId, (snap.stars || []).filter((item) => item.achieved).length);
-    const unlocked = firstClear ? newlyUnlockedBy(missionId) : [];
-    message = (firstClear ? "Mission cleared!" : "Mission cleared again!") + (unlocked.length ? " Unlocked: " + unlocked.join(", ") : "");
+    const earnedStars = (snap.stars || []).filter((item) => item.achieved).length;
+    if (activeCampaign && campaignRun && pendingCampaignNodeId) {
+      const result = pendingCampaignBattle
+        ? settleCampaignBattleVictory(campaignRun, progress, content, pendingCampaignNodeId, earnedStars, game)
+        : recordCampaignBattleVictory(campaignRun, progress, content, pendingCampaignNodeId, earnedStars);
+      if (result.ok) {
+        campaignRun = result.run;
+        progress = result.profile;
+        persistPlayerProfile();
+        renderMetaPanel();
+        message = "Campaign battle recorded. Available: " + (result.newlyAvailableNodeIds.join(", ") || "none");
+      } else {
+        message = "Campaign battle could not be recorded: " + result.code;
+      }
+      pendingCampaignNodeId = null;
+      pendingCampaignBattle = false;
+      updateCampaignRun();
+    } else {
+      recordPlayerVictory(missionId, earnedStars);
+    }
     refreshMissionOptions();
     showStoryForMission("afterVictory");
   }
@@ -1733,7 +3436,212 @@ function updateHud(snap) {
   const stars = snap.stars || [];
   $("stat-objectives").textContent = objectives.filter((item) => item.complete).length + "/" + objectives.length
     + (stars.length ? " | " + stars.filter((item) => item.achieved).length + "/" + stars.length + " stars" : "");
-  $("message").textContent = message;
+  $("message").textContent = playerProfileStatusText(message);
+}
+
+function updateRogueliteStatus(snap) {
+  const panel = $("roguelite-status");
+  const draftPanel = $("wave-draft");
+  const artifactPanel = $("artifact-inventory");
+  if (!panel || !draftPanel || !artifactPanel) return;
+  const source = snap?.roguelite;
+  const nextCache = {
+    synergies: source?.synergies,
+    inventory: source?.artifacts?.inventory,
+    towerSlots: source?.artifacts?.towerSlots,
+    allowed: source?.artifacts?.management?.allowed,
+    reasonKey: source?.artifacts?.management?.reasonKey,
+    pendingOffer: source?.draft?.pendingOffer,
+    selections: source?.draft?.selections,
+    selectedTowerId
+  };
+  const previousCache = updateRogueliteStatus.lastRender;
+  if (previousCache
+    && previousCache.synergies === nextCache.synergies
+    && previousCache.inventory === nextCache.inventory
+    && previousCache.towerSlots === nextCache.towerSlots
+    && previousCache.allowed === nextCache.allowed
+    && previousCache.reasonKey === nextCache.reasonKey
+    && previousCache.pendingOffer === nextCache.pendingOffer
+    && previousCache.selections === nextCache.selections
+    && previousCache.selectedTowerId === nextCache.selectedTowerId) return;
+  updateRogueliteStatus.lastRender = nextCache;
+  const presentation = projectRoguelitePresentation(snap);
+  if (!presentation) { panel.hidden = true; panel.replaceChildren(); draftPanel.hidden = true; draftPanel.replaceChildren(); artifactPanel.hidden = true; artifactPanel.replaceChildren(); return; }
+  panel.hidden = !presentation.active;
+  panel.replaceChildren();
+  draftPanel.hidden = !presentation.active || !presentation.draft?.pendingOffer;
+  draftPanel.replaceChildren();
+  artifactPanel.hidden = !presentation.active || !presentation.artifacts;
+  artifactPanel.replaceChildren();
+  if (!presentation.active) return;
+  for (const synergy of presentation.synergies) {
+    const row = document.createElement("span");
+    const active = synergy.activeTierRequiredCounts.length
+      ? "active " + synergy.activeTierRequiredCounts.join("/")
+      : "inactive";
+    row.textContent = synergy.label + ": " + synergy.towerCount + " towers (" + active + ")";
+    panel.append(row);
+  }
+  const pendingOffer = presentation.draft?.pendingOffer;
+  if (pendingOffer) {
+    const title = document.createElement("strong");
+    title.textContent = "Choose a wave upgrade";
+    draftPanel.append(title);
+    for (const option of pendingOffer.options) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.setAttribute("data-draft-card-id", option.cardId);
+      button.textContent = option.label;
+      button.addEventListener("click", () => {
+        const result = dispatchGameCommand(game, {
+          schemaVersion: 3, type: "chooseDraftOption",
+          offerId: pendingOffer.offerId,
+          cardId: option.cardId
+        });
+        report(result);
+        if (result.ok) updateRogueliteStatus(game.getSnapshot());
+      });
+      draftPanel.append(button);
+    }
+  }
+  if (presentation.artifacts) {
+    const title = document.createElement("strong");
+    title.textContent = "Artifacts (" + presentation.artifacts.inventory.length + ")";
+    artifactPanel.append(title);
+    for (const artifact of presentation.artifacts.inventory) {
+      const row = document.createElement("div");
+      const label = document.createElement("span");
+      label.textContent = artifact.label + " · " + artifact.slotType
+        + (artifact.socket ? " → " + artifact.socket.towerId + "/" + artifact.socket.slotId : "");
+      row.append(label);
+      const addAction = (action, text, activate) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.setAttribute("data-artifact-action", action);
+        button.textContent = text;
+        button.disabled = presentation.artifacts.management?.allowed !== true;
+        button.addEventListener("click", () => {
+          const result = activate();
+          report(result);
+          if (result.ok) updateRogueliteStatus(game.getSnapshot());
+        });
+        row.append(button);
+      };
+      if (artifact.socket) {
+        addAction("unsocket", "Unsocket", () => dispatchGameCommand(game, {
+          schemaVersion: 2, type: "unsocketArtifact",
+          artifactInstanceId: artifact.instanceId,
+          towerId: artifact.socket.towerId,
+          slotId: artifact.socket.slotId
+        }));
+      } else {
+        const tower = presentation.artifacts.towerSlots?.find((item) => item.towerId === selectedTowerId);
+        for (const slot of tower?.slots ?? []) {
+          if (slot.slotType !== artifact.slotType || slot.artifactInstanceId !== null) continue;
+          addAction("socket", "Socket in " + slot.slotId, () => dispatchGameCommand(game, {
+            schemaVersion: 2, type: "socketArtifact",
+            artifactInstanceId: artifact.instanceId,
+            towerId: tower.towerId,
+            slotId: slot.slotId
+          }));
+        }
+      }
+      artifactPanel.append(row);
+    }
+  }
+}
+
+function updateLogisticsStatus(snapshot) {
+  const panel = $("logistics-status");
+  if (!panel) return;
+  const presentation = projectLogisticsPresentation(snapshot);
+  panel.replaceChildren();
+  panel.hidden = !presentation.active;
+  if (!presentation.active) return;
+  const heading = document.createElement("strong");
+  heading.textContent = "Logistics";
+  panel.append(heading);
+  if (presentation.power) {
+    for (const component of presentation.power.components) {
+      const row = document.createElement("span");
+      row.textContent = component.id + ": " + component.allocated + "/" + component.output
+        + " allocated · " + component.consumerIds.length + " consumers";
+      panel.append(row);
+    }
+    const brownout = presentation.power.consumers.filter((consumer) => !consumer.powered);
+    if (brownout.length) {
+      const row = document.createElement("span");
+      row.dataset.logisticsBrownout = "true";
+      row.textContent = "Brownout: " + brownout.map((consumer) => consumer.towerId).join(", ");
+      panel.append(row);
+    }
+    for (const node of presentation.power.nodes) {
+      for (const linkedTowerId of node.linkTowerIds) {
+        if (node.towerId >= linkedTowerId) continue;
+        const row = document.createElement("span");
+        row.className = "logistics-link-cue";
+        row.textContent = "Grid link: " + node.towerId + " ↔ " + linkedTowerId;
+        panel.append(row);
+      }
+      for (const consumerTowerId of node.coveredConsumerIds) {
+        const row = document.createElement("span");
+        row.className = "logistics-coverage-cue";
+        row.textContent = "Power coverage: " + node.towerId + " → " + consumerTowerId;
+        panel.append(row);
+      }
+    }
+  }
+  if (presentation.ammunition) {
+    for (const inventory of presentation.ammunition.inventories) {
+      const row = document.createElement("span");
+      row.className = "logistics-ammunition-cue";
+      row.textContent = inventory.towerId + ": " + inventory.amount + "/" + inventory.capacity
+        + " " + inventory.ammoTypeId;
+      panel.append(row);
+      if (!inventory.hasRequiredAmmo) {
+        const depleted = document.createElement("span");
+        depleted.className = "logistics-depleted-cue";
+        depleted.textContent = "Depleted: " + inventory.towerId;
+        panel.append(depleted);
+      }
+    }
+  }
+  if (presentation.supply) {
+    const supply = presentation.supply;
+    for (const source of [...supply.producers, ...supply.storages]) {
+      const stock = document.createElement("span");
+      stock.className = "logistics-supply-stock-cue";
+      stock.textContent = source.towerId + ": " + source.amount + "/" + source.capacity
+        + " " + source.ammoTypeId;
+      panel.append(stock);
+      const progress = document.createElement("span");
+      progress.className = "logistics-supply-progress-cue";
+      progress.textContent = "productionProgress" in source
+        ? source.towerId + ": production " + source.productionProgress + "/" + source.productionInterval
+          + ", transfer " + source.transferProgress + "/" + source.transferInterval
+        : source.towerId + ": transfer " + source.transferProgress + "/" + source.transferInterval;
+      panel.append(progress);
+      if (!source.operational) {
+        const paused = document.createElement("span");
+        paused.className = "logistics-supply-paused-cue";
+        paused.textContent = "Paused/brownout: " + source.towerId;
+        panel.append(paused);
+      }
+    }
+    for (const edge of supply.edges) {
+      const link = document.createElement("span");
+      link.className = "logistics-supply-link-cue";
+      link.textContent = "Supply link: " + edge.sourceTowerId + " → " + edge.destinationTowerId;
+      panel.append(link);
+      if (edge.destinationKind === "consumer") {
+        const refill = document.createElement("span");
+        refill.className = "logistics-refill-cue";
+        refill.textContent = "Refill: " + edge.sourceTowerId + " → " + edge.destinationTowerId;
+        panel.append(refill);
+      }
+    }
+  }
 }
 
 function updateTargetMode(snap) {

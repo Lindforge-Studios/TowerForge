@@ -2,7 +2,9 @@ import { type GameContentRegistry } from "../content/registry.js";
 import { TowerDefenseGame } from "./TowerDefenseGame.js";
 import type { ActionResult, GameSnapshot, HexCoord, MissionAbilityId, TowerTargetMode } from "./types.js";
 import type { TowerScriptJson } from "../scripting/types.js";
+import { dispatchGameCommand, type GameCommandV1, type GameCommandV4 } from "./commands.js";
 
+/** @deprecated Use the versioned GameCommand public contract. */
 export type SimulationAction =
   | { type: "tick"; units: number }
   | { type: "startWave" }
@@ -12,6 +14,7 @@ export type SimulationAction =
   | { type: "upgradeTower"; towerId: string }
   | { type: "setTargetMode"; towerId: string; mode: TowerTargetMode }
   | { type: "useAbility"; abilityId: MissionAbilityId; center: HexCoord }
+  | { type: "moveHero"; heroId: string; target: HexCoord }
   | { type: "emitSignal"; signal: string; payload?: TowerScriptJson };
 
 export interface SimulationActionResult {
@@ -33,36 +36,20 @@ export interface HeadlessMissionRunResult {
   actionResults: SimulationActionResult[];
 }
 
+/** @deprecated Use dispatchGameCommand with a versioned GameCommand. */
 export function applySimulationAction(game: TowerDefenseGame, action: SimulationAction): ActionResult {
-  if (action.type === "tick") {
-    game.tick(action.units);
-    return { ok: true };
+  if (action.type === "moveHero") {
+    return dispatchGameCommand(game, {
+      schemaVersion: 4,
+      type: "moveHero",
+      heroId: action.heroId,
+      target: action.target
+    } satisfies GameCommandV4);
   }
-  if (action.type === "startWave") {
-    return game.startNextWave();
-  }
-  if (action.type === "placeTower") {
-    return game.placeTower(action.towerTypeId, action.coord);
-  }
-  if (action.type === "moveTower") {
-    return game.moveTower(action.towerId, action.coord);
-  }
-  if (action.type === "sellTower") {
-    return game.sellTower(action.towerId);
-  }
-  if (action.type === "upgradeTower") {
-    return game.upgradeTower(action.towerId);
-  }
-  if (action.type === "setTargetMode") {
-    return game.setTowerTargetMode(action.towerId, action.mode);
-  }
-  if (action.type === "useAbility") {
-    return game.useAbility(action.abilityId, action.center);
-  }
-  if (action.type === "emitSignal") {
-    return game.emitScriptSignal(action.signal, action.payload);
-  }
-  return { ok: false, reason: "Unknown simulation action." };
+  const payload = action.type === "emitSignal" && action.payload === undefined
+    ? { schemaVersion: 1 as const, type: action.type, signal: action.signal }
+    : { schemaVersion: 1 as const, ...action };
+  return dispatchGameCommand(game, payload satisfies GameCommandV1);
 }
 
 export function tickHeadless(game: TowerDefenseGame, units: number, step = 0.1): void {

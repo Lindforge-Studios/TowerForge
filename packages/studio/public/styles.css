@@ -131,6 +131,7 @@ html[data-sidebar="collapsed"] .sidebar-toggle-expand { display: block; }
 #main-content { flex: 1; min-width: 0; overflow: hidden; position: relative; }
 .tab-panel { display: none; height: 100%; flex-direction: column; overflow: hidden; }
 .tab-panel.active { display: flex; }
+.nav-tab:disabled { opacity: .48; cursor: not-allowed; }
 
 .panel-header {
   display: flex; align-items: center; gap: 10px;
@@ -140,6 +141,96 @@ html[data-sidebar="collapsed"] .sidebar-toggle-expand { display: block; }
 .panel-header h2 { font-size: 13.5px; font-weight: 600; flex: 1; }
 
 .panel-layout { display: flex; height: 100%; overflow: hidden; }
+
+/* ── Planned opt-in mechanics hub ─────────────────────────────────────────── */
+.mechanics-hub-state { font: 10px var(--mono); text-transform: uppercase; }
+.mechanics-hub-body { overflow: auto; padding: 20px 20px 48px; }
+.mechanics-hub-intro { max-width: 760px; margin: 0 0 16px; color: var(--text-muted); font-size: 12px; line-height: 1.55; }
+.mechanics-module-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; max-width: 1120px; }
+.mechanics-module-card { position: relative; min-height: 132px; padding: 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); opacity: .55; text-align: left; }
+.mechanics-module-card h3 { margin: 0 0 7px; font-size: 12px; }
+.mechanics-module-card p { margin: 0; color: var(--text-muted); font-size: 10.5px; line-height: 1.5; }
+.mechanics-module-card span { display: inline-block; margin-top: 12px; color: var(--text-dim); font: 9px var(--mono); text-transform: uppercase; letter-spacing: .05em; }
+.mechanics-context-bar { display: flex; align-items: end; gap: 14px; margin-bottom: 16px; }
+.mechanics-context-bar label, .mechanics-editor-head label { display: grid; gap: 5px; min-width: 220px; color: var(--text-muted); font: 9px var(--mono); text-transform: uppercase; letter-spacing: .05em; }
+.mechanics-context-bar select, .mechanics-editor-head input, .mechanics-editor-head select { min-height: 34px; padding: 6px 9px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface-2); color: var(--text); font: 11px var(--mono); }
+.mechanics-revision { padding-bottom: 8px; color: var(--text-dim); font: 9px var(--mono); }
+.mechanics-notice { max-width: 920px; margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--warn); border-radius: 6px; background: var(--warn-bg); color: var(--text); font-size: 11px; line-height: 1.5; }
+.mechanics-module-card.available { cursor: pointer; opacity: 1; border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.mechanics-module-card.active { box-shadow: inset 3px 0 0 var(--ok); }
+.mechanics-module-card:disabled { cursor: not-allowed; }
+.mechanics-module-status { float: right; margin: 0 0 8px 8px !important; }
+.mechanics-module-card.active .mechanics-module-status { color: var(--ok); }
+.mechanics-editor { max-width: 1120px; margin-top: 16px; padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.mechanics-editor-head { display: flex; align-items: end; justify-content: space-between; gap: 20px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+.mechanics-editor-head h3 { margin: 0 0 4px; font-size: 14px; }
+.mechanics-editor-head p, .mechanics-shield-section > p { margin: 0; color: var(--text-muted); font-size: 10.5px; line-height: 1.5; }
+.mechanics-roguelite-tower-tag-row { display: grid; grid-template-columns: minmax(180px, .7fr) minmax(260px, 1.3fr); gap: 10px; align-items: end; }
+.mechanics-roguelite-synergy-row { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)) auto; gap: 10px; align-items: end; padding: 12px; border: 1px solid var(--border); border-radius: 6px; }
+.mechanics-roguelite-synergy-row .mechanics-roguelite-tier-lines { grid-column: 1 / -1; }
+.mechanics-roguelite-synergy-row textarea { width: 100%; min-height: 88px; resize: vertical; }
+.mechanics-roguelite-section [data-role="artifact-json"] { width: 100%; min-height: 150px; resize: vertical; }
+#mechanics-roguelite-campaign-editor { display: grid; gap: 12px; }
+#mechanics-roguelite-campaign-editor > label { display: grid; gap: 6px; }
+#mechanics-roguelite-campaign-json { width: 100%; min-height: 260px; resize: vertical; }
+.mechanics-profile-controls { display: flex; align-items: end; justify-content: flex-end; gap: 7px; flex-wrap: wrap; }
+.mechanics-profile-controls label { min-width: 180px; }
+.mechanics-shield-section { margin-top: 17px; }
+.mechanics-shield-section h4 { margin: 0 0 4px; font-size: 11px; }
+.mechanics-heroes-section { margin-top: 17px; }
+.mechanics-heroes-section h4 { margin: 0 0 4px; font-size: 11px; }
+.mechanics-shield-rows { display: grid; gap: 7px; margin-top: 9px; }
+.mechanics-shield-row { display: grid; grid-template-columns: minmax(190px, 1.4fr) repeat(3, minmax(115px, .7fr)); gap: 8px; align-items: end; padding: 9px; border: 1px solid var(--border); border-radius: 6px; opacity: .7; }
+.mechanics-shield-row.enabled { opacity: 1; border-color: color-mix(in srgb, var(--accent) 32%, var(--border)); }
+.mechanics-shield-row label { display: grid; gap: 4px; color: var(--text-muted); font: 8.5px var(--mono); text-transform: uppercase; }
+.mechanics-shield-row input[type="number"] { width: 100%; min-height: 31px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2); color: var(--text); font: 10px var(--mono); }
+.mechanics-shield-toggle { grid-template-columns: 18px 1fr !important; align-items: center; }
+.mechanics-shield-toggle input { width: 15px; height: 15px; accent-color: var(--accent); }
+.mechanics-shield-toggle span { display: grid; gap: 3px; margin: 0; text-transform: none; }
+.mechanics-shield-toggle strong { color: var(--text); font: 11px var(--font); }
+.mechanics-shield-toggle code { color: var(--text-dim); font: 9px var(--mono); }
+.mechanics-empty { padding: 11px; border: 1px dashed var(--border); border-radius: 5px; color: var(--text-dim); font-size: 10px; }
+.mechanics-section-head { display: flex; align-items: end; justify-content: space-between; gap: 14px; }
+.mechanics-section-head p { margin: 0; color: var(--text-muted); font-size: 10.5px; line-height: 1.5; }
+.mechanics-definition-rows, .mechanics-assignment-rows { display: grid; gap: 8px; margin-top: 9px; }
+.mechanics-definition-row { display: grid; grid-template-columns: minmax(150px, .8fr) minmax(190px, 1.2fr) minmax(120px, .7fr) auto; align-items: end; gap: 8px; }
+.mechanics-definition-row > label { display: grid; gap: 4px; color: var(--text-muted); font: 8.5px var(--mono); text-transform: uppercase; }
+.mechanics-definition-row input, .mechanics-matrix-grid input, .mechanics-assignment-row select { width: 100%; min-height: 31px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2); color: var(--text); font: 10px var(--mono); }
+.mechanics-armor-row { display: grid; gap: 9px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; }
+.mechanics-matrix-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 7px; }
+.mechanics-matrix-grid label { display: grid; gap: 4px; color: var(--text-muted); font: 8.5px var(--mono); }
+.mechanics-matrix-grid label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mechanics-matrix-grid code, .mechanics-assignment-row code { color: var(--text-dim); font: 8.5px var(--mono); }
+.mechanics-assignment-row { display: grid; grid-template-columns: minmax(190px, 1fr) minmax(180px, 1fr); align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; }
+.mechanics-assignment-row > span { display: grid; gap: 2px; }
+.mechanics-assignment-row strong { font-size: 11px; }
+.mechanics-mark-row { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; }
+.mechanics-mark-definition-grid { grid-template-columns: minmax(120px,.8fr) minmax(150px,1fr) repeat(4,minmax(105px,.65fr)) minmax(180px,1.2fr) auto; }
+.mechanics-mark-definition-grid select, .mechanics-mark-binding-row select, .mechanics-mark-binding-row input { width: 100%; min-height: 31px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2); color: var(--text); font: 10px var(--mono); }
+.mechanics-mark-binding-row { display: grid; grid-template-columns: minmax(220px,1.3fr) minmax(180px,1fr) minmax(90px,.45fr) auto; align-items: end; gap: 8px; padding: 9px; border: 1px solid var(--border); border-radius: 6px; }
+.mechanics-mark-binding-row > label { display: grid; gap: 4px; color: var(--text-muted); font: 8.5px var(--mono); text-transform: uppercase; }
+.mechanics-navigation-settings { display: grid; grid-template-columns: minmax(190px,.8fr) minmax(190px,.8fr) minmax(240px,1.2fr) auto; gap: 9px; align-items: end; margin-bottom: 17px; }
+.mechanics-navigation-settings > label { display: grid; gap: 5px; color: var(--text-muted); font: 8.5px var(--mono); text-transform: uppercase; }
+.mechanics-navigation-settings select, .mechanics-navigation-profile-row input, .mechanics-navigation-profile-row select, .mechanics-navigation-profile-row textarea { width: 100%; min-height: 31px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2); color: var(--text); font: 10px var(--mono); }
+.mechanics-navigation-overlay-toggle { grid-template-columns: auto 1fr !important; align-items: center; min-height: 31px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 4px; text-transform: none !important; }
+.mechanics-navigation-overlay-toggle input { accent-color: var(--accent); }
+.mechanics-navigation-profile-rows { display: grid; gap: 9px; margin-top: 9px; }
+.mechanics-navigation-profile-row { display: grid; grid-template-columns: minmax(130px,.75fr) minmax(150px,1fr) repeat(3,minmax(135px,.8fr)) minmax(190px,1.15fr) auto; gap: 8px; align-items: end; padding: 10px; border: 1px solid var(--border); border-radius: 6px; }
+.mechanics-navigation-profile-row > label { display: grid; gap: 4px; color: var(--text-muted); font: 8.5px var(--mono); text-transform: uppercase; }
+.mechanics-navigation-profile-row textarea { min-height: 58px; resize: vertical; }
+.mechanics-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.mechanics-preview-result { max-height: 260px; overflow: auto; margin: 12px 0 0; padding: 11px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--text-muted); font: 9.5px/1.5 var(--mono); white-space: pre-wrap; }
+.mechanics-preview-result.error { border-color: var(--err); color: var(--err); }
+@media (max-width: 900px) {
+  .mechanics-editor-head { align-items: stretch; flex-direction: column; }
+  .mechanics-profile-controls { align-items: stretch; flex-direction: column; }
+  .mechanics-shield-row { grid-template-columns: 1fr 1fr; }
+  .mechanics-section-head { align-items: stretch; flex-direction: column; }
+  .mechanics-definition-row { grid-template-columns: 1fr 1fr; }
+  .mechanics-assignment-row { grid-template-columns: 1fr; }
+  .mechanics-mark-definition-grid, .mechanics-mark-binding-row { grid-template-columns: 1fr; }
+  .mechanics-navigation-settings, .mechanics-navigation-profile-row { grid-template-columns: 1fr; }
+}
 
 /* ── Project Home ───────────────────────────────────────────────────────────── */
 .project-home-body { max-width: 980px; width: 100%; margin: 0 auto; }
@@ -476,6 +567,132 @@ label { font-size: 11px; font-weight: 500; color: var(--text-muted); display: bl
   display: block;
   cursor: crosshair;
 }
+
+#mechanics-elevation-canvas {
+  display: block;
+  width: 100%;
+  min-height: 280px;
+  max-height: 520px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-strong, #101410);
+  touch-action: none;
+  cursor: crosshair;
+  outline: none;
+}
+
+#mechanics-elevation-canvas:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 48%, transparent);
+}
+
+.mechanics-elevation-canvas-tools {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.mechanics-elevation-canvas-tools label {
+  width: min(180px, 42%);
+}
+.mechanics-elevation-los-tags {
+  margin-top: 12px;
+}
+.mechanics-elevation-los-tags label,
+.mechanics-elevation-los-coordinates label {
+  display: grid;
+  gap: 5px;
+  color: var(--text-muted);
+  font: 8.5px var(--mono);
+  text-transform: uppercase;
+}
+.mechanics-elevation-los-tags input,
+.mechanics-elevation-los-coordinates input {
+  width: 100%;
+  min-height: 31px;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: 10px var(--mono);
+}
+.mechanics-elevation-los-coordinates {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(90px, .55fr)) minmax(150px, .8fr);
+  gap: 8px;
+  align-items: end;
+  margin-top: 10px;
+}
+
+.mechanics-elevation-high-ground-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.mechanics-elevation-high-ground-fields label {
+  display: grid;
+  gap: 6px;
+}
+
+.mechanics-physics-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.mechanics-physics-fields label { display: grid; gap: 6px; }
+.mechanics-physics-fields textarea {
+  width: 100%;
+  min-height: 88px;
+  resize: vertical;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+.displacement-effect-editor { display: grid; gap: 8px; margin-top: 10px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; }
+.displacement-effect-row { grid-template-columns: minmax(100px,.7fr) minmax(100px,.5fr) minmax(170px,1fr) auto; }
+
+.mechanics-terraforming-transition-row {
+  display: grid;
+  grid-template-columns: minmax(140px, .8fr) minmax(220px, 1.4fr) auto minmax(170px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+.mechanics-terraforming-transition-row label,
+.mechanics-terraforming-elevation-fields label,
+.mechanics-terraforming-recipe-fields label,
+.mechanics-terraforming-snippet-label { display: grid; gap: 6px; }
+.mechanics-terraforming-source-tags { display: grid; gap: 6px; }
+.mechanics-terraforming-source-tags span { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; }
+.mechanics-terraforming-elevation-fields,
+.mechanics-terraforming-recipe-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.mechanics-terraforming-snippet-label { margin-top: 12px; }
+.mechanics-terraforming-snippet-label pre { margin: 0; max-height: 240px; overflow: auto; }
+
+@media (max-width: 840px) {
+  .mechanics-elevation-high-ground-fields { grid-template-columns: 1fr; }
+  .mechanics-physics-fields,
+  .displacement-effect-row,
+  .mechanics-terraforming-transition-row,
+  .mechanics-terraforming-elevation-fields,
+  .mechanics-terraforming-recipe-fields { grid-template-columns: 1fr; }
+}
+@media (max-width: 900px) {
+  .mechanics-elevation-los-coordinates { grid-template-columns: 1fr 1fr; }
+}
 .map-props { padding: 14px; }
 .json-editor {
   min-height: 280px;
@@ -799,6 +1016,10 @@ button.workbench-row:hover { background: var(--surface-2); }
 .pt-inspector { min-height: 54px; padding: 7px 8px; border: 1px solid var(--border); background: var(--surface-2); border-radius: var(--radius); color: var(--text-muted); font-size: 10.5px; overflow-wrap: anywhere; }
 .pt-inspector strong { color: var(--text); }
 .pt-inspector code { font-family: var(--mono); color: var(--accent); }
+.pt-artifact-inventory { display: grid; gap: 6px; padding: 7px 8px; border: 1px solid var(--border); background: var(--surface-2); border-radius: var(--radius); font-size: 10.5px; }
+.pt-artifact-inventory[hidden] { display: none; }
+.pt-artifact-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; }
+.pt-artifact-row .btn { min-height: 24px; padding: 2px 7px; font-size: 10px; }
 .pt-inspector-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
 .pt-inspector-head .btn { min-height: 24px; padding: 2px 7px; font-size: 10px; }
 .pt-target-mode { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px; align-items: center; margin-top: 7px; }

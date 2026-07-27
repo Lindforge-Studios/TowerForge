@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { createCanvasRenderer, MAX_BACKBUFFER_PX } from "./index.mjs";
+import * as rendererModule from "./index.mjs";
+
+const { createCanvasRenderer, MAX_BACKBUFFER_PX } = rendererModule;
 
 describe("canvas renderer backbuffer cap (mobile hardening)", () => {
   function sizedCanvas(cssW, cssH) {
@@ -188,6 +190,363 @@ describe("canvas renderer contract", () => {
     } finally {
       globalThis.Image = prevImage;
     }
+  });
+});
+
+describe("opt-in shield presentation contract", () => {
+  const shieldSnapshot = (combat) => ({
+    tiles: [{ q: 0, r: 0, terrain: "buildable" }, { q: 1, r: 0, terrain: "path" }],
+    temporaryWaterTiles: [],
+    towers: [{ id: "tower-1", coord: { q: 0, r: 0 }, typeId: "arrow" }],
+    enemies: [{ id: "enemy-1", typeId: "crawler", hp: 3, maxHp: 5, pathProgress: 0 }],
+    pathCenterline: [{ q: 1, r: 0 }, { q: 1, r: 1 }],
+    pathRoutes: [],
+    spawnCoord: { q: 1, r: 0 },
+    ...(combat === undefined ? {} : { combat })
+  });
+
+  const combat = (enemies = {}, towers = {}) => ({
+    schemaVersion: 1,
+    shields: { enemies, towers }
+  });
+
+  const state = (current, capacity, regenerationDelayRemaining = 0) => ({
+    current,
+    capacity,
+    regenerationDelayRemaining
+  });
+
+  const malformedTerminalCoordinates = [
+    ["fractional", { q: 0.5, r: 1 }],
+    ["unsafe integer", { q: Number.MAX_SAFE_INTEGER + 1, r: 1 }],
+    ["over presentation budget", { q: 1_000_001, r: 1 }]
+  ];
+
+  function drawCalls(snapshot) {
+    const calls = [];
+    const canvas = {
+      width: 320,
+      height: 240,
+      getBoundingClientRect: () => ({ width: 320, height: 240, left: 0, top: 0 }),
+      getContext: () => fakeContext(calls)
+    };
+    const renderer = createCanvasRenderer({
+      canvas,
+      content: {
+        towers: { arrow: { label: "Arrow" } },
+        enemies: { crawler: { color: 0x88aa66 } }
+      }
+    });
+    renderer.drawSnapshot(snapshot);
+    return calls;
+  }
+
+  function rendererHarness() {
+    const canvas = {
+      width: 320,
+      height: 240,
+      getBoundingClientRect: () => ({ width: 320, height: 240, left: 0, top: 0 }),
+      getContext: () => fakeContext([])
+    };
+    return createCanvasRenderer({
+      canvas,
+      content: {
+        towers: { arrow: { label: "Arrow" } },
+        enemies: { crawler: { color: 0x88aa66 } }
+      }
+    });
+  }
+
+  it("resolves enemy and tower shield state from the optional combat snapshot only", () => {
+    const snapshot = shieldSnapshot(combat(
+      { "enemy-1": state(5, 10, 2) },
+      { "tower-1": state(12, 20) }
+    ));
+
+    expect(rendererModule.resolveShieldPresentation(snapshot, "enemy", "enemy-1")).toEqual({
+      current: 5,
+      capacity: 10,
+      ratio: 0.5,
+      regenerationDelayRemaining: 2
+    });
+    expect(rendererModule.resolveShieldPresentation(snapshot, "tower", "tower-1")).toEqual({
+      current: 12,
+      capacity: 20,
+      ratio: 0.6,
+      regenerationDelayRemaining: 0
+    });
+    expect(rendererModule.resolveShieldPresentation(snapshot, "enemy", "missing")).toBeNull();
+    expect(rendererModule.resolveShieldPresentation(shieldSnapshot(), "enemy", "enemy-1")).toBeNull();
+  });
+
+  it("clamps presentation ratios and fails closed for malformed snapshot data", () => {
+    expect(rendererModule.resolveShieldPresentation(
+      shieldSnapshot(combat({ "enemy-1": state(15, 10) })), "enemy", "enemy-1"
+    )?.ratio).toBe(1);
+    expect(rendererModule.resolveShieldPresentation(
+      shieldSnapshot(combat({ "enemy-1": state(-5, 10) })), "enemy", "enemy-1"
+    )?.ratio).toBe(0);
+
+    for (const malformed of [
+      null,
+      state(Number.NaN, 10),
+      state(5, 0),
+      state(5, Number.POSITIVE_INFINITY),
+      { current: 5, capacity: 10, regenerationDelayRemaining: -1 }
+    ]) {
+      const snapshot = shieldSnapshot(combat({ "enemy-1": malformed }));
+      expect(() => rendererModule.resolveShieldPresentation(snapshot, "enemy", "enemy-1")).not.toThrow();
+      expect(rendererModule.resolveShieldPresentation(snapshot, "enemy", "enemy-1")).toBeNull();
+    }
+
+    const accessorRecord = {};
+    Object.defineProperty(accessorRecord, "enemy-1", {
+      enumerable: true,
+      get() { throw new Error("renderer must not invoke snapshot accessors"); }
+    });
+    expect(() => rendererModule.resolveShieldPresentation(
+      shieldSnapshot(combat(accessorRecord)), "enemy", "enemy-1"
+    )).not.toThrow();
+    expect(rendererModule.resolveShieldPresentation(
+      shieldSnapshot(combat(accessorRecord)), "enemy", "enemy-1"
+    )).toBeNull();
+  });
+
+  it("uses own prototype-safe entity IDs", () => {
+    const enemies = Object.create(null);
+    Object.defineProperty(enemies, "__proto__", {
+      value: state(4, 8), enumerable: true, configurable: true, writable: true
+    });
+    const inherited = Object.create({ inherited: state(7, 9) });
+
+    expect(rendererModule.resolveShieldPresentation(
+      shieldSnapshot(combat(enemies)), "enemy", "__proto__"
+    )?.ratio).toBe(0.5);
+    expect(rendererModule.resolveShieldPresentation(
+      shieldSnapshot(combat(inherited)), "enemy", "inherited"
+    )).toBeNull();
+  });
+
+  it("draws each present shield while preserving the exact legacy no-shield draw path", () => {
+    const legacy = drawCalls(shieldSnapshot());
+    const explicitEmpty = drawCalls(shieldSnapshot(combat()));
+    const enemyShield = drawCalls(shieldSnapshot(combat({ "enemy-1": state(5, 10) })));
+    const bothShields = drawCalls(shieldSnapshot(combat(
+      { "enemy-1": state(5, 10) },
+      { "tower-1": state(8, 10) }
+    )));
+
+    expect(explicitEmpty).toEqual(legacy);
+    expect(enemyShield.length).toBeGreaterThan(legacy.length);
+    expect(bothShields.length).toBeGreaterThan(enemyShield.length);
+  });
+
+  it("retains enemy and tower break cues for one frame after both entities leave the snapshot", () => {
+    const canvas = {
+      width: 320,
+      height: 240,
+      getBoundingClientRect: () => ({ width: 320, height: 240, left: 0, top: 0 }),
+      getContext: () => fakeContext([])
+    };
+    const renderer = createCanvasRenderer({
+      canvas,
+      content: {
+        towers: { arrow: { label: "Arrow" } },
+        enemies: { crawler: { color: 0x88aa66 } }
+      }
+    });
+    renderer.drawSnapshot(shieldSnapshot(combat(
+      { "enemy-1": state(5, 10) },
+      { "tower-1": state(8, 10) }
+    )));
+
+    renderer.drawSnapshot({
+      ...shieldSnapshot(),
+      enemies: [],
+      towers: [],
+      lastEvents: [
+        {
+          type: "enemyShieldChanged",
+          enemyId: "enemy-1",
+          enemyTypeId: "crawler",
+          cause: "damage",
+          previous: 5,
+          current: 0,
+          capacity: 10,
+          amount: 5
+        },
+        {
+          type: "towerShieldChanged",
+          towerId: "tower-1",
+          towerTypeId: "arrow",
+          cause: "damage",
+          previous: 8,
+          current: 0,
+          capacity: 10,
+          amount: 8
+        }
+      ]
+    });
+
+    expect(renderer.effects.filter((effect) => effect.kind === "shield").map((effect) => effect.cause)).toEqual([
+      "break",
+      "break"
+    ]);
+  });
+
+  it("places a terminal enemy shield break at spawn on the first frame without combat or entities", () => {
+    const renderer = rendererHarness();
+    const terminal = {
+      ...shieldSnapshot(),
+      enemies: [],
+      towers: [],
+      lastEvents: [{
+        type: "enemyShieldChanged",
+        enemyId: "removed-enemy",
+        enemyTypeId: "crawler",
+        cause: "damage",
+        previous: 5,
+        current: 0,
+        capacity: 10,
+        amount: 5
+      }]
+    };
+    renderer.drawSnapshot(terminal);
+
+    const expected = renderer.center(terminal.spawnCoord, renderer.geometry(terminal.tiles));
+    const effects = renderer.effects.filter((effect) => effect.kind === "shield");
+    expect(effects).toHaveLength(1);
+    expect(effects[0]).toMatchObject({ cause: "break" });
+    expect(effects[0].x).toBeCloseTo(expected.x);
+    expect(effects[0].y).toBeCloseTo(expected.y);
+  });
+
+  it("places a terminal tower shield break at its safely projected towerPlaced coordinate", () => {
+    const renderer = rendererHarness();
+    const placementCoord = { q: 0, r: 0 };
+    const terminal = {
+      ...shieldSnapshot(),
+      enemies: [],
+      towers: [],
+      lastEvents: [
+        { type: "towerPlaced", towerId: "removed-tower", coord: placementCoord },
+        {
+          type: "towerShieldChanged",
+          towerId: "removed-tower",
+          towerTypeId: "arrow",
+          cause: "damage",
+          previous: 8,
+          current: 0,
+          capacity: 10,
+          amount: 8
+        }
+      ]
+    };
+    renderer.drawSnapshot(terminal);
+
+    const expected = renderer.center(placementCoord, renderer.geometry(terminal.tiles));
+    const effects = renderer.effects.filter((effect) => effect.kind === "shield");
+    expect(effects).toHaveLength(1);
+    expect(effects[0]).toMatchObject({ cause: "break" });
+    expect(effects[0].x).toBeCloseTo(expected.x);
+    expect(effects[0].y).toBeCloseTo(expected.y);
+  });
+
+  it.each(malformedTerminalCoordinates)("fails closed for a %s terminal spawn coordinate", (_label, malformedCoord) => {
+    const enemyRenderer = rendererHarness();
+    const enemyTerminal = {
+      ...shieldSnapshot(),
+      spawnCoord: malformedCoord,
+      enemies: [],
+      towers: [],
+      lastEvents: [{
+        type: "enemyShieldChanged",
+        enemyId: "removed-enemy",
+        cause: "damage",
+        previous: 5,
+        current: 0,
+        capacity: 10,
+        amount: 5
+      }]
+    };
+    expect(() => enemyRenderer.drawSnapshot(enemyTerminal)).not.toThrow();
+    expect(enemyRenderer.effects.some((effect) => effect.kind === "shield")).toBe(false);
+  });
+
+  it.each(malformedTerminalCoordinates)("fails closed for a %s terminal tower placement", (_label, malformedCoord) => {
+    const towerRenderer = rendererHarness();
+    const towerTerminal = {
+      ...shieldSnapshot(),
+      enemies: [],
+      towers: [],
+      lastEvents: [
+        { type: "towerPlaced", towerId: "removed-tower", coord: malformedCoord },
+        {
+          type: "towerShieldChanged",
+          towerId: "removed-tower",
+          cause: "damage",
+          previous: 8,
+          current: 0,
+          capacity: 10,
+          amount: 8
+        }
+      ]
+    };
+    expect(() => towerRenderer.drawSnapshot(towerTerminal)).not.toThrow();
+    expect(towerRenderer.effects.some((effect) => effect.kind === "shield")).toBe(false);
+  });
+
+  it("does not invoke coordinate accessors for malformed terminal fallbacks", () => {
+    let accessorReads = 0;
+    const malformedCoord = { r: 1 };
+    Object.defineProperty(malformedCoord, "q", {
+      enumerable: true,
+      get() {
+        accessorReads += 1;
+        throw new Error("Canvas must not invoke terminal coordinate accessors");
+      }
+    });
+
+    const enemyRenderer = rendererHarness();
+    const enemyTerminal = {
+      ...shieldSnapshot(),
+      spawnCoord: malformedCoord,
+      enemies: [],
+      towers: [],
+      lastEvents: [{
+        type: "enemyShieldChanged",
+        enemyId: "removed-enemy",
+        cause: "damage",
+        previous: 5,
+        current: 0,
+        capacity: 10,
+        amount: 5
+      }]
+    };
+    expect(() => enemyRenderer.drawSnapshot(enemyTerminal)).not.toThrow();
+    expect(enemyRenderer.effects.some((effect) => effect.kind === "shield")).toBe(false);
+
+    const towerRenderer = rendererHarness();
+    const towerTerminal = {
+      ...shieldSnapshot(),
+      enemies: [],
+      towers: [],
+      lastEvents: [
+        { type: "towerPlaced", towerId: "removed-tower", coord: malformedCoord },
+        {
+          type: "towerShieldChanged",
+          towerId: "removed-tower",
+          cause: "damage",
+          previous: 8,
+          current: 0,
+          capacity: 10,
+          amount: 8
+        }
+      ]
+    };
+    expect(() => towerRenderer.drawSnapshot(towerTerminal)).not.toThrow();
+    expect(towerRenderer.effects.some((effect) => effect.kind === "shield")).toBe(false);
+    expect(accessorReads).toBe(0);
   });
 });
 

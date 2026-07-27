@@ -1,3 +1,9 @@
+import {
+  MechanicsRecipeParameterError,
+  listMechanicsRecipes,
+  materializeMechanicsRecipe
+} from "./mechanics-recipes.mjs";
+
 const RECIPES = Object.freeze({
   enemies: [
     recipe("grunt", "Grunt", "Baseline ground unit for early waves.", {
@@ -87,17 +93,25 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-export const CONTENT_RECIPE_COLLECTIONS = Object.freeze(Object.keys(RECIPES));
+export const CONTENT_RECIPE_COLLECTIONS = Object.freeze([...Object.keys(RECIPES), "mechanics"]);
 
 export function listContentRecipes(collection) {
   assertCollection(collection);
+  if (collection === "mechanics") return listMechanicsRecipes();
   return RECIPES[collection].map(({ entity, ...metadata }) => ({ ...metadata, attackKind: entity.attack?.kind ?? null }));
 }
 
 export function materializeContentRecipe(collection, recipeId, context = {}) {
   assertCollection(collection);
+  if (collection === "mechanics") return materializeMechanicsRecipe(recipeId, context);
   const source = RECIPES[collection].find((item) => item.id === recipeId);
   if (!source) throw new Error(`Unknown ${collection} recipe "${recipeId}".`);
+  if (ownDataFieldPresent(context, "parameters")) {
+    throw new MechanicsRecipeParameterError(
+      "terraform_recipe_parameter_invalid",
+      `Content recipe "${collection}/${recipeId}" does not accept parameters.`
+    );
+  }
   const result = clone(source);
   result.entity.id = result.suggestedId;
 
@@ -113,13 +127,135 @@ export function materializeContentRecipe(collection, recipeId, context = {}) {
   return result;
 }
 
+function ownDataFieldPresent(value, key) {
+  if (value === null || (typeof value !== "object" && typeof value !== "function")) return false;
+  try {
+    return Object.getOwnPropertyDescriptor(value, key) !== undefined;
+  } catch {
+    return true;
+  }
+}
+
 export function contentRecipeContext(files) {
+  const balance = files.balance ?? files;
+  const towerEntries = Object.entries(balance.towers ?? files.towers ?? {});
+  const missionIds = Object.keys(balance.missions ?? {});
+  const defaultMissionId = balance.defaultMissionId ?? files.manifest?.defaultMissionId;
+  const missionId = missionIds.includes(defaultMissionId) ? defaultMissionId : [...missionIds].sort(compareBinary)[0];
+  const selectedProfiles = ownDataValue(ownDataValue(ownDataValue(balance.missions, missionId), "mechanics"), "profiles");
+  const combatProfileId = ownDataValue(selectedProfiles, "combat");
+  const modules = ownDataValue(files.mechanics, "modules");
+  const combatModule = ownDataValue(modules, "combat");
+  const combatProfiles = ownDataValue(combatModule, "profiles");
+  const combatProfile = typeof combatProfileId === "string" ? ownDataValue(combatProfiles, combatProfileId) : undefined;
+  const damageTypes = ownDataValue(combatProfile, "damageTypes");
   return {
     mapIds: Object.keys(files.maps ?? {}),
-    waveSetIds: Object.keys(files.balance?.waveSets ?? files.waveSets ?? {}),
-    towerIds: Object.keys(files.balance?.towers ?? files.towers ?? {}),
-    abilityIds: Object.keys(files.balance?.abilities ?? files.abilities ?? {})
+    waveSetIds: Object.keys(balance.waveSets ?? files.waveSets ?? {}),
+    towerIds: towerEntries.map(([id]) => id).sort(compareBinary),
+    towerAttackKindsByTowerId: Object.fromEntries(towerEntries
+      .map(([id, tower]) => [id, tower?.attack?.kind])
+      .filter(([, kind]) => typeof kind === "string")
+      .sort(([left], [right]) => compareBinary(left, right))),
+    towerTagsByTowerId: authoredTowerTags(towerEntries),
+    abilityIds: Object.keys(balance.abilities ?? files.abilities ?? {}),
+    defaultMissionId,
+    missionIds,
+    enemyIds: Object.keys(balance.enemies ?? files.enemies ?? {}),
+    moduleSchemaVersions: mechanicsModuleSchemaVersions(files.mechanics),
+    activeCombatModuleSchemaVersion: combatModule?.enabled === true && typeof combatProfileId === "string"
+      ? ownDataValue(combatModule, "schemaVersion")
+      : undefined,
+    activeCombatDamageTypeIds: isRecord(damageTypes) ? Object.keys(damageTypes).sort(compareBinary) : [],
+    terrainIds: isRecord(balance.terrainTypes) ? Object.keys(balance.terrainTypes).sort(compareBinary) : [],
+    terrainTags: authoredTerrainTags(balance.terrainTypes),
+    destructibleTowerIds: towerEntries
+      .filter(([, tower]) => Number.isFinite(tower?.maxHp) && tower.maxHp > 0)
+      .map(([id]) => id)
   };
+}
+
+function authoredTowerTags(towerEntries) {
+  const result = Object.create(null);
+  for (const [towerId, tower] of [...towerEntries].sort(([left], [right]) => compareBinary(left, right))) {
+    const tags = ownDataValue(tower, "tags");
+    if (!Array.isArray(tags)) continue;
+    const normalized = [...new Set(tags.filter((tag) => typeof tag === "string" && tag.length > 0))]
+      .sort(compareBinary);
+    if (normalized.length === 0) continue;
+    Object.defineProperty(result, towerId, {
+      value: normalized,
+      enumerable: true,
+      configurable: true,
+      writable: true
+    });
+  }
+  return result;
+}
+
+function authoredTerrainTags(terrainTypes) {
+  if (!isRecord(terrainTypes)) return [];
+  const tags = new Set();
+  for (const terrainId of Object.keys(terrainTypes).sort(compareBinary).slice(0, 4096)) {
+    const authoredTags = ownDataValue(ownDataValue(terrainTypes, terrainId), "tags");
+    if (!Array.isArray(authoredTags)) continue;
+    for (const tag of authoredTags.slice(0, 256)) {
+      if (typeof tag === "string" && tag.length > 0) tags.add(tag);
+    }
+  }
+  return [...tags].sort(compareBinary);
+}
+
+function mechanicsModuleSchemaVersions(mechanics) {
+  const versions = Object.create(null);
+  const modules = ownDataValue(mechanics, "modules");
+  if (!isRecord(modules)) return versions;
+
+  let moduleIds;
+  try {
+    moduleIds = Object.keys(modules).slice(0, 64).sort(compareBinary);
+  } catch {
+    return versions;
+  }
+  for (const moduleId of moduleIds) {
+    const module = ownDataValue(modules, moduleId);
+    const schemaVersion = ownDataValue(module, "schemaVersion");
+    if (Number.isInteger(schemaVersion) && schemaVersion > 0) {
+      Object.defineProperty(versions, moduleId, {
+        value: schemaVersion,
+        enumerable: true,
+        configurable: true,
+        writable: true
+      });
+    }
+  }
+  return versions;
+}
+
+function ownDataValue(value, key) {
+  if (!isRecord(value)) return undefined;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && descriptor.enumerable && "value" in descriptor
+      ? descriptor.value
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isRecord(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  try {
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+  } catch {
+    return false;
+  }
+}
+
+function compareBinary(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function assertCollection(collection) {

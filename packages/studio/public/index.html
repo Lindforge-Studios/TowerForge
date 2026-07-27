@@ -102,6 +102,10 @@
     </div>
     <div class="nav-group">
       <div class="nav-group-label">Project</div>
+      <button class="nav-tab" data-tab="mechanics" role="tab" type="button" title="Open the opt-in Mechanics Hub.">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/><circle cx="12" cy="12" r="3"/></svg>
+        <span>Mechanics</span>
+      </button>
       <button class="nav-tab" data-tab="scripts" role="tab">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
         <span>Scripts</span>
@@ -476,6 +480,485 @@
     </section>
 
     <!-- ── SETTINGS TAB ──────────────────────────────────────────────────────── -->
+    <section id="tab-mechanics" class="tab-panel" role="tabpanel" aria-label="Mechanics Hub">
+      <div class="panel-header">
+        <h2>Mechanics Hub</h2>
+        <span id="mechanics-hub-state" class="text-muted mechanics-hub-state">Loading capabilities…</span>
+      </div>
+      <div class="mechanics-hub-body">
+        <p class="mechanics-hub-intro">Mechanics are independent, opt-in project modules. The standard constructor remains unchanged until a module is explicitly enabled for a mission.</p>
+        <div class="mechanics-context-bar">
+          <label>Mission<select id="mechanics-mission-select"></select></label>
+          <span id="mechanics-revision" class="mechanics-revision">Revision pending</span>
+          <button id="btn-mechanics-reload" class="btn btn-outline" type="button">Reload from disk</button>
+        </div>
+        <div id="mechanics-migration-panel" class="mechanics-notice warning hidden" role="status"></div>
+        <div id="mechanics-module-grid" class="mechanics-module-grid" aria-live="polite"></div>
+        <section id="mechanics-combat-editor" class="mechanics-editor hidden" aria-labelledby="mechanics-combat-title">
+          <div class="mechanics-editor-head">
+            <div><h3 id="mechanics-combat-title">Mechanics profile</h3><p id="mechanics-editor-description">Author a reusable profile, then explicitly select it for this mission.</p></div>
+            <div class="mechanics-profile-controls">
+              <label>Authored profiles<select id="mechanics-profile-select"></select></label>
+              <button id="btn-mechanics-load-profile" class="btn btn-outline" type="button">Load profile</button>
+              <label>Recipe<select id="mechanics-recipe-select"></select></label>
+              <button id="btn-mechanics-new-profile" class="btn btn-outline" type="button">New from recipe</button>
+              <label>Profile ID<input id="mechanics-profile-id" type="text" autocomplete="off" spellcheck="false" placeholder="basic_regenerating_shields"></label>
+            </div>
+          </div>
+          <div id="mechanics-reaction-prerequisites" class="mechanics-notice warning hidden" role="status"></div>
+          <div id="mechanics-combat-fields">
+          <div class="mechanics-shield-section">
+            <h4>Enemy shields</h4>
+            <p>Capacity is required when a row is enabled. Regeneration is optional.</p>
+            <div id="mechanics-enemy-shield-rows" class="mechanics-shield-rows"></div>
+          </div>
+          <div class="mechanics-shield-section">
+            <h4>Destructible tower shields</h4>
+            <p>Only tower definitions with authored HP can receive a shield profile.</p>
+            <div id="mechanics-tower-shield-rows" class="mechanics-shield-rows"></div>
+          </div>
+          <div class="mechanics-shield-section mechanics-armor-section">
+            <div class="mechanics-section-head">
+              <div><h4>Damage types</h4><p>Define project-local damage IDs. Types are inert until referenced by authored attacks or effects.</p></div>
+              <button id="btn-mechanics-add-damage-type" class="btn btn-outline" type="button">+ Add damage type</button>
+            </div>
+            <div id="mechanics-damage-type-rows" class="mechanics-definition-rows"></div>
+          </div>
+          <div class="mechanics-shield-section mechanics-armor-section">
+            <div class="mechanics-section-head">
+              <div><h4>Armor types &amp; armor matrix</h4><p>Set the default multiplier and optional per-damage-type overrides for each armor type.</p></div>
+              <button id="btn-mechanics-add-armor-type" class="btn btn-outline" type="button">+ Add armor type</button>
+            </div>
+            <div id="mechanics-armor-type-rows" class="mechanics-definition-rows"></div>
+          </div>
+          <div class="mechanics-shield-section mechanics-armor-section">
+            <h4>Enemy armor</h4>
+            <p>Assignments are explicit and remain inactive when this combat profile is not selected.</p>
+            <div id="mechanics-enemy-armor-rows" class="mechanics-assignment-rows"></div>
+          </div>
+          <div class="mechanics-shield-section mechanics-mark-section">
+            <div class="mechanics-section-head">
+              <div><h4>Marks &amp; vulnerabilities</h4><p>Define bounded, consumable damage amplifiers. They remain inert until this v3 profile is selected.</p></div>
+              <button id="btn-mechanics-add-mark" class="btn btn-outline" type="button">+ Add mark</button>
+            </div>
+            <div id="mechanics-mark-definition-rows" class="mechanics-definition-rows"></div>
+          </div>
+          <div class="mechanics-shield-section mechanics-mark-section">
+            <div class="mechanics-section-head">
+              <div><h4>Mark source bindings</h4><p>Bind direct tower, ability, or TowerScript damage to a mark without changing standard entity forms.</p></div>
+              <button id="btn-mechanics-add-mark-binding" class="btn btn-outline" type="button">+ Add binding</button>
+            </div>
+            <div id="mechanics-mark-binding-rows" class="mechanics-assignment-rows"></div>
+          </div>
+          </div>
+          <div id="mechanics-reaction-editor" class="hidden">
+            <div class="mechanics-shield-section mechanics-reaction-section">
+              <div class="mechanics-section-head">
+                <div><h4>Exposures</h4><p>Define bounded elemental state; damage-type applications add stacks after reaction planning.</p></div>
+                <button id="btn-mechanics-add-exposure" class="btn btn-outline" type="button">+ Add exposure</button>
+              </div>
+              <div id="mechanics-exposure-definition-rows" class="mechanics-definition-rows"></div>
+              <h4>Exposure applications</h4>
+              <div id="mechanics-exposure-application-rows" class="mechanics-assignment-rows"></div>
+            </div>
+            <div class="mechanics-shield-section mechanics-reaction-section">
+              <div class="mechanics-section-head">
+                <div><h4>Reaction matrix</h4><p>Rules are directional, data-driven, and execute bounded engine-owned damage effects.</p></div>
+                <button id="btn-mechanics-add-reaction" class="btn btn-outline" type="button">+ Add reaction</button>
+              </div>
+              <div id="mechanics-reaction-definition-rows" class="mechanics-definition-rows"></div>
+            </div>
+          </div>
+          <div id="mechanics-navigation-editor" class="hidden">
+            <div class="mechanics-shield-section mechanics-navigation-section">
+              <div class="mechanics-navigation-settings">
+                <label>Navigation mode
+                  <select id="mechanics-navigation-mode">
+                    <option value="authored_routes">Authored routes (legacy)</option>
+                    <option value="dynamic_flow">Dynamic flow</option>
+                  </select>
+                </label>
+                <label>Default movement profile
+                  <select id="mechanics-navigation-default-profile"></select>
+                </label>
+                <label class="mechanics-navigation-overlay-toggle">
+                  <input id="mechanics-navigation-overlay-toggle" type="checkbox" checked>
+                  <span>Show buildability overlay in Playtest</span>
+                </label>
+                <span id="mechanics-navigation-overlay-state" class="text-muted" role="status">Overlay inactive</span>
+              </div>
+              <div class="mechanics-section-head">
+                <div><h4>Movement profiles</h4><p>Profiles choose terrain traversal, tower occupancy, and fixed-point tile costs. They remain inert until this module is enabled and selected.</p></div>
+                <button id="btn-mechanics-add-movement-profile" class="btn btn-outline" type="button">+ Add movement profile</button>
+              </div>
+              <div id="mechanics-navigation-movement-profile-rows" class="mechanics-navigation-profile-rows"></div>
+            </div>
+            <div class="mechanics-shield-section mechanics-navigation-section">
+              <h4>Enemy movement assignments</h4>
+              <p>Assignments are optional. Unassigned enemies use the selected default profile.</p>
+              <div id="mechanics-navigation-enemy-profile-rows" class="mechanics-assignment-rows"></div>
+            </div>
+          </div>
+          <div id="mechanics-elevation-editor" class="hidden">
+            <div class="mechanics-shield-section mechanics-elevation-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Authored tile elevation</h4>
+                  <p>Map values are stored separately from the empty opt-in profile. Saving this layer does not enable elevation for any mission.</p>
+                </div>
+                <label>Map<select id="mechanics-elevation-map"></select></label>
+              </div>
+              <div class="mechanics-elevation-canvas-tools">
+                <label>Brush level<input id="mechanics-elevation-brush" type="number" min="-1000000" max="1000000" step="1" value="1"></label>
+                <span class="text-muted">Pointer paints · arrows move · Enter/Space paints · [ ] changes level · 0 erases</span>
+              </div>
+              <canvas id="mechanics-elevation-canvas" tabindex="0" role="application" aria-label="Elevation map editor"></canvas>
+              <div id="mechanics-elevation-override-rows" class="mechanics-definition-rows"></div>
+              <div class="mechanics-actions">
+                <button id="btn-elevation-add-override" class="btn btn-outline" type="button">+ Add tile</button>
+                <button id="btn-elevation-preview" class="btn btn-outline" type="button">Preview elevations</button>
+                <button id="btn-elevation-apply" class="btn btn-primary" type="button">Apply elevations</button>
+              </div>
+              <pre id="mechanics-elevation-state" class="mechanics-preview-result" aria-live="polite">Elevation badge and contour preview is inactive until the mission selects this profile.</pre>
+            </div>
+            <div class="mechanics-shield-section mechanics-elevation-los-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Elevation line of sight (LoS)</h4>
+                  <p>Enable deterministic v2 visibility and list the terrain blocker tags that stop a sight line.</p>
+                </div>
+                <label class="mechanics-navigation-overlay-toggle">
+                  <input id="mechanics-elevation-los-enabled" type="checkbox">
+                  <span>Enable LoS in this profile</span>
+                </label>
+              </div>
+              <div class="mechanics-elevation-los-tags">
+                <label>Terrain blocker tags
+                  <input id="mechanics-elevation-los-tags" type="text" autocomplete="off" spellcheck="false" placeholder="opaque, wall">
+                </label>
+              </div>
+              <div class="mechanics-elevation-los-coordinates">
+                <label>Source q<input id="mechanics-elevation-los-source-q" type="number" min="0" step="1"></label>
+                <label>Source r<input id="mechanics-elevation-los-source-r" type="number" min="0" step="1"></label>
+                <label>Target q<input id="mechanics-elevation-los-target-q" type="number" min="0" step="1"></label>
+                <label>Target r<input id="mechanics-elevation-los-target-r" type="number" min="0" step="1"></label>
+                <button id="btn-elevation-los-analyze" class="btn btn-outline" type="button">Analyze candidate</button>
+              </div>
+              <pre id="mechanics-elevation-los-state" class="mechanics-preview-result" aria-live="polite">Preview this mechanics profile, then analyze a bounded source and target.</pre>
+            </div>
+            <div class="mechanics-shield-section mechanics-elevation-high-ground-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>High-ground advantage</h4>
+                  <p>Optionally expand pairwise tower acquisition and immediate tower damage when the source tile is higher than its target.</p>
+                </div>
+                <label class="mechanics-navigation-overlay-toggle">
+                  <input id="mechanics-elevation-high-ground-enabled" type="checkbox">
+                  <span>Enable high-ground in this profile</span>
+                </label>
+              </div>
+              <div class="mechanics-elevation-high-ground-fields">
+                <label>Maximum effective elevation delta
+                  <input id="mechanics-elevation-high-ground-max-delta" type="number" min="1" max="64" step="1">
+                </label>
+                <label>Range bonus per elevation
+                  <input id="mechanics-elevation-high-ground-range-bonus" type="number" min="0" max="16" step="1">
+                </label>
+                <label>Damage bonus per elevation (basis points)
+                  <input id="mechanics-elevation-high-ground-damage-bps" type="number" min="0" max="10000" step="1">
+                </label>
+              </div>
+            </div>
+          </div>
+          <div id="mechanics-physics-editor" class="hidden">
+            <div class="mechanics-shield-section mechanics-physics-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Push, pull &amp; displacement</h4>
+                  <p>Author bounded immunity lists and explicit fall-hazard terrain tags. Effects remain inert until this profile is selected for the mission.</p>
+                </div>
+              </div>
+              <div class="mechanics-physics-fields">
+                <label>Displacement-immune enemy IDs
+                  <textarea id="mechanics-physics-displacement-immunity" class="mono" rows="4" spellcheck="false" placeholder="boss\nstone_golem"></textarea>
+                </label>
+                <label>Fall-immune enemy IDs
+                  <textarea id="mechanics-physics-fall-immunity" class="mono" rows="4" spellcheck="false" placeholder="winged_guardian"></textarea>
+                </label>
+                <label>Fall hazard / chasm terrain tags
+                  <textarea id="mechanics-physics-hazard-tags" class="mono" rows="4" spellcheck="false" placeholder="fall_hazard"></textarea>
+                </label>
+              </div>
+              <p class="text-muted">One ID or tag per line. Physics v1 supports tile-discrete ground displacement with a maximum distance of 8.</p>
+            </div>
+          </div>
+          <div id="mechanics-terraforming-editor" class="hidden">
+            <div class="mechanics-shield-section mechanics-terraforming-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Terrain transitions</h4>
+                  <p>Map an existing terrain tag to an existing destination terrain. These definitions remain inert until the v1 profile is explicitly enabled for the mission.</p>
+                </div>
+                <button id="btn-mechanics-add-terraforming-transition" class="btn btn-outline" type="button">+ Add transition</button>
+              </div>
+              <div id="mechanics-terraforming-transition-rows" class="mechanics-definition-rows"></div>
+            </div>
+            <div class="mechanics-shield-section mechanics-terraforming-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Elevation mutation policy</h4>
+                  <p>Optional bounded elevation edits require a separately active elevation profile for this mission.</p>
+                </div>
+                <label class="mechanics-navigation-overlay-toggle">
+                  <input id="mechanics-terraforming-elevation-enabled" type="checkbox">
+                  <span>Allow elevation operations</span>
+                </label>
+              </div>
+              <div class="mechanics-terraforming-elevation-fields">
+                <label>Minimum elevation<input id="mechanics-terraforming-elevation-minimum" type="number" step="1"></label>
+                <label>Maximum elevation<input id="mechanics-terraforming-elevation-maximum" type="number" step="1"></label>
+                <label>Maximum delta per operation<input id="mechanics-terraforming-elevation-max-delta" type="number" min="1" step="1"></label>
+              </div>
+              <p id="mechanics-terraforming-elevation-dependency" class="mechanics-notice" role="status">Elevation mutation is not included in this profile.</p>
+            </div>
+            <div class="mechanics-shield-section mechanics-terraforming-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Detached recipe materialization</h4>
+                  <p>Choose authored terrain values, then use “New from recipe”. This fills only the local profile draft and a read-only TowerScript snippet.</p>
+                </div>
+              </div>
+              <div class="mechanics-terraforming-recipe-fields">
+                <label>Source terrain tag<select id="mechanics-terraforming-recipe-source-tag"></select></label>
+                <label>Destination terrain<select id="mechanics-terraforming-recipe-destination"></select></label>
+                <label>Transition ID (optional)<input id="mechanics-terraforming-recipe-transition-id" type="text" autocomplete="off" spellcheck="false" placeholder="recipe default"></label>
+              </div>
+              <label class="mechanics-terraforming-snippet-label">Read-only TowerScript v6 snippet
+                <pre id="mechanics-terraforming-recipe-snippet" class="mechanics-preview-result" aria-live="polite">Materialize a recipe to inspect its read-only TowerScript v6 snippet.</pre>
+              </label>
+            </div>
+          </div>
+          <div id="mechanics-roguelite-editor" class="hidden">
+            <div class="mechanics-shield-section mechanics-roguelite-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Tower synergy tags</h4>
+                  <p>Tags are authored here as part of the guarded mechanics transaction. Ordinary tower forms stay unchanged.</p>
+                </div>
+              </div>
+              <div id="mechanics-roguelite-tower-tag-rows" class="mechanics-definition-rows"></div>
+            </div>
+            <div class="mechanics-shield-section mechanics-roguelite-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Global damage synergies</h4>
+                  <p>Count live placed towers by tag. Highest mode applies one tier; cumulative mode applies every reached tier.</p>
+                </div>
+                <button id="btn-mechanics-add-synergy" class="btn btn-outline" type="button">+ Add synergy</button>
+              </div>
+              <div id="mechanics-roguelite-synergy-rows" class="mechanics-definition-rows"></div>
+              <p class="text-muted">Tier lines use: <code>requiredCount operation value</code>, for example <code>2 additive_ratio 0.1</code>. Repeat a count to add another modifier to that tier.</p>
+            </div>
+            <div class="mechanics-shield-section mechanics-roguelite-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Artifacts, typed tower slots, and boss loot</h4>
+                  <p>Roguelite v2 drops enter a read-only battle inventory. Authored modifiers are reserved for the later socketing runtime and do not apply yet.</p>
+                </div>
+                <button id="btn-mechanics-add-artifact" class="btn btn-outline" type="button">+ Add artifact</button>
+              </div>
+              <div id="mechanics-roguelite-artifact-definition-rows" class="mechanics-definition-rows"></div>
+              <div id="mechanics-roguelite-tower-slot-rows" class="mechanics-definition-rows"></div>
+              <div id="mechanics-roguelite-boss-loot-table-rows" class="mechanics-definition-rows"></div>
+            </div>
+            <div class="mechanics-shield-section mechanics-roguelite-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Wave draft cards</h4>
+                  <p>Roguelite v3 offers three seeded choices between waves. Cards, weighted pools, and the default pool remain an independent opt-in slice.</p>
+                </div>
+                <div class="mechanics-inline-actions">
+                  <button id="btn-mechanics-add-draft-card" class="btn btn-outline" type="button">+ Add draft card</button>
+                  <button id="btn-mechanics-add-draft-pool" class="btn btn-outline" type="button">+ Add draft pool</button>
+                </div>
+              </div>
+              <label>Default pool ID<input id="mechanics-roguelite-draft-default-pool" type="text" autocomplete="off" spellcheck="false" placeholder="starter"></label>
+              <div id="mechanics-roguelite-draft-card-rows" class="mechanics-definition-rows"></div>
+              <div id="mechanics-roguelite-draft-pool-rows" class="mechanics-definition-rows"></div>
+            </div>
+            <div id="mechanics-roguelite-campaign-editor" class="mechanics-shield-section mechanics-roguelite-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Campaign Run map</h4>
+                  <p>Author an independent opt-in WorldCampaign v1/v2 run graph. Campaign marker v2 carries the run deck/cards and artifacts between battles; marker v1 remains a playable legacy campaign without handoff. Graph v2 also declares runResources and merchant/event choices. Supported node types: battle, elite, merchant, event, boss.</p>
+                </div>
+                <button id="btn-campaign-preview" class="btn btn-outline" type="button">Preview campaign</button>
+              </div>
+              <label>Rogue-lite profile ID
+                <input id="mechanics-roguelite-campaign-profile-id" type="text" autocomplete="off" spellcheck="false" placeholder="campaign_run">
+              </label>
+              <label>Campaign graph JSON
+                <textarea id="mechanics-roguelite-campaign-json" class="mono" spellcheck="false" rows="14" placeholder='{"schemaVersion":2,"rogueliteProfileId":"campaign_run","runResources":{},"entryNodeIds":[],"nodes":[]}'></textarea>
+              </label>
+              <div class="mechanics-inline-actions">
+                <button id="btn-campaign-enable" class="btn btn-primary" type="button">Enable campaign</button>
+                <button id="btn-campaign-disable" class="btn btn-danger" type="button">Disable campaign</button>
+              </div>
+              <pre id="campaign-preview-result" class="mechanics-preview-result" aria-live="polite">Load or preview the campaign graph.</pre>
+            </div>
+          </div>
+          <div id="mechanics-heroes-editor" class="hidden">
+            <div class="mechanics-heroes-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Hero definitions</h4>
+                  <p>Choose one commander definition. Later opt-in versions extend its authored combat and movement capabilities.</p>
+                </div>
+                <button id="btn-mechanics-add-hero" class="btn btn-outline" type="button">+ Add hero</button>
+              </div>
+              <div id="mechanics-heroes-read-only" class="mechanics-notice warning hidden" role="status"></div>
+              <label>Selected hero
+                <select id="mechanics-heroes-selected-id"></select>
+              </label>
+              <div id="mechanics-heroes-definition-rows" class="mechanics-definition-rows"></div>
+              <details id="mechanics-heroes-movement" class="mechanics-heroes-section">
+                <summary>Hero movement (v2 opt-in)</summary>
+                <p>Movement profiles belong to Heroes. They do not enable or depend on Dynamic Navigation.</p>
+                <div class="mechanics-section-head">
+                  <h4>Hero movement profiles</h4>
+                  <button id="btn-mechanics-add-hero-movement-profile" class="btn btn-outline" type="button">+ Add movement profile</button>
+                </div>
+                <div id="mechanics-heroes-movement-profile-rows" class="mechanics-definition-rows"></div>
+              </details>
+            </div>
+          </div>
+          <div id="mechanics-logistics-editor" class="hidden">
+            <div id="mechanics-logistics-read-only" class="mechanics-notice warning hidden" role="status"></div>
+            <div class="mechanics-shield-section mechanics-logistics-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Power grid</h4>
+                  <p>Explicit generators, relay pylons, and consumers. Engine snapshots own links, coverage, allocation, and brownout.</p>
+                </div>
+                <label class="mechanics-navigation-overlay-toggle">
+                  <input id="mechanics-logistics-power-enabled" type="checkbox">
+                  <span>Include power in this profile</span>
+                </label>
+              </div>
+              <div class="mechanics-section-head">
+                <h4>Generators</h4>
+                <button id="btn-mechanics-add-logistics-generator" class="btn btn-outline" type="button">+ Add generator</button>
+              </div>
+              <div id="mechanics-logistics-generator-rows" class="mechanics-definition-rows"></div>
+              <div class="mechanics-section-head">
+                <h4>Relays / pylons</h4>
+                <button id="btn-mechanics-add-logistics-relay" class="btn btn-outline" type="button">+ Add relay</button>
+              </div>
+              <div id="mechanics-logistics-relay-rows" class="mechanics-definition-rows"></div>
+              <div class="mechanics-section-head">
+                <h4>Consumers and brownout priority</h4>
+                <button id="btn-mechanics-add-logistics-consumer" class="btn btn-outline" type="button">+ Add consumer</button>
+              </div>
+              <div id="mechanics-logistics-consumer-rows" class="mechanics-definition-rows"></div>
+            </div>
+            <div class="mechanics-shield-section mechanics-logistics-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Local ammunition (v2 opt-in)</h4>
+                  <p>Finite magazines are authored only for explicitly selected fire-capable towers. Refill and supply infrastructure are not part of this slice.</p>
+                </div>
+                <button id="btn-mechanics-add-ammunition" class="btn btn-outline" type="button">Add ammunition</button>
+                <label class="mechanics-navigation-overlay-toggle">
+                  <input id="mechanics-logistics-ammunition-enabled" type="checkbox">
+                  <span>Include ammunition in this profile</span>
+                </label>
+              </div>
+              <div class="mechanics-section-head">
+                <h4>Ammunition types</h4>
+                <button id="btn-mechanics-add-ammunition-type" class="btn btn-outline" type="button">+ Add ammunition type</button>
+              </div>
+              <div id="mechanics-logistics-ammunition-type-rows" class="mechanics-definition-rows"></div>
+              <div class="mechanics-section-head">
+                <h4>Tower inventories</h4>
+                <button id="btn-mechanics-add-tower-inventory" class="btn btn-outline" type="button">+ Add tower inventory</button>
+              </div>
+              <div id="mechanics-logistics-tower-inventory-rows" class="mechanics-definition-rows"></div>
+            </div>
+            <div class="mechanics-shield-section mechanics-logistics-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Ammunition supply (v3 opt-in)</h4>
+                  <p>Factories, local storage, and bounded refill links remain inactive until this profile is explicitly promoted and saved.</p>
+                </div>
+                <button id="btn-mechanics-add-supply" class="btn btn-outline" type="button">Add supply</button>
+                <label class="mechanics-navigation-overlay-toggle">
+                  <input id="mechanics-logistics-supply-enabled" type="checkbox">
+                  <span>Include supply in this profile</span>
+                </label>
+              </div>
+              <div class="mechanics-section-head">
+                <h4>Production recipes</h4>
+                <button id="btn-mechanics-add-production-recipe" class="btn btn-outline" type="button">+ Add production recipe</button>
+              </div>
+              <div id="mechanics-logistics-production-recipe-rows" class="mechanics-definition-rows"></div>
+              <div class="mechanics-section-head">
+                <h4>Producers</h4>
+                <button id="btn-mechanics-add-producer" class="btn btn-outline" type="button">+ Add producer</button>
+              </div>
+              <div id="mechanics-logistics-producer-rows" class="mechanics-definition-rows"></div>
+              <div class="mechanics-section-head">
+                <h4>Storages</h4>
+                <button id="btn-mechanics-add-storage" class="btn btn-outline" type="button">+ Add storage</button>
+              </div>
+              <div id="mechanics-logistics-storage-rows" class="mechanics-definition-rows"></div>
+            </div>
+            <div class="mechanics-shield-section mechanics-logistics-section">
+              <div class="mechanics-section-head"><div><h4>Basic power-grid recipe</h4><p>Choose three distinct existing tower types. The recipe remains inert until preview/apply.</p></div></div>
+              <div class="mechanics-logistics-recipe-fields">
+                <label>Generator tower<select id="mechanics-logistics-recipe-generator"></select></label>
+                <label>Relay tower<select id="mechanics-logistics-recipe-relay"></select></label>
+                <label>Consumer tower<select id="mechanics-logistics-recipe-consumer"></select></label>
+              </div>
+              <div class="mechanics-section-head"><div><h4>Basic local-ammunition recipe</h4><p>Creates one inert finite magazine profile with power disabled.</p></div></div>
+              <div class="mechanics-logistics-recipe-fields">
+                <label>Ammunition type ID<input id="mechanics-logistics-recipe-ammo-type-id" value="shell"></label>
+                <label>Ammunition label<input id="mechanics-logistics-recipe-ammo-label" value="Shell"></label>
+                <label>Capacity<input id="mechanics-logistics-recipe-capacity" type="number" value="30"></label>
+                <label>Starting amount<input id="mechanics-logistics-recipe-starting-amount" type="number" value="12"></label>
+                <label>Consumption per activation<input id="mechanics-logistics-recipe-consumption" type="number" value="1"></label>
+              </div>
+              <div class="mechanics-section-head"><div><h4>Basic factory-ammunition-supply recipe</h4><p>Creates one inert v3 producer, storage, and consumer profile.</p></div></div>
+              <div class="mechanics-logistics-recipe-fields">
+                <label>Producer tower<select id="mechanics-logistics-recipe-producer"></select></label>
+                <label>Storage tower<select id="mechanics-logistics-recipe-storage"></select></label>
+                <label>Production recipe ID<input id="mechanics-logistics-recipe-production-id" value="forge_shell"></label>
+                <label>Production label<input id="mechanics-logistics-recipe-production-label" value="Forge shell"></label>
+                <label>Output amount<input id="mechanics-logistics-recipe-output-amount" type="number" value="4"></label>
+                <label>Production interval<input id="mechanics-logistics-recipe-production-interval" type="number" value="1"></label>
+                <label>Producer capacity<input id="mechanics-logistics-recipe-producer-capacity" type="number" value="120"></label>
+                <label>Producer starting amount<input id="mechanics-logistics-recipe-producer-starting" type="number" value="0"></label>
+                <label>Producer transfer radius<input id="mechanics-logistics-recipe-producer-radius" type="number" value="4"></label>
+                <label>Producer transfer amount<input id="mechanics-logistics-recipe-producer-amount" type="number" value="8"></label>
+                <label>Producer transfer interval<input id="mechanics-logistics-recipe-producer-interval" type="number" value="0.4"></label>
+                <label>Storage capacity<input id="mechanics-logistics-recipe-storage-capacity" type="number" value="240"></label>
+                <label>Storage starting amount<input id="mechanics-logistics-recipe-storage-starting" type="number" value="0"></label>
+                <label>Storage transfer radius<input id="mechanics-logistics-recipe-storage-radius" type="number" value="5"></label>
+                <label>Storage transfer amount<input id="mechanics-logistics-recipe-storage-amount" type="number" value="12"></label>
+                <label>Storage transfer interval<input id="mechanics-logistics-recipe-storage-interval" type="number" value="0.4"></label>
+              </div>
+            </div>
+          </div>
+          <div class="mechanics-actions">
+            <button id="btn-mechanics-preview" class="btn btn-outline" type="button">Preview</button>
+            <button id="btn-mechanics-enable" class="btn btn-primary" type="button">Enable for mission</button>
+            <button id="btn-mechanics-save" class="btn btn-outline" type="button">Save profile</button>
+            <button id="btn-mechanics-disable" class="btn btn-danger" type="button">Disable module</button>
+          </div>
+          <pre id="mechanics-preview-result" class="mechanics-preview-result" aria-live="polite">Preview changes before applying them.</pre>
+        </section>
+      </div>
+    </section>
+
     <section id="tab-settings" class="tab-panel" role="tabpanel">
       <div class="panel-header">
         <h2>Constants &amp; Settings</h2>
@@ -661,6 +1144,9 @@
           <div class="pt-stat"><span class="k">Objectives</span><span class="v" id="pt-objectives">—</span></div>
           <div class="form-section-title pt-debug-title">Inspector</div>
           <div id="pt-inspector" class="pt-inspector">Click Inspect, then choose a tower or enemy.</div>
+          <div id="pt-wave-draft" class="pt-artifact-inventory" hidden></div>
+          <div id="pt-artifact-inventory" class="pt-artifact-inventory" hidden></div>
+          <div id="pt-logistics-power" class="pt-artifact-inventory" hidden></div>
           <div class="form-section-title pt-debug-title">Event timeline</div>
           <div id="pt-event-timeline" class="pt-event-timeline"></div>
           <div class="form-section-title" style="margin-top:6px">Build (click tower, then a tile)</div>

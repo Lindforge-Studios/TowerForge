@@ -1,3 +1,5 @@
+import type { CombatState, EnemyShieldChangedEvent, TowerShieldChangedEvent } from "./shields.js";
+import type { EnemyExposureChangedEvent, EnemyReactionTriggeredEvent, ReactionBudgetExceededEvent, ReactionStateV1 } from "./reactions.js";
 /** Terrain ids are project-authored; the built-in ids remain available as defaults. */
 export type Terrain = string;
 export type TerrainId = Terrain;
@@ -251,7 +253,14 @@ export type TowerEffectSpec = {
 } | {
     kind: "resource";
     resources: ResourceBag;
-};
+} | DisplacementEffectV1;
+/** Bounded opt-in tile displacement effect shared by tower pipelines and abilities. */
+export interface DisplacementEffectV1 {
+    kind: "displacement";
+    mode: "push" | "pull";
+    distance: number;
+    stopAtBlocker: boolean;
+}
 /**
  * Declarative tower execution model. Targeting chooses primary enemies, delivery expands that set,
  * and effects are applied in order to every delivered target. This is the preferred authoring
@@ -270,6 +279,8 @@ export interface EffectPipelineAttackModel {
 export interface TowerType {
     id: string;
     label: string;
+    /** Optional author-defined synergy tags. They are inert unless a roguelite profile is active. */
+    tags?: readonly string[];
     cost: ResourceCost;
     footprintRadius: number;
     range: number;
@@ -448,7 +459,7 @@ export type AbilityEffect = {
 } | {
     kind: "status";
     status: StatusEffectSpec;
-};
+} | DisplacementEffectV1;
 export interface MissionAbilityDefinition {
     id: MissionAbilityId;
     label: string;
@@ -476,6 +487,29 @@ export interface MissionSunlightPathTile {
     routeId: string;
     pathOrder: number;
 }
+export interface EnemyNavigationStateV1 {
+    readonly schemaVersion: 1;
+    readonly movementProfileId: string;
+    currentCoord: GridCoord;
+    nextCoord?: GridCoord;
+    edgeProgress: number;
+    stepsEntered: number;
+}
+export interface NavigationFieldSnapshotV1 {
+    readonly movementProfileId: string;
+    readonly goal: GridCoord;
+    readonly routeIds: readonly string[];
+    readonly revision: string;
+    readonly reachableTileCount: number;
+    readonly reachableRouteIds: readonly string[];
+    readonly unreachableRouteIds: readonly string[];
+}
+export interface NavigationSnapshotV1 {
+    readonly schemaVersion: 1;
+    readonly mode: "dynamic_flow";
+    readonly fields: readonly NavigationFieldSnapshotV1[];
+    readonly stalledEnemyIds: readonly string[];
+}
 export interface EnemyState {
     id: string;
     typeId: string;
@@ -489,6 +523,7 @@ export interface EnemyState {
     dotSourceTowerTypeId?: string;
     pathOffset: number;
     routeId?: string;
+    navigation?: EnemyNavigationStateV1;
     phaseSpawnsTriggered?: string[];
     statuses?: {
         slow?: {
@@ -541,6 +576,18 @@ export interface TowerState {
     /** Current health if the tower type has `maxHp`; when it reaches 0 the tower is destroyed. */
     hp?: number;
 }
+export type EnemyMarkChangeCause = "application" | "consume" | "expiration" | "script";
+export interface EnemyMarkChangedEvent {
+    type: "enemyMarkChanged";
+    enemyId: string;
+    enemyTypeId: string;
+    markId: string;
+    previousStacks: number;
+    currentStacks: number;
+    previousRemaining: number;
+    remaining: number;
+    cause: EnemyMarkChangeCause;
+}
 export type GameEvent = {
     type: "towerPlaced";
     towerId: string;
@@ -576,11 +623,64 @@ export type GameEvent = {
     enemyTypeId: string;
     towerId: string;
     damage: number;
-} | {
+} | TowerShieldChangedEvent | {
     type: "towerDestroyed";
     towerId: string;
     towerTypeId: string;
     enemyId: string;
+} | {
+    type: "heroShieldChanged";
+    heroId: string;
+    previous: number;
+    current: number;
+    capacity: number;
+    cause: "damage";
+    amount: number;
+    overflowDamage?: number;
+} | {
+    type: "heroAttacked";
+    enemyId: string;
+    enemyTypeId: string;
+    heroId: string;
+    damage: number;
+    shieldAbsorbed: number;
+    hpDamage: number;
+} | {
+    type: "heroDefeated";
+    heroId: string;
+    heroDefinitionId: string;
+    enemyId: string;
+} | {
+    type: "heroAbilityUsed";
+    heroId: string;
+    heroDefinitionId: string;
+    abilityId: string;
+    targetEnemyId: string;
+    targetEnemyTypeId: string;
+    previousMana: number;
+    currentMana: number;
+    manaSpent: number;
+    cooldownApplied: number;
+    requestedDamage: number;
+    resolvedDamage: number;
+    shieldAbsorbed: number;
+    hpDamage: number;
+} | {
+    type: "heroSkillUnlocked";
+    heroId: string;
+    heroDefinitionId: string;
+    skillId: string;
+    cost: number;
+    previousPoints: number;
+    currentPoints: number;
+} | {
+    type: "heroSkillPointsGranted";
+    heroId: string;
+    heroDefinitionId: string;
+    waveIndex: number;
+    previousPoints: number;
+    currentPoints: number;
+    amount: number;
 } | {
     type: "towerTargetModeChanged";
     towerId: string;
@@ -592,6 +692,28 @@ export type GameEvent = {
     coins: number;
     resources: ResourceBag;
 } | {
+    type: "artifactDropped";
+    enemyId: string;
+    enemyTypeId: string;
+    artifactInstanceId: string;
+    artifactId: string;
+    rollIndex: number;
+} | {
+    type: "artifactSocketed";
+    artifactInstanceId: string;
+    artifactId: string;
+    towerId: string;
+    towerTypeId: string;
+    slotId: string;
+} | {
+    type: "artifactUnsocketed";
+    artifactInstanceId: string;
+    artifactId: string;
+    towerId: string;
+    towerTypeId: string;
+    slotId: string;
+    cause: "command" | "tower_sold" | "tower_destroyed";
+} | {
     type: "enemySpawnedOnDeath";
     parentEnemyId: string;
     parentEnemyTypeId: string;
@@ -602,6 +724,29 @@ export type GameEvent = {
     enemyId: string;
     enemyTypeId: string;
     damage: number;
+} | {
+    type: "enemyDisplacementResolved";
+    sourceKind: "tower" | "ability";
+    sourceId: string;
+    sourceCoord: GridCoord;
+    enemyId: string;
+    enemyTypeId: string;
+    mode: "push" | "pull";
+    requestedDistance: number;
+    movedDistance: number;
+    from: GridCoord;
+    to: GridCoord;
+    stopReason: "completed" | "same_source_target" | "blocked" | "atomic_blocked" | "no_strict_neighbor" | "fall_hazard" | "goal_blocked" | "immune";
+} | {
+    type: "enemyFell";
+    sourceKind: "tower" | "ability";
+    sourceId: string;
+    sourceCoord: GridCoord;
+    enemyId: string;
+    enemyTypeId: string;
+    from: GridCoord;
+    to: GridCoord;
+    terrainTag: string;
 } | {
     type: "waveStarted";
     waveIndex: number;
@@ -637,7 +782,7 @@ export type GameEvent = {
     enemyId: string;
     enemyTypeId: string;
     damage: number;
-} | {
+} | EnemyShieldChangedEvent | EnemyMarkChangedEvent | EnemyExposureChangedEvent | EnemyReactionTriggeredEvent | ReactionBudgetExceededEvent | {
     type: "enemyArmorBlocked";
     towerId: string;
     enemyId: string;
@@ -694,6 +839,12 @@ export type GameEvent = {
     terrainMetadata: TerrainTypeDefinition;
     source: "script" | "ability" | "restore";
 } | {
+    type: "elevationChanged";
+    coord: GridCoord;
+    fromElevation: number;
+    toElevation: number;
+    source: "script" | "restore";
+} | {
     type: "scriptSignal";
     scriptId: string;
     signal: string;
@@ -727,8 +878,332 @@ export interface SunlightTile extends HexCoord {
     pathOrder: number;
     routeId?: string;
 }
+export interface ElevationSnapshotV1 {
+    readonly schemaVersion: 1;
+    readonly defaultElevation: 0;
+    readonly overrides: readonly import("./map.js").GridMapElevationOverride[];
+}
+export interface TerraformingSnapshotV1 {
+    readonly schemaVersion: 1;
+    readonly pendingExpiryGroups: readonly {
+        readonly sequence: number;
+        readonly remaining: number;
+        readonly targets: readonly {
+            readonly layer: "terrain" | "elevation";
+            readonly q: number;
+            readonly r: number;
+        }[];
+    }[];
+}
+export interface RogueliteSynergySnapshotV1 {
+    readonly synergyId: string;
+    readonly label: string;
+    readonly tag: string;
+    readonly towerCount: number;
+    readonly tierMode: "highest" | "cumulative";
+    readonly activeTierRequiredCounts: readonly number[];
+}
+export interface RogueliteSnapshotV1 {
+    readonly schemaVersion: 1;
+    readonly synergies: readonly RogueliteSynergySnapshotV1[];
+}
+export interface RogueliteArtifactInventoryEntryV1 {
+    readonly instanceId: string;
+    readonly artifactId: string;
+    readonly label: string;
+    readonly slotType: string;
+    readonly socket: null;
+}
+export interface RogueliteArtifactSocketSnapshotV1 {
+    readonly towerId: string;
+    readonly towerTypeId: string;
+    readonly slotId: string;
+}
+export interface RogueliteArtifactInventoryEntryV2 {
+    readonly instanceId: string;
+    readonly artifactId: string;
+    readonly label: string;
+    readonly slotType: string;
+    readonly socket: RogueliteArtifactSocketSnapshotV1 | null;
+}
+export interface RogueliteTowerArtifactSlotSnapshotV1 {
+    readonly slotId: string;
+    readonly slotType: string;
+    readonly artifactInstanceId: string | null;
+}
+export interface RogueliteTowerArtifactSlotsSnapshotV1 {
+    readonly towerId: string;
+    readonly towerTypeId: string;
+    readonly slots: readonly RogueliteTowerArtifactSlotSnapshotV1[];
+}
+export interface RogueliteSnapshotV2 {
+    readonly schemaVersion: 2;
+    readonly synergies: readonly RogueliteSynergySnapshotV1[];
+    readonly artifacts: {
+        readonly inventory: readonly RogueliteArtifactInventoryEntryV1[];
+    };
+}
+export type RogueliteArtifactManagementSnapshotV1 = {
+    readonly allowed: true;
+} | {
+    readonly allowed: false;
+    readonly reasonKey: string;
+};
+export interface RogueliteSnapshotV3 {
+    readonly schemaVersion: 3;
+    readonly synergies: readonly RogueliteSynergySnapshotV1[];
+    readonly artifacts: {
+        readonly inventory: readonly RogueliteArtifactInventoryEntryV2[];
+        readonly towerSlots: readonly RogueliteTowerArtifactSlotsSnapshotV1[];
+        readonly management: RogueliteArtifactManagementSnapshotV1;
+    };
+}
+export interface RogueliteDraftOfferSnapshotV1 {
+    readonly offerId: string;
+    readonly afterWaveIndex: number;
+    readonly poolId: string;
+    readonly options: readonly {
+        readonly cardId: string;
+        readonly label: string;
+    }[];
+}
+export interface RogueliteDraftSnapshotV1 {
+    readonly pendingOffer: RogueliteDraftOfferSnapshotV1 | null;
+    readonly selections: readonly {
+        readonly cardId: string;
+        readonly label: string;
+        readonly count: number;
+    }[];
+}
+export interface RogueliteSnapshotV4 {
+    readonly schemaVersion: 4;
+    readonly synergies: readonly RogueliteSynergySnapshotV1[];
+    readonly draft: RogueliteDraftSnapshotV1;
+    readonly artifacts?: RogueliteSnapshotV3["artifacts"];
+}
+export type RogueliteSnapshot = RogueliteSnapshotV1 | RogueliteSnapshotV2 | RogueliteSnapshotV3 | RogueliteSnapshotV4;
+/** Derived immutable unit state for the opt-in static hero roster foundation. */
+export interface HeroUnitStateV1 {
+    readonly id: string;
+    readonly definitionId: string;
+    readonly label: string;
+    readonly coord: Readonly<GridCoord>;
+}
+export interface HeroesSnapshotV1 {
+    readonly schemaVersion: 1;
+    readonly units: readonly HeroUnitStateV1[];
+}
+export interface HeroMovementStateSnapshotV2 {
+    readonly targetCoord: Readonly<GridCoord> | null;
+    readonly nextCoord: Readonly<GridCoord> | null;
+    readonly edgeProgress: number;
+}
+export interface HeroUnitStateV2 extends HeroUnitStateV1 {
+    readonly movement: HeroMovementStateSnapshotV2;
+}
+export interface HeroesSnapshotV2 {
+    readonly schemaVersion: 2;
+    readonly units: readonly HeroUnitStateV2[];
+}
+export interface HeroDurabilityStateSnapshotV3 {
+    readonly hp: number;
+    readonly maxHp: number;
+    readonly shield: Readonly<{
+        current: number;
+        capacity: number;
+    }> | null;
+    readonly defeated: boolean;
+}
+export interface HeroUnitStateV3 extends HeroUnitStateV2 {
+    readonly durability: HeroDurabilityStateSnapshotV3;
+}
+export interface HeroesSnapshotV3 {
+    readonly schemaVersion: 3;
+    readonly units: readonly HeroUnitStateV3[];
+}
+export interface HeroManaStateSnapshotV4 {
+    readonly current: number;
+    readonly max: number;
+    readonly regenerationPerUnit: number;
+}
+export interface HeroActiveAbilityStateSnapshotV4 {
+    readonly id: string;
+    readonly label: string;
+    readonly target: "enemy";
+    readonly manaCost: number;
+    readonly cooldown: number;
+    readonly cooldownRemaining: number;
+    readonly range: number;
+    readonly damage: number;
+    readonly ready: boolean;
+}
+export interface HeroUnitStateV4 extends HeroUnitStateV3 {
+    readonly mana: HeroManaStateSnapshotV4;
+    readonly activeAbility: HeroActiveAbilityStateSnapshotV4;
+}
+export interface HeroesSnapshotV4 {
+    readonly schemaVersion: 4;
+    readonly units: readonly HeroUnitStateV4[];
+}
+export interface HeroSkillNodeStateSnapshotV5 {
+    readonly id: string;
+    readonly label: string;
+    readonly description: string;
+    readonly cost: number;
+    readonly requiresSkillIds: readonly string[];
+    readonly missingRequirementIds: readonly string[];
+    readonly unlocked: boolean;
+    readonly unlockable: boolean;
+}
+export interface HeroSkillsStateSnapshotV5 {
+    readonly availablePoints: number;
+    readonly startingPoints: number;
+    readonly pointsPerInterwave: number;
+    readonly maximumEarnablePoints: number;
+    readonly managementAvailable: boolean;
+    readonly nodes: readonly HeroSkillNodeStateSnapshotV5[];
+}
+export interface HeroUnitStateV5 extends HeroUnitStateV4 {
+    readonly skills: HeroSkillsStateSnapshotV5;
+}
+export interface HeroesSnapshotV5 {
+    readonly schemaVersion: 5;
+    readonly units: readonly HeroUnitStateV5[];
+}
+export interface HeroPassiveAuraStateSnapshotV6 {
+    readonly id: string;
+    readonly label: string;
+    readonly radius: number;
+    readonly active: boolean;
+    readonly affectedTowerIds: readonly string[];
+}
+export interface HeroUnitStateV6 extends HeroUnitStateV4 {
+    readonly skills: HeroSkillsStateSnapshotV5 | null;
+    readonly passiveAura: HeroPassiveAuraStateSnapshotV6;
+}
+export interface HeroesSnapshotV6 {
+    readonly schemaVersion: 6;
+    readonly units: readonly HeroUnitStateV6[];
+}
+export interface HeroBlockingStateSnapshotV7 {
+    readonly blockCapacity: number;
+    readonly active: boolean;
+    readonly blockedEnemyIds: readonly string[];
+}
+export interface HeroUnitStateV7 extends HeroUnitStateV4 {
+    readonly skills: HeroSkillsStateSnapshotV5 | null;
+    readonly passiveAura: HeroPassiveAuraStateSnapshotV6 | null;
+    readonly blocking: HeroBlockingStateSnapshotV7;
+}
+export interface HeroesSnapshotV7 {
+    readonly schemaVersion: 7;
+    readonly units: readonly HeroUnitStateV7[];
+}
+export type HeroesSnapshot = HeroesSnapshotV1 | HeroesSnapshotV2 | HeroesSnapshotV3 | HeroesSnapshotV4 | HeroesSnapshotV5 | HeroesSnapshotV6 | HeroesSnapshotV7;
+export interface LogisticsPowerComponentSnapshotV1 {
+    readonly id: string;
+    readonly output: number;
+    readonly demand: number;
+    readonly allocated: number;
+    readonly nodeIds: readonly string[];
+    readonly consumerIds: readonly string[];
+}
+export interface LogisticsPowerNodeSnapshotV1 {
+    readonly towerId: string;
+    readonly towerTypeId: string;
+    readonly role: "generator" | "relay";
+    readonly componentId: string;
+    readonly output: number;
+    readonly linkTowerIds: readonly string[];
+    readonly coveredConsumerIds: readonly string[];
+}
+export interface LogisticsPowerConsumerSnapshotV1 {
+    readonly towerId: string;
+    readonly towerTypeId: string;
+    readonly demand: number;
+    readonly priority: number;
+    readonly nodeId: string | null;
+    readonly componentId: string | null;
+    readonly powered: boolean;
+}
+export interface LogisticsSnapshotV1 {
+    readonly schemaVersion: 1;
+    readonly power: {
+        readonly components: readonly LogisticsPowerComponentSnapshotV1[];
+        readonly nodes: readonly LogisticsPowerNodeSnapshotV1[];
+        readonly consumers: readonly LogisticsPowerConsumerSnapshotV1[];
+    };
+}
+export interface LogisticsAmmunitionInventorySnapshotV2 {
+    readonly towerId: string;
+    readonly towerTypeId: string;
+    readonly ammoTypeId: string;
+    readonly amount: number;
+    readonly capacity: number;
+    readonly consumptionPerActivation: number;
+    readonly hasRequiredAmmo: boolean;
+}
+export interface LogisticsSnapshotV2 {
+    readonly schemaVersion: 2;
+    readonly power: LogisticsSnapshotV1["power"] | null;
+    readonly ammunition: {
+        readonly inventories: readonly LogisticsAmmunitionInventorySnapshotV2[];
+    } | null;
+}
+export interface LogisticsSupplyProducerSnapshotV3 {
+    readonly towerId: string;
+    readonly towerTypeId: string;
+    readonly recipeId: string;
+    readonly ammoTypeId: string;
+    readonly amount: number;
+    readonly capacity: number;
+    readonly productionProgress: number;
+    readonly productionInterval: number;
+    readonly transferProgress: number;
+    readonly transferInterval: number;
+    readonly transferAmount: number;
+    readonly transferRadius: number;
+    readonly powered: boolean;
+    readonly operational: boolean;
+}
+export interface LogisticsSupplyStorageSnapshotV3 {
+    readonly towerId: string;
+    readonly towerTypeId: string;
+    readonly ammoTypeId: string;
+    readonly amount: number;
+    readonly capacity: number;
+    readonly transferProgress: number;
+    readonly transferInterval: number;
+    readonly transferAmount: number;
+    readonly transferRadius: number;
+    readonly powered: boolean;
+    readonly operational: boolean;
+}
+export interface LogisticsSupplyEdgeSnapshotV3 {
+    readonly sourceTowerId: string;
+    readonly sourceTowerTypeId: string;
+    readonly sourceKind: "producer" | "storage";
+    readonly destinationTowerId: string;
+    readonly destinationTowerTypeId: string;
+    readonly destinationKind: "consumer" | "storage";
+    readonly ammoTypeId: string;
+    readonly distance: number;
+}
+export interface LogisticsSnapshotV3 {
+    readonly schemaVersion: 3;
+    readonly power: LogisticsSnapshotV1["power"] | null;
+    readonly ammunition: LogisticsSnapshotV2["ammunition"];
+    readonly supply: {
+        readonly producers: readonly LogisticsSupplyProducerSnapshotV3[];
+        readonly storages: readonly LogisticsSupplyStorageSnapshotV3[];
+        readonly edges: readonly LogisticsSupplyEdgeSnapshotV3[];
+    } | null;
+}
+export type LogisticsSnapshot = LogisticsSnapshotV1 | LogisticsSnapshotV2 | LogisticsSnapshotV3;
 export interface GameSnapshot {
+    /** Canonical authored map identity for presentation and renderer adapters. */
     mapId: string;
+    /** Normalized map topology; legacy maps are published as hex/odd-r. */
     grid: GridDefinition;
     missionId: string;
     missionLabel: string;
@@ -764,6 +1239,14 @@ export interface GameSnapshot {
     spawnCoord: HexCoord;
     coreCoord: HexCoord;
     outcome: Outcome;
+    combat?: CombatState;
+    reactions?: ReactionStateV1;
+    navigation?: NavigationSnapshotV1;
+    elevation?: ElevationSnapshotV1;
+    terraforming?: TerraformingSnapshotV1;
+    roguelite?: RogueliteSnapshot;
+    heroes?: HeroesSnapshot;
+    logistics?: LogisticsSnapshot;
     scriptState: import("../scripting/types.js").TowerScriptStateSnapshot;
     lastEvents: GameEvent[];
 }

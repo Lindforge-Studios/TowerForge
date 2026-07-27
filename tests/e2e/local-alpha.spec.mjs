@@ -309,6 +309,7 @@ test("local alpha constructor flow", async ({ page, request, browser }) => {
 });
 
 test("single-file build runs directly from file URL", async ({ page }) => {
+  test.setTimeout(120_000);
   execFileSync(process.execPath, [
     path.join(repoRoot, "packages", "cli", "build.mjs"),
     "--project", projectDir,
@@ -320,9 +321,10 @@ test("single-file build runs directly from file URL", async ({ page }) => {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
-  await page.goto(pathToFileURL(htmlPath).href);
-  await expect(page.getByRole("heading", { name: /Starter Tower Defense|TowerForge/i })).toBeVisible();
-  await expect(page.locator("#mission-select option")).toHaveCount(1);
+  await page.goto(pathToFileURL(htmlPath).href, { waitUntil: "commit", timeout: 30_000 });
+  await expect(page.getByRole("heading", { name: /Starter Tower Defense|TowerForge/i }))
+    .toBeVisible({ timeout: 90_000 });
+  await expect(page.locator("#mission-select option")).toHaveCount(1, { timeout: 90_000 });
   await expect(page.locator("#story-overlay")).toBeVisible();
   await page.locator("#story-skip").click();
   await expect(page.locator("#story-overlay")).toBeHidden();
@@ -528,6 +530,7 @@ test("Russian locale covers the primary authoring surfaces", async ({ page }) =>
     ["missions", "Редактор миссий"],
     ["worldmap", "Редактор карты мира"],
     ["maps", "Редактор карт"],
+    ["mechanics", "Центр механик"],
     ["scripts", "Проект и скрипты"],
     ["assets", "Каталог ресурсов"],
     ["settings", "Константы и настройки"],

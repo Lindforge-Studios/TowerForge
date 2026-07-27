@@ -1,5 +1,5 @@
-export declare const TOWER_SCRIPT_SCOPES: readonly ("global" | "mission" | "map" | "wave" | "tower" | "enemy" | "ability" | "terrain")[];
-export declare const TOWER_SCRIPT_EVENTS: readonly ("gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "enemyHit" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal")[];
+export declare const TOWER_SCRIPT_SCOPES: readonly ("map" | "global" | "mission" | "wave" | "tower" | "enemy" | "ability" | "terrain")[];
+export declare const TOWER_SCRIPT_EVENTS: readonly ("gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "towerShieldChanged" | "enemyHit" | "enemyShieldChanged" | "enemyMarkChanged" | "enemyExposureChanged" | "enemyReactionTriggered" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "elevationChanged" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal")[];
 export declare const TOWER_SCRIPT_OPERATORS: readonly ("eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "and" | "or" | "not" | "add" | "sub" | "mul" | "div" | "min" | "max" | "coalesce")[];
 export declare const TOWER_SCRIPT_TARGETS: Readonly<{
     entity: ("self" | "eventEnemy" | "eventTower" | "allEnemies" | "allTowers")[];
@@ -33,6 +33,48 @@ export declare const TOWER_SCRIPT_ACTION_SCHEMA: Readonly<{
         required: {
             target: string;
             amount: string;
+        };
+    };
+    restoreEnemyShield: {
+        required: {
+            target: string;
+            amount: string;
+        };
+    };
+    restoreTowerShield: {
+        required: {
+            target: string;
+            amount: string;
+        };
+    };
+    applyEnemyMark: {
+        required: {
+            target: string;
+            markId: string;
+        };
+        optional: {
+            stacks: string;
+        };
+    };
+    clearEnemyMark: {
+        required: {
+            target: string;
+            markId: string;
+        };
+    };
+    applyEnemyExposure: {
+        required: {
+            target: string;
+            exposureId: string;
+        };
+        optional: {
+            stacks: string;
+        };
+    };
+    clearEnemyExposure: {
+        required: {
+            target: string;
+            exposureId: string;
         };
     };
     applyStatus: {
@@ -77,6 +119,17 @@ export declare const TOWER_SCRIPT_ACTION_SCHEMA: Readonly<{
             target: string;
         };
     };
+    terraformTiles: {
+        required: {
+            operations: string;
+        };
+        optional: {
+            duration: string;
+        };
+        additionalProperties: false;
+        minimumSchemaVersion: number;
+        operationKinds: string[];
+    };
     setState: {
         required: {
             key: string;
@@ -111,7 +164,12 @@ export declare const TOWER_SCRIPT_EVENT_FIELDS: Readonly<{
     towerTargetModeChanged: string[];
     towerFired: string[];
     towerResourcesGranted: string[];
+    towerShieldChanged: string[];
     enemyHit: string[];
+    enemyShieldChanged: string[];
+    enemyMarkChanged: string[];
+    enemyExposureChanged: string[];
+    enemyReactionTriggered: string[];
     enemyKilled: string[];
     enemyLeaked: string[];
     enemySpawnedOnDeath: string[];
@@ -122,6 +180,7 @@ export declare const TOWER_SCRIPT_EVENT_FIELDS: Readonly<{
     abilityUsed: string[];
     enemyEnteredTile: string[];
     terrainChanged: string[];
+    elevationChanged: string[];
     objectiveCompleted: string[];
     objectiveFailed: string[];
     starEarned: string[];
@@ -147,15 +206,15 @@ export declare const TOWER_SCRIPT_LIMITS: Readonly<{
     retainedDiagnostics: 32;
 }>;
 export declare const TOWER_SCRIPT_SCHEMA: Readonly<{
-    schemaVersion: 2;
+    schemaVersion: 6;
     filePattern: "scripts/**/*.tower.json";
     semantics: "Deterministic JSON rules interpreted by the engine; never executable host code.";
     bindingRules: {
         global: string;
         otherScopes: string;
     };
-    scopes: readonly ("global" | "mission" | "map" | "wave" | "tower" | "enemy" | "ability" | "terrain")[];
-    events: readonly ("gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "enemyHit" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal")[];
+    scopes: readonly ("map" | "global" | "mission" | "wave" | "tower" | "enemy" | "ability" | "terrain")[];
+    events: readonly ("gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "towerShieldChanged" | "enemyHit" | "enemyShieldChanged" | "enemyMarkChanged" | "enemyExposureChanged" | "enemyReactionTriggered" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "elevationChanged" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal")[];
     eventFields: Readonly<{
         gameStarted: string[];
         tick: string[];
@@ -167,7 +226,12 @@ export declare const TOWER_SCRIPT_SCHEMA: Readonly<{
         towerTargetModeChanged: string[];
         towerFired: string[];
         towerResourcesGranted: string[];
+        towerShieldChanged: string[];
         enemyHit: string[];
+        enemyShieldChanged: string[];
+        enemyMarkChanged: string[];
+        enemyExposureChanged: string[];
+        enemyReactionTriggered: string[];
         enemyKilled: string[];
         enemyLeaked: string[];
         enemySpawnedOnDeath: string[];
@@ -178,6 +242,7 @@ export declare const TOWER_SCRIPT_SCHEMA: Readonly<{
         abilityUsed: string[];
         enemyEnteredTile: string[];
         terrainChanged: string[];
+        elevationChanged: string[];
         objectiveCompleted: string[];
         objectiveFailed: string[];
         starEarned: string[];
@@ -232,6 +297,48 @@ export declare const TOWER_SCRIPT_SCHEMA: Readonly<{
                 amount: string;
             };
         };
+        restoreEnemyShield: {
+            required: {
+                target: string;
+                amount: string;
+            };
+        };
+        restoreTowerShield: {
+            required: {
+                target: string;
+                amount: string;
+            };
+        };
+        applyEnemyMark: {
+            required: {
+                target: string;
+                markId: string;
+            };
+            optional: {
+                stacks: string;
+            };
+        };
+        clearEnemyMark: {
+            required: {
+                target: string;
+                markId: string;
+            };
+        };
+        applyEnemyExposure: {
+            required: {
+                target: string;
+                exposureId: string;
+            };
+            optional: {
+                stacks: string;
+            };
+        };
+        clearEnemyExposure: {
+            required: {
+                target: string;
+                exposureId: string;
+            };
+        };
         applyStatus: {
             required: {
                 target: string;
@@ -274,6 +381,17 @@ export declare const TOWER_SCRIPT_SCHEMA: Readonly<{
                 target: string;
             };
         };
+        terraformTiles: {
+            required: {
+                operations: string;
+            };
+            optional: {
+                duration: string;
+            };
+            additionalProperties: false;
+            minimumSchemaVersion: number;
+            operationKinds: string[];
+        };
         setState: {
             required: {
                 key: string;
@@ -296,6 +414,11 @@ export declare const TOWER_SCRIPT_SCHEMA: Readonly<{
                 payload: string;
             };
         };
+    }>;
+    diagnostic: Readonly<{
+        requiredFields: readonly ["scriptId", "event", "code", "message"];
+        optionalFields: readonly ["handlerId", "reasonKey"];
+        additionalProperties: false;
     }>;
     limits: Readonly<{
         scriptsPerProject: 128;

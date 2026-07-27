@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "heroes": {
+      "schemaVersion": 1,
+      "enabled": true,
+      "profiles": {
+        "field_commander": {
+          "selectedHeroId": "commander",
+          "definitions": {
+            "commander": {
+              "label": "Field Commander",
+              "spawn": "core"
+            }
+          }
+        }
+      }
+    }
+  }
+}

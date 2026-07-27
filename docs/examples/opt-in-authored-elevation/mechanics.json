@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "elevation": {
+      "schemaVersion": 1,
+      "enabled": true,
+      "profiles": {
+        "basic_authored_elevation": {}
+      }
+    }
+  }
+}

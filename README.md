@@ -91,6 +91,7 @@ python3 -m http.server 5175 --bind 127.0.0.1 --directory examples/starter.tdproj
 
 - `project.json` — метаданные проекта.
 - `content/balance.json` — константы, типизированный terrain registry, сложности, метапрогрессия, награды, способности, враги, башни, волны и миссии.
+- `content/mechanics.json` — необязательный versioned-каталог opt-in механик; без него проект сохраняет штатное legacy-поведение.
 - `content/world-map.json` — регионы и узлы миссий.
 - `content/visuals.json` — визуальный каталог v2: атласы, спрайты, tilesets, Wang/signature rules, веса, transforms и map/grid bindings.
 - `content/story-comics.json` — сюжетные панели, связанные с миссиями.
@@ -100,6 +101,8 @@ python3 -m http.server 5175 --bind 127.0.0.1 --directory examples/starter.tdproj
 - `scripts/**/*.tower.json` — детерминированная пользовательская логика, включая terrain scope, tile events и контролируемые runtime terrain changes.
 - `build-targets.json` — цели сборки.
 - `.towerforge/` — локальное состояние редактора и резервные копии; каталог нельзя добавлять в git.
+
+Миссия выбирает профили каталога через `mission.mechanics`; само наличие профиля не включает механику. Модуль `combat` v1 добавляет opt-in щиты, v2 — author-defined типы урона/брони, а v3 — метки уязвимости. Независимый `reactions` v1 добавляет exposures и bounded secondary effects только при явном выборе совместимого combat v2/v3. `navigation` v1 включает dynamic-flow отдельно от legacy routes. `elevation` v1 включает только authored-высоты, v2 опционально добавляет deterministic LoS, а v3 — независимый bounded high-ground профиль с pairwise range и immediate tower damage bonus; snapshot высот остаётся v1. Независимый `physics` v1 добавляет только bounded tile-discrete push/pull для pipeline-башен и custom abilities, явные immunity-списки и terrain-tag fall hazards. Он не добавляет TowerScript, continuous physics или terraforming; при неактивном модуле displacement effects не меняют gameplay. Mechanics Hub и AI/MCP показывают prerequisites для recipes, но никогда не патчат зависимые combat, terrain, map, tower или ability автоматически. Обычные starter-проекты не содержат `content/mechanics.json` и сохраняют legacy path. Подробнее: [ADR 0011](docs/adr/0011-opt-in-versioned-mechanics.md), [ADR 0021](docs/adr/0021-opt-in-elemental-reactions.md), [ADR 0022](docs/adr/0022-opt-in-dynamic-flow-navigation.md), [ADR 0023](docs/adr/0023-opt-in-authored-elevation-foundation.md), [ADR 0024](docs/adr/0024-opt-in-deterministic-elevation-line-of-sight.md), [ADR 0025](docs/adr/0025-opt-in-authored-high-ground-modifiers.md), [ADR 0026](docs/adr/0026-opt-in-tile-displacement-physics.md) и [roadmap](docs/ROADMAP.md).
 
 ## Архитектура
 

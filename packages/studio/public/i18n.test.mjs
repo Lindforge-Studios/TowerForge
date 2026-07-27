@@ -11,6 +11,8 @@ describe("Studio localization", () => {
     expect(getLanguage()).toBe("ru");
     expect(t("Settings")).toBe("Настройки");
     expect(t("Build Targets")).toBe("Цели сборки");
+    expect(t("Mechanics")).toBe("Механики");
+    expect(t("Mechanics Hub")).toBe("Центр механик");
   });
 
   it("keeps canonical English strings in English mode", () => {

@@ -1,34 +1,19 @@
 import { TowerDefenseGame } from "./TowerDefenseGame.js";
+import { dispatchGameCommand } from "./commands.js";
+/** @deprecated Use dispatchGameCommand with a versioned GameCommand. */
 export function applySimulationAction(game, action) {
-    if (action.type === "tick") {
-        game.tick(action.units);
-        return { ok: true };
+    if (action.type === "moveHero") {
+        return dispatchGameCommand(game, {
+            schemaVersion: 4,
+            type: "moveHero",
+            heroId: action.heroId,
+            target: action.target
+        });
     }
-    if (action.type === "startWave") {
-        return game.startNextWave();
-    }
-    if (action.type === "placeTower") {
-        return game.placeTower(action.towerTypeId, action.coord);
-    }
-    if (action.type === "moveTower") {
-        return game.moveTower(action.towerId, action.coord);
-    }
-    if (action.type === "sellTower") {
-        return game.sellTower(action.towerId);
-    }
-    if (action.type === "upgradeTower") {
-        return game.upgradeTower(action.towerId);
-    }
-    if (action.type === "setTargetMode") {
-        return game.setTowerTargetMode(action.towerId, action.mode);
-    }
-    if (action.type === "useAbility") {
-        return game.useAbility(action.abilityId, action.center);
-    }
-    if (action.type === "emitSignal") {
-        return game.emitScriptSignal(action.signal, action.payload);
-    }
-    return { ok: false, reason: "Unknown simulation action." };
+    const payload = action.type === "emitSignal" && action.payload === undefined
+        ? { schemaVersion: 1, type: action.type, signal: action.signal }
+        : { schemaVersion: 1, ...action };
+    return dispatchGameCommand(game, payload);
 }
 export function tickHeadless(game, units, step = 0.1) {
     const safeStep = Math.max(0.01, step);

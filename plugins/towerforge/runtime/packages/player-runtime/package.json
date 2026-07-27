@@ -1,0 +1,10 @@
+{
+  "name": "@towerforge/player-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.mjs",
+    "./player-profile-store": "./src/player-profile-store.mjs"
+  }
+}

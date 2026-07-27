@@ -1,4 +1,10 @@
 import { type TowerAttackKind } from "../simulation/types.js";
+export { NAVIGATION_MECHANICS_SCHEMA } from "./navigation-mechanics.js";
+export { ELEVATION_MECHANICS_SCHEMA } from "./elevation-mechanics.js";
+export { TERRAFORMING_MECHANICS_SCHEMA } from "./terraforming-mechanics.js";
+export { ROGUELITE_MECHANICS_SCHEMA } from "./roguelite-mechanics.js";
+export { HEROES_MECHANICS_SCHEMA } from "./heroes-mechanics.js";
+export { LOGISTICS_MECHANICS_SCHEMA } from "./logistics-mechanics.js";
 /**
  * A machine-readable description of the content schema's closed sets and per-shape field
  * constraints — the single source of truth for what `validateGameContentRegistry` (validate.ts)
@@ -59,6 +65,346 @@ export declare const TARGET_MODE_SCHEMA: Readonly<{
     supportedAttackKinds: readonly ["single", "sniper", "antiair", "splash", "pipeline"];
     tieBreak: "enemy id ascending";
 }>;
+/**
+ * Public, machine-readable R0B contract for the bounded modifier pipeline.
+ * Runtime allowlists and the per-resolution budget are imported directly from
+ * simulation/modifiers.ts so authoring discovery cannot drift from execution.
+ */
+export declare const MODIFIER_SPEC_SCHEMA: Readonly<{
+    schemaVersion: 1;
+    requiredFields: readonly ["id", "target", "stage", "operation", "value"];
+    targets: "damage"[];
+    stages: ("tower_upgrade" | "meta" | "run" | "spatial" | "temporary")[];
+    operations: ("flat" | "multiplier" | "additive_ratio")[];
+    maxPerResolution: 64;
+    pipelineOrder: readonly ["base", "tower_upgrade", "meta", "run", "spatial", "temporary"];
+    withinStageOrder: readonly ["flat", "additive_ratio", "multiplier", "id_binary_ascending"];
+}>;
+/**
+ * Public damage envelope. The pure resolver applies authored armor before per-entity
+ * resistances; shields and HP remain at the entity mutation boundary.
+ */
+export declare const DAMAGE_PACKET_SCHEMA: Readonly<{
+    schemaVersion: 1;
+    requiredFields: readonly ["amount", "source", "target"];
+    optionalFields: readonly ["damageType", "tags", "modifiers"];
+    sourceKinds: readonly ["tower", "ability", "tower_script", "status", "enemy", "leak", "reaction"];
+    targetKinds: readonly ["enemy", "tower", "hero", "core"];
+    tags: ("reaction" | "area" | "over_time" | "armor_piercing")[];
+    pipelineOrder: readonly ["modifiers", "marks", "armor_matrix", "entity_resistance", "legacy_pierce_only", "shield", "entity_hp", "reactions"];
+}>;
+/**
+ * Public R1 combat-module authoring contract. The compatibility fields at the end preserve the
+ * smaller R1.2a descriptor while the structured sections give Studio/MCP enough information to
+ * build an exact, capability-aware shield editor without duplicating engine rules.
+ */
+export declare const COMBAT_MECHANICS_SCHEMA: Readonly<{
+    schemaVersion: 3;
+    moduleId: "combat";
+    supportedModuleSchemaVersions: readonly [1, 2, 3];
+    profile: {
+        additionalProperties: boolean;
+        optionalFields: readonly ["shields", "damageTypes", "armorTypes", "armorAssignments", "marks"];
+        shields: {
+            additionalProperties: boolean;
+            targetKinds: readonly ["enemies", "towers"];
+            enemies: string;
+            towers: string;
+        };
+    };
+    shieldDefinition: {
+        requiredFields: readonly ["capacity"];
+        optionalFields: readonly ["regeneration"];
+        additionalProperties: boolean;
+    };
+    regeneration: {
+        requiredFields: readonly ["ratePerUnit"];
+        optionalFields: readonly ["delayAfterDamage"];
+        additionalProperties: boolean;
+    };
+    semanticBounds: {
+        capacity: {
+            exclusiveMinimum: number;
+            maximum: 1000000000000;
+        };
+        ratePerUnit: {
+            exclusiveMinimum: number;
+            maximum: 1000000000;
+        };
+        delayAfterDamage: {
+            minimum: number;
+            maximum: 1000000000;
+        };
+    };
+    runtimeSnapshot: {
+        path: string;
+        optionalUnlessActive: boolean;
+        schemaVersion: number;
+        legacyShieldOnlySchemaVersion: number;
+        fields: readonly ["schemaVersion", "shields", "marks"];
+        targetStateFields: readonly ["current", "capacity", "regenerationDelayRemaining"];
+        keysAreRuntimeInstanceIds: boolean;
+    };
+    events: {
+        enemyShieldChanged: string[];
+        towerShieldChanged: string[];
+        causes: readonly ["damage", "regeneration", "script"];
+    };
+    towerScript: {
+        minimumSchemaVersion: number;
+        events: readonly ["enemyShieldChanged", "towerShieldChanged"];
+        actions: readonly ["restoreEnemyShield", "restoreTowerShield"];
+        enemyTargets: ("self" | "eventEnemy" | "allEnemies")[];
+        towerTargets: ("self" | "eventTower" | "allTowers")[];
+        amount: string;
+    };
+    damageTypes: {
+        minimumModuleSchemaVersion: number;
+        shape: string;
+        definition: {
+            requiredFields: readonly ["label"];
+            additionalProperties: boolean;
+        };
+        fallbackDamageTypeId: string;
+    };
+    armorTypes: {
+        minimumModuleSchemaVersion: number;
+        shape: string;
+        definition: {
+            requiredFields: readonly ["label", "multipliers"];
+            optionalFields: readonly ["defaultMultiplier"];
+            additionalProperties: boolean;
+            multipliers: string;
+        };
+    };
+    armorAssignments: {
+        minimumModuleSchemaVersion: number;
+        additionalProperties: boolean;
+        targetKinds: readonly ["enemies"];
+        enemies: string;
+    };
+    armorMatrix: {
+        limits: Readonly<{
+            damageTypes: 256;
+            armorTypes: 256;
+            assignments: 4096;
+            matrixEntries: 16384;
+            multiplier: 1000000;
+            labelLength: 128;
+        }>;
+        order: string;
+        armorPiercingCompatibility: string;
+    };
+    marks: {
+        minimumModuleSchemaVersion: number;
+        additionalProperties: boolean;
+        limits: Readonly<{
+            definitions: 256;
+            sourceBindings: 4096;
+            runtimeApplications: 16384;
+            applicationsPerSource: 16;
+            filterDamageTypes: 256;
+            labelLength: 128;
+            duration: 1000000000;
+            maxStacks: 256;
+            multiplier: 1000000;
+        }>;
+        definitions: string;
+        definitionRequiredFields: readonly ["label", "duration", "maxStacks", "multiplier", "consumePolicy"];
+        definitionOptionalFields: readonly ["damageTypes"];
+        consumePolicies: readonly ["retain", "consume_one", "consume_all"];
+        bindingKinds: readonly ["towers", "abilities", "towerScripts"];
+        applicationRequiredFields: readonly ["markId"];
+        applicationOptionalFields: readonly ["stacks"];
+    };
+    profileFields: readonly ["shields", "damageTypes", "armorTypes", "armorAssignments", "marks"];
+    targetKinds: readonly ["enemies", "towers"];
+    definitionFields: readonly ["capacity", "regeneration"];
+    regenerationFields: readonly ["ratePerUnit", "delayAfterDamage"];
+    limits: Readonly<{
+        capacity: 1000000000000;
+        ratePerUnit: 1000000000;
+        delayAfterDamage: 1000000000;
+    }>;
+    runtimeStateFields: readonly ["current", "capacity", "regenerationDelayRemaining"];
+    changeCauses: readonly ["damage", "regeneration", "script"];
+}>;
+/** @deprecated Use COMBAT_MECHANICS_SCHEMA. */
+export declare const COMBAT_SHIELD_SCHEMA: Readonly<{
+    schemaVersion: 3;
+    moduleId: "combat";
+    supportedModuleSchemaVersions: readonly [1, 2, 3];
+    profile: {
+        additionalProperties: boolean;
+        optionalFields: readonly ["shields", "damageTypes", "armorTypes", "armorAssignments", "marks"];
+        shields: {
+            additionalProperties: boolean;
+            targetKinds: readonly ["enemies", "towers"];
+            enemies: string;
+            towers: string;
+        };
+    };
+    shieldDefinition: {
+        requiredFields: readonly ["capacity"];
+        optionalFields: readonly ["regeneration"];
+        additionalProperties: boolean;
+    };
+    regeneration: {
+        requiredFields: readonly ["ratePerUnit"];
+        optionalFields: readonly ["delayAfterDamage"];
+        additionalProperties: boolean;
+    };
+    semanticBounds: {
+        capacity: {
+            exclusiveMinimum: number;
+            maximum: 1000000000000;
+        };
+        ratePerUnit: {
+            exclusiveMinimum: number;
+            maximum: 1000000000;
+        };
+        delayAfterDamage: {
+            minimum: number;
+            maximum: 1000000000;
+        };
+    };
+    runtimeSnapshot: {
+        path: string;
+        optionalUnlessActive: boolean;
+        schemaVersion: number;
+        legacyShieldOnlySchemaVersion: number;
+        fields: readonly ["schemaVersion", "shields", "marks"];
+        targetStateFields: readonly ["current", "capacity", "regenerationDelayRemaining"];
+        keysAreRuntimeInstanceIds: boolean;
+    };
+    events: {
+        enemyShieldChanged: string[];
+        towerShieldChanged: string[];
+        causes: readonly ["damage", "regeneration", "script"];
+    };
+    towerScript: {
+        minimumSchemaVersion: number;
+        events: readonly ["enemyShieldChanged", "towerShieldChanged"];
+        actions: readonly ["restoreEnemyShield", "restoreTowerShield"];
+        enemyTargets: ("self" | "eventEnemy" | "allEnemies")[];
+        towerTargets: ("self" | "eventTower" | "allTowers")[];
+        amount: string;
+    };
+    damageTypes: {
+        minimumModuleSchemaVersion: number;
+        shape: string;
+        definition: {
+            requiredFields: readonly ["label"];
+            additionalProperties: boolean;
+        };
+        fallbackDamageTypeId: string;
+    };
+    armorTypes: {
+        minimumModuleSchemaVersion: number;
+        shape: string;
+        definition: {
+            requiredFields: readonly ["label", "multipliers"];
+            optionalFields: readonly ["defaultMultiplier"];
+            additionalProperties: boolean;
+            multipliers: string;
+        };
+    };
+    armorAssignments: {
+        minimumModuleSchemaVersion: number;
+        additionalProperties: boolean;
+        targetKinds: readonly ["enemies"];
+        enemies: string;
+    };
+    armorMatrix: {
+        limits: Readonly<{
+            damageTypes: 256;
+            armorTypes: 256;
+            assignments: 4096;
+            matrixEntries: 16384;
+            multiplier: 1000000;
+            labelLength: 128;
+        }>;
+        order: string;
+        armorPiercingCompatibility: string;
+    };
+    marks: {
+        minimumModuleSchemaVersion: number;
+        additionalProperties: boolean;
+        limits: Readonly<{
+            definitions: 256;
+            sourceBindings: 4096;
+            runtimeApplications: 16384;
+            applicationsPerSource: 16;
+            filterDamageTypes: 256;
+            labelLength: 128;
+            duration: 1000000000;
+            maxStacks: 256;
+            multiplier: 1000000;
+        }>;
+        definitions: string;
+        definitionRequiredFields: readonly ["label", "duration", "maxStacks", "multiplier", "consumePolicy"];
+        definitionOptionalFields: readonly ["damageTypes"];
+        consumePolicies: readonly ["retain", "consume_one", "consume_all"];
+        bindingKinds: readonly ["towers", "abilities", "towerScripts"];
+        applicationRequiredFields: readonly ["markId"];
+        applicationOptionalFields: readonly ["stacks"];
+    };
+    profileFields: readonly ["shields", "damageTypes", "armorTypes", "armorAssignments", "marks"];
+    targetKinds: readonly ["enemies", "towers"];
+    definitionFields: readonly ["capacity", "regeneration"];
+    regenerationFields: readonly ["ratePerUnit", "delayAfterDamage"];
+    limits: Readonly<{
+        capacity: 1000000000000;
+        ratePerUnit: 1000000000;
+        delayAfterDamage: 1000000000;
+    }>;
+    runtimeStateFields: readonly ["current", "capacity", "regenerationDelayRemaining"];
+    changeCauses: readonly ["damage", "regeneration", "script"];
+}>;
+/** Public closed authoring contract for the independently versioned reactions v1 module. */
+export declare const REACTIONS_MECHANICS_SCHEMA: Readonly<{
+    schemaVersion: 1;
+    moduleId: "reactions";
+    supportedModuleSchemaVersions: readonly [1];
+    dependency: {
+        moduleId: string;
+        supportedModuleSchemaVersions: readonly [2, 3];
+    };
+    profile: {
+        additionalProperties: boolean;
+        requiredFields: readonly ["reactions"];
+        optionalFields: readonly ["exposures"];
+    };
+    limits: Readonly<{
+        exposureDefinitions: 256;
+        damageTypeApplicationBindings: 256;
+        applicationsPerDamageType: 16;
+        totalExposureApplications: 4096;
+        reactionDefinitions: 256;
+        requirementsPerReaction: 8;
+        effectsPerReaction: 8;
+        totalReactionEffects: 2048;
+        runtimeExposureApplications: 16384;
+        labelLength: 128;
+        idTagUtf8Bytes: 128;
+        duration: 1000000000;
+        maxStacks: 256;
+        flatDamage: 1000000000000;
+        sourceMultiplier: 1000000;
+        radius: 64;
+        targetsPerEffect: 64;
+        maxDepth: 4;
+        secondaryPacketsPerRoot: 256;
+    }>;
+    runtimeSnapshot: {
+        path: string;
+        schemaVersion: number;
+        optionalUnlessActive: boolean;
+    };
+    towerScript: {
+        minimumSchemaVersion: number;
+    };
+}>;
 export declare const ATTACK_KIND_SCHEMA: Record<TowerAttackKind, AttackKindDescriptor>;
 export declare const TOWER_PIPELINE_SCHEMA: Readonly<{
     semantics: "targeting selects primary enemies; delivery expands them; effects run in declaration order";
@@ -95,6 +441,12 @@ export declare const TOWER_PIPELINE_SCHEMA: Readonly<{
         resource: {
             resources: string;
         };
+        displacement: {
+            kind: string;
+            mode: string;
+            distance: string;
+            stopAtBlocker: string;
+        };
     };
 }>;
 export declare const ATTACK_KIND_IDS: TowerAttackKind[];
@@ -126,6 +478,12 @@ export declare const ABILITY_EFFECT_SCHEMA: {
     };
     status: {
         note: string;
+    };
+    displacement: {
+        kind: string;
+        mode: string;
+        distance: string;
+        stopAtBlocker: string;
     };
 };
 /** The rule enforced for every currency-typed resource bag (tower cost, enemy reward, etc.). */

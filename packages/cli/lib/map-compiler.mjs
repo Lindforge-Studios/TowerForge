@@ -5,6 +5,9 @@ import path from "node:path";
 // "terrain" tilelayer whose GIDs translate to engine terrain kinds.
 export const TERRAIN_BY_GID = { 1: "buildable", 2: "path", 3: "blocked", 4: "water", 5: "spawn", 6: "core" };
 export const GID_BY_TERRAIN = { buildable: 1, path: 2, blocked: 3, water: 4, spawn: 5, core: 6 };
+export const MAX_ELEVATION_OVERRIDES = 65_536;
+export const MIN_TILE_ELEVATION = -1_000_000;
+export const MAX_TILE_ELEVATION = 1_000_000;
 
 export function readMapSources(projectDir) {
   const srcDir = path.join(projectDir, "maps", "src");
@@ -58,10 +61,11 @@ export function compileMapSource(source, sourceName = "map.tmj", terrainTypes = 
   const layerOverrides = readTerrainLayer(source, defaultTerrain, width, height);
   const explicitOverrides = normalizeTerrainOverrides(source.terrainOverrides ?? parseJson(properties.terrainOverrides, []), `${sourceName}.terrainOverrides`);
   const terrainOverrides = mergeTerrainOverrides(layerOverrides, explicitOverrides);
+  const elevationOverrides = readElevationOverrides(source, properties, width, height, sourceName);
   const pathRoutes = normalizeRoutes(source.pathRoutes ?? parseJson(properties.pathRoutes, []), pathCenterline, `${sourceName}.pathRoutes`);
   validateRoutes(pathRoutes, grid, width, height, defaultTerrain, terrainOverrides, terrainTypes, sourceName);
 
-  return {
+  const compiled = {
     id,
     width,
     height,
@@ -73,6 +77,98 @@ export function compileMapSource(source, sourceName = "map.tmj", terrainTypes = 
     pathRoutes,
     terrainOverrides
   };
+  if (elevationOverrides.length > 0) compiled.elevationOverrides = elevationOverrides;
+  return compiled;
+}
+
+/**
+ * Compile the optional authored elevation layer. The sparse list is deliberately stricter than
+ * ordinary map metadata: it is gameplay content, so accessors, inherited fields, sparse arrays,
+ * duplicates, and non-canonical numeric values are rejected before anything reads them.
+ */
+function readElevationOverrides(source, properties, width, height, sourceName) {
+  let sourceDescriptor = Object.getOwnPropertyDescriptor(source, "elevationOverrides");
+  if (sourceDescriptor && !("value" in sourceDescriptor)) {
+    throw new Error(`${sourceName}.elevationOverrides must be an own data property; accessors are not allowed.`);
+  }
+  // Treat an explicitly undefined optional field as absent. This preserves callers that construct
+  // legacy source objects with `elevationOverrides: undefined` while still rejecting every other
+  // malformed authored value.
+  if (sourceDescriptor?.value === undefined) sourceDescriptor = undefined;
+  const propertyDescriptor = Object.getOwnPropertyDescriptor(properties, "elevationOverrides");
+  if (sourceDescriptor && propertyDescriptor) {
+    throw new Error(`${sourceName}.elevationOverrides is ambiguous: author it either at the top level or as a Tiled property, not both.`);
+  }
+  if (!sourceDescriptor && !propertyDescriptor) return [];
+
+  const authored = sourceDescriptor ? sourceDescriptor.value : propertyDescriptor.value;
+  const parsed = parseStrictJson(authored, `${sourceName}.elevationOverrides`);
+  return normalizeElevationOverrides(parsed, width, height, `${sourceName}.elevationOverrides`);
+}
+
+export function normalizeElevationOverrides(value, width, height, fieldPath = "elevationOverrides") {
+  if (!Array.isArray(value)) throw new Error(`${fieldPath} must be a dense array.`);
+  if (Object.getPrototypeOf(value) !== Array.prototype) {
+    throw new Error(`${fieldPath} must be an ordinary array.`);
+  }
+  if (value.length > MAX_ELEVATION_OVERRIDES) {
+    throw new Error(`${fieldPath} may contain at most ${MAX_ELEVATION_OVERRIDES} entries.`);
+  }
+  const arrayDescriptors = Object.getOwnPropertyDescriptors(value);
+  const expectedArrayKeys = new Set(["length", ...Array.from({ length: value.length }, (_, index) => String(index))]);
+  if (Reflect.ownKeys(arrayDescriptors).some((key) => typeof key !== "string" || !expectedArrayKeys.has(key))) {
+    throw new Error(`${fieldPath} must be an ordinary dense array without extra fields.`);
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = arrayDescriptors[index];
+    if (!descriptor) throw new Error(`${fieldPath} must be a dense array (missing index ${index}).`);
+    if (!("value" in descriptor) || !descriptor.enumerable) {
+      throw new Error(`${fieldPath}.${index} must be an enumerable own data property; accessors are not allowed.`);
+    }
+  }
+
+  const seen = new Set();
+  const normalized = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const entry = arrayDescriptors[index].value;
+    const entryPath = `${fieldPath}.${index}`;
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`${entryPath} must be a plain object with q, r, and elevation data fields.`);
+    }
+    const prototype = Object.getPrototypeOf(entry);
+    if (prototype !== Object.prototype) {
+      throw new Error(`${entryPath} must be an ordinary plain object with Object.prototype.`);
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(entry);
+    const keys = Reflect.ownKeys(descriptors);
+    if (keys.length !== 3 || !keys.every((key) => typeof key === "string" && ["q", "r", "elevation"].includes(key))) {
+      throw new Error(`${entryPath} must contain exactly the q, r, and elevation fields.`);
+    }
+    for (const key of ["q", "r", "elevation"]) {
+      const descriptor = descriptors[key];
+      if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+        throw new Error(`${entryPath}.${key} must be an enumerable own data property; accessors are not allowed.`);
+      }
+    }
+    const q = descriptors.q.value;
+    const r = descriptors.r.value;
+    const elevation = descriptors.elevation.value;
+    if (!Number.isSafeInteger(q) || !Number.isSafeInteger(r)) {
+      throw new Error(`${entryPath} coordinate q/r must be safe integers.`);
+    }
+    if (q < 0 || r < 0 || q >= width || r >= height) {
+      throw new Error(`${entryPath} coordinate is outside map bounds.`);
+    }
+    if (!Number.isSafeInteger(elevation) || elevation < MIN_TILE_ELEVATION || elevation > MAX_TILE_ELEVATION) {
+      throw new Error(`${entryPath}.elevation must be an integer from ${MIN_TILE_ELEVATION} to ${MAX_TILE_ELEVATION}.`);
+    }
+    const key = `${q},${r}`;
+    if (seen.has(key)) throw new Error(`${entryPath} duplicates elevation coordinate (${q}, ${r}).`);
+    seen.add(key);
+    if (elevation !== 0) normalized.push({ q, r, elevation });
+  }
+  normalized.sort((left, right) => left.r - right.r || left.q - right.q);
+  return normalized;
 }
 
 function resolveGrid(source, properties, sourceName) {
@@ -144,15 +240,39 @@ function propertiesToObject(properties) {
   const result = {};
   if (!Array.isArray(properties)) return result;
   for (const prop of properties) {
-    if (!prop || typeof prop.name !== "string") continue;
-    result[prop.name] = prop.value;
+    if (!prop || typeof prop !== "object" || Array.isArray(prop)) continue;
+    let descriptors;
+    try {
+      descriptors = Object.getOwnPropertyDescriptors(prop);
+    } catch {
+      throw new Error("Map property fields could not be inspected safely.");
+    }
+    const nameDescriptor = descriptors.name;
+    if (!nameDescriptor || !("value" in nameDescriptor) || !nameDescriptor.enumerable) {
+      throw new Error("Map property name must be an enumerable own data field; accessors are not allowed.");
+    }
+    const name = nameDescriptor.value;
+    if (typeof name !== "string") continue;
+    const valueDescriptor = descriptors.value;
+    if (!valueDescriptor || !("value" in valueDescriptor) || !valueDescriptor.enumerable) {
+      throw new Error(`Map property "${name}" value must be an enumerable own data field; accessors are not allowed.`);
+    }
+    if (name !== "elevationOverrides") {
+      // Preserve the pre-elevation behavior for every legacy Tiled property.
+      result[name] = valueDescriptor.value;
+      continue;
+    }
+    if (Object.hasOwn(result, "elevationOverrides")) {
+      throw new Error("Tiled map properties may define elevationOverrides only once.");
+    }
+    result.elevationOverrides = valueDescriptor.value;
   }
   return result;
 }
 
 function requirePositiveInteger(value, fieldPath) {
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(`${fieldPath} must be a positive integer.`);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${fieldPath} must be a positive safe integer.`);
   }
   return value;
 }
@@ -256,5 +376,14 @@ function parseJson(value, fallback) {
     return JSON.parse(value);
   } catch {
     return fallback;
+  }
+}
+
+function parseStrictJson(value, fieldPath) {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw new Error(`${fieldPath} must contain valid JSON.`);
   }
 }

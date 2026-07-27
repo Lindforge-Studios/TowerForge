@@ -57,6 +57,7 @@ export function readRawProjectFiles(projectDir) {
     }),
     maps: readJsonOr(path.join(mapsDir, "maps.json"), {}),
     mapSources: readMapSources(projectDir),
+    mechanics: readJsonOr(path.join(contentDir, "mechanics.json"), undefined),
     visuals: readJsonOr(path.join(contentDir, "visuals.json"), defaultVisuals()),
     storyComics: readJsonOr(path.join(contentDir, "story-comics.json"), { seenStoragePrefix: "story_seen_", comics: {} }),
     battleBackgrounds: readJsonOr(path.join(contentDir, "battle-backgrounds.json"), {
@@ -81,6 +82,7 @@ export function readRawProjectFiles(projectDir) {
  *  author's delta while validating the effective result) read raw once and derive this from it. */
 export function normalizeProjectFiles(rawFiles) {
   const migrated = migrateProjectFiles(rawFiles);
+  const mechanicsAuthored = migrated.files.mechanics !== undefined;
 
   return {
     projectDir: rawFiles.projectDir,
@@ -89,6 +91,8 @@ export function normalizeProjectFiles(rawFiles) {
     worldMap: normalizeWorldMap(migrated.files.worldMap),
     maps: normalizeMaps(migrated.files.maps),
     mapSources: migrated.files.mapSources ?? {},
+    mechanics: mechanicsAuthored ? migrated.files.mechanics : { schemaVersion: 1, modules: {} },
+    mechanicsAuthored,
     visuals: normalizeVisuals(migrated.files.visuals),
     storyComics: normalizeStoryComics(migrated.files.storyComics),
     battleBackgrounds: normalizeBattleBackgrounds(migrated.files.battleBackgrounds),
@@ -119,6 +123,8 @@ export function projectSummary(files) {
     towers: files.balance.towers,
     waveSets: files.balance.waveSets,
     missions: files.balance.missions,
+    mechanics: files.mechanics,
+    mechanicsAuthored: files.mechanicsAuthored ?? false,
     maps: Object.fromEntries(Object.entries(files.maps).map(([id, map]) => [id, {
       id,
       grid: map.grid,
@@ -138,7 +144,8 @@ export function projectSummary(files) {
     schemaVersions: {
       project: files.manifest.schemaVersion ?? 1,
       buildTargets: files.buildTargets.schemaVersion ?? 1,
-      visuals: files.visuals.schemaVersion ?? 1
+      visuals: files.visuals.schemaVersion ?? 1,
+      mechanics: files.mechanics.schemaVersion ?? 1
     },
     appliedMigrations: files.appliedMigrations ?? [],
     mapRoutes: Object.fromEntries(
@@ -164,6 +171,7 @@ export async function loadContentRegistry(projectDir) {
     maps: files.maps,
     worldMap: files.worldMap,
     scripts: files.scripts,
+    mechanics: files.mechanics,
     visuals: files.visuals,
     storyComics: files.storyComics,
     battleBackgrounds: files.battleBackgrounds

@@ -21,7 +21,12 @@ export type TowerScriptEventName =
   | "towerTargetModeChanged"
   | "towerFired"
   | "towerResourcesGranted"
+  | "towerShieldChanged"
   | "enemyHit"
+  | "enemyShieldChanged"
+  | "enemyMarkChanged"
+  | "enemyExposureChanged"
+  | "enemyReactionTriggered"
   | "enemyKilled"
   | "enemyLeaked"
   | "enemySpawnedOnDeath"
@@ -32,6 +37,7 @@ export type TowerScriptEventName =
   | "abilityUsed"
   | "enemyEnteredTile"
   | "terrainChanged"
+  | "elevationChanged"
   | "objectiveCompleted"
   | "objectiveFailed"
   | "starEarned"
@@ -63,8 +69,22 @@ export type TowerScriptExpression =
   | { $op: TowerScriptOperator; args: TowerScriptExpression[] };
 
 export type TowerScriptEntityTarget = "self" | "eventEnemy" | "eventTower" | "allEnemies" | "allTowers";
+export type TowerScriptEnemyTarget = "self" | "eventEnemy" | "allEnemies";
+export type TowerScriptTowerTarget = "self" | "eventTower" | "allTowers";
 
 export type TowerScriptTileTarget = "eventTile" | { q: TowerScriptExpression; r: TowerScriptExpression };
+
+export type TerraformOperationV1 =
+  | { readonly kind: "set_terrain"; readonly target: TowerScriptTileTarget; readonly transitionId: string }
+  | { readonly kind: "restore_terrain"; readonly target: TowerScriptTileTarget }
+  | { readonly kind: "set_elevation"; readonly target: TowerScriptTileTarget; readonly elevation: TowerScriptExpression }
+  | { readonly kind: "restore_elevation"; readonly target: TowerScriptTileTarget };
+
+export interface TerraformTilesActionV1 {
+  readonly action: "terraformTiles";
+  readonly operations: readonly TerraformOperationV1[];
+  readonly duration?: TowerScriptExpression;
+}
 
 export type TowerScriptAction =
   | { action: "grantResource"; resourceId: string; amount: TowerScriptExpression }
@@ -72,12 +92,19 @@ export type TowerScriptAction =
   | { action: "healCore"; amount: TowerScriptExpression }
   | { action: "damageEnemy"; target: TowerScriptEntityTarget; amount: TowerScriptExpression }
   | { action: "healEnemy"; target: TowerScriptEntityTarget; amount: TowerScriptExpression }
+  | { action: "restoreEnemyShield"; target: TowerScriptEnemyTarget; amount: TowerScriptExpression }
+  | { action: "restoreTowerShield"; target: TowerScriptTowerTarget; amount: TowerScriptExpression }
+  | { action: "applyEnemyMark"; target: TowerScriptEnemyTarget; markId: string; stacks?: TowerScriptExpression }
+  | { action: "clearEnemyMark"; target: TowerScriptEnemyTarget; markId: string }
+  | { action: "applyEnemyExposure"; target: TowerScriptEnemyTarget; exposureId: string; stacks?: TowerScriptExpression }
+  | { action: "clearEnemyExposure"; target: TowerScriptEnemyTarget; exposureId: string }
   | { action: "applyStatus"; target: TowerScriptEntityTarget; status: StatusEffectSpec }
   | { action: "setTowerCooldown"; target: TowerScriptEntityTarget; value: TowerScriptExpression }
   | { action: "addTowerStacks"; target: TowerScriptEntityTarget; amount: TowerScriptExpression }
   | { action: "spawnEnemy"; enemyTypeId: string; count?: TowerScriptExpression; routeId?: string; pathProgress?: TowerScriptExpression }
   | { action: "setTileTerrain"; target: TowerScriptTileTarget; terrainId: string; duration?: TowerScriptExpression }
   | { action: "restoreTileTerrain"; target: TowerScriptTileTarget }
+  | TerraformTilesActionV1
   | { action: "setState"; key: string; value: TowerScriptExpression }
   | { action: "incrementState"; key: string; amount?: TowerScriptExpression }
   | { action: "emitSignal"; signal: string; payload?: TowerScriptExpression };
@@ -92,7 +119,7 @@ export interface TowerScriptHandler {
 }
 
 export interface TowerScriptDefinition {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6;
   id: string;
   label?: string;
   description?: string;
@@ -108,6 +135,8 @@ export interface TowerScriptDiagnostic {
   event: TowerScriptEventName;
   code: "budget_exceeded" | "invalid_expression" | "invalid_action" | "runtime_error";
   message: string;
+  /** Stable machine-readable rejection reason; absent for legacy diagnostics. */
+  reasonKey?: string;
 }
 
 export interface TowerScriptStateSnapshot {

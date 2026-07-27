@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#111111">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Starter Tower Defense</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main id="app">
+    <header class="hud">
+      <div>
+        <h1>Starter Tower Defense</h1>
+        <p id="mission-caption"></p>
+      </div>
+      <div class="controls">
+        <label>Mission <select id="mission-select"></select></label>
+        <label>Difficulty <select id="difficulty-select"></select></label>
+        <label>Tower <select id="tower-select"></select></label>
+        <button id="start-wave">Start wave</button>
+        <button id="pause-run" aria-pressed="false" title="Pause or resume (Space)">Pause</button>
+        <button id="sell-mode" aria-pressed="false" title="Sell a tower">Sell</button>
+        <button id="reset-run">Reset</button>
+        <button id="reset-progress" title="Clear saved campaign progress">Reset progress</button>
+      </div>
+    </header>
+    <section class="play-shell">
+      <canvas id="playfield" tabindex="0" role="application" aria-label="Hex battlefield. Use arrow keys to move the tile cursor and Enter to act."></canvas>
+      <aside class="panel">
+        <div class="stat"><span>Outcome</span><strong id="stat-outcome" aria-live="polite">playing</strong></div>
+        <div class="stat"><span>Core</span><strong id="stat-core">-</strong></div>
+        <div class="stat"><span>Resources</span><strong id="stat-resources">-</strong></div>
+        <div class="stat"><span>Wave</span><strong id="stat-wave">-</strong></div>
+        <div class="stat"><span>Enemies</span><strong id="stat-enemies">-</strong></div>
+        <div class="stat"><span>Towers</span><strong id="stat-towers">-</strong></div>
+        <div class="stat"><span>Objectives</span><strong id="stat-objectives">-</strong></div>
+        <label class="targeting">Target priority <select id="target-mode" disabled>
+          <option value="first">First</option><option value="last">Last</option><option value="closest">Closest</option>
+          <option value="furthest">Furthest</option><option value="strongest">Strongest</option><option value="weakest">Weakest</option>
+        </select></label>
+        <label class="speed">Speed <input id="speed" type="range" min="0" max="4" step="0.25" value="1"><span id="speed-label">1x</span></label>
+        <label class="speed">Sound <input id="snd" type="checkbox" checked style="width:auto;justify-self:start"></label>
+        <label class="speed">SFX <input id="sfx-volume" type="range" min="0" max="1" step="0.05" value="0.5"><span id="sfx-volume-label">50%</span></label>
+        <label class="speed">Music <input id="music-volume" type="range" min="0" max="1" step="0.05" value="0.35"><span id="music-volume-label">35%</span></label>
+        <div id="ability-bar" class="ability-bar"></div>
+        <section id="meta-panel" class="meta-panel" aria-label="Permanent upgrades" hidden>
+          <div class="meta-title">Forge upgrades <span id="meta-resources"></span></div>
+          <div id="meta-upgrades" class="meta-upgrades"></div>
+        </section>
+        <p id="message" role="status" aria-live="polite"></p>
+      </aside>
+    </section>
+  </main>
+  <section id="boot-error" class="boot-error" role="alertdialog" aria-modal="true" aria-labelledby="boot-error-title" hidden>
+    <div class="boot-error-panel">
+      <h2 id="boot-error-title">The game could not start</h2>
+      <p id="boot-error-message">Reload the game. If the problem continues, reset local progress.</p>
+      <div class="boot-error-actions">
+        <button type="button" id="boot-reload">Reload</button>
+        <button type="button" id="boot-reset">Reset local progress</button>
+      </div>
+    </div>
+  </section>
+  <section id="story-overlay" class="story-overlay" role="dialog" aria-modal="true" aria-labelledby="story-title" hidden>
+    <div class="story-panel">
+      <div id="story-art" class="story-art" hidden></div>
+      <div class="story-copy">
+        <h2 id="story-title"></h2>
+        <p id="story-speaker" class="story-speaker"></p>
+        <p id="story-text" class="story-text"></p>
+        <div class="story-actions">
+          <button type="button" id="story-skip">Skip</button>
+          <button type="button" id="story-next">Next</button>
+        </div>
+      </div>
+    </div>
+  </section>
+  <script src="./boot.js"></script>
+  <script type="module" src="./player.mjs"></script>
+</body>
+</html>

@@ -12,9 +12,11 @@ export const TOWER_SCRIPT_SCOPES = Object.freeze([
 
 export const TOWER_SCRIPT_EVENTS = Object.freeze([
   "gameStarted", "tick", "towerPlaced", "towerSold", "towerMoved", "towerUpgraded", "towerDestroyed",
-  "towerTargetModeChanged", "towerFired", "towerResourcesGranted", "enemyHit", "enemyKilled", "enemyLeaked",
+  "towerTargetModeChanged", "towerFired", "towerResourcesGranted", "towerShieldChanged", "enemyHit", "enemyShieldChanged", "enemyKilled", "enemyLeaked",
+  "enemyMarkChanged",
+  "enemyExposureChanged", "enemyReactionTriggered",
   "enemySpawnedOnDeath", "enemyPhaseSpawned", "waveStarted", "waveCleared", "resourcesGranted", "abilityUsed",
-  "enemyEnteredTile", "terrainChanged", "objectiveCompleted", "objectiveFailed", "starEarned", "victory", "defeat", "signal"
+  "enemyEnteredTile", "terrainChanged", "elevationChanged", "objectiveCompleted", "objectiveFailed", "starEarned", "victory", "defeat", "signal"
 ] satisfies TowerScriptEventName[]);
 
 export const TOWER_SCRIPT_OPERATORS = Object.freeze([
@@ -29,12 +31,32 @@ export const TOWER_SCRIPT_TARGETS = Object.freeze({
 
 type TowerScriptActionName = TowerScriptAction["action"];
 
+interface TowerScriptActionDescriptor {
+  readonly required: Readonly<Record<string, string>>;
+  readonly optional?: Readonly<Record<string, string>>;
+  readonly additionalProperties?: false;
+  readonly minimumSchemaVersion?: number;
+  readonly operationKinds?: readonly string[];
+}
+
 export const TOWER_SCRIPT_ACTION_SCHEMA = Object.freeze({
   grantResource: { required: { resourceId: "runtime currency id", amount: "expression" } },
   damageCore: { required: { amount: "expression >= 0" } },
   healCore: { required: { amount: "expression >= 0" } },
   damageEnemy: { required: { target: "enemy target", amount: "expression >= 0" } },
   healEnemy: { required: { target: "enemy target", amount: "expression >= 0" } },
+  restoreEnemyShield: { required: { target: "enemy target", amount: "expression >= 0" } },
+  restoreTowerShield: { required: { target: "tower target", amount: "expression >= 0" } },
+  applyEnemyMark: {
+    required: { target: "enemy target", markId: "existing mark id" },
+    optional: { stacks: "expression; integer >= 1; defaults to 1" }
+  },
+  clearEnemyMark: { required: { target: "enemy target", markId: "existing mark id" } },
+  applyEnemyExposure: {
+    required: { target: "enemy target", exposureId: "existing exposure id" },
+    optional: { stacks: "expression; integer >= 1; defaults to 1" }
+  },
+  clearEnemyExposure: { required: { target: "enemy target", exposureId: "existing exposure id" } },
   applyStatus: { required: { target: "enemy target", status: "StatusEffectSpec" } },
   setTowerCooldown: { required: { target: "tower target", value: "expression >= 0" } },
   addTowerStacks: { required: { target: "tower target", amount: "expression; truncated to an integer" } },
@@ -47,10 +69,17 @@ export const TOWER_SCRIPT_ACTION_SCHEMA = Object.freeze({
     optional: { duration: "expression > 0; omitted persists until reset or restore" }
   },
   restoreTileTerrain: { required: { target: '"eventTile" or {q: expression, r: expression}' } },
+  terraformTiles: {
+    required: { operations: "1..64 closed terraform operations" },
+    optional: { duration: "expression > 0; allowed only when all operations are set_*" },
+    additionalProperties: false,
+    minimumSchemaVersion: 6,
+    operationKinds: ["set_terrain", "restore_terrain", "set_elevation", "restore_elevation"]
+  },
   setState: { required: { key: "safe identifier", value: "expression" } },
   incrementState: { required: { key: "safe identifier" }, optional: { amount: "expression; defaults to 1" } },
   emitSignal: { required: { signal: "safe identifier" }, optional: { payload: "JSON expression" } }
-} satisfies Record<TowerScriptActionName, { required: Record<string, string>; optional?: Record<string, string> }>);
+} satisfies Record<TowerScriptActionName, TowerScriptActionDescriptor>);
 
 export const TOWER_SCRIPT_EVENT_FIELDS = Object.freeze({
   gameStarted: ["type"],
@@ -63,7 +92,21 @@ export const TOWER_SCRIPT_EVENT_FIELDS = Object.freeze({
   towerTargetModeChanged: ["type", "towerId", "mode"],
   towerFired: ["type", "towerId", "enemyId", "damage"],
   towerResourcesGranted: ["type", "towerId", "enemyId", "resources"],
+  towerShieldChanged: ["type", "towerId", "towerTypeId", "previous", "current", "capacity", "cause", "amount", "overflowDamage"],
   enemyHit: ["type", "towerId", "enemyId", "enemyTypeId", "damage"],
+  enemyShieldChanged: ["type", "enemyId", "enemyTypeId", "previous", "current", "capacity", "cause", "amount", "overflowDamage"],
+  enemyMarkChanged: [
+    "type", "enemyId", "enemyTypeId", "markId", "previousStacks", "currentStacks",
+    "previousRemaining", "remaining", "cause"
+  ],
+  enemyExposureChanged: [
+    "type", "enemyId", "enemyTypeId", "exposureId", "previousStacks", "currentStacks",
+    "previousRemaining", "remaining", "cause"
+  ],
+  enemyReactionTriggered: [
+    "type", "reactionId", "originEnemyId", "originEnemyTypeId", "originCoord",
+    "triggerDamageType", "depth", "scheduledTargetIds"
+  ],
   enemyKilled: ["type", "enemyId", "enemyTypeId", "coins", "resources"],
   enemyLeaked: ["type", "enemyId", "enemyTypeId", "damage"],
   enemySpawnedOnDeath: ["type", "parentEnemyId", "parentEnemyTypeId", "enemyTypeId", "enemyIds"],
@@ -74,6 +117,7 @@ export const TOWER_SCRIPT_EVENT_FIELDS = Object.freeze({
   abilityUsed: ["type", "abilityId", "center", "enemyIds", "effects"],
   enemyEnteredTile: ["type", "enemyId", "enemyTypeId", "coord", "terrain", "terrainMetadata", "routeId", "pathOrder"],
   terrainChanged: ["type", "coord", "fromTerrain", "toTerrain", "terrainMetadata", "source"],
+  elevationChanged: ["type", "coord", "fromElevation", "toElevation", "source"],
   objectiveCompleted: ["type", "objectiveId", "kind"],
   objectiveFailed: ["type", "objectiveId", "kind"],
   starEarned: ["type", "starId"],
@@ -101,7 +145,7 @@ export const TOWER_SCRIPT_LIMITS = Object.freeze({
 });
 
 export const TOWER_SCRIPT_SCHEMA = Object.freeze({
-  schemaVersion: 2,
+  schemaVersion: 6,
   filePattern: "scripts/**/*.tower.json",
   semantics: "Deterministic JSON rules interpreted by the engine; never executable host code.",
   bindingRules: {
@@ -124,6 +168,11 @@ export const TOWER_SCRIPT_SCHEMA = Object.freeze({
   },
   targets: TOWER_SCRIPT_TARGETS,
   actions: TOWER_SCRIPT_ACTION_SCHEMA,
+  diagnostic: Object.freeze({
+    requiredFields: Object.freeze(["scriptId", "event", "code", "message"] as const),
+    optionalFields: Object.freeze(["handlerId", "reasonKey"] as const),
+    additionalProperties: false
+  }),
   limits: TOWER_SCRIPT_LIMITS,
   example: {
     schemaVersion: 1,
