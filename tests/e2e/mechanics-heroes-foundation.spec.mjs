@@ -862,7 +862,7 @@ test.describe("R5.1A Studio static heroes lifecycle", () => {
       await expect(ids).toHaveCount(1);
       await commander.locator("[data-hero-block-capacity]").fill("2");
       await expect(commander.locator("[data-hero-block-capacity]")).toHaveValue("2");
-      await page.locator("#btn-mechanics-preview").click();
+      await clickMechanicsPreviewAndWait(page, '"ok": true');
       await expect(page.locator("#mechanics-preview-result")).toContainText('"ok": true');
       expect(fs.readFileSync(mechanicsPath, "utf8")).toBe(beforeInvalid);
       await page.locator("#btn-mechanics-save").click();
@@ -2135,17 +2135,22 @@ async function openHeroesMechanics(page) {
   await expect(page.locator("#mechanics-heroes-editor")).toBeVisible();
 }
 
-async function clickMechanicsPreviewAndWait(page) {
+async function clickMechanicsPreviewAndWait(page, expectedText) {
   const responsePromise = page.waitForResponse((response) => (
     response.request().method() === "POST"
       && new URL(response.url()).pathname === "/api/mechanics/preview"
   ), { timeout: 45_000 });
   await page.locator("#btn-mechanics-preview").click();
   await responsePromise;
-  await expect(page.locator("#mechanics-preview-result")).not.toHaveText(
-    "Preview changes before applying them.",
-    { timeout: 45_000 }
-  );
+  const output = page.locator("#mechanics-preview-result");
+  if (expectedText !== undefined) {
+    await expect(output).toContainText(expectedText, { timeout: 45_000 });
+  } else {
+    await expect(output).not.toHaveText(
+      "Preview changes before applying them.",
+      { timeout: 45_000 }
+    );
+  }
 }
 
 function readHeroesState(root) {
