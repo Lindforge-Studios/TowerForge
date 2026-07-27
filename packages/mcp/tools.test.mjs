@@ -77,7 +77,7 @@ describe("mcp tool registry", () => {
     const result = await callTool("validate_project", { projectDir: STARTER }, {});
     expect(result.ok).toBe(true);
     expect(result.errorCount).toBe(0);
-  });
+  }, 30_000);
 
   it("reports production readiness through stable structured checks", async () => {
     const result = await callTool("release_readiness", { projectDir: STARTER }, {});

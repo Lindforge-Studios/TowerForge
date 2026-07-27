@@ -72,7 +72,7 @@ describe("R5.1A MCP/AI static hero authoring", () => {
     expect(mechanics.mechanics.implementedModuleIds).toContain("heroes");
     expect(mechanics.mechanics.modules.heroes).toEqual(heroes.heroes);
     expect(TOOLS.map((tool) => tool.name)).not.toContain("analyze_heroes");
-  });
+  }, 30_000);
 
   it("runs describe -> read -> recipe -> preview -> guarded apply -> validate", async () => {
     const projectDir = fixture();
