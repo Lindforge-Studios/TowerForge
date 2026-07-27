@@ -117,7 +117,12 @@ test.describe.serial("R5.7A Studio Logistics power lifecycle", () => {
       enabled: true, selectedProfileId: "basic_power_grid", profile: preserved
     });
 
+    await page.reload();
+    await openLogisticsMechanics(page);
+    await expect(page.locator("#mechanics-logistics-power-enabled")).toBeChecked();
     await page.locator("#mechanics-logistics-power-enabled").uncheck();
+    await expect(page.locator("#mechanics-logistics-power-enabled")).not.toBeChecked();
+    await expect(page.locator("#mechanics-logistics-generator-rows")).toBeEmpty();
     await page.locator("#btn-mechanics-save").click();
     await expect.poll(() => readLogisticsState(projectDir).profile).toEqual({ power: null });
     await page.reload();

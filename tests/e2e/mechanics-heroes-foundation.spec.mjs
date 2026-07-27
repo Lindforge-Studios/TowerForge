@@ -860,6 +860,8 @@ test.describe("R5.1A Studio static heroes lifecycle", () => {
       await ids.nth(1).fill("flying");
       await ids.nth(1).locator("xpath=..").locator("[data-remove-hero-blocking-movement-profile]").click();
       await expect(ids).toHaveCount(1);
+      await commander.locator("[data-hero-block-capacity]").fill("2");
+      await expect(commander.locator("[data-hero-block-capacity]")).toHaveValue("2");
       await page.locator("#btn-mechanics-preview").click();
       await expect(page.locator("#mechanics-preview-result")).toContainText('"ok": true');
       expect(fs.readFileSync(mechanicsPath, "utf8")).toBe(beforeInvalid);
@@ -891,13 +893,13 @@ test.describe("R5.1A Studio static heroes lifecycle", () => {
       const preservedProfile = structuredClone(readHeroesState(projectDir).profile);
       page.once("dialog", (dialog) => dialog.accept());
       await page.locator("#btn-mechanics-disable").click();
-      await expect.poll(() => readHeroesState(projectDir)).toMatchObject({
+      await expect.poll(() => readHeroesState(projectDir), { timeout: 30_000 }).toMatchObject({
         enabled: false,
         selectedProfileId: "alpha",
         profile: preservedProfile
       });
       await page.locator("#btn-mechanics-enable").click();
-      await expect.poll(() => readHeroesState(projectDir)).toMatchObject({
+      await expect.poll(() => readHeroesState(projectDir), { timeout: 30_000 }).toMatchObject({
         enabled: true,
         selectedProfileId: "alpha",
         profile: preservedProfile

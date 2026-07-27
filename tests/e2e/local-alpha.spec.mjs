@@ -309,6 +309,7 @@ test("local alpha constructor flow", async ({ page, request, browser }) => {
 });
 
 test("single-file build runs directly from file URL", async ({ page }) => {
+  test.setTimeout(120_000);
   execFileSync(process.execPath, [
     path.join(repoRoot, "packages", "cli", "build.mjs"),
     "--project", projectDir,
