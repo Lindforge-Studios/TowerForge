@@ -14,6 +14,7 @@ export class GridElevationValidationError extends Error {
     }
 }
 const elevationIndexes = new WeakMap();
+const runtimeElevationIndexes = new WeakMap();
 /** Read the optional top-level field without evaluating accessors or inherited data. */
 export function inspectGridElevationOverrides(definition) {
     if (definition === null || typeof definition !== "object" || Array.isArray(definition)) {
@@ -180,6 +181,14 @@ export class GridMap {
     elevationAt(coord) {
         if (!Number.isSafeInteger(coord.q) || !Number.isSafeInteger(coord.r) || !this.isInside(coord))
             return undefined;
+        const runtime = runtimeElevationIndexes.get(this)?.get(coordKey(coord));
+        if (runtime)
+            return runtime.elevation;
+        return this.getBaseElevation(coord);
+    }
+    getBaseElevation(coord) {
+        if (!Number.isSafeInteger(coord.q) || !Number.isSafeInteger(coord.r) || !this.isInside(coord))
+            return undefined;
         let index = elevationIndexes.get(this);
         if (!index) {
             index = new Map((this.definition.elevationOverrides ?? []).map((entry) => [coordKey(entry), entry.elevation]));
@@ -189,6 +198,20 @@ export class GridMap {
     }
     getElevationOverrides() {
         return (this.definition.elevationOverrides ?? []).map((entry) => ({ ...entry }));
+    }
+    getEffectiveElevationOverrides() {
+        const effective = new Map((this.definition.elevationOverrides ?? []).map((entry) => [coordKey(entry), { ...entry }]));
+        for (const [key, entry] of runtimeElevationIndexes.get(this) ?? []) {
+            if (entry.elevation === 0)
+                effective.delete(key);
+            else
+                effective.set(key, { ...entry });
+        }
+        return [...effective.values()].sort((left, right) => left.r - right.r || left.q - right.q);
+    }
+    /** Attach the authoritative simulation-owned runtime projection without copying it. */
+    useRuntimeElevationOverrides(overrides) {
+        runtimeElevationIndexes.set(this, overrides);
     }
     setTerrain(coord, terrain) {
         const tile = this.getTile(coord);

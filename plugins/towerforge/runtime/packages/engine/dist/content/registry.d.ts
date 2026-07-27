@@ -25,11 +25,62 @@ export interface WorldMissionNode {
     difficulty: 1 | 2 | 3 | 4 | 5;
     unlockRequiresMissionIds: string[];
 }
+export type WorldCampaignNodeType = "battle" | "elite" | "merchant" | "event" | "boss";
+export interface WorldCampaignNodeBaseV1 {
+    readonly id: string;
+    readonly type: WorldCampaignNodeType;
+    readonly regionId: string;
+    readonly x: number;
+    readonly y: number;
+    readonly difficulty: 1 | 2 | 3 | 4 | 5;
+    readonly nextNodeIds: readonly string[];
+}
+export interface WorldCampaignBattleNodeV1 extends WorldCampaignNodeBaseV1 {
+    readonly type: "battle" | "elite" | "boss";
+    readonly missionId: string;
+}
+export interface WorldCampaignStructuralNodeV1 extends WorldCampaignNodeBaseV1 {
+    readonly type: "merchant" | "event";
+    readonly label: string;
+}
+export type WorldCampaignNodeV1 = WorldCampaignBattleNodeV1 | WorldCampaignStructuralNodeV1;
+/** Optional authored graph. Its absence preserves the legacy mission-node campaign unchanged. */
+export interface WorldCampaignDefinitionV1 {
+    readonly schemaVersion: 1;
+    readonly rogueliteProfileId: string;
+    readonly entryNodeIds: readonly string[];
+    readonly nodes: readonly WorldCampaignNodeV1[];
+}
+export interface WorldCampaignRunResourceDefinitionV2 {
+    readonly label: string;
+}
+export interface WorldCampaignStructuralChoiceV2 {
+    readonly id: string;
+    readonly label: string;
+    readonly costs: Readonly<Record<string, number>>;
+    readonly grants: Readonly<Record<string, number>>;
+}
+export interface WorldCampaignStructuralNodeV2 extends WorldCampaignNodeBaseV1 {
+    readonly type: "merchant" | "event";
+    readonly label: string;
+    readonly choices: readonly WorldCampaignStructuralChoiceV2[];
+}
+export type WorldCampaignNodeV2 = WorldCampaignBattleNodeV1 | WorldCampaignStructuralNodeV2;
+/** Version 2 adds declared run resources and atomic merchant/event choices. */
+export interface WorldCampaignDefinitionV2 {
+    readonly schemaVersion: 2;
+    readonly rogueliteProfileId: string;
+    readonly runResources: Readonly<Record<string, WorldCampaignRunResourceDefinitionV2>>;
+    readonly entryNodeIds: readonly string[];
+    readonly nodes: readonly WorldCampaignNodeV2[];
+}
+export type WorldCampaignDefinition = WorldCampaignDefinitionV1 | WorldCampaignDefinitionV2;
 export interface WorldMapCatalog {
     width: number;
     height: number;
     regions: WorldRegionDefinition[];
     missionNodes: WorldMissionNode[];
+    campaign?: WorldCampaignDefinition;
 }
 export interface GameBalanceConstants {
     timeUnitSeconds: number;

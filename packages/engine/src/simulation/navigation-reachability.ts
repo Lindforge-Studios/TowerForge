@@ -5,6 +5,7 @@ import type {
   TowerScriptEventName
 } from "../scripting/types.js";
 import type { GridCoord, GridPathRoute } from "./types.js";
+import { reserveDynamicTerraformingSafetyEntry } from "./terraforming-navigation-budget.js";
 
 export type DynamicTerraformingSpawnSourceKind =
   | "wave_spawn"
@@ -19,6 +20,31 @@ export interface DynamicTerraformingSpawnProvenance {
   readonly goal: GridCoord;
   readonly coord: GridCoord;
   readonly subjectId: string;
+}
+
+export type DynamicTerraformingSpawnObligationKind = "death_spawn" | "phase_spawn";
+
+export interface DynamicTerraformingNavigationFieldRef {
+  readonly movementProfileId: string;
+  readonly goal: GridCoord;
+}
+
+export interface DynamicTerraformingSpawnObligationObservation {
+  readonly kind: DynamicTerraformingSpawnObligationKind;
+  readonly parentEnemyTypeId: string;
+  readonly childEnemyTypeId: string;
+}
+
+export interface DynamicTerraformingSpawnObligation {
+  readonly key: string;
+  readonly parent: DynamicTerraformingNavigationFieldRef;
+  readonly child: DynamicTerraformingNavigationFieldRef;
+  readonly observations: readonly DynamicTerraformingSpawnObligationObservation[];
+}
+
+export interface DynamicTerraformingSpawnGraph {
+  readonly spawnProvenance: readonly DynamicTerraformingSpawnProvenance[];
+  readonly spawnObligations: readonly DynamicTerraformingSpawnObligation[];
 }
 
 interface ReachabilityEnemyDefinition {
@@ -84,6 +110,31 @@ function compareProvenance(
     || compareBinary(left.subjectId, right.subjectId);
 }
 
+function compareFieldRef(
+  left: DynamicTerraformingNavigationFieldRef,
+  right: DynamicTerraformingNavigationFieldRef
+): number {
+  return compareBinary(left.movementProfileId, right.movementProfileId)
+    || left.goal.r - right.goal.r
+    || left.goal.q - right.goal.q;
+}
+
+function compareObligation(
+  left: DynamicTerraformingSpawnObligation,
+  right: DynamicTerraformingSpawnObligation
+): number {
+  return compareFieldRef(left.parent, right.parent) || compareFieldRef(left.child, right.child);
+}
+
+function compareObservation(
+  left: DynamicTerraformingSpawnObligationObservation,
+  right: DynamicTerraformingSpawnObligationObservation
+): number {
+  return SOURCE_KIND_RANK[left.kind] - SOURCE_KIND_RANK[right.kind]
+    || compareBinary(left.parentEnemyTypeId, right.parentEnemyTypeId)
+    || compareBinary(left.childEnemyTypeId, right.childEnemyTypeId);
+}
+
 function movementProfileId(
   profile: DynamicFlowNavigationProfileV1,
   enemyTypeId: string
@@ -98,7 +149,7 @@ function movementProfileId(
  */
 export function collectDynamicTerraformingSpawnProvenance(
   request: DynamicTerraformingSpawnProvenanceRequest
-): readonly DynamicTerraformingSpawnProvenance[] {
+): DynamicTerraformingSpawnGraph {
   const routes = [...request.routes].sort((left, right) => compareBinary(left.id, right.id));
   const routesById = new Map(routes.map((route) => [route.id, route]));
   const defaultRoute = routes.find((route) => route.id === "main") ?? routes[0];
@@ -112,6 +163,12 @@ export function collectDynamicTerraformingSpawnProvenance(
   };
 
   const provenanceByKey = new Map<string, DynamicTerraformingSpawnProvenance>();
+  const obligationsByKey = new Map<string, {
+    readonly parent: DynamicTerraformingNavigationFieldRef;
+    readonly child: DynamicTerraformingNavigationFieldRef;
+    readonly observationsByKey: Map<string, DynamicTerraformingSpawnObligationObservation>;
+  }>();
+  const observationKeys = new Set<string>();
   const record = (
     kind: DynamicTerraformingSpawnSourceKind,
     enemyTypeId: string,
@@ -140,7 +197,55 @@ export function collectDynamicTerraformingSpawnProvenance(
       entry.coord.r,
       entry.subjectId
     ]);
+    if (provenanceByKey.has(key)) return;
+    reserveDynamicTerraformingSafetyEntry(provenanceByKey.size);
     provenanceByKey.set(key, entry);
+  };
+  const fieldRef = (
+    enemyTypeId: string,
+    route: GridPathRoute
+  ): DynamicTerraformingNavigationFieldRef => {
+    const goal = route.pathCenterline.at(-1);
+    if (!goal) throw new Error(`Dynamic navigation route "${route.id}" has no goal.`);
+    return Object.freeze({
+      movementProfileId: movementProfileId(request.profile, enemyTypeId),
+      goal: Object.freeze({ q: goal.q, r: goal.r })
+    });
+  };
+  const recordObligation = (
+    kind: DynamicTerraformingSpawnObligationKind,
+    parentEnemyTypeId: string,
+    parentRoute: GridPathRoute,
+    childEnemyTypeId: string,
+    childRoute: GridPathRoute
+  ): void => {
+    const parent = fieldRef(parentEnemyTypeId, parentRoute);
+    const child = fieldRef(childEnemyTypeId, childRoute);
+    const key = JSON.stringify([
+      parent.movementProfileId,
+      parent.goal.q,
+      parent.goal.r,
+      child.movementProfileId,
+      child.goal.q,
+      child.goal.r
+    ]);
+    let obligation = obligationsByKey.get(key);
+    if (!obligation) {
+      reserveDynamicTerraformingSafetyEntry(obligationsByKey.size);
+      obligation = { parent, child, observationsByKey: new Map() };
+      obligationsByKey.set(key, obligation);
+    }
+    const observation: DynamicTerraformingSpawnObligationObservation = Object.freeze({
+      kind,
+      parentEnemyTypeId,
+      childEnemyTypeId
+    });
+    const observationKey = JSON.stringify([kind, parentEnemyTypeId, childEnemyTypeId]);
+    const compositeObservationKey = JSON.stringify([key, observationKey]);
+    if (observationKeys.has(compositeObservationKey)) return;
+    reserveDynamicTerraformingSafetyEntry(observationKeys.size);
+    observationKeys.add(compositeObservationKey);
+    obligation.observationsByKey.set(observationKey, observation);
   };
 
   const queued = new Set<string>();
@@ -150,12 +255,9 @@ export function collectDynamicTerraformingSpawnProvenance(
     const route = resolveRoute(routeId);
     const key = JSON.stringify([enemyTypeId, route.id]);
     if (!queued.has(key)) {
+      reserveDynamicTerraformingSafetyEntry(queued.size);
       queued.add(key);
       worklist.push({ enemyTypeId, routeId: route.id });
-      worklist.sort((left, right) => (
-        compareBinary(left.enemyTypeId, right.enemyTypeId)
-        || compareBinary(left.routeId, right.routeId)
-      ));
     }
     return route;
   };
@@ -172,6 +274,8 @@ export function collectDynamicTerraformingSpawnProvenance(
   const phaseSpawnChildTypeIds = new Set<string>();
   const reachableTerrainIds = new Set(request.initialReachableTerrainIds);
   const appliedHandlers = new Set<string>();
+  let worklistCursor = 0;
+  let relationCauseAttempts = 0;
   const acceptsAny = (ids: readonly string[] | undefined, candidates: Iterable<string>): boolean => {
     const accepted = ids === undefined ? undefined : new Set(ids);
     for (const candidate of candidates) if (!accepted || accepted.has(candidate)) return true;
@@ -218,31 +322,59 @@ export function collectDynamicTerraformingSpawnProvenance(
 
   while (true) {
     let changed = false;
-    while (worklist.length > 0) {
-      const current = worklist.shift()!;
+    while (worklistCursor < worklist.length) {
+      const current = worklist[worklistCursor++]!;
       changed = true;
       const enemy = request.enemyTypes[current.enemyTypeId];
       if (!enemy) continue;
       reachableEnemyTypeIds.add(current.enemyTypeId);
       const inheritedRoute = resolveRoute(current.routeId);
       if (enemy.spawnOnDeath && enemy.spawnOnDeath.count > 0) {
+        reserveDynamicTerraformingSafetyEntry(relationCauseAttempts);
+        relationCauseAttempts += 1;
         const childId = enemy.spawnOnDeath.enemyId;
         const childRoute = enqueue(childId, inheritedRoute.id);
         if (childRoute) {
           deathSpawnChildTypeIds.add(childId);
           record("death_spawn", childId, childRoute, childId);
+          recordObligation(
+            "death_spawn",
+            current.enemyTypeId,
+            inheritedRoute,
+            childId,
+            childRoute
+          );
         }
       }
-      for (const phase of enemy.phaseSpawns ?? []) {
+      const phaseSpawns = enemy.phaseSpawns ?? [];
+      for (let phaseIndex = 0; phaseIndex < phaseSpawns.length; phaseIndex += 1) {
+        reserveDynamicTerraformingSafetyEntry(relationCauseAttempts);
+        relationCauseAttempts += 1;
+        const phase = phaseSpawns[phaseIndex]!;
         if (!(phase.count > 0)) continue;
-        const routeIds = phase.routeIds?.length
-          ? phase.routeIds.slice(0, Math.min(phase.routeIds.length, Math.ceil(phase.count)))
-          : [inheritedRoute.id];
-        for (const routeId of routeIds) {
+        const explicitRouteIds = phase.routeIds;
+        const routeCauseCount = explicitRouteIds?.length
+          ? Math.min(explicitRouteIds.length, Math.ceil(phase.count))
+          : 1;
+        for (let routeIndex = 0; routeIndex < routeCauseCount; routeIndex += 1) {
+          if (routeIndex > 0) {
+            reserveDynamicTerraformingSafetyEntry(relationCauseAttempts);
+            relationCauseAttempts += 1;
+          }
+          const routeId = explicitRouteIds?.length
+            ? explicitRouteIds[routeIndex]!
+            : inheritedRoute.id;
           const childRoute = enqueue(phase.enemyId, routeId);
           if (!childRoute) continue;
           phaseSpawnChildTypeIds.add(phase.enemyId);
           record("phase_spawn", phase.enemyId, childRoute, phase.enemyId);
+          recordObligation(
+            "phase_spawn",
+            current.enemyTypeId,
+            inheritedRoute,
+            phase.enemyId,
+            childRoute
+          );
         }
       }
     }
@@ -279,8 +411,21 @@ export function collectDynamicTerraformingSpawnProvenance(
         }
       }
     }
-    if (worklist.length === 0 && !changed) break;
+    if (worklistCursor === worklist.length && !changed) break;
   }
 
-  return Object.freeze([...provenanceByKey.values()].sort(compareProvenance));
+  const spawnObligations = [...obligationsByKey.entries()]
+    .map(([key, obligation]): DynamicTerraformingSpawnObligation => Object.freeze({
+      key,
+      parent: obligation.parent,
+      child: obligation.child,
+      observations: Object.freeze(
+        [...obligation.observationsByKey.values()].sort(compareObservation)
+      )
+    }))
+    .sort(compareObligation);
+  return Object.freeze({
+    spawnProvenance: Object.freeze([...provenanceByKey.values()].sort(compareProvenance)),
+    spawnObligations: Object.freeze(spawnObligations)
+  });
 }

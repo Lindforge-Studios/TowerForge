@@ -8,7 +8,10 @@ import {
   getPlayerProfileLaunchOptions,
   parsePlayerProfileJson,
   serializePlayerProfile,
-  validateGameContentRegistry
+  validateGameContentRegistry,
+  type PlayerProfile,
+  type PlayerProfileV2,
+  type PlayerProfileV3
 } from "../index.js";
 import {
   createGameContentRegistry,
@@ -123,7 +126,7 @@ function createContent(): GameContentRegistry {
   return createGameContentRegistry(profileInput());
 }
 
-function validProfile() {
+function validV2Profile(): PlayerProfileV2 {
   return {
     version: 2 as const,
     clearedMissionIds: ["beta", "alpha"],
@@ -133,6 +136,13 @@ function validProfile() {
     selectedDifficultyId: "hard"
   };
 }
+
+function validProfile(): PlayerProfileV3 {
+  return { ...validV2Profile(), version: 3 };
+}
+
+const canonicalProfileAlias: PlayerProfile = validProfile();
+void canonicalProfileAlias;
 
 function jsonClone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -146,9 +156,46 @@ function warningText(warnings: readonly unknown[]): string {
   }).join("\n");
 }
 
-describe("PlayerProfileV2 codec", () => {
-  it("publishes an independent schema v2 and bounded codec limits", () => {
-    expect(PLAYER_PROFILE_SCHEMA_VERSION).toBe(2);
+function descriptorSequenceProxy<T extends object>(snapshots: readonly T[]): {
+  readonly proxy: T;
+  readonly descriptorPasses: () => number;
+  readonly valueReads: () => number;
+} {
+  let descriptorPasses = 0;
+  let valueReads = 0;
+  let active = snapshots[0]!;
+  const target = { ...snapshots[0] } as T;
+  const proxy = new Proxy(target, {
+    ownKeys() {
+      active = snapshots[Math.min(descriptorPasses, snapshots.length - 1)]!;
+      descriptorPasses += 1;
+      return Reflect.ownKeys(active);
+    },
+    getOwnPropertyDescriptor(_target, key) {
+      return Reflect.getOwnPropertyDescriptor(active, key);
+    },
+    get(_target, key, receiver) {
+      valueReads += 1;
+      return Reflect.get(active, key, receiver);
+    }
+  });
+  return {
+    proxy,
+    descriptorPasses: () => descriptorPasses,
+    valueReads: () => valueReads
+  };
+}
+
+describe("PlayerProfileV3 codec", () => {
+  it("publishes migration-input v2, canonical v3, and an independent schema v3", () => {
+    const migrationInput: PlayerProfileV2 = validV2Profile();
+    const canonical: PlayerProfileV3 = validProfile();
+    const publicAlias: PlayerProfile = canonical;
+
+    expect(migrationInput.version).toBe(2);
+    expect(canonical.version).toBe(3);
+    expect(publicAlias).toBe(canonical);
+    expect(PLAYER_PROFILE_SCHEMA_VERSION).toBe(3);
     expect(PLAYER_PROFILE_LIMITS).toEqual({
       jsonBytes: 1 * 1_024 * 1_024,
       collectionEntries: 10_000,
@@ -160,7 +207,7 @@ describe("PlayerProfileV2 codec", () => {
   it("creates the canonical deeply immutable empty profile from authored content", () => {
     const profile = createEmptyPlayerProfile(createContent());
     expect(profile).toEqual({
-      version: 2,
+      version: 3,
       clearedMissionIds: [],
       starsByMission: {},
       metaResources: { crystals: 0, dust: 0 },
@@ -175,13 +222,13 @@ describe("PlayerProfileV2 codec", () => {
     expect(Object.isFrozen(profile.upgradeLevels)).toBe(true);
   });
 
-  it("decodes valid v2 as a detached deeply immutable value without diagnostics", () => {
+  it("decodes valid v3 as a detached deeply immutable value without diagnostics", () => {
     const content = createContent();
     const contentBefore = JSON.stringify(content);
     const input = jsonClone(validProfile());
     const decoded = decodePlayerProfile(input, content);
 
-    expect(decoded).toEqual({ profile: validProfile(), source: "v2", migrations: [], warnings: [] });
+    expect(decoded).toEqual({ profile: validProfile(), source: "v3", migrations: [], warnings: [] });
     expect(decoded.profile).not.toBe(input);
     expect(decoded.profile.clearedMissionIds).not.toBe(input.clearedMissionIds);
     expect(decoded.profile.metaResources).not.toBe(input.metaResources);
@@ -196,7 +243,7 @@ describe("PlayerProfileV2 codec", () => {
     expect(JSON.stringify(content)).toBe(contentBefore);
   });
 
-  it("serializes canonically and parses back through the same v2 decoder", () => {
+  it("serializes canonically and parses back through the same v3 decoder", () => {
     const content = createContent();
     const profile = decodePlayerProfile(validProfile(), content).profile;
     const serialized = serializePlayerProfile(profile);
@@ -205,20 +252,37 @@ describe("PlayerProfileV2 codec", () => {
     expect(serializePlayerProfile(profile)).toBe(serialized);
 
     const parsed = parsePlayerProfileJson(serialized, content);
-    expect(parsed).toEqual({ profile, source: "v2", migrations: [], warnings: [] });
+    expect(parsed).toEqual({ profile, source: "v3", migrations: [], warnings: [] });
     expect(parsed.profile).not.toBe(profile);
     expect(Object.isFrozen(parsed.profile)).toBe(true);
   });
 
-  it("migrates a raw cleared-mission array with an explicit migration id", () => {
+  it("migrates v2 to v3 with the exact source/id and preserves every persistent field", () => {
+    const input = validV2Profile();
+    const decoded = decodePlayerProfile(input, createContent());
+
+    expect(decoded.source).toBe("v2");
+    expect(decoded.migrations).toEqual([{
+      id: "player-profile-v2-to-v3",
+      description: expect.any(String)
+    }]);
+    expect(decoded.profile).toEqual({ ...input, version: 3 });
+    expect(decoded.profile.clearedMissionIds).toEqual(input.clearedMissionIds);
+    expect(decoded.profile.starsByMission).toEqual(input.starsByMission);
+    expect(decoded.profile.metaResources).toEqual(input.metaResources);
+    expect(decoded.profile.upgradeLevels).toEqual(input.upgradeLevels);
+    expect(decoded.profile.selectedDifficultyId).toBe(input.selectedDifficultyId);
+  });
+
+  it("migrates a raw cleared-mission array through the exact two-step chain", () => {
     const decoded = decodePlayerProfile(["beta", "alpha"], createContent());
     expect(decoded.source).toBe("legacy-array");
-    expect(decoded.migrations).toEqual([expect.objectContaining({
-      id: "legacy-clears-array-to-profile-v2",
-      description: expect.any(String)
-    })]);
+    expect(decoded.migrations).toEqual([
+      { id: "legacy-clears-array-to-profile-v2", description: expect.any(String) },
+      { id: "player-profile-v2-to-v3", description: expect.any(String) }
+    ]);
     expect(decoded.profile).toEqual({
-      version: 2,
+      version: 3,
       clearedMissionIds: ["beta", "alpha"],
       starsByMission: {},
       metaResources: { crystals: 0, dust: 0 },
@@ -239,10 +303,10 @@ describe("PlayerProfileV2 codec", () => {
       };
       const decoded = decodePlayerProfile(legacy, createContent());
       expect(decoded.source).toBe("legacy-object");
-      expect(decoded.migrations).toEqual([expect.objectContaining({
-        id: "legacy-object-to-profile-v2",
-        description: expect.any(String)
-      })]);
+      expect(decoded.migrations).toEqual([
+        { id: "legacy-object-to-profile-v2", description: expect.any(String) },
+        { id: "player-profile-v2-to-v3", description: expect.any(String) }
+      ]);
       expect(decoded.profile).toEqual({ ...validProfile(), clearedMissionIds: ["alpha"], starsByMission: { alpha: 1 }, metaResources: { crystals: 7, dust: 2 } });
     }
   });
@@ -262,7 +326,7 @@ describe("PlayerProfileV2 codec", () => {
     const decoded = decodePlayerProfile(input, content);
 
     expect(decoded.profile).toEqual({
-      version: 2,
+      version: 3,
       clearedMissionIds: ["alpha", "beta"],
       starsByMission: { alpha: 2 },
       metaResources: { crystals: 3, dust: 0 },
@@ -287,7 +351,7 @@ describe("PlayerProfileV2 codec", () => {
     ] as const;
     for (const [metaResources, expectedResources] of directCases) {
       const decoded = decodePlayerProfile({
-        version: 2,
+        version: 3,
         clearedMissionIds: ["alpha", "beta"],
         starsByMission: { alpha: 99, beta: 0.9 },
         metaResources,
@@ -334,14 +398,14 @@ describe("PlayerProfileV2 codec", () => {
   it("fails closed on a future version with a typed error carrying the unsupported version", () => {
     let error: unknown;
     try {
-      decodePlayerProfile({ ...validProfile(), version: 3 }, createContent());
+      decodePlayerProfile({ ...validProfile(), version: 4 }, createContent());
     } catch (caught) {
       error = caught;
     }
     expect(error).toBeInstanceOf(UnsupportedPlayerProfileVersionError);
     expect(error).toMatchObject({
       code: "UNSUPPORTED_PLAYER_PROFILE_VERSION",
-      version: 3
+      version: 4
     });
   });
 
@@ -379,7 +443,7 @@ describe("PlayerProfileV2 codec", () => {
 
   it("rejects symbols, prototype pollution keys, exotic objects, sparse arrays, and cycles", () => {
     const symbolProfile = { ...validProfile(), [Symbol("unsafe")]: true };
-    const polluted = JSON.parse(`{"version":2,"clearedMissionIds":[],"starsByMission":{},"metaResources":{},"upgradeLevels":{},"selectedDifficultyId":"normal","__proto__":{"polluted":true}}`) as unknown;
+    const polluted = JSON.parse(`{"version":3,"clearedMissionIds":[],"starsByMission":{},"metaResources":{},"upgradeLevels":{},"selectedDifficultyId":"normal","__proto__":{"polluted":true}}`) as unknown;
     const exoticRoot = new Map([["version", 2]]);
     const exoticNested = { ...validProfile(), metaResources: Object.assign(Object.create({ inherited: true }), { crystals: 1 }) };
     const sparse = ["alpha", , "beta"];
@@ -443,6 +507,74 @@ describe("PlayerProfileV2 codec", () => {
     expect(() => parsePlayerProfileJson("{not-json", createContent())).toThrow(/json|profile/i);
     const oversized = `{"ignored":"${"x".repeat(PLAYER_PROFILE_LIMITS.jsonBytes)}"}`;
     expect(() => parsePlayerProfileJson(oversized, createContent())).toThrow(/profile|bytes|budget|large|limit/i);
+  });
+
+  it("serializes only the exact closed v3 envelope", () => {
+    expect(() => serializePlayerProfile(validV2Profile() as unknown as PlayerProfileV3)).toThrow(/version|3|serializ/i);
+    expect(() => serializePlayerProfile({ ...validProfile(), future: true } as unknown as PlayerProfileV3)).toThrow(/field|unsupported|serializ/i);
+  });
+
+  it("fails closed on hostile proxies without reading profile values", () => {
+    let valueReads = 0;
+    const proxy = new Proxy(validProfile(), {
+      get() {
+        valueReads += 1;
+        throw new Error("proxy value trap must not be reached");
+      },
+      ownKeys() {
+        throw new Error("proxy inspection rejected");
+      }
+    });
+
+    expect(() => decodePlayerProfile(proxy, createContent())).toThrow();
+    expect(valueReads).toBe(0);
+
+    const revoked = Proxy.revocable(validProfile(), {});
+    revoked.revoke();
+    expect(() => decodePlayerProfile(revoked.proxy, createContent())).toThrow();
+  });
+
+  it("decodes from one descriptor snapshot even when a proxy substitutes a future envelope", () => {
+    const original = validProfile();
+    const substituted = { ...original, version: 4 as const, future: "injected" };
+    const stateful = descriptorSequenceProxy([original, substituted]);
+
+    const decoded = decodePlayerProfile(stateful.proxy, createContent());
+
+    expect(decoded).toMatchObject({ source: "v3", profile: original });
+    expect(stateful.descriptorPasses()).toBe(1);
+    expect(stateful.valueReads()).toBe(0);
+  });
+
+  it("serializes only the first detached descriptor snapshot of a stateful proxy", () => {
+    const original = validProfile();
+    const substituted = { ...original, version: 4 as const, future: "injected" };
+    const stateful = descriptorSequenceProxy<PlayerProfileV3>([
+      original,
+      original,
+      substituted as unknown as PlayerProfileV3
+    ]);
+
+    expect(JSON.parse(serializePlayerProfile(stateful.proxy))).toEqual(original);
+    expect(stateful.descriptorPasses()).toBe(1);
+    expect(stateful.valueReads()).toBe(0);
+  });
+
+  it("derives launch options from the first detached descriptor snapshot", () => {
+    const original = validProfile();
+    const substituted = {
+      ...original,
+      selectedDifficultyId: "normal",
+      upgradeLevels: { focus: 999, shield: 999 }
+    };
+    const stateful = descriptorSequenceProxy([original, substituted]);
+
+    expect(getPlayerProfileLaunchOptions(stateful.proxy)).toEqual({
+      difficultyId: "hard",
+      metaUpgradeLevels: { focus: 2, shield: 1 }
+    });
+    expect(stateful.descriptorPasses()).toBe(1);
+    expect(stateful.valueReads()).toBe(0);
   });
 
   it("derives exact detached TowerDefenseGame launch options without project schema metadata", () => {

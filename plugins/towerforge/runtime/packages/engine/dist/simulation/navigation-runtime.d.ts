@@ -33,6 +33,8 @@ export declare class NavigationResolver {
     private dirty;
     constructor(value: NavigationResolverRequest);
     getField(movementProfileId: string, routeId: string): NavigationFieldResult;
+    /** Returns an already materialized field without changing resolver diagnostics. */
+    peekField(movementProfileId: string, routeId: string): NavigationFieldResult | undefined;
     /**
      * Checks the installed cache entry without counting a field query. Cache identity reflects
      * selective resolver invalidation, so retained fields stay current while dirty fields do not.

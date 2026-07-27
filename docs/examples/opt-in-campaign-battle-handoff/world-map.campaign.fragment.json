@@ -1,0 +1,33 @@
+{
+  "campaign": {
+    "schemaVersion": 1,
+    "rogueliteProfileId": "campaign_handoff",
+    "entryNodeIds": [
+      "battle_start"
+    ],
+    "nodes": [
+      {
+        "id": "battle_start",
+        "type": "battle",
+        "missionId": "tutorial_01",
+        "regionId": "forest",
+        "x": 200,
+        "y": 300,
+        "difficulty": 1,
+        "nextNodeIds": [
+          "boss_finale"
+        ]
+      },
+      {
+        "id": "boss_finale",
+        "type": "boss",
+        "missionId": "tutorial_01",
+        "regionId": "forest",
+        "x": 520,
+        "y": 300,
+        "difficulty": 3,
+        "nextNodeIds": []
+      }
+    ]
+  }
+}

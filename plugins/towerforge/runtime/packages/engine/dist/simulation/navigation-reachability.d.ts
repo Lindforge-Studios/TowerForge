@@ -10,6 +10,26 @@ export interface DynamicTerraformingSpawnProvenance {
     readonly coord: GridCoord;
     readonly subjectId: string;
 }
+export type DynamicTerraformingSpawnObligationKind = "death_spawn" | "phase_spawn";
+export interface DynamicTerraformingNavigationFieldRef {
+    readonly movementProfileId: string;
+    readonly goal: GridCoord;
+}
+export interface DynamicTerraformingSpawnObligationObservation {
+    readonly kind: DynamicTerraformingSpawnObligationKind;
+    readonly parentEnemyTypeId: string;
+    readonly childEnemyTypeId: string;
+}
+export interface DynamicTerraformingSpawnObligation {
+    readonly key: string;
+    readonly parent: DynamicTerraformingNavigationFieldRef;
+    readonly child: DynamicTerraformingNavigationFieldRef;
+    readonly observations: readonly DynamicTerraformingSpawnObligationObservation[];
+}
+export interface DynamicTerraformingSpawnGraph {
+    readonly spawnProvenance: readonly DynamicTerraformingSpawnProvenance[];
+    readonly spawnObligations: readonly DynamicTerraformingSpawnObligation[];
+}
 interface ReachabilityEnemyDefinition {
     readonly spawnOnDeath?: {
         readonly enemyId: string;
@@ -48,5 +68,5 @@ export interface DynamicTerraformingSpawnProvenanceRequest {
  * resolver or mutating runtime state. The returned provenance is intentionally richer than the
  * work-set key so independent authored causes remain visible while spawn cycles stay bounded.
  */
-export declare function collectDynamicTerraformingSpawnProvenance(request: DynamicTerraformingSpawnProvenanceRequest): readonly DynamicTerraformingSpawnProvenance[];
+export declare function collectDynamicTerraformingSpawnProvenance(request: DynamicTerraformingSpawnProvenanceRequest): DynamicTerraformingSpawnGraph;
 export {};

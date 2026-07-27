@@ -1,0 +1,75 @@
+{
+  "campaign": {
+    "schemaVersion": 2,
+    "rogueliteProfileId": "campaign_run",
+    "runResources": {
+      "coins": {
+        "label": "Coins"
+      },
+      "relics": {
+        "label": "Relics"
+      }
+    },
+    "entryNodeIds": [
+      "first_battle"
+    ],
+    "nodes": [
+      {
+        "id": "first_battle",
+        "type": "battle",
+        "missionId": "tutorial_01",
+        "regionId": "forest",
+        "x": 200,
+        "y": 300,
+        "difficulty": 1,
+        "nextNodeIds": [
+          "supply_cache"
+        ]
+      },
+      {
+        "id": "supply_cache",
+        "type": "event",
+        "label": "Abandoned supply cache",
+        "regionId": "forest",
+        "x": 420,
+        "y": 300,
+        "difficulty": 2,
+        "nextNodeIds": [
+          "field_merchant"
+        ],
+        "choices": [
+          {
+            "id": "take_coins",
+            "label": "Take five coins",
+            "costs": {},
+            "grants": {
+              "coins": 5
+            }
+          }
+        ]
+      },
+      {
+        "id": "field_merchant",
+        "type": "merchant",
+        "label": "Field merchant",
+        "regionId": "forest",
+        "x": 640,
+        "y": 300,
+        "difficulty": 2,
+        "nextNodeIds": [],
+        "choices": [
+          {
+            "id": "buy_relic",
+            "label": "Buy one relic",
+            "costs": {
+              "coins": 3
+            },
+            "grants": {
+              "relics": 1
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

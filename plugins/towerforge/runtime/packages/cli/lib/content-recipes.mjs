@@ -1,4 +1,8 @@
-import { listMechanicsRecipes, materializeMechanicsRecipe } from "./mechanics-recipes.mjs";
+import {
+  MechanicsRecipeParameterError,
+  listMechanicsRecipes,
+  materializeMechanicsRecipe
+} from "./mechanics-recipes.mjs";
 
 const RECIPES = Object.freeze({
   enemies: [
@@ -102,6 +106,12 @@ export function materializeContentRecipe(collection, recipeId, context = {}) {
   if (collection === "mechanics") return materializeMechanicsRecipe(recipeId, context);
   const source = RECIPES[collection].find((item) => item.id === recipeId);
   if (!source) throw new Error(`Unknown ${collection} recipe "${recipeId}".`);
+  if (ownDataFieldPresent(context, "parameters")) {
+    throw new MechanicsRecipeParameterError(
+      "terraform_recipe_parameter_invalid",
+      `Content recipe "${collection}/${recipeId}" does not accept parameters.`
+    );
+  }
   const result = clone(source);
   result.entity.id = result.suggestedId;
 
@@ -115,6 +125,15 @@ export function materializeContentRecipe(collection, recipeId, context = {}) {
     result.entity.abilityIds = [...(context.abilityIds ?? [])];
   }
   return result;
+}
+
+function ownDataFieldPresent(value, key) {
+  if (value === null || (typeof value !== "object" && typeof value !== "function")) return false;
+  try {
+    return Object.getOwnPropertyDescriptor(value, key) !== undefined;
+  } catch {
+    return true;
+  }
 }
 
 export function contentRecipeContext(files) {
@@ -133,7 +152,12 @@ export function contentRecipeContext(files) {
   return {
     mapIds: Object.keys(files.maps ?? {}),
     waveSetIds: Object.keys(balance.waveSets ?? files.waveSets ?? {}),
-    towerIds: towerEntries.map(([id]) => id),
+    towerIds: towerEntries.map(([id]) => id).sort(compareBinary),
+    towerAttackKindsByTowerId: Object.fromEntries(towerEntries
+      .map(([id, tower]) => [id, tower?.attack?.kind])
+      .filter(([, kind]) => typeof kind === "string")
+      .sort(([left], [right]) => compareBinary(left, right))),
+    towerTagsByTowerId: authoredTowerTags(towerEntries),
     abilityIds: Object.keys(balance.abilities ?? files.abilities ?? {}),
     defaultMissionId,
     missionIds,
@@ -143,11 +167,30 @@ export function contentRecipeContext(files) {
       ? ownDataValue(combatModule, "schemaVersion")
       : undefined,
     activeCombatDamageTypeIds: isRecord(damageTypes) ? Object.keys(damageTypes).sort(compareBinary) : [],
+    terrainIds: isRecord(balance.terrainTypes) ? Object.keys(balance.terrainTypes).sort(compareBinary) : [],
     terrainTags: authoredTerrainTags(balance.terrainTypes),
     destructibleTowerIds: towerEntries
       .filter(([, tower]) => Number.isFinite(tower?.maxHp) && tower.maxHp > 0)
       .map(([id]) => id)
   };
+}
+
+function authoredTowerTags(towerEntries) {
+  const result = Object.create(null);
+  for (const [towerId, tower] of [...towerEntries].sort(([left], [right]) => compareBinary(left, right))) {
+    const tags = ownDataValue(tower, "tags");
+    if (!Array.isArray(tags)) continue;
+    const normalized = [...new Set(tags.filter((tag) => typeof tag === "string" && tag.length > 0))]
+      .sort(compareBinary);
+    if (normalized.length === 0) continue;
+    Object.defineProperty(result, towerId, {
+      value: normalized,
+      enumerable: true,
+      configurable: true,
+      writable: true
+    });
+  }
+  return result;
 }
 
 function authoredTerrainTags(terrainTypes) {

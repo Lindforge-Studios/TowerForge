@@ -228,7 +228,7 @@ describe("schema-descriptor: combat resolution contracts", () => {
       requiredFields: ["amount", "source", "target"],
       optionalFields: ["damageType", "tags", "modifiers"],
       sourceKinds: ["tower", "ability", "tower_script", "status", "enemy", "leak", "reaction"],
-      targetKinds: ["enemy", "tower", "core"],
+      targetKinds: ["enemy", "tower", "hero", "core"],
       tags: ["area", "over_time", "armor_piercing", "reaction"],
       pipelineOrder: [
         "modifiers",

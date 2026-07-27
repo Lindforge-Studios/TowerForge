@@ -1,0 +1,7 @@
+{
+  "terrainOverrides": [
+    { "q": 3, "r": 2, "terrain": "floodable_ground" },
+    { "q": 4, "r": 2, "terrain": "moat_ground" },
+    { "q": 5, "r": 2, "terrain": "wooden_bridge" }
+  ]
+}

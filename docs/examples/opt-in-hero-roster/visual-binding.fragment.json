@@ -1,0 +1,7 @@
+{
+  "bindings": {
+    "heroes": {
+      "commander": "commander_idle"
+    }
+  }
+}

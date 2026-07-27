@@ -1163,6 +1163,90 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // The campaign editor has its own guarded four-file authoring boundary. It intentionally does
+  // not pass through the generic mechanics or project-save routes.
+  if (req.method === "GET" && pathname === "/api/campaign") {
+    try {
+      const result = await callTool("get_campaign", { projectDir: PROJECT_DIR }, { defaultProjectDir: PROJECT_DIR });
+      return jsonResp(res, 200, sanitizeMechanicsResponse(result));
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status, failure.response);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/campaign/preview") {
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { code: "malformed_request", error: "Invalid JSON body" }); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return jsonResp(res, 400, { code: "invalid_request", error: "Campaign preview request must be a JSON object." });
+    }
+    try {
+      const result = await callTool("preview_campaign", { ...body, projectDir: PROJECT_DIR }, { defaultProjectDir: PROJECT_DIR });
+      return jsonResp(res, 200, sanitizeMechanicsResponse(result));
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/campaign/apply") {
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { code: "malformed_request", error: "Invalid JSON body" }); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return jsonResp(res, 400, { code: "invalid_request", error: "Campaign apply request must be a JSON object." });
+    }
+    if (typeof body.ifRevision !== "string" || !body.ifRevision) {
+      return jsonResp(res, 428, {
+        code: "revision_required",
+        error: "Campaign apply requires ifRevision returned by preview."
+      });
+    }
+    try {
+      const result = await callTool("apply_campaign", { ...body, projectDir: PROJECT_DIR }, { defaultProjectDir: PROJECT_DIR });
+      return jsonResp(res, 200, sanitizeMechanicsResponse(result));
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/mechanics/recipe") {
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { code: "malformed_request", error: "Invalid JSON body" }); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return jsonResp(res, 400, { code: "invalid_request", error: "Mechanics recipe request must be a JSON object." });
+    }
+    const keys = Object.keys(body).sort();
+    if (keys.length !== 2 || keys[0] !== "parameters" || keys[1] !== "recipeId") {
+      return jsonResp(res, 400, {
+        code: "invalid_request",
+        error: "Mechanics recipe request accepts exactly recipeId and parameters."
+      });
+    }
+    if (typeof body.recipeId !== "string" || !body.recipeId
+      || !body.parameters || typeof body.parameters !== "object" || Array.isArray(body.parameters)) {
+      return jsonResp(res, 400, {
+        code: "invalid_request",
+        error: "Mechanics recipe request requires a recipeId and closed parameters object."
+      });
+    }
+    try {
+      const result = await callTool("get_recipe", {
+        collection: "mechanics",
+        recipeId: body.recipeId,
+        parameters: body.parameters
+      }, { defaultProjectDir: PROJECT_DIR });
+      return jsonResp(res, 200, sanitizeMechanicsResponse(result));
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
+    }
+  }
+
   if (req.method === "POST" && pathname === "/api/navigation/analyze") {
     let body;
     try { body = await readBody(req); }
@@ -1336,7 +1420,11 @@ const server = http.createServer(async (req, res) => {
       const collection = url.searchParams.get("collection");
       const files = loadProjectFiles(PROJECT_DIR);
       const context = contentRecipeContext(files);
-      const recipes = listContentRecipes(collection).map((item) => materializeContentRecipe(collection, item.id, context));
+      const recipes = listContentRecipes(collection).map((item) => (
+        item.parameterSchema
+          ? item
+          : materializeContentRecipe(collection, item.id, context)
+      ));
       return jsonResp(res, 200, { collection, recipes });
     } catch (error) {
       return jsonResp(res, 400, { error: error instanceof Error ? error.message : String(error) });

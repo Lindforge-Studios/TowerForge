@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "physics": {
+      "schemaVersion": 1,
+      "enabled": true,
+      "profiles": {
+        "tagged_fall_hazards": {
+          "displacementImmuneEnemyTypeIds": [],
+          "fallImmuneEnemyTypeIds": [],
+          "fallHazardTerrainTags": ["fall_hazard"]
+        }
+      }
+    }
+  }
+}

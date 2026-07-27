@@ -1,0 +1,7 @@
+{
+  "mechanics": {
+    "profiles": {
+      "elevation": "basic_elevation_line_of_sight"
+    }
+  }
+}

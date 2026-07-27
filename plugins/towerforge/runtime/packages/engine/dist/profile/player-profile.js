@@ -1,5 +1,5 @@
 import { canonicalStringify } from "../simulation/stable-digest.js";
-export const PLAYER_PROFILE_SCHEMA_VERSION = 2;
+export const PLAYER_PROFILE_SCHEMA_VERSION = 3;
 export const PLAYER_PROFILE_LIMITS = Object.freeze({
     jsonBytes: 1 * 1_024 * 1_024,
     collectionEntries: 10_000,
@@ -47,11 +47,105 @@ function utf8ByteLength(value) {
     }
     return bytes;
 }
+function hasTopLevelNumericVersionMember(source) {
+    let index = 0;
+    while (index < source.length && /\s/u.test(source[index]))
+        index += 1;
+    if (source[index] !== "{")
+        return false;
+    let depth = 1;
+    index += 1;
+    while (index < source.length && depth > 0) {
+        const character = source[index];
+        if (character === '"') {
+            const start = index;
+            index += 1;
+            let terminated = false;
+            while (index < source.length) {
+                const stringCharacter = source[index];
+                if (stringCharacter === "\\") {
+                    index += 2;
+                    continue;
+                }
+                index += 1;
+                if (stringCharacter === '"') {
+                    terminated = true;
+                    break;
+                }
+            }
+            if (!terminated)
+                return false;
+            // A JSON spelling of the seven ASCII code units in "version" is at most
+            // seven six-byte unicode escapes plus the surrounding quotes.
+            if (depth === 1 && index - start <= 44) {
+                let key;
+                try {
+                    key = JSON.parse(source.slice(start, index));
+                }
+                catch {
+                    return false;
+                }
+                if (key === "version") {
+                    let cursor = index;
+                    while (cursor < source.length && /\s/u.test(source[cursor]))
+                        cursor += 1;
+                    if (source[cursor] === ":") {
+                        cursor += 1;
+                        while (cursor < source.length && /\s/u.test(source[cursor]))
+                            cursor += 1;
+                        const firstValueCharacter = source[cursor];
+                        if (firstValueCharacter === "-" || (firstValueCharacter !== undefined && firstValueCharacter >= "0" && firstValueCharacter <= "9")) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+        if (character === "{" || character === "[") {
+            depth += 1;
+            index += 1;
+            continue;
+        }
+        if (character === "}" || character === "]") {
+            depth -= 1;
+            index += 1;
+            continue;
+        }
+        index += 1;
+    }
+    return false;
+}
+function oversizedFutureProfileVersion(source) {
+    // Ordinary oversized/corrupt inputs retain the pre-parse byte boundary. Only a
+    // lexically top-level numeric version candidate is parsed so a future format can
+    // remain opaque to the current codec instead of being mistaken for corrupt data.
+    if (!hasTopLevelNumericVersionMember(source))
+        return undefined;
+    let parsed;
+    try {
+        parsed = JSON.parse(source);
+    }
+    catch {
+        return undefined;
+    }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+        return undefined;
+    const descriptor = Object.getOwnPropertyDescriptor(parsed, "version");
+    const version = descriptor && "value" in descriptor ? descriptor.value : undefined;
+    return typeof version === "number"
+        && Number.isSafeInteger(version)
+        && version > PLAYER_PROFILE_SCHEMA_VERSION
+        ? version
+        : undefined;
+}
 /**
- * Validate and budget an untrusted profile without invoking accessors or coercion hooks.
- * Non-finite numbers are allowed here because the profile normalizer intentionally repairs them.
+ * Capture an untrusted profile into plain detached data while validating its budget.
+ * Each source object is inspected through one descriptor snapshot; later profile
+ * processing must only read the detached result. Non-finite numbers are retained
+ * because the profile normalizer intentionally repairs them.
  */
-function assertSafeBoundedInput(value) {
+function captureSafeBoundedInput(value, detectFutureRootVersion = false) {
     const ancestors = new WeakSet();
     let bytes = 0;
     let nodes = 0;
@@ -69,19 +163,19 @@ function assertSafeBoundedInput(value) {
             throw new Error("Player profile exceeds the node budget.");
         if (current === null) {
             emit("null");
-            return;
+            return null;
         }
         if (typeof current === "string") {
             emit(JSON.stringify(current));
-            return;
+            return current;
         }
         if (typeof current === "boolean") {
             emit(current ? "true" : "false");
-            return;
+            return current;
         }
         if (typeof current === "number") {
             emit(Number.isFinite(current) ? (Object.is(current, -0) ? "0" : JSON.stringify(current)) : "null");
-            return;
+            return current;
         }
         if (typeof current !== "object") {
             throw new Error(`Player profile rejects unsupported ${typeof current} values.`);
@@ -114,6 +208,7 @@ function assertSafeBoundedInput(value) {
                     throw new Error("Player profile rejects sparse arrays or arrays with extra properties.");
                 }
                 emit("[");
+                const detached = [];
                 for (let index = 0; index < length; index += 1) {
                     if (index > 0)
                         emit(",");
@@ -121,10 +216,10 @@ function assertSafeBoundedInput(value) {
                     if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
                         throw new Error("Player profile array entries must be enumerable data properties; accessors are rejected.");
                     }
-                    visit(descriptor.value, depth + 1);
+                    detached.push(visit(descriptor.value, depth + 1));
                 }
                 emit("]");
-                return;
+                return detached;
             }
             if (Object.getPrototypeOf(current) !== Object.prototype) {
                 throw new Error("Player profile accepts plain objects with the standard prototype only.");
@@ -132,6 +227,15 @@ function assertSafeBoundedInput(value) {
             const descriptors = Object.getOwnPropertyDescriptors(current);
             if (Object.getOwnPropertySymbols(descriptors).length > 0) {
                 throw new Error("Player profile rejects symbol keys.");
+            }
+            if (depth === 0 && detectFutureRootVersion) {
+                const versionDescriptor = descriptors.version;
+                if (versionDescriptor
+                    && "value" in versionDescriptor
+                    && Number.isSafeInteger(versionDescriptor.value)
+                    && versionDescriptor.value > PLAYER_PROFILE_SCHEMA_VERSION) {
+                    throw new UnsupportedPlayerProfileVersionError(versionDescriptor.value);
+                }
             }
             const keys = Object.keys(descriptors).sort();
             if (keys.length > PLAYER_PROFILE_LIMITS.collectionEntries) {
@@ -150,21 +254,28 @@ function assertSafeBoundedInput(value) {
                 }
             }
             emit("{");
+            const detached = {};
             for (let index = 0; index < keys.length; index += 1) {
                 if (index > 0)
                     emit(",");
                 const key = keys[index];
                 emit(JSON.stringify(key));
                 emit(":");
-                visit(descriptors[key].value, depth + 1);
+                Object.defineProperty(detached, key, {
+                    value: visit(descriptors[key].value, depth + 1),
+                    enumerable: true,
+                    configurable: true,
+                    writable: true
+                });
             }
             emit("}");
+            return detached;
         }
         finally {
             ancestors.delete(current);
         }
     };
-    visit(value, 0);
+    return visit(value, 0);
 }
 function objectFields(value, context) {
     if (value === null || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) {
@@ -415,35 +526,45 @@ function normalizeProfile(fields, content, warnings) {
     });
 }
 function frozenMigrations(source) {
-    if (source === "v2")
+    if (source === "v3")
         return Object.freeze([]);
-    const migration = source === "legacy-array"
-        ? {
+    const migrations = [];
+    if (source === "legacy-array") {
+        migrations.push(Object.freeze({
             id: "legacy-clears-array-to-profile-v2",
             description: "Migrated the legacy cleared-mission array to player profile v2."
-        }
-        : {
+        }));
+    }
+    else if (source === "legacy-object") {
+        migrations.push(Object.freeze({
             id: "legacy-object-to-profile-v2",
             description: "Migrated the legacy unversioned/version-1 object to player profile v2."
-        };
-    return Object.freeze([Object.freeze(migration)]);
+        }));
+    }
+    migrations.push(Object.freeze({
+        id: "player-profile-v2-to-v3",
+        description: "Migrated player profile v2 to player profile v3 without changing persistent progress."
+    }));
+    return Object.freeze(migrations);
 }
 export function decodePlayerProfile(value, content) {
-    assertSafeBoundedInput(value);
+    const captured = captureSafeBoundedInput(value, true);
     const warnings = new WarningCollector();
     let source;
     let fields;
-    if (Array.isArray(value)) {
+    if (Array.isArray(captured)) {
         source = "legacy-array";
-        fields = new Map([["clearedMissionIds", value]]);
+        fields = new Map([["clearedMissionIds", captured]]);
     }
     else {
-        fields = objectFields(value, "Player profile");
+        fields = objectFields(captured, "Player profile");
         if (!fields.has("version"))
             source = "legacy-object";
         else {
             const version = fields.get("version");
             if (version === PLAYER_PROFILE_SCHEMA_VERSION)
+                source = "v3";
+            else if (version === 2)
                 source = "v2";
             else if (version === 1)
                 source = "legacy-object";
@@ -467,6 +588,9 @@ export function parsePlayerProfileJson(source, content) {
     if (typeof source !== "string")
         throw new Error("Player profile JSON source must be a string.");
     if (utf8ByteLength(source) > PLAYER_PROFILE_LIMITS.jsonBytes) {
+        const futureVersion = oversizedFutureProfileVersion(source);
+        if (futureVersion !== undefined)
+            throw new UnsupportedPlayerProfileVersionError(futureVersion);
         throw new Error(`Player profile JSON exceeds the ${PLAYER_PROFILE_LIMITS.jsonBytes} byte budget.`);
     }
     let parsed;
@@ -479,13 +603,13 @@ export function parsePlayerProfileJson(source, content) {
     return decodePlayerProfile(parsed, content);
 }
 function assertSerializableProfile(profile) {
-    assertSafeBoundedInput(profile);
-    const fields = objectFields(profile, "Player profile");
+    const captured = captureSafeBoundedInput(profile);
+    const fields = objectFields(captured, "Player profile");
     if (fields.size !== PROFILE_KEYS.length || PROFILE_KEYS.some((key) => !fields.has(key))) {
         throw new Error("Player profile contains missing or unsupported fields.");
     }
     if (fields.get("version") !== PLAYER_PROFILE_SCHEMA_VERSION) {
-        throw new Error("Player profile version must be 2 for serialization.");
+        throw new Error("Player profile version must be 3 for serialization.");
     }
     const clears = arrayItems(fields.get("clearedMissionIds"), "Player profile clearedMissionIds");
     if (!clears || clears.some((missionId) => typeof missionId !== "string")) {
@@ -509,27 +633,28 @@ function assertSerializableProfile(profile) {
     if (typeof fields.get("selectedDifficultyId") !== "string") {
         throw new Error("Player profile selectedDifficultyId must be a string.");
     }
+    return freezeProfile({
+        version: PLAYER_PROFILE_SCHEMA_VERSION,
+        clearedMissionIds: [...clears],
+        starsByMission: copyNumberRecord(fields.get("starsByMission")),
+        metaResources: copyNumberRecord(fields.get("metaResources")),
+        upgradeLevels: copyNumberRecord(fields.get("upgradeLevels")),
+        selectedDifficultyId: fields.get("selectedDifficultyId")
+    });
 }
 export function serializePlayerProfile(profile) {
-    assertSerializableProfile(profile);
-    return canonicalStringify(profile, {
+    const captured = assertSerializableProfile(profile);
+    return canonicalStringify(captured, {
         maxDepth: MAX_PROFILE_DEPTH,
         maxNodes: MAX_PROFILE_NODES,
         maxBytes: PLAYER_PROFILE_LIMITS.jsonBytes
     });
 }
 export function getPlayerProfileLaunchOptions(profile) {
-    assertSerializableProfile(profile);
-    const fields = objectFields(profile, "Player profile");
-    const selectedDifficultyId = fields.get("selectedDifficultyId");
-    const upgradeFields = objectFields(fields.get("upgradeLevels"), "Player profile upgradeLevels");
-    const metaUpgradeLevels = {};
-    for (const [upgradeId, level] of upgradeFields) {
-        setRecordValue(metaUpgradeLevels, upgradeId, level);
-    }
+    const captured = assertSerializableProfile(profile);
     return {
-        difficultyId: selectedDifficultyId,
-        metaUpgradeLevels
+        difficultyId: captured.selectedDifficultyId,
+        metaUpgradeLevels: copyNumberRecord(captured.upgradeLevels)
     };
 }
 function frozenFailure(code, profile) {
@@ -585,26 +710,26 @@ function isValidMetaResourceBag(value, currencyIds) {
     return true;
 }
 export function selectPlayerDifficulty(profile, content, difficultyId) {
-    assertSerializableProfile(profile);
+    const captured = assertSerializableProfile(profile);
     if (!content.difficulties.some((difficulty) => difficulty.id === difficultyId)) {
         return frozenFailure("unknown_difficulty", profile);
     }
-    if (profile.selectedDifficultyId === difficultyId) {
+    if (captured.selectedDifficultyId === difficultyId) {
         return Object.freeze({ ok: true, code: "difficulty_unchanged", profile });
     }
     return Object.freeze({
         ok: true,
         code: "difficulty_selected",
-        profile: copyProfile(profile, { selectedDifficultyId: difficultyId })
+        profile: copyProfile(captured, { selectedDifficultyId: difficultyId })
     });
 }
 export function purchasePlayerMetaUpgrade(profile, content, upgradeId) {
-    assertSerializableProfile(profile);
+    const captured = assertSerializableProfile(profile);
     if (!Object.prototype.hasOwnProperty.call(content.metaProgression.upgrades, upgradeId)) {
         return frozenFailure("unknown_upgrade", profile);
     }
     const upgrade = ownDataValue(content.metaProgression.upgrades, upgradeId);
-    const previousLevel = ownNumberOrZero(profile.upgradeLevels, upgradeId);
+    const previousLevel = ownNumberOrZero(captured.upgradeLevels, upgradeId);
     if (previousLevel >= upgrade.maxLevel)
         return frozenFailure("upgrade_max_level", profile);
     const currencyIds = metaCurrencyIds(content);
@@ -613,41 +738,41 @@ export function purchasePlayerMetaUpgrade(profile, content, upgradeId) {
     if (!isValidMetaResourceBag(cost, currencyIdSet))
         return frozenFailure("invalid_upgrade_cost", profile);
     for (const currencyId of currencyIds) {
-        if (ownNumberOrZero(profile.metaResources, currencyId) < ownNumberOrZero(cost, currencyId)) {
+        if (ownNumberOrZero(captured.metaResources, currencyId) < ownNumberOrZero(cost, currencyId)) {
             return frozenFailure("insufficient_meta_resources", profile);
         }
     }
-    const metaResources = copyNumberRecord(profile.metaResources);
+    const metaResources = copyNumberRecord(captured.metaResources);
     for (const currencyId of currencyIds) {
-        setRecordValue(metaResources, currencyId, ownNumberOrZero(profile.metaResources, currencyId) - ownNumberOrZero(cost, currencyId));
+        setRecordValue(metaResources, currencyId, ownNumberOrZero(captured.metaResources, currencyId) - ownNumberOrZero(cost, currencyId));
     }
-    const upgradeLevels = copyNumberRecord(profile.upgradeLevels);
+    const upgradeLevels = copyNumberRecord(captured.upgradeLevels);
     const newLevel = previousLevel + 1;
     setRecordValue(upgradeLevels, upgradeId, newLevel);
     return Object.freeze({
         ok: true,
         code: "upgrade_purchased",
-        profile: copyProfile(profile, { metaResources, upgradeLevels }),
+        profile: copyProfile(captured, { metaResources, upgradeLevels }),
         upgradeId,
         previousLevel,
         newLevel
     });
 }
 export function isPlayerMissionUnlocked(profile, content, missionId) {
-    assertSerializableProfile(profile);
+    const captured = assertSerializableProfile(profile);
     if (!Object.prototype.hasOwnProperty.call(content.missions, missionId))
         return false;
     const node = content.worldMap.missionNodes.find((candidate) => candidate.missionId === missionId);
     if (!node)
         return true;
-    const clearedMissionIds = new Set(profile.clearedMissionIds);
+    const clearedMissionIds = new Set(captured.clearedMissionIds);
     return node.unlockRequiresMissionIds.every((requiredId) => clearedMissionIds.has(requiredId));
 }
 export function newlyUnlockedPlayerMissionIds(profile, content, clearedMissionId) {
-    assertSerializableProfile(profile);
-    if (!profile.clearedMissionIds.includes(clearedMissionId))
+    const captured = assertSerializableProfile(profile);
+    if (!captured.clearedMissionIds.includes(clearedMissionId))
         return Object.freeze([]);
-    const clearedMissionIds = new Set(profile.clearedMissionIds);
+    const clearedMissionIds = new Set(captured.clearedMissionIds);
     const newlyUnlocked = [];
     for (const missionId of Object.keys(content.missions)) {
         const node = content.worldMap.missionNodes.find((candidate) => candidate.missionId === missionId);
@@ -662,7 +787,7 @@ export function newlyUnlockedPlayerMissionIds(profile, content, clearedMissionId
     return Object.freeze(newlyUnlocked);
 }
 export function recordPlayerMissionClear(profile, content, missionId, earnedStars) {
-    assertSerializableProfile(profile);
+    const captured = assertSerializableProfile(profile);
     if (!Object.prototype.hasOwnProperty.call(content.missions, missionId)) {
         return frozenFailure("unknown_mission", profile);
     }
@@ -686,17 +811,17 @@ export function recordPlayerMissionClear(profile, content, missionId, earnedStar
             || !isValidMetaResourceBag(perStarReward ?? {}, currencyIdSet))) {
         return frozenFailure("invalid_mission_reward", profile);
     }
-    const firstClear = !profile.clearedMissionIds.includes(missionId);
-    const previousStars = ownNumberOrZero(profile.starsByMission, missionId);
+    const firstClear = !captured.clearedMissionIds.includes(missionId);
+    const previousStars = ownNumberOrZero(captured.starsByMission, missionId);
     const bestStars = Math.max(previousStars, earnedStars);
     const rewardedStarCount = Math.max(0, bestStars - previousStars);
     const baseReward = firstClear ? firstClearReward : repeatClearReward;
     const grantedResources = {};
-    const metaResources = copyNumberRecord(profile.metaResources);
+    const metaResources = copyNumberRecord(captured.metaResources);
     for (const currencyId of currencyIds) {
         const amount = ownNumberOrZero(baseReward, currencyId)
             + ownNumberOrZero(perStarReward, currencyId) * rewardedStarCount;
-        const newBalance = ownNumberOrZero(profile.metaResources, currencyId) + amount;
+        const newBalance = ownNumberOrZero(captured.metaResources, currencyId) + amount;
         if (!Number.isFinite(amount) || amount < 0 || !Number.isFinite(newBalance)) {
             return frozenFailure("invalid_mission_reward", profile);
         }
@@ -704,12 +829,12 @@ export function recordPlayerMissionClear(profile, content, missionId, earnedStar
             setRecordValue(grantedResources, currencyId, amount);
         setRecordValue(metaResources, currencyId, newBalance);
     }
-    const clearedMissionIds = [...profile.clearedMissionIds];
+    const clearedMissionIds = [...captured.clearedMissionIds];
     if (firstClear)
         clearedMissionIds.push(missionId);
-    const starsByMission = copyNumberRecord(profile.starsByMission);
+    const starsByMission = copyNumberRecord(captured.starsByMission);
     setRecordValue(starsByMission, missionId, bestStars);
-    const nextProfile = copyProfile(profile, { clearedMissionIds, starsByMission, metaResources });
+    const nextProfile = copyProfile(captured, { clearedMissionIds, starsByMission, metaResources });
     const newlyUnlockedMissionIds = firstClear
         ? newlyUnlockedPlayerMissionIds(nextProfile, content, missionId)
         : Object.freeze([]);

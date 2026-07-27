@@ -2,6 +2,69 @@ const SQUARE_EDGES = ["N", "E", "S", "W"];
 const SQUARE_WANG = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
 const HEX_EDGES = ["NW", "NE", "E", "SE", "SW", "W"];
 
+/** Expand presentation invalidation roots against current authoritative tiles. */
+export function expandAutotileInvalidations(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
+  let descriptors; let gridType; let coordinates; let tiles;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(input);
+    if (Object.getPrototypeOf(input) !== Object.prototype || Object.getOwnPropertySymbols(input).length || Object.keys(descriptors).length !== 3
+      || !["gridType", "coordinates", "tiles"].every((key) => descriptors[key]?.enumerable && "value" in descriptors[key])) return undefined;
+    gridType = descriptors.gridType.value;
+    coordinates = descriptors.coordinates.value;
+    tiles = descriptors.tiles.value;
+  } catch { return undefined; }
+  const roots = ownDenseValues(coordinates, 1_024);
+  const currentTiles = ownDenseValues(tiles, 1_000_000);
+  if (!["square", "hex"].includes(gridType) || roots === null || currentTiles === null) return undefined;
+  const available = new Map();
+  for (const tile of currentTiles) {
+    const point = ownCoordinate(tile, false); if (!point) return undefined;
+    available.set(`${point.q},${point.r}`, point);
+  }
+  const expanded = new Map();
+  for (const rootValue of roots) {
+    const root = ownCoordinate(rootValue, true); if (!root) return undefined;
+    for (const point of [root, ...autotileNeighbors(root, gridType)]) {
+      const present = available.get(`${point.q},${point.r}`); if (present) expanded.set(`${present.q},${present.r}`, present);
+    }
+  }
+  return Object.freeze([...expanded.values()].sort((a, b) => a.r - b.r || a.q - b.q).map(({ q, r }) => Object.freeze({ q, r })));
+}
+
+function ownDenseValues(value, maximumLength) {
+  if (!Array.isArray(value)) return null;
+  try {
+    if (Object.getPrototypeOf(value) !== Array.prototype || Object.getOwnPropertySymbols(value).length) return null;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const length = descriptors.length?.value;
+    if (!Number.isSafeInteger(length) || length < 0 || length > maximumLength || Object.keys(descriptors).length !== length + 1) return null;
+    const detached = [];
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = descriptors[String(index)];
+      if (!descriptor?.enumerable || !("value" in descriptor)) return null;
+      detached.push(descriptor.value);
+    }
+    return detached;
+  } catch { return null; }
+}
+function ownCoordinate(value, exact) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  try {
+    if (Object.getPrototypeOf(value) !== Object.prototype || Object.getOwnPropertySymbols(value).length) return null;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    if (!descriptors.q?.enumerable || !descriptors.r?.enumerable || !("value" in descriptors.q) || !("value" in descriptors.r)) return null;
+    if (exact && Object.keys(descriptors).length !== 2) return null;
+    const { q, r } = descriptors;
+    return Number.isSafeInteger(q.value) && Number.isSafeInteger(r.value) && q.value >= 0 && r.value >= 0 && q.value <= 1_000_000 && r.value <= 1_000_000 ? { q: q.value, r: r.value } : null;
+  } catch { return null; }
+}
+function autotileNeighbors(coord, gridType) {
+  if (gridType === "square") return [[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]].map(([q, r]) => ({ q: coord.q + q, r: coord.r + r }));
+  const offsets = coord.r % 2 === 0 ? [[-1,-1],[0,-1],[1,0],[0,1],[-1,1],[-1,0]] : [[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,0]];
+  return offsets.map(([q, r]) => ({ q: coord.q + q, r: coord.r + r }));
+}
+
 export const TILE_PRESETS = Object.freeze({
   "random-variants": preset("random-variants", "Random variants", "any", "random", ["random"]),
   "square-edge-16": preset("square-edge-16", "Square edge 16", "square", "edge", masks("edge", 4)),

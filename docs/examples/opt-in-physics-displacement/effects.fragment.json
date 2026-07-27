@@ -1,0 +1,14 @@
+{
+  "pipelineTowerEffect": {
+    "kind": "displacement",
+    "mode": "push",
+    "distance": 2,
+    "stopAtBlocker": true
+  },
+  "customAbilityEffect": {
+    "kind": "displacement",
+    "mode": "pull",
+    "distance": 1,
+    "stopAtBlocker": false
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "mechanics": {
+    "profiles": {
+      "heroes": "blocking_commander",
+      "navigation": "blocking_lane"
+    }
+  }
+}

@@ -3,19 +3,25 @@ import {
   executeParsedGameCommand,
   invalidGameCommandResult,
   parseGameCommand,
-  type GameCommandV1
+  type GameCommand
 } from "./command-internal.js";
 import type { ActionResult } from "./types.js";
 
 export {
   GAME_COMMAND_SCHEMA_VERSION,
+  GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS,
   type GameCommand,
-  type GameCommandV1
+  type GameCommandV1,
+  type GameCommandV2,
+  type GameCommandV3,
+  type GameCommandV4,
+  type GameCommandV5,
+  type GameCommandV6
 } from "./command-internal.js";
 
 /** Validate and dispatch one deterministic simulation command. Invalid input never mutates the game. */
 export function dispatchGameCommand(game: TowerDefenseGame, input: unknown): ActionResult {
-  let command: GameCommandV1 | undefined;
+  let command: GameCommand | undefined;
   try {
     command = parseGameCommand(input);
   } catch {
