@@ -32,6 +32,13 @@ import { inspectTileSetCoverage, TILE_PRESETS } from "../renderer/src/autotile.m
 import { applyThemePack, listThemePacks, previewThemePack } from "../cli/lib/theme-packs.mjs";
 import { listProjectTree } from "../cli/lib/project-tree.mjs";
 import { resolveTowerScriptPath, restoreTowerScriptWrite, scriptFileRevision, writeTowerScriptAtomic } from "../cli/lib/project-scripts.mjs";
+import {
+  readTowerScriptLayout,
+  restoreTowerScriptLayoutWrite,
+  towerScriptGraphRevision,
+  validateTowerScriptLayout,
+  writeTowerScriptLayoutAtomic
+} from "../cli/lib/tower-script-layout.mjs";
 import { findEntityReferences } from "../cli/lib/references.mjs";
 import { mergeValidationResults } from "../cli/lib/trace.mjs";
 import { projectTileCoverage } from "../cli/lib/tile-coverage.mjs";
@@ -1070,6 +1077,72 @@ export const TOOLS = [
     }
   },
   {
+    name: "get_tower_script_graph",
+    description: "Read one lossless Visual Graph projection of the canonical TowerScript AST plus optional local .towerforge layout. Reading never materializes editor state.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory." },
+        scriptId: { type: "string" },
+        path: { type: "string", description: "Existing project-relative scripts/**/*.tower.json path." }
+      },
+      additionalProperties: false
+    }
+  },
+  {
+    name: "preview_tower_script_graph",
+    description: "Project a Visual Graph back to canonical TowerScript AST and validate it without writing script or local layout bytes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory." },
+        path: { type: "string", description: "Existing project-relative scripts/**/*.tower.json path." },
+        graph: { type: "object", description: "Lossless TowerScript graph schema v1." },
+        layout: { type: "object", description: "Optional local graph layout schema v1." },
+        ifRevision: IF_REVISION_PROPERTY
+      },
+      required: ["path", "graph"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "preview_tower_script_trace",
+    description: "Run a bounded deterministic TowerScript debug session in memory and return its structured trace plus one historical replay-to-cursor frame. Writes no project or editor files.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory." },
+        missionId: { type: "string", description: "Mission id; defaults to defaultMissionId." },
+        seed: { type: "string", maxLength: 256 },
+        commands: {
+          type: "array",
+          maxItems: 128,
+          items: { type: "object", description: "One exact versioned GameCommand." }
+        },
+        stepMode: { type: "string", enum: ["tick", "event", "handler", "action"] },
+        stepSequence: { type: "integer", minimum: 0, maximum: 16383 }
+      },
+      required: ["commands"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "apply_tower_script_graph",
+    description: "Apply a previewed canonical TowerScript AST and optional local graph layout behind the composite revision. Validates before write and rolls script and layout back together on failure.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory." },
+        path: { type: "string", description: "Existing project-relative scripts/**/*.tower.json path." },
+        graph: { type: "object", description: "Lossless TowerScript graph schema v1." },
+        layout: { type: "object", description: "Optional local graph layout schema v1." },
+        ifRevision: { ...IF_REVISION_PROPERTY, description: "Required revision returned by preview_tower_script_graph." }
+      },
+      required: ["path", "graph", "ifRevision"],
+      additionalProperties: false
+    }
+  },
+  {
     name: "upsert_tower_script",
     description: "Dry-run or write one deterministic TowerScript under scripts/. Validates bindings, expressions, actions, references, and the complete project. Commits atomically with backup and rollback. Use dryRun:true first and pass the returned revision as ifRevision.",
     inputSchema: {
@@ -1302,6 +1375,10 @@ const TOOL_RISK = {
   preview_theme_pack: { riskClass: "compute_only", sideEffect: "none" },
   list_project_tree: { riskClass: "read_only", sideEffect: "none" },
   get_tower_script: { riskClass: "read_only", sideEffect: "none" },
+  get_tower_script_graph: { riskClass: "read_only", sideEffect: "none" },
+  preview_tower_script_graph: { riskClass: "compute_only", sideEffect: "none" },
+  preview_tower_script_trace: { riskClass: "compute_only", sideEffect: "builds engine dist if stale and runs a bounded deterministic in-memory replay; writes no project files" },
+  apply_tower_script_graph: { riskClass: "write_local", sideEffect: "writes one canonical TowerScript AST and optional confined .towerforge layout with revision guard, validation, backup, and rollback" },
   upsert_tower_script: { riskClass: "write_local", sideEffect: "optionally writes one confined scripts/**/*.tower.json file with backup and rollback" },
   apply_theme_pack: { riskClass: "write_local", sideEffect: "optionally writes a bundled background asset plus visuals and mission background catalogs with backup and rollback" },
   validate_project: { riskClass: "compute_only", sideEffect: "builds engine dist if stale" },
@@ -1939,6 +2016,18 @@ export async function callTool(name, args = {}, ctx = {}) {
       return { projectDir, path: entry.path, source: entry.source, script: entry.definition, error: entry.error, revision: computeRevision(entry.definition ?? entry.source) };
     }
 
+    case "get_tower_script_graph":
+      return getTowerScriptGraph(projectDir, args);
+
+    case "preview_tower_script_graph":
+      return previewTowerScriptGraph(projectDir, args);
+
+    case "preview_tower_script_trace":
+      return previewTowerScriptTrace(projectDir, args);
+
+    case "apply_tower_script_graph":
+      return applyTowerScriptGraph(projectDir, args);
+
     case "upsert_tower_script":
       return upsertTowerScript(projectDir, args);
 
@@ -2330,6 +2419,309 @@ async function dryRunBalancePatch(projectDir, patch) {
     diff: computeDiff(files.balance, candidateFiles.balance, applied),
     validation: validationSummary(result)
   };
+}
+
+function towerScriptGraphValidationFailure(message, revision) {
+  return {
+    ok: false,
+    dryRun: true,
+    written: false,
+    revision,
+    validation: {
+      ok: false,
+      errorCount: 1,
+      warningCount: 0,
+      issues: [{
+        severity: "error",
+        entityKind: "script",
+        entityId: "?",
+        fieldPath: "graph",
+        code: "TOWER_SCRIPT_GRAPH",
+        message
+      }]
+    }
+  };
+}
+
+function findTowerScriptEntry(files, args) {
+  let entry;
+  if (typeof args.path === "string") entry = files.scriptFiles?.[args.path];
+  else if (typeof args.scriptId === "string") {
+    entry = Object.values(files.scriptFiles ?? {}).find((file) => file.definition?.id === args.scriptId);
+  } else {
+    throw new Error("TowerScript graph read requires scriptId or path.");
+  }
+  if (!entry?.definition) throw new Error("TowerScript was not found or is not valid JSON.");
+  return entry;
+}
+
+async function getTowerScriptGraph(projectDir, args) {
+  const files = loadProjectFiles(projectDir);
+  const entry = findTowerScriptEntry(files, args);
+  const engine = await loadEngine();
+  const local = readTowerScriptLayout(projectDir, entry.path);
+  return {
+    projectDir,
+    path: entry.path,
+    scriptId: entry.definition.id,
+    script: structuredCloneCompat(entry.definition),
+    graph: engine.towerScriptAstToGraph(entry.definition),
+    layout: local.layout,
+    layoutRevision: local.layoutRevision,
+    revision: local.revision,
+    nodeCatalog: engine.TOWER_SCRIPT_SCHEMA.completion.catalog,
+    descriptor: engine.TOWER_SCRIPT_SCHEMA
+  };
+}
+
+const TOWER_SCRIPT_TRACE_COMMAND_LIMIT = 128;
+const TOWER_SCRIPT_TRACE_COMMAND_BYTES = 256 * 1024;
+const TOWER_SCRIPT_TRACE_ENTRY_LIMIT = 512;
+const TOWER_SCRIPT_TRACE_STEP_MODES = new Set(["tick", "event", "handler", "action"]);
+
+async function previewTowerScriptTrace(projectDir, args) {
+  if (!Array.isArray(args.commands)) throw new Error("preview_tower_script_trace requires a commands array.");
+  if (args.commands.length > TOWER_SCRIPT_TRACE_COMMAND_LIMIT) {
+    throw new Error(`preview_tower_script_trace command limit is ${TOWER_SCRIPT_TRACE_COMMAND_LIMIT}.`);
+  }
+  const commandBytes = Buffer.byteLength(JSON.stringify(args.commands), "utf8");
+  if (commandBytes > TOWER_SCRIPT_TRACE_COMMAND_BYTES) {
+    throw new Error(`preview_tower_script_trace commands exceed ${TOWER_SCRIPT_TRACE_COMMAND_BYTES} bytes.`);
+  }
+  const stepMode = args.stepMode ?? "action";
+  if (!TOWER_SCRIPT_TRACE_STEP_MODES.has(stepMode)) {
+    throw new Error("preview_tower_script_trace stepMode must be tick, event, handler, or action.");
+  }
+  const stepSequence = args.stepSequence ?? 0;
+  if (!Number.isSafeInteger(stepSequence) || stepSequence < 0 || stepSequence >= 16_384) {
+    throw new Error("preview_tower_script_trace stepSequence must be an integer 0..16383.");
+  }
+  if (args.seed !== undefined && (typeof args.seed !== "string" || Buffer.byteLength(args.seed, "utf8") > 256)) {
+    throw new Error("preview_tower_script_trace seed must be at most 256 UTF-8 bytes.");
+  }
+
+  const { files, engine, content } = await loadContentRegistry(projectDir);
+  const missionId = args.missionId ?? files.balance.defaultMissionId;
+  if (typeof missionId !== "string" || !content.missions[missionId]) {
+    throw new Error(`preview_tower_script_trace mission was not found: ${String(missionId)}`);
+  }
+  const initial = new engine.TowerDefenseGame({
+    missionId,
+    content,
+    seed: args.seed ?? "towerforge:mcp:towerscript-trace"
+  });
+  const debug = new engine.TowerScriptDebugSession({
+    content,
+    initial,
+    checkpointRingCapacity: TOWER_SCRIPT_TRACE_COMMAND_LIMIT,
+    trace: { maxEntries: TOWER_SCRIPT_TRACE_ENTRY_LIMIT }
+  });
+  const commandResults = args.commands.map((command) => debug.dispatch(command));
+  let frame = null;
+  for (let index = 0; index <= stepSequence; index += 1) {
+    frame = debug.step(stepMode);
+    if (frame === null) break;
+  }
+  const liveSnapshot = debug.game.getSnapshot();
+  return {
+    projectDir,
+    ok: true,
+    computeOnly: true,
+    missionId,
+    commandCount: args.commands.length,
+    commandResults,
+    trace: debug.getTrace(),
+    frame,
+    live: {
+      snapshot: liveSnapshot,
+      stateDigest: debug.game.getStateDigest()
+    }
+  };
+}
+
+async function previewTowerScriptGraph(projectDir, args) {
+  if (typeof args.path !== "string") throw new Error("preview_tower_script_graph requires path.");
+  const revision = towerScriptGraphRevision(projectDir, args.path);
+  if (args.ifRevision !== undefined && args.ifRevision !== revision) {
+    return {
+      projectDir,
+      ok: false,
+      conflict: true,
+      dryRun: true,
+      written: false,
+      expectedRevision: args.ifRevision,
+      actualRevision: revision
+    };
+  }
+  try {
+    const engine = await loadEngine();
+    const canonicalAst = engine.towerScriptGraphToAst(args.graph);
+    const layout = args.layout === undefined ? undefined : validateTowerScriptLayout(args.layout);
+    const files = loadProjectFiles(projectDir);
+    const entry = findTowerScriptEntry(files, { path: args.path });
+    const baselineRawNodes = engine.towerScriptAstToGraph(entry.definition).nodes
+      .filter((node) => node.kind === "raw");
+    const candidateRawByPath = new Map(engine.towerScriptAstToGraph(canonicalAst).nodes
+      .filter((node) => node.kind === "raw")
+      .map((node) => [node.astPath, node.raw]));
+    for (const baselineNode of baselineRawNodes) {
+      const candidateRaw = candidateRawByPath.get(baselineNode.astPath);
+      if (candidateRaw === undefined || JSON.stringify(candidateRaw) !== JSON.stringify(baselineNode.raw)) {
+        return {
+          projectDir,
+          ...towerScriptGraphValidationFailure(
+            `Unknown future node at "${baselineNode.astPath}" must remain raw and byte-semantically unchanged.`,
+            revision
+          )
+        };
+      }
+    }
+    const scripts = structuredCloneCompat(files.scripts ?? {});
+    if (entry.definition?.id) delete scripts[entry.definition.id];
+    const duplicate = Object.entries(files.scriptFiles ?? {}).find(([filePath, file]) => (
+      filePath !== args.path && file.definition?.id === canonicalAst.id
+    ));
+    if (duplicate) {
+      return {
+        projectDir,
+        ...towerScriptGraphValidationFailure(
+          `Script id "${canonicalAst.id}" is already declared by ${duplicate[0]}.`,
+          revision
+        )
+      };
+    }
+    scripts[canonicalAst.id] = structuredCloneCompat(canonicalAst);
+    const validation = await validateCandidateFiles({ ...files, scripts });
+    return {
+      projectDir,
+      ok: validation.ok,
+      dryRun: true,
+      written: false,
+      path: args.path,
+      scriptId: canonicalAst.id,
+      revision,
+      canonicalAst: structuredCloneCompat(canonicalAst),
+      ...(layout === undefined ? {} : { layout: structuredCloneCompat(layout) }),
+      validation: validationSummary(validation)
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { projectDir, ...towerScriptGraphValidationFailure(message, revision) };
+  }
+}
+
+async function applyTowerScriptGraph(projectDir, args) {
+  if (typeof args.ifRevision !== "string" || args.ifRevision.length === 0) {
+    throw new Error("apply_tower_script_graph requires ifRevision from preview_tower_script_graph.");
+  }
+  const preview = await previewTowerScriptGraph(projectDir, args);
+  if (preview.conflict || !preview.ok) return preview;
+
+  const sourcePath = resolveTowerScriptPath(projectDir, args.path, { mustExist: true });
+  const sourceRevision = scriptFileRevision(sourcePath);
+  const preWriteRevision = towerScriptGraphRevision(projectDir, args.path);
+  if (preWriteRevision !== args.ifRevision || preWriteRevision !== preview.revision) {
+    return {
+      projectDir,
+      ok: false,
+      conflict: true,
+      dryRun: false,
+      written: false,
+      expectedRevision: args.ifRevision,
+      actualRevision: preWriteRevision
+    };
+  }
+  let layoutWrite = null;
+  let scriptWrite = null;
+  const rollback = () => {
+    const failures = [];
+    if (scriptWrite?.ok) {
+      try {
+        const restored = restoreTowerScriptWrite(projectDir, args.path, scriptWrite.backup, {
+          ifRevision: scriptWrite.revision
+        });
+        if (!restored?.ok) failures.push({ target: "script", ...restored });
+      } catch (error) {
+        failures.push({ target: "script", error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    if (layoutWrite?.ok) {
+      try {
+        const restored = restoreTowerScriptLayoutWrite(projectDir, args.path, layoutWrite.backup, {
+          ifLayoutRevision: layoutWrite.layoutRevision
+        });
+        if (!restored?.ok) failures.push({ target: "layout", ...restored });
+      } catch (error) {
+        failures.push({ target: "layout", error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    return failures;
+  };
+
+  try {
+    if (preview.layout !== undefined) {
+      layoutWrite = writeTowerScriptLayoutAtomic(projectDir, args.path, preview.layout, {
+        ifRevision: preWriteRevision
+      });
+      if (!layoutWrite.ok) return { projectDir, ...layoutWrite };
+    }
+
+    scriptWrite = writeTowerScriptAtomic(
+      projectDir,
+      args.path,
+      `${JSON.stringify(preview.canonicalAst, null, 2)}\n`,
+      { ifRevision: sourceRevision }
+    );
+    if (!scriptWrite.ok) {
+      const rollbackFailures = rollback();
+      return {
+        projectDir,
+        ok: false,
+        conflict: true,
+        written: false,
+        expectedFileRevision: sourceRevision,
+        actualFileRevision: scriptWrite.revision,
+        ...(rollbackFailures.length > 0 ? { rollbackFailures } : {})
+      };
+    }
+
+    const post = await validateProjectDir(projectDir);
+    if (!post.result.ok) {
+      const rollbackFailures = rollback();
+      return {
+        projectDir,
+        ok: false,
+        written: false,
+        rolledBack: rollbackFailures.length === 0,
+        ...(rollbackFailures.length > 0 ? { rollbackFailures } : {}),
+        path: args.path,
+        revision: towerScriptGraphRevision(projectDir, args.path),
+        validation: validationSummary(post.result)
+      };
+    }
+    return {
+      projectDir,
+      ok: true,
+      written: true,
+      dryRun: false,
+      path: args.path,
+      scriptId: preview.canonicalAst.id,
+      previousRevision: preview.revision,
+      revision: towerScriptGraphRevision(projectDir, args.path),
+      fileRevision: scriptWrite.revision,
+      layoutRevision: readTowerScriptLayout(projectDir, args.path).layoutRevision,
+      backupCreated: Boolean(scriptWrite.backup || layoutWrite?.backup?.existed),
+      validation: validationSummary(post.result)
+    };
+  } catch (error) {
+    const rollbackFailures = rollback();
+    if (rollbackFailures.length > 0) {
+      throw new Error(`TowerScript graph transaction failed and rollback conflicted: ${JSON.stringify(rollbackFailures)}`, {
+        cause: error
+      });
+    }
+    throw error;
+  }
 }
 
 async function upsertTowerScript(projectDir, args) {

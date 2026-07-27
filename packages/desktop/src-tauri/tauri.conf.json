@@ -46,6 +46,7 @@
     "macOS": {
       "frameworks": [],
       "signingIdentity": "-",
+      "entitlements": "Entitlements.plist",
       "minimumSystemVersion": "10.13"
     },
     "linux": {

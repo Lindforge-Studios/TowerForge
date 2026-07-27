@@ -10,6 +10,41 @@ function commandFailure(command, result) {
   return new Error(`${command} validation failed${detail ? `: ${detail}` : "."}`);
 }
 
+function verifyBundledNode(appPath, run) {
+  const nodePath = path.join(appPath, "Contents", "MacOS", "node");
+  const result = run(nodePath, ["-e", "process.stdout.write('towerforge-node-ready')"]);
+  if (result.error) throw result.error;
+  if (result.status !== 0 || result.stdout !== "towerforge-node-ready") {
+    throw commandFailure("Bundled Node sidecar", result);
+  }
+}
+
+function verifyAppArchitecture(appPath, expectedArchitecture, run) {
+  const executable = path.join(appPath, "Contents", "MacOS", "towerforge_desktop");
+  const result = run("lipo", ["-archs", executable]);
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw commandFailure("macOS architecture", result);
+  const architectures = String(result.stdout || "").trim().split(/\s+/).filter(Boolean);
+  if (!architectures.includes(expectedArchitecture)) {
+    throw new Error(`macOS app architecture mismatch: expected ${expectedArchitecture}, got ${architectures.join(", ") || "<none>"}.`);
+  }
+}
+
+function detachDiskImage(mountDirectory, run) {
+  const attempts = [
+    ["detach", mountDirectory],
+    ["detach", mountDirectory],
+    ["detach", "-force", mountDirectory]
+  ];
+  let result;
+  for (const args of attempts) {
+    result = run("hdiutil", args);
+    if (!result.error && result.status === 0) return result;
+  }
+  if (result?.error) throw result.error;
+  throw commandFailure("hdiutil detach", result || {});
+}
+
 export function verifyMacosBundle({
   appPath,
   dmgPath,
@@ -19,7 +54,8 @@ export function verifyMacosBundle({
     .filter((entry) => entry.isDirectory() && entry.name.endsWith(".app"))
     .map((entry) => entry.name),
   cleanupDirectory = (directory) => fs.rmSync(directory, { recursive: true, force: true }),
-  run = (command, args) => spawnSync(command, args, { encoding: "utf8" })
+  run = (command, args) => spawnSync(command, args, { encoding: "utf8" }),
+  expectedArchitecture = "arm64"
 }) {
   if (!dmgPath || !exists(dmgPath)) throw new Error(`macOS DMG does not exist: ${dmgPath || "<missing>"}`);
 
@@ -31,6 +67,8 @@ export function verifyMacosBundle({
     const signature = run("codesign", ["--verify", "--deep", "--strict", "--verbose=4", appPath]);
     if (signature.error) throw signature.error;
     if (signature.status !== 0) throw commandFailure("codesign", signature);
+    verifyAppArchitecture(appPath, expectedArchitecture, run);
+    verifyBundledNode(appPath, run);
     return { appPath, dmgPath };
   }
 
@@ -49,14 +87,18 @@ export function verifyMacosBundle({
     const signature = run("codesign", ["--verify", "--deep", "--strict", "--verbose=4", resolvedAppPath]);
     if (signature.error) throw signature.error;
     if (signature.status !== 0) throw commandFailure("codesign", signature);
+    verifyAppArchitecture(resolvedAppPath, expectedArchitecture, run);
+    verifyBundledNode(resolvedAppPath, run);
   } catch (error) {
     failure = error;
   }
 
   if (mounted) {
-    const detach = run("hdiutil", ["detach", mountDirectory]);
-    if (!failure && detach.error) failure = detach.error;
-    if (!failure && detach.status !== 0) failure = commandFailure("hdiutil detach", detach);
+    try {
+      detachDiskImage(mountDirectory, run);
+    } catch (error) {
+      if (!failure) failure = error;
+    }
   }
   try {
     cleanupDirectory(mountDirectory);

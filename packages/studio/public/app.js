@@ -23,6 +23,7 @@ const S = {
   dirty:                false,
   projectDirty:         false,
   scriptDirty:          false,
+  scriptGraphDirty:     false,
   contentHash:          null,
   activeTab:            "home",
   // Per-tab selections
@@ -62,6 +63,19 @@ const APP_INFO = {
 };
 
 const SCRIPT_UI = { collapsed: new Set(), selectedNode: null, loading: false };
+const TowerScriptGraphUI = {
+  view: "json",
+  graph: null,
+  layout: { schemaVersion: 1, nodes: {}, viewport: { x: 0, y: 0, zoom: 1 } },
+  revision: null,
+  nodeCatalog: null,
+  schemaDescriptor: null,
+  selectedNodeId: null,
+  dirty: false,
+  loading: false,
+  drag: null,
+  engineModule: null
+};
 
 const MECHANICS_MODULES = [
   { id: "combat", title: "Deep Combat", description: "Opt-in shields, project-defined damage types, armor matrices, marks, and assignments." },
@@ -354,7 +368,7 @@ $("workbench-body")?.addEventListener("click", (event) => {
 });
 
 function syncDirtyUi() {
-  S.dirty = Boolean(S.projectDirty || S.scriptDirty);
+  S.dirty = Boolean(S.projectDirty || S.scriptDirty || S.scriptGraphDirty);
   const badge = $("dirty-badge");
   const btn   = $("btn-save");
   if (badge) badge.classList.toggle("visible", S.dirty);
@@ -383,6 +397,17 @@ function markScriptDirty(isDirty) {
     invalidateBalanceReport();
     invalidateElevationLineOfSightAnalysis();
     scheduleAutosave();
+    PT.dirty = true;
+  }
+}
+
+function markTowerScriptGraphDirty(isDirty) {
+  TowerScriptGraphUI.dirty = isDirty;
+  S.scriptGraphDirty = isDirty;
+  syncDirtyUi();
+  if (isDirty) {
+    invalidateBalanceReport();
+    invalidateElevationLineOfSightAnalysis();
     PT.dirty = true;
   }
 }
@@ -487,11 +512,17 @@ async function load() {
     S.balanceReportRevision = null;
     S.releaseDoctor = null; // readiness describes the saved revision only
     S.scriptDirty = false;
+    S.scriptGraphDirty = false;
     S.projectTree = null;
     S.selectedProjectPath = null;
     S.scriptSource = "";
     S.scriptFileRevision = null;
     S.scriptOriginalId = null;
+    TowerScriptGraphUI.graph = null;
+    TowerScriptGraphUI.layout = { schemaVersion: 1, nodes: {}, viewport: { x: 0, y: 0, zoom: 1 } };
+    TowerScriptGraphUI.revision = null;
+    TowerScriptGraphUI.selectedNodeId = null;
+    TowerScriptGraphUI.dirty = false;
     CampaignUI.loaded = false;
     CampaignUI.preview = null;
     CampaignUI.error = null;
@@ -550,6 +581,11 @@ async function save() {
     if (S.scriptDirty && !await saveActiveScript({ silent: true })) {
       syncDirtyUi();
       setStatus("Script error");
+      return false;
+    }
+    if (S.scriptGraphDirty && !await saveTowerScriptGraph({ silent: true })) {
+      syncDirtyUi();
+      setStatus("Graph error");
       return false;
     }
     S.serverSnapshot = deep(S.project); // saved state becomes the new baseline
@@ -8881,10 +8917,11 @@ function renderProjectTree() {
       syncScriptTreeActions();
       return;
     }
-    if (S.scriptDirty && path !== S.selectedProjectPath) {
+    if ((S.scriptDirty || TowerScriptGraphUI.dirty) && path !== S.selectedProjectPath) {
       const discard = await confirmDialog({ title: "Discard unsaved script changes?", message: S.selectedProjectPath ?? "Unsaved TowerScript", confirmLabel: "Discard", danger: true });
       if (!discard) return;
       markScriptDirty(false);
+      markTowerScriptGraphDirty(false);
     }
     await openProjectTreeFile(path);
   }));
@@ -8914,6 +8951,10 @@ async function openProjectTreeFile(path) {
     S.scriptSource = file.source;
     S.scriptFileRevision = file.revision;
     S.scriptOriginalId = file.editable ? safeScriptDefinition(file.source)?.id ?? null : null;
+    TowerScriptGraphUI.graph = null;
+    TowerScriptGraphUI.revision = null;
+    TowerScriptGraphUI.selectedNodeId = null;
+    markTowerScriptGraphDirty(false);
     markScriptDirty(false);
     const editor = $("script-editor");
     if (editor) {
@@ -8923,6 +8964,7 @@ async function openProjectTreeFile(path) {
     }
     syncScriptEditorUi();
     validateScriptEditorSource();
+    if (TowerScriptGraphUI.view === "graph" && file.editable) await loadTowerScriptGraph();
   } catch (error) {
     toast(`Could not open file: ${error.message}`, "err");
   }
@@ -8933,6 +8975,783 @@ function safeScriptDefinition(source) {
     const value = JSON.parse(source);
     return value && typeof value === "object" && !Array.isArray(value) ? value : null;
   } catch { return null; }
+}
+
+function towerScriptGraphPosition(nodeId, index) {
+  const layout = TowerScriptGraphUI.layout?.nodes?.[nodeId]
+    ?? TowerScriptGraphUI.layout?.positions?.[nodeId];
+  const x = Number(layout?.x);
+  const y = Number(layout?.y);
+  return {
+    x: Number.isFinite(x) ? Math.max(12, x) : 24 + (index % 3) * 294,
+    y: Number.isFinite(y) ? Math.max(12, y) : 24 + Math.floor(index / 3) * 154
+  };
+}
+
+async function towerScriptGraphCanonicalAst() {
+  TowerScriptGraphUI.engineModule ??= await import("/engine/index.js");
+  const materialize = TowerScriptGraphUI.engineModule?.towerScriptGraphToAst;
+  if (typeof materialize !== "function" || !TowerScriptGraphUI.graph) {
+    throw new Error("TowerScript graph materializer is unavailable.");
+  }
+  return deep(materialize(TowerScriptGraphUI.graph));
+}
+
+function towerScriptGraphPathTokens(path) {
+  if (!path) return [];
+  return path.slice(1).split("/").map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"));
+}
+
+function towerScriptGraphValueAtPath(root, path) {
+  let value = root;
+  for (const token of towerScriptGraphPathTokens(path)) {
+    if (Array.isArray(value)) value = value[Number(token)];
+    else if (value && typeof value === "object") value = value[token];
+    else return undefined;
+  }
+  return value;
+}
+
+function towerScriptGraphHandlerPath(node) {
+  if (!node) return null;
+  if (node.kind === "handler") return node.astPath;
+  const match = node.astPath?.match(/^(\/handlers\/[^/]+\/\d+)/);
+  return match?.[1] ?? null;
+}
+
+function towerScriptGraphSelectedHandler() {
+  const selected = TowerScriptGraphUI.graph?.nodes?.find((node) => node.id === TowerScriptGraphUI.selectedNodeId);
+  return towerScriptGraphHandlerPath(selected);
+}
+
+async function rebuildTowerScriptGraph(ast, { selectedPath = null, addedPosition = null } = {}) {
+  TowerScriptGraphUI.engineModule ??= await import("/engine/index.js");
+  const projector = TowerScriptGraphUI.engineModule?.towerScriptAstToGraph;
+  if (typeof projector !== "function") throw new Error("TowerScript graph projector is unavailable.");
+  const previous = TowerScriptGraphUI.graph;
+  const previousPositions = new Map((previous?.nodes ?? []).map((node, index) => [node.astPath, towerScriptGraphPosition(node.id, index)]));
+  const next = deep(projector(ast));
+  const nextLayoutNodes = {};
+  next.nodes.forEach((node, index) => {
+    const prior = previousPositions.get(node.astPath);
+    nextLayoutNodes[node.id] = prior ?? (node.astPath === selectedPath && addedPosition
+      ? addedPosition
+      : towerScriptGraphPosition(node.id, index));
+  });
+  TowerScriptGraphUI.graph = next;
+  TowerScriptGraphUI.layout = {
+    schemaVersion: 1,
+    nodes: nextLayoutNodes,
+    viewport: TowerScriptGraphUI.layout?.viewport ?? { x: 0, y: 0, zoom: 1 }
+  };
+  TowerScriptGraphUI.selectedNodeId = selectedPath
+    ? next.nodes.find((node) => node.astPath === selectedPath)?.id ?? null
+    : null;
+  markTowerScriptGraphDirty(true);
+  renderTowerScriptGraph();
+  renderTowerScriptNodeHelp();
+  syncScriptEditorUi();
+}
+
+function towerScriptGraphCatalogEntry(group, name) {
+  const entries = TowerScriptGraphUI.nodeCatalog?.[group];
+  return (Array.isArray(entries) ? entries : []).find((entry) => (typeof entry === "string" ? entry : entry?.name) === name) ?? null;
+}
+
+function towerScriptGraphActionDefault(name, descriptor) {
+  const required = descriptor?.required && typeof descriptor.required === "object" ? descriptor.required : {};
+  const action = { action: name };
+  const first = (record, fallback) => Object.keys(record ?? {})[0] ?? fallback;
+  const firstCurrency = (S.project?.currencies ?? []).find((currency) => typeof currency?.id === "string")?.id ?? "coins";
+  const markDefinitions = S.project?.mechanics?.modules?.combat?.profiles
+    ? Object.values(S.project.mechanics.modules.combat.profiles).find((profile) => profile?.marks?.definitions)?.marks?.definitions
+    : null;
+  const exposureDefinitions = S.project?.mechanics?.modules?.reactions?.profiles
+    ? Object.values(S.project.mechanics.modules.reactions.profiles).find((profile) => profile?.exposures)?.exposures
+    : null;
+  for (const [field, hint] of Object.entries(required)) {
+    if (field === "target") action[field] = /tower/i.test(String(hint)) ? "eventTower" : "eventEnemy";
+    else if (["amount", "value", "count", "pathProgress", "duration", "stacks"].includes(field)) action[field] = 1;
+    else if (field === "resourceId") action[field] = firstCurrency;
+    else if (field === "enemyTypeId") action[field] = first(S.project?.enemies, "enemy");
+    else if (field === "terrainId") action[field] = first(S.project?.terrainTypes, "terrain");
+    else if (field === "markId") action[field] = first(markDefinitions, "mark");
+    else if (field === "exposureId") action[field] = first(exposureDefinitions, "exposure");
+    else if (field === "key") action[field] = "state";
+    else if (field === "signal") action[field] = "signal";
+    else if (field === "status") action[field] = { stun: 1 };
+    else if (field === "operations") action[field] = [{ kind: "restore_terrain", target: "eventTile" }];
+    else action[field] = 1;
+  }
+  return action;
+}
+
+async function addTowerScriptGraphNode(group, name) {
+  const descriptor = towerScriptGraphCatalogEntry(group, name);
+  if (!descriptor) return false;
+  const ast = await towerScriptGraphCanonicalAst();
+  if (!ast) return false;
+  ast.bindings ??= [];
+  ast.handlers ??= {};
+  let selectedPath = null;
+  if (group === "events") {
+    const handlers = Array.isArray(ast.handlers[name]) ? ast.handlers[name] : (ast.handlers[name] = []);
+    const defaultActionDescriptor = towerScriptGraphCatalogEntry("actions", "emitSignal");
+    handlers.push({
+      id: `on_${String(name).replace(/[^A-Za-z0-9_.-]+/g, "_")}_${handlers.length + 1}`,
+      actions: [towerScriptGraphActionDefault("emitSignal", defaultActionDescriptor?.descriptor)]
+    });
+    selectedPath = `/handlers/${String(name).replaceAll("~", "~0").replaceAll("/", "~1")}/${handlers.length - 1}`;
+  } else if (group === "scopes") {
+    ast.bindings.push({ scope: name });
+    selectedPath = `/bindings/${ast.bindings.length - 1}`;
+  } else if (group === "actions") {
+    const handlerPath = towerScriptGraphSelectedHandler();
+    const handler = handlerPath && towerScriptGraphValueAtPath(ast, handlerPath);
+    if (!handler || !Array.isArray(handler.actions)) {
+      toast("Select a handler before adding an action.", "warn");
+      return false;
+    }
+    handler.actions.push(towerScriptGraphActionDefault(name, descriptor.descriptor));
+    selectedPath = `${handlerPath}/actions/${handler.actions.length - 1}`;
+  } else if (group === "operators") {
+    const handlerPath = towerScriptGraphSelectedHandler();
+    const handler = handlerPath && towerScriptGraphValueAtPath(ast, handlerPath);
+    if (!handler) {
+      toast("Select a handler before adding a condition.", "warn");
+      return false;
+    }
+    handler.when = { $op: name, args: [true, true] };
+    selectedPath = `${handlerPath}/when`;
+  } else return false;
+  const selectedNode = TowerScriptGraphUI.graph?.nodes?.find((node) => node.id === TowerScriptGraphUI.selectedNodeId);
+  const origin = selectedNode ? towerScriptGraphPosition(selectedNode.id, 0) : { x: 24, y: 24 };
+  await rebuildTowerScriptGraph(ast, { selectedPath, addedPosition: { x: origin.x + 294, y: origin.y + 36 } });
+  return true;
+}
+
+async function reparentTowerScriptGraphNode(nodeId, destination) {
+  const node = TowerScriptGraphUI.graph?.nodes?.find((candidate) => candidate.id === nodeId);
+  const ast = await towerScriptGraphCanonicalAst();
+  if (!node || !ast || node.kind === "raw") return false;
+  let selectedPath = node.astPath;
+  if (node.kind === "handler") {
+    const tokens = towerScriptGraphPathTokens(node.astPath);
+    const oldEvent = tokens[1];
+    const oldIndex = Number(tokens[2]);
+    const source = ast.handlers?.[oldEvent];
+    if (!Array.isArray(source)) return false;
+    ast.handlers[destination] ??= [];
+    if (!Array.isArray(ast.handlers[destination])) return false;
+    const [handler] = source.splice(oldIndex, 1);
+    if (!source.length) delete ast.handlers[oldEvent];
+    ast.handlers[destination].push(handler);
+    selectedPath = `/handlers/${String(destination).replaceAll("~", "~0").replaceAll("/", "~1")}/${ast.handlers[destination].length - 1}`;
+  } else if (node.kind === "action") {
+    const sourcePath = towerScriptGraphHandlerPath(node);
+    const source = sourcePath && towerScriptGraphValueAtPath(ast, sourcePath);
+    const target = towerScriptGraphValueAtPath(ast, destination);
+    const actionIndex = Number(towerScriptGraphPathTokens(node.astPath).at(-1));
+    if (!source || !target || !Array.isArray(source.actions) || !Array.isArray(target.actions) || source.actions.length <= 1) {
+      toast("A handler must retain at least one action.", "warn");
+      return false;
+    }
+    const [action] = source.actions.splice(actionIndex, 1);
+    target.actions.push(action);
+    selectedPath = `${destination}/actions/${target.actions.length - 1}`;
+  } else if (node.kind === "condition") {
+    const sourcePath = towerScriptGraphHandlerPath(node);
+    const source = sourcePath && towerScriptGraphValueAtPath(ast, sourcePath);
+    const target = towerScriptGraphValueAtPath(ast, destination);
+    if (!source || !target || target.when !== undefined) {
+      toast("The destination handler already has a condition.", "warn");
+      return false;
+    }
+    target.when = source.when;
+    delete source.when;
+    selectedPath = `${destination}/when`;
+  } else return false;
+  await rebuildTowerScriptGraph(ast, { selectedPath });
+  return true;
+}
+
+async function deleteTowerScriptGraphNode(nodeId) {
+  const node = TowerScriptGraphUI.graph?.nodes?.find((candidate) => candidate.id === nodeId);
+  const ast = await towerScriptGraphCanonicalAst();
+  if (!node || !ast || node.kind === "script" || node.kind === "raw") return false;
+  const tokens = towerScriptGraphPathTokens(node.astPath);
+  if (node.kind === "binding") {
+    if (!Array.isArray(ast.bindings) || ast.bindings.length <= 1) {
+      toast("A TowerScript must retain at least one binding.", "warn");
+      return false;
+    }
+    ast.bindings.splice(Number(tokens[1]), 1);
+  } else if (node.kind === "handler") {
+    const handlers = ast.handlers?.[tokens[1]];
+    if (!Array.isArray(handlers)) return false;
+    handlers.splice(Number(tokens[2]), 1);
+    if (!handlers.length) delete ast.handlers[tokens[1]];
+  } else if (node.kind === "condition") {
+    const handler = towerScriptGraphValueAtPath(ast, towerScriptGraphHandlerPath(node));
+    if (!handler) return false;
+    delete handler.when;
+  } else if (node.kind === "action") {
+    const handler = towerScriptGraphValueAtPath(ast, towerScriptGraphHandlerPath(node));
+    if (!handler || !Array.isArray(handler.actions) || handler.actions.length <= 1) {
+      toast("A handler must retain at least one action.", "warn");
+      return false;
+    }
+    handler.actions.splice(Number(tokens.at(-1)), 1);
+  } else return false;
+  await rebuildTowerScriptGraph(ast);
+  return true;
+}
+
+function towerScriptGraphPointerChild(path, field) {
+  const token = String(field).replaceAll("~", "~0").replaceAll("/", "~1");
+  return `${path}/${token}`;
+}
+
+function towerScriptGraphCatalogNames(group) {
+  return (TowerScriptGraphUI.nodeCatalog?.[group] ?? [])
+    .map((entry) => typeof entry === "string" ? entry : entry?.name)
+    .filter((name) => typeof name === "string" && name);
+}
+
+function towerScriptGraphFieldOptions(node, field, hint) {
+  const schemaDescriptor = TowerScriptGraphUI.schemaDescriptor ?? {};
+  if (field === "scope") return towerScriptGraphCatalogNames("scopes");
+  if (field === "action") return towerScriptGraphCatalogNames("actions");
+  if (field === "$op") return towerScriptGraphCatalogNames("operators");
+  if (field === "target" && typeof hint === "string") {
+    const group = hint.includes("enemy target") ? "enemy" : hint.includes("tower target") ? "tower" : "entity";
+    return Array.isArray(schemaDescriptor.targets?.[group]) ? schemaDescriptor.targets[group] : [];
+  }
+  if (field === "kind" && node.kind === "action" && node.raw?.action === "terraformTiles") {
+    const descriptor = towerScriptGraphCatalogEntry("actions", "terraformTiles")?.descriptor;
+    return Array.isArray(descriptor?.operationKinds) ? descriptor.operationKinds : [];
+  }
+  const projectIds = (collection) => Array.isArray(collection)
+    ? collection.map((entry) => entry?.id).filter(Boolean)
+    : collection && typeof collection === "object" ? Object.keys(collection) : [];
+  if (field === "resourceId") return projectIds(S.project?.currencies);
+  if (field === "enemyTypeId") return projectIds(S.project?.enemies);
+  if (field === "terrainId") return projectIds(S.project?.terrainTypes);
+  return [];
+}
+
+function towerScriptGraphFieldDefault(node, field, hint) {
+  const options = towerScriptGraphFieldOptions(node, field, hint);
+  if (options.length) return options[0];
+  if (field === "enabled") return true;
+  if (field === "ids" || field === "args" || field === "operations") return [];
+  if (field === "initialState" || field === "status") return {};
+  if (field === "every" || /expression|number|integer|duration|amount|count/i.test(String(hint))) return 1;
+  return "";
+}
+
+function updateTowerScriptGraphNodeField(node, path, value) {
+  if (!path) node.raw = deep(value);
+  else {
+    const tokens = towerScriptGraphPathTokens(path);
+    let parent = node.raw;
+    for (const token of tokens.slice(0, -1)) {
+      parent = Array.isArray(parent) ? parent[Number(token)] : parent?.[token];
+    }
+    const field = tokens.at(-1);
+    if (Array.isArray(parent)) parent[Number(field)] = deep(value);
+    else if (parent && typeof parent === "object") parent[field] = deep(value);
+    else return false;
+  }
+  if (node.kind === "script" && path === "/id" && typeof value === "string" && value) {
+    TowerScriptGraphUI.graph.scriptId = value;
+  }
+  if (node.kind === "binding" && path === "/scope" && value === "global" && node.raw?.ids) {
+    delete node.raw.ids;
+  }
+  markTowerScriptGraphDirty(true);
+  syncScriptEditorUi();
+  return true;
+}
+
+function deleteTowerScriptGraphNodeField(node, path) {
+  const tokens = towerScriptGraphPathTokens(path);
+  let parent = node.raw;
+  for (const token of tokens.slice(0, -1)) {
+    parent = Array.isArray(parent) ? parent[Number(token)] : parent?.[token];
+  }
+  const field = tokens.at(-1);
+  if (Array.isArray(parent)) parent.splice(Number(field), 1);
+  else if (parent && typeof parent === "object") delete parent[field];
+  else return false;
+  markTowerScriptGraphDirty(true);
+  renderTowerScriptGraph();
+  syncScriptEditorUi();
+  return true;
+}
+
+function renderGraphNodeFields(node) {
+  const schemaDescriptor = TowerScriptGraphUI.schemaDescriptor ?? {};
+  const nodeCatalog = TowerScriptGraphUI.nodeCatalog ?? schemaDescriptor.completion?.catalog ?? {};
+  const fields = document.createElement("div");
+  fields.className = "script-graph-node-fields";
+  fields.setAttribute("data-graph-node-form", node.kind);
+  const structuralDescriptors = {
+    script: {
+      required: { schemaVersion: "TowerScript schema version", id: "safe identifier" },
+      optional: { label: "label", description: "description", enabled: "boolean", initialState: "state object" },
+      excluded: new Set(["bindings", "handlers"])
+    },
+    binding: { required: { scope: "scope enum" }, optional: { ids: "bound id list" }, excluded: new Set() },
+    handler: { required: {}, optional: { id: "safe identifier", every: "number > 0" }, excluded: new Set(["actions", "when"]) },
+    action: { required: {}, optional: {}, excluded: new Set() },
+    condition: { required: {}, optional: {}, excluded: new Set() }
+  };
+  const structural = structuralDescriptors[node.kind] ?? structuralDescriptors.condition;
+  const actionName = node.kind === "action" && typeof node.raw?.action === "string" ? node.raw.action : null;
+  const actionDescriptor = actionName
+    ? (nodeCatalog.actions ?? []).find((entry) => (typeof entry === "string" ? entry : entry?.name) === actionName)?.descriptor ?? {}
+    : {};
+  const required = { ...structural.required, ...(actionDescriptor.required ?? {}) };
+  const optional = { ...structural.optional, ...(actionDescriptor.optional ?? {}) };
+
+  const renderValue = (path, label, value, hint, depth = 0) => {
+    const fieldName = towerScriptGraphPathTokens(path).at(-1) ?? label;
+    if (Array.isArray(value)) {
+      const group = document.createElement("fieldset");
+      group.className = "script-graph-structured-field";
+      group.setAttribute("data-graph-structured", "array");
+      const legend = document.createElement("legend");
+      legend.textContent = `${label} [${value.length}]`;
+      group.append(legend);
+      value.forEach((item, index) => {
+        const itemPath = towerScriptGraphPointerChild(path, index);
+        const itemRow = renderValue(itemPath, String(index), item, hint, depth + 1);
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "script-graph-field-remove";
+        remove.textContent = "Remove";
+        remove.addEventListener("click", () => deleteTowerScriptGraphNodeField(node, itemPath));
+        itemRow.append(remove);
+        group.append(itemRow);
+      });
+      const add = document.createElement("button");
+      add.type = "button";
+      add.className = "script-graph-field-add";
+      add.textContent = "+ item";
+      add.addEventListener("click", () => {
+        const next = deep(value);
+        const fallback = fieldName === "ids" ? "" : fieldName === "operations"
+          ? { kind: "restore_terrain", target: "eventTile" }
+          : fieldName === "args" ? true : (value.length ? deep(value.at(-1)) : 0);
+        next.push(fallback);
+        updateTowerScriptGraphNodeField(node, path, next);
+        renderTowerScriptGraph();
+      });
+      group.append(add);
+      return group;
+    }
+    if (value && typeof value === "object") {
+      const group = document.createElement("fieldset");
+      group.className = "script-graph-structured-field";
+      group.setAttribute("data-graph-structured", "object");
+      const legend = document.createElement("legend");
+      legend.textContent = label;
+      group.append(legend);
+      for (const [child, childValue] of Object.entries(value)) {
+        group.append(renderValue(towerScriptGraphPointerChild(path, child), child, childValue, hint, depth + 1));
+      }
+      const add = document.createElement("button");
+      add.type = "button";
+      add.className = "script-graph-field-add";
+      add.textContent = "+ property";
+      add.addEventListener("click", () => {
+        const property = window.prompt(`Property name for ${label}`)?.trim();
+        if (!property || Object.hasOwn(value, property)) return;
+        updateTowerScriptGraphNodeField(node, towerScriptGraphPointerChild(path, property), 0);
+        renderTowerScriptGraph();
+      });
+      group.append(add);
+      return group;
+    }
+    const row = document.createElement("label");
+    row.className = "script-graph-field";
+    row.title = String(hint ?? "");
+    const caption = document.createElement("span");
+    caption.textContent = label;
+    const options = towerScriptGraphFieldOptions(node, fieldName, hint);
+    let control;
+    if (options.length) {
+      control = document.createElement("select");
+      const authored = value === null || value === undefined ? "" : String(value);
+      const names = options.includes(authored) ? options : [authored, ...options];
+      for (const optionName of names) {
+        const option = document.createElement("option");
+        option.value = optionName;
+        option.textContent = optionName;
+        control.append(option);
+      }
+      control.value = authored;
+    } else {
+      control = document.createElement("input");
+      if (typeof value === "boolean") {
+        control.type = "checkbox";
+        control.checked = value;
+      } else if (typeof value === "number") {
+        control.type = "number";
+        control.step = "any";
+        control.value = String(value);
+      } else {
+        control.type = "text";
+        control.value = value === null || value === undefined ? "null" : String(value);
+      }
+    }
+    control.setAttribute("data-graph-field", fieldName);
+    control.setAttribute("data-graph-field-path", path);
+    control.setAttribute("aria-label", `${node.kind} ${label}`);
+    const apply = () => {
+      let next;
+      if (control.type === "checkbox") next = control.checked;
+      else if (control.type === "number") {
+        next = Number(control.value);
+        if (!Number.isFinite(next)) return;
+      } else next = control.value;
+      if (node.kind === "action" && path === "/action" && next !== node.raw.action) {
+        const descriptor = towerScriptGraphCatalogEntry("actions", next)?.descriptor;
+        node.raw = towerScriptGraphActionDefault(next, descriptor);
+        markTowerScriptGraphDirty(true);
+        renderTowerScriptGraph();
+        syncScriptEditorUi();
+        return;
+      }
+      updateTowerScriptGraphNodeField(node, path, next);
+    };
+    control.addEventListener(control.tagName === "SELECT" || control.type === "checkbox" ? "change" : "input", apply);
+    row.append(caption, control);
+    return row;
+  };
+
+  if (node.kind === "condition" && (node.raw === null || typeof node.raw !== "object")) {
+    fields.append(renderValue("", "expression", node.raw, "condition expression"));
+    return fields;
+  }
+  const raw = node.raw && typeof node.raw === "object" && !Array.isArray(node.raw) ? node.raw : {};
+  const names = [...new Set([...Object.keys(required), ...Object.keys(raw), ...Object.keys(optional)])]
+    .filter((field) => !structural.excluded.has(field));
+  for (const field of names) {
+    const path = towerScriptGraphPointerChild("", field);
+    const hint = required[field] ?? optional[field] ?? "structured value";
+    if (!Object.hasOwn(raw, field)) {
+      const add = document.createElement("button");
+      add.type = "button";
+      add.className = "script-graph-field-add script-graph-field-optional";
+      add.setAttribute("data-graph-field-add", field);
+      add.textContent = `+ ${field}${Object.hasOwn(required, field) ? " (required)" : ""}`;
+      add.addEventListener("click", () => {
+        updateTowerScriptGraphNodeField(node, path, towerScriptGraphFieldDefault(node, field, hint));
+        renderTowerScriptGraph();
+      });
+      fields.append(add);
+      continue;
+    }
+    const rendered = renderValue(path, field, raw[field], hint);
+    if (Object.hasOwn(optional, field)) {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "script-graph-field-remove";
+      remove.textContent = "Remove";
+      remove.addEventListener("click", () => deleteTowerScriptGraphNodeField(node, path));
+      rendered.append(remove);
+    }
+    fields.append(rendered);
+  }
+  return fields;
+}
+
+async function loadTowerScriptGraph() {
+  if (!S.selectedProjectPath?.endsWith(".tower.json") || TowerScriptGraphUI.loading) return false;
+  TowerScriptGraphUI.loading = true;
+  const canvas = $("script-graph-canvas");
+  if (canvas) canvas.innerHTML = `<div class="workbench-empty">Loading lossless graph projection…</div>`;
+  try {
+    const result = await apiGet(`/api/project/script/graph?path=${encodeURIComponent(S.selectedProjectPath)}`); // get_tower_script_graph
+    TowerScriptGraphUI.graph = deep(result.graph);
+    TowerScriptGraphUI.layout = deep(result.layout ?? { schemaVersion: 1, nodes: {}, viewport: { x: 0, y: 0, zoom: 1 } });
+    TowerScriptGraphUI.revision = result.revision ?? result.compositeRevision ?? S.scriptFileRevision;
+    TowerScriptGraphUI.schemaDescriptor = deep(result.descriptor ?? TowerScriptGraphUI.schemaDescriptor);
+    TowerScriptGraphUI.nodeCatalog = deep(result.nodeCatalog
+      ?? result.completion?.nodeCatalog
+      ?? result.descriptor?.completion?.catalog
+      ?? null);
+    TowerScriptGraphUI.selectedNodeId = null;
+    markTowerScriptGraphDirty(false);
+    if (!TowerScriptGraphUI.nodeCatalog || !TowerScriptGraphUI.schemaDescriptor) {
+      const schema = await apiGet("/api/towerscript/schema"); // describe_schema scripts
+      TowerScriptGraphUI.schemaDescriptor = deep(schema.towerScript ?? schema.descriptor ?? TowerScriptGraphUI.schemaDescriptor);
+      TowerScriptGraphUI.nodeCatalog = deep(schema.nodeCatalog
+        ?? schema.completion
+        ?? schema.towerScript?.completion?.catalog
+        ?? null);
+    }
+    renderTowerScriptGraph();
+    renderTowerScriptNodePalette();
+    renderTowerScriptNodeHelp();
+    syncScriptEditorUi();
+    return true;
+  } catch (error) {
+    TowerScriptGraphUI.graph = null;
+    if (canvas) canvas.innerHTML = `<div class="workbench-empty">${esc(error.message)}</div>`;
+    toast(`Could not load TowerScript graph: ${error.message}`, "err");
+    return false;
+  } finally {
+    TowerScriptGraphUI.loading = false;
+  }
+}
+
+function renderTowerScriptGraph() {
+  const canvas = $("script-graph-canvas");
+  const graph = TowerScriptGraphUI.graph;
+  if (!canvas) return;
+  canvas.replaceChildren();
+  if (!graph?.nodes?.length) {
+    canvas.innerHTML = `<div class="workbench-empty">Choose a TowerScript file to open its graph.</div>`;
+    return;
+  }
+  const positions = new Map();
+  graph.nodes.forEach((node, index) => positions.set(node.id, towerScriptGraphPosition(node.id, index)));
+  const handlerNodes = graph.nodes.filter((node) => node.kind === "handler");
+  const handlerOptions = (selectedPath) => handlerNodes.map((handler) =>
+    `<option value="${esc(handler.astPath)}"${handler.astPath === selectedPath ? " selected" : ""}>${esc(handler.astPath)}</option>`
+  ).join("");
+  for (const edge of graph.edges ?? []) {
+    const from = positions.get(edge.from);
+    const to = positions.get(edge.to);
+    if (!from || !to) continue;
+    const x1 = from.x + 130;
+    const y1 = from.y + 45;
+    const x2 = to.x + 130;
+    const y2 = to.y + 45;
+    const line = document.createElement("span");
+    line.className = "script-graph-edge";
+    line.style.left = `${x1}px`;
+    line.style.top = `${y1}px`;
+    line.style.width = `${Math.hypot(x2 - x1, y2 - y1)}px`;
+    line.style.transform = `rotate(${Math.atan2(y2 - y1, x2 - x1)}rad)`;
+    canvas.append(line);
+  }
+  graph.nodes.forEach((node, index) => {
+    const position = positions.get(node.id);
+    const isRaw = node.kind === "raw";
+    const card = document.createElement("article");
+    card.className = `script-graph-node ${isRaw ? "raw" : ""}${TowerScriptGraphUI.selectedNodeId === node.id ? " selected" : ""}`;
+    card.setAttribute("data-graph-node", node.id);
+    card.style.left = `${position.x}px`;
+    card.style.top = `${position.y}px`;
+    const head = document.createElement("div");
+    head.className = "script-graph-node-head";
+    const dragHandle = document.createElement("button");
+    dragHandle.type = "button";
+    dragHandle.className = "script-graph-node-drag";
+    dragHandle.setAttribute("aria-label", `Select and move ${node.kind} node`);
+    dragHandle.innerHTML = `<span class="script-graph-node-kind">${esc(node.kind)}</span><span class="script-graph-node-path">${esc(node.astPath || node.id)}</span>`;
+    dragHandle.addEventListener("click", () => {
+      TowerScriptGraphUI.selectedNodeId = node.id;
+      renderTowerScriptNodeHelp();
+      for (const current of canvas.querySelectorAll("[data-graph-node]")) current.classList.toggle("selected", current === card);
+    });
+    dragHandle.addEventListener("pointerdown", (event) => beginTowerScriptNodeDrag(event, card, node.id));
+    head.append(dragHandle);
+    if (node.kind === "handler") {
+      const eventSelect = document.createElement("select");
+      eventSelect.setAttribute("data-graph-event", node.id);
+      eventSelect.setAttribute("aria-label", "Handler event");
+      const eventName = towerScriptGraphPathTokens(node.astPath)[1];
+      eventSelect.innerHTML = (TowerScriptGraphUI.nodeCatalog?.events ?? []).map((entry) => {
+        const name = typeof entry === "string" ? entry : entry?.name;
+        return `<option value="${esc(name ?? "")}"${name === eventName ? " selected" : ""}>${esc(name ?? "")}</option>`;
+      }).join("");
+      eventSelect.addEventListener("change", () => void reparentTowerScriptGraphNode(node.id, eventSelect.value));
+      head.append(eventSelect);
+    } else if ((node.kind === "action" || node.kind === "condition") && !isRaw && handlerNodes.length > 1) {
+      const parentSelect = document.createElement("select");
+      parentSelect.setAttribute("data-graph-parent", node.id);
+      parentSelect.setAttribute("aria-label", `${node.kind} parent handler`);
+      parentSelect.innerHTML = handlerOptions(towerScriptGraphHandlerPath(node));
+      parentSelect.addEventListener("change", () => void reparentTowerScriptGraphNode(node.id, parentSelect.value));
+      head.append(parentSelect);
+    }
+    if (node.kind !== "script" && !isRaw) {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "script-graph-node-delete";
+      remove.setAttribute("data-graph-delete", node.id);
+      remove.setAttribute("aria-label", `Delete ${node.kind} node`);
+      remove.textContent = "×";
+      remove.addEventListener("click", () => void deleteTowerScriptGraphNode(node.id));
+      head.append(remove);
+    }
+    if (isRaw) {
+      const source = document.createElement("textarea");
+      source.spellcheck = false;
+      source.setAttribute("aria-label", "Unknown future node raw JSON");
+      source.value = JSON.stringify(node.raw, null, 2);
+      source.readOnly = true;
+      source.title = "Unknown future node: preserved as raw JSON and read only in this Studio version.";
+      card.append(head, source);
+    } else {
+      card.append(head, renderGraphNodeFields(node));
+    }
+    canvas.append(card);
+  });
+}
+
+function beginTowerScriptNodeDrag(event, card, nodeId) {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  TowerScriptGraphUI.selectedNodeId = nodeId;
+  renderTowerScriptNodeHelp();
+  for (const current of card.parentElement?.querySelectorAll("[data-graph-node]") ?? []) {
+    current.classList.toggle("selected", current === card);
+  }
+  const start = { x: event.clientX, y: event.clientY, left: card.offsetLeft, top: card.offsetTop };
+  TowerScriptGraphUI.drag = { nodeId, pointerId: event.pointerId, card, start };
+  card.setPointerCapture?.(event.pointerId);
+  const move = (moveEvent) => {
+    if (TowerScriptGraphUI.drag?.pointerId !== moveEvent.pointerId) return;
+    card.style.left = `${Math.max(12, start.left + moveEvent.clientX - start.x)}px`;
+    card.style.top = `${Math.max(12, start.top + moveEvent.clientY - start.y)}px`;
+  };
+  const finish = (upEvent) => {
+    if (TowerScriptGraphUI.drag?.pointerId !== upEvent.pointerId) return;
+    card.removeEventListener("pointermove", move);
+    card.removeEventListener("pointerup", finish);
+    card.removeEventListener("pointercancel", finish);
+    TowerScriptGraphUI.layout = {
+      schemaVersion: 1,
+      nodes: {
+        ...(TowerScriptGraphUI.layout?.nodes ?? TowerScriptGraphUI.layout?.positions ?? {}),
+        [nodeId]: { x: card.offsetLeft, y: card.offsetTop }
+      },
+      viewport: TowerScriptGraphUI.layout?.viewport ?? { x: 0, y: 0, zoom: 1 }
+    };
+    TowerScriptGraphUI.drag = null;
+    markTowerScriptGraphDirty(true);
+    renderTowerScriptGraph();
+    syncScriptEditorUi();
+  };
+  card.addEventListener("pointermove", move);
+  card.addEventListener("pointerup", finish);
+  card.addEventListener("pointercancel", finish);
+}
+
+function renderTowerScriptNodePalette() {
+  const panel = $("script-graph-node-palette");
+  if (!panel) return;
+  const nodeCatalog = TowerScriptGraphUI.nodeCatalog ?? {};
+  const groups = [
+    ["Events", "events", nodeCatalog.events],
+    ["Actions", "actions", nodeCatalog.actions],
+    ["Operators", "operators", nodeCatalog.operators],
+    ["Scopes", "scopes", nodeCatalog.scopes]
+  ];
+  panel.innerHTML = groups.map(([label, group, entries]) => {
+    const items = (Array.isArray(entries) ? entries : []).map((entry) => {
+      const name = typeof entry === "string" ? entry : entry?.name;
+      return `<button class="script-graph-palette-item" type="button" data-node-catalog-group="${esc(group)}" data-node-catalog-name="${esc(name ?? "")}" title="Add ${esc(name ?? "node")}">${esc(name ?? "Unknown")}</button>`;
+    }).join("");
+    return `<div class="script-graph-palette-group"><div class="script-graph-palette-title">${esc(label)}</div>${items || `<span class="text-muted">No entries</span>`}</div>`;
+  }).join("");
+  panel.querySelectorAll("[data-node-catalog-name]").forEach((button) => button.addEventListener("click", () => {
+    renderTowerScriptNodeHelp(button.dataset.nodeCatalogName);
+    void addTowerScriptGraphNode(button.dataset.nodeCatalogGroup, button.dataset.nodeCatalogName);
+  }));
+}
+
+function renderTowerScriptNodeHelp(catalogName) {
+  const panel = $("script-graph-help");
+  if (!panel) return;
+  const nodeCatalog = TowerScriptGraphUI.nodeCatalog ?? {};
+  const selected = TowerScriptGraphUI.graph?.nodes?.find((node) => node.id === TowerScriptGraphUI.selectedNodeId);
+  const all = [nodeCatalog.events, nodeCatalog.actions, nodeCatalog.operators, nodeCatalog.scopes]
+    .flatMap((entries) => Array.isArray(entries) ? entries : []);
+  const descriptor = all.find((entry) => (typeof entry === "string" ? entry : entry?.name) === catalogName)
+    ?? (selected ? { name: selected.kind, descriptor: selected.raw } : null);
+  if (!descriptor) {
+    panel.textContent = "Select a node or a descriptor-driven palette item. Required and optional fields come from the engine schema.";
+    return;
+  }
+  const name = typeof descriptor === "string" ? descriptor : descriptor.name;
+  const details = typeof descriptor === "string" ? {} : descriptor.descriptor ?? {};
+  const required = details.required ?? details.requiredFields ?? [];
+  const optional = details.optional ?? details.optionalFields ?? [];
+  panel.innerHTML = `<strong>${esc(name ?? "TowerScript node")}</strong><br><code>required</code>: ${esc(JSON.stringify(required))}<br><code>optional</code>: ${esc(JSON.stringify(optional))}<pre>${esc(JSON.stringify(details, null, 2))}</pre>`;
+}
+
+async function saveTowerScriptGraph(options) {
+  const silent = options?.silent ?? false;
+  if (!TowerScriptGraphUI.dirty) return true;
+  if (!S.selectedProjectPath?.endsWith(".tower.json") || !TowerScriptGraphUI.graph) return false;
+  try {
+    const candidate = {
+      path: S.selectedProjectPath,
+      graph: TowerScriptGraphUI.graph,
+      layout: TowerScriptGraphUI.layout,
+      ifRevision: TowerScriptGraphUI.revision,
+      contentHash: S.contentHash
+    };
+    const preview = await apiPost("/api/project/script/graph/preview", candidate); // preview_tower_script_graph
+    if (preview.ok === false || preview.validation?.ok === false) {
+      const issues = preview.validation?.issues ?? preview.issues ?? [];
+      throw Object.assign(new Error("TowerScript graph preview did not validate."), { issues });
+    }
+    const applied = await apiPost("/api/project/script/graph/apply", {
+      ...candidate,
+      ifRevision: preview.revision
+    }); // apply_tower_script_graph
+    TowerScriptGraphUI.revision = applied.revision ?? applied.compositeRevision ?? preview.revision;
+    S.scriptFileRevision = applied.fileRevision ?? S.scriptFileRevision;
+    S.contentHash = applied.newHash ?? applied.contentHash ?? S.contentHash;
+    const file = await apiGet(`/api/project/file?path=${encodeURIComponent(S.selectedProjectPath)}`);
+    const definition = safeScriptDefinition(file.source);
+    if (!definition) throw new Error("Applied graph did not produce a TowerScript AST.");
+    if (S.scriptOriginalId && S.scriptOriginalId !== definition.id) delete S.project.scripts?.[S.scriptOriginalId];
+    S.project.scripts ??= {};
+    S.project.scripts[definition.id] = definition;
+    S.scriptSource = file.source;
+    S.scriptOriginalId = definition.id;
+    S.scriptFileRevision = file.revision ?? S.scriptFileRevision;
+    const editor = $("script-editor");
+    if (editor) editor.value = file.source;
+    markTowerScriptGraphDirty(false);
+    PT.dirty = true;
+    await refreshProjectTree();
+    syncScriptEditorUi();
+    recordActivity("TowerScript graph saved", "ok", S.selectedProjectPath);
+    if (!silent) toast("TowerScript graph saved.", "ok");
+    return true;
+  } catch (error) {
+    const issues = error.issues ?? [];
+    const diagnostics = $("script-diagnostics");
+    if (diagnostics && issues.length) diagnostics.innerHTML = issues.map((issue) => `<div class="script-diagnostic">${ICO.err}<span>${esc(issue.message)} <code>${esc(issue.fieldPath ?? "")}</code></span></div>`).join("");
+    if (!silent) toast(`Graph save failed: ${error.message}`, "err");
+    return false;
+  }
+}
+
+async function setTowerScriptView(view) {
+  if (view !== "json" && view !== "graph") return;
+  if (view === TowerScriptGraphUI.view) return;
+  if (TowerScriptGraphUI.view === "json" && S.scriptDirty) {
+    toast("Save the JSON projection before opening Graph.", "warn");
+    return;
+  }
+  if (TowerScriptGraphUI.view === "graph" && TowerScriptGraphUI.dirty) {
+    toast("Save the Graph projection before returning to JSON.", "warn");
+    return;
+  }
+  TowerScriptGraphUI.view = view;
+  syncScriptEditorUi();
+  if (view === "graph" && !TowerScriptGraphUI.graph) await loadTowerScriptGraph();
 }
 
 function validateScriptEditorSource() {
@@ -8961,11 +9780,29 @@ function validateScriptEditorSource() {
 function syncScriptEditorUi() {
   const editor = $("script-editor");
   const isScript = Boolean(S.selectedProjectPath?.endsWith(".tower.json"));
+  const graphView = TowerScriptGraphUI.view === "graph";
   if ($("script-editor-path")) $("script-editor-path").textContent = S.selectedProjectPath ?? "Select a file";
   if (editor && document.activeElement !== editor && editor.value !== S.scriptSource) editor.value = S.scriptSource;
   if (editor && !S.selectedProjectPath) editor.disabled = true;
+  if (editor) editor.hidden = graphView;
+  if ($("script-graph-pane")) $("script-graph-pane").hidden = !graphView;
+  for (const [id, active] of [["script-view-json", !graphView], ["script-view-graph", graphView]]) {
+    const button = $(id);
+    if (!button) continue;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+    button.disabled = !isScript;
+  }
   const valid = validateScriptEditorSource();
-  if ($("btn-script-save")) $("btn-script-save").disabled = !isScript || !S.scriptDirty || !valid;
+  const save = $("btn-script-save");
+  if (save) {
+    save.textContent = graphView ? "Save Graph" : "Save Script";
+    save.disabled = !isScript || (graphView ? !TowerScriptGraphUI.dirty || !TowerScriptGraphUI.graph : !S.scriptDirty || !valid);
+  }
+  if (graphView && $("script-editor-state")) {
+    $("script-editor-state").textContent = TowerScriptGraphUI.loading ? "Loading Graph" : TowerScriptGraphUI.dirty ? "Unsaved Graph" : TowerScriptGraphUI.graph ? "Lossless Graph" : "Graph unavailable";
+    $("script-editor-state").className = `script-editor-state${TowerScriptGraphUI.dirty ? " dirty" : ""}`;
+  }
   syncScriptTreeActions();
 }
 
@@ -9043,10 +9880,12 @@ $("script-editor")?.addEventListener("keydown", (event) => {
   editor.setRangeText("  ", start, editor.selectionEnd, "end");
   editor.dispatchEvent(new Event("input", { bubbles: true }));
 });
-$("btn-script-save")?.addEventListener("click", () => saveActiveScript());
+$("btn-script-save")?.addEventListener("click", () => TowerScriptGraphUI.view === "graph" ? saveTowerScriptGraph() : saveActiveScript());
+$("script-view-json")?.addEventListener("click", () => void setTowerScriptView("json"));
+$("script-view-graph")?.addEventListener("click", () => void setTowerScriptView("graph"));
 $("btn-script-refresh")?.addEventListener("click", refreshProjectTree);
 $("btn-script-new")?.addEventListener("click", async () => {
-  if (S.scriptDirty) { toast("Save or discard the current script first.", "warn"); return; }
+  if (S.scriptDirty || S.scriptGraphDirty) { toast("Save or discard the current script first.", "warn"); return; }
   const requested = window.prompt("New TowerScript path", "scripts/gameplay/new-rule.tower.json");
   if (!requested) return;
   const path = requested.replaceAll("\\", "/");
@@ -9055,6 +9894,9 @@ $("btn-script-new")?.addEventListener("click", async () => {
   S.scriptFileRevision = "missing";
   S.scriptOriginalId = null;
   S.scriptSource = newTowerScriptSource(id);
+  TowerScriptGraphUI.view = "json";
+  TowerScriptGraphUI.graph = null;
+  markTowerScriptGraphDirty(false);
   SCRIPT_UI.selectedNode = { path, kind: "file", manageable: true, editable: true };
   const editor = $("script-editor");
   editor.disabled = false;
@@ -9076,7 +9918,7 @@ $("btn-script-folder")?.addEventListener("click", async () => {
 $("btn-script-rename")?.addEventListener("click", async () => {
   const selected = SCRIPT_UI.selectedNode;
   if (!selected?.manageable) return;
-  if (S.scriptDirty) { toast("Save or discard the current script first.", "warn"); return; }
+  if (S.scriptDirty || S.scriptGraphDirty) { toast("Save or discard the current script first.", "warn"); return; }
   const to = window.prompt("Rename project entry", selected.path);
   if (!to || to === selected.path) return;
   try {
@@ -9091,7 +9933,7 @@ $("btn-script-rename")?.addEventListener("click", async () => {
 $("btn-script-delete")?.addEventListener("click", async () => {
   const selected = SCRIPT_UI.selectedNode;
   if (!selected?.manageable) return;
-  if (S.scriptDirty) { toast("Save or discard the current script first.", "warn"); return; }
+  if (S.scriptDirty || S.scriptGraphDirty) { toast("Save or discard the current script first.", "warn"); return; }
   const confirmed = await confirmDialog({ title: `Delete ${selected.path}?`, message: "A backup will be kept under .towerforge/backups/scripts.", confirmLabel: "Delete", danger: true });
   if (!confirmed) return;
   try {
@@ -10411,7 +11253,8 @@ const PT = {
   mod: null, rmod: null, content: null, game: null, renderer: null, raf: null,
   towerId: null, missionId: null, difficultyId: null, keyboardCoord: null, dirty: true, lastFrame: 0, error: null,
   events: [], selectedDebug: null, resumeSpeed: 1, lastDebugRender: 0,
-  navigationOverlayKey: null, navigationOverlayRequest: 0, artifactUiDirty: true
+  navigationOverlayKey: null, navigationOverlayRequest: 0, artifactUiDirty: true,
+  debugSession: null, debugCursor: null, debugPendingEvents: []
 };
 const PT_KIND_COLOR = { single: "#e8a44a", pulse: "#a07ec8", sniper: "#7eb87e", antiair: "#e8c84a", splash: "#6ea8d8", support: "#7ec8b8", support_buff: "#c87e9c", pipeline: "#79c8d3" };
 const PT_TARGET_MODES = [["first", "First"], ["last", "Last"], ["closest", "Closest"], ["furthest", "Furthest"], ["strongest", "Strongest"], ["weakest", "Weakest"]];
@@ -10568,7 +11411,24 @@ function newPlaytestGame() {
   if (!PT.missionId) { PT.error = "No playable missions in this project."; PT.game = null; return null; }
   const difficultyIds = PT.content.difficulties.map((item) => item.id);
   if (!difficultyIds.includes(PT.difficultyId)) PT.difficultyId = PT.content.defaultDifficultyId;
-  try { PT.game = new PT.mod.TowerDefenseGame({ missionId: PT.missionId, content: PT.content, difficultyId: PT.difficultyId }); }
+  try {
+    const game = new PT.mod.TowerDefenseGame({ missionId: PT.missionId, content: PT.content, difficultyId: PT.difficultyId });
+    if ($("script-debug-enabled")?.checked && PT.mod.TowerScriptDebugSession) {
+      PT.debugSession = new PT.mod.TowerScriptDebugSession({
+        content: PT.content,
+        initial: game,
+        checkpointRingCapacity: 240,
+        trace: { maxEntries: 512 }
+      });
+      PT.game = PT.debugSession.game;
+      PT.debugPendingEvents = [...PT.game.getRenderSnapshot().lastEvents];
+    } else {
+      PT.debugSession = null;
+      PT.game = game;
+      PT.debugPendingEvents = [];
+    }
+    PT.debugCursor = null;
+  }
   catch (e) { PT.error = "Cannot start mission: " + e.message; PT.game = null; return null; }
   const m = PT.content.missions[PT.missionId];
   const tids = (m.buildTowerIds?.length ? m.buildTowerIds : Object.keys(PT.content.towers));
@@ -10579,9 +11439,140 @@ function newPlaytestGame() {
   PT.keyboardCoord = null;
   syncPlaytestKeyboardCoord(ensurePlaytestKeyboardCoord());
   renderPlaytestDebugger(PT.game.getSnapshot());
+  renderTowerScriptDebugger();
   void refreshNavigationOverlay();
   return PT.game;
 }
+
+function dispatchPlaytestCommand(command, legacyDispatch) {
+  if (!PT.debugSession) return legacyDispatch();
+  const result = PT.debugSession.dispatch(command);
+  PT.game = PT.debugSession.game;
+  PT.debugPendingEvents = [...PT.game.getRenderSnapshot().lastEvents];
+  PT.debugCursor = null;
+  renderTowerScriptDebugger();
+  return result;
+}
+
+function syncTowerScriptDebuggerControls() {
+  const enabled = Boolean(PT.debugSession);
+  for (const id of ["script-debug-step-mode", "btn-script-debug-step", "btn-script-debug-resume", "script-debug-rewind-ticks", "btn-script-debug-rewind"]) {
+    if ($(id)) $(id).disabled = !enabled;
+  }
+}
+
+function stepTowerScriptDebugger() {
+  if (!PT.debugSession) return null;
+  const mode = $("script-debug-step-mode")?.value ?? "tick";
+  const speed = $("pt-speed");
+  if (speed) {
+    const currentSpeed = Number(speed.value);
+    if (currentSpeed > 0) PT.resumeSpeed = currentSpeed;
+    speed.value = "0";
+    speed.dispatchEvent(new Event("input"));
+  }
+  try {
+    const result = PT.debugSession.step(mode);
+    PT.debugCursor = result ? {
+      cursor: result.cursor,
+      traceEntry: result.traceEntry,
+      snapshot: result.snapshot,
+      stateDigest: result.stateDigest
+    } : null;
+    if (result?.snapshot && PT.renderer) {
+      const historical = deep(result.snapshot);
+      historical.lastEvents = [];
+      PT.renderer.drawSnapshot(historical);
+      updatePlaytestHud(historical);
+      renderPlaytestDebugger(historical);
+    }
+    renderTowerScriptDebugger(result);
+    if (!result) toast(`No retained ${mode} trace entry to inspect.`, "warn");
+    return result;
+  } catch (error) {
+    toast(`Debugger step failed: ${error.message}`, "err");
+    return null;
+  }
+}
+
+function rewindTowerScriptDebugger() {
+  if (!PT.debugSession) return null;
+  const ticks = Number($("script-debug-rewind-ticks")?.value);
+  try {
+    const result = PT.debugSession.rewindTicks(ticks);
+    if (!result.ok) {
+      toast(`Cannot rewind: ${result.reasonKey ?? "outside retained checkpoint ring"}.`, "warn");
+      renderTowerScriptDebugger();
+      return result;
+    }
+    PT.game = PT.debugSession.game;
+    PT.debugCursor = null;
+    PT.events = [];
+    PT.debugPendingEvents = [];
+    const snapshot = PT.game.getRenderSnapshot();
+    snapshot.lastEvents = [];
+    PT.renderer?.drawSnapshot(snapshot);
+    updatePlaytestHud(PT.game.getSnapshot());
+    renderPlaytestDebugger(PT.game.getSnapshot());
+    renderTowerScriptDebugger();
+    toast(`Rewound ${ticks} tick${ticks === 1 ? "" : "s"}.`, "ok");
+    return result;
+  } catch (error) {
+    toast(`Debugger rewind failed: ${error.message}`, "err");
+    return null;
+  }
+}
+
+function resumeTowerScriptDebugger() {
+  if (!PT.debugSession) return null;
+  const result = PT.debugSession.resume();
+  PT.game = PT.debugSession.game;
+  PT.debugCursor = null;
+  const snapshot = PT.game.getRenderSnapshot();
+  if (PT.renderer) {
+    PT.renderer.drawSnapshot(snapshot);
+    updatePlaytestHud(snapshot);
+    renderPlaytestDebugger(snapshot);
+  }
+  const speed = $("pt-speed");
+  if (speed) {
+    speed.value = String(PT.resumeSpeed > 0 ? PT.resumeSpeed : 1);
+    speed.dispatchEvent(new Event("input"));
+  }
+  renderTowerScriptDebugger();
+  return result;
+}
+
+function renderTowerScriptDebugger(frame) {
+  const state = $("script-debug-state");
+  const panel = $("script-debug-trace");
+  syncTowerScriptDebuggerControls();
+  if (!state || !panel) return;
+  if (!PT.debugSession) {
+    state.textContent = "Debugger disabled — legacy playtest path is active.";
+    panel.replaceChildren();
+    return;
+  }
+  const phaseLabels = ["event", "binding", "handler", "condition", "action", "state_diff", "diagnostic"];
+  const trace = PT.debugSession.getTrace();
+  const ring = PT.debugSession.getCheckpointRing();
+  const cursor = frame?.cursor ?? PT.debugCursor?.cursor;
+  const snapshot = frame?.snapshot ?? PT.debugCursor?.snapshot;
+  state.textContent = cursor
+    ? `Paused preview · ${cursor.mode} ${cursor.sequence} · trace ${cursor.traceSequence} · tick ${ring.newestTick} · ${snapshot?.outcome ?? "playing"}`
+    : `Live · trace ${trace?.entries?.length ?? 0}/${trace?.maxEntries ?? 0} · dropped ${trace?.droppedEntries ?? 0} · checkpoints ${ring.size}/${ring.capacity} · ticks ${ring.oldestTick}–${ring.newestTick}`;
+  const entries = [...(trace?.entries ?? [])].slice(-80).reverse();
+  panel.innerHTML = entries.map((entry) => {
+    const changes = (entry.changes ?? []).map((change) => `${change.op} ${change.path}: before=${JSON.stringify(change.before)} after=${JSON.stringify(change.after)}`).join("; ");
+    const diagnostic = entry.diagnostic ? `${entry.diagnostic.code ?? "diagnostic"}: ${entry.diagnostic.message ?? JSON.stringify(entry.diagnostic)}` : "";
+    const action = entry.action ? JSON.stringify(entry.action) : "";
+    const detail = diagnostic || changes || action || entry.handlerId || entry.eventName || entry.scope || "";
+    const phase = phaseLabels.includes(entry.phase) ? entry.phase : "diagnostic";
+    const active = cursor?.traceSequence === entry.sequence ? " selected" : "";
+    return `<div class="script-debug-trace-entry ${esc(phase)}${active}"><span>#${entry.sequence}</span><span class="script-debug-trace-phase">${esc(phase)}</span><span class="script-debug-trace-detail" title="${esc(detail)}">${esc(detail)}</span></div>`;
+  }).join("");
+}
+
 async function renderPlaytestTab() {
   const empty = $("playtest-empty"), stage = $("playtest-stage"), side = $("playtest-side");
   const fail = msg => { empty.style.display = "flex"; empty.querySelector("p").textContent = msg; stage.style.display = "none"; side.style.display = "none"; stopPlaytestLoop(); };
@@ -10692,11 +11683,18 @@ function renderPlaytestArtifacts(snapshot = PT.game?.getSnapshot()) {
       button.setAttribute("data-pt-draft-card-id", option.cardId);
       button.textContent = option.label;
       button.addEventListener("click", () => {
-        const result = PT.mod.dispatchGameCommand(PT.game, {
+        const command = {
           schemaVersion: 3, type: "chooseDraftOption",
           offerId: pendingOffer.offerId,
           cardId: option.cardId
-        });
+        };
+        const result = PT.debugSession
+          ? dispatchPlaytestCommand(command, () => PT.mod.dispatchGameCommand(PT.game, command))
+          : PT.mod.dispatchGameCommand(PT.game, {
+            schemaVersion: 3, type: "chooseDraftOption",
+            offerId: pendingOffer.offerId,
+            cardId: option.cardId
+          });
         ptMsg(result, "Wave upgrade selected.");
         if (result.ok) {
           PT.artifactUiDirty = true;
@@ -10736,22 +11734,42 @@ function renderPlaytestArtifacts(snapshot = PT.game?.getSnapshot()) {
       row.append(button);
     };
     if (artifact.socket) {
-      addAction("unsocket", "Unsocket", () => PT.mod.dispatchGameCommand(PT.game, {
-        schemaVersion: 2, type: "unsocketArtifact",
-        artifactInstanceId: artifact.instanceId,
-        towerId: artifact.socket.towerId,
-        slotId: artifact.socket.slotId
-      }));
+      addAction("unsocket", "Unsocket", () => {
+        const command = {
+          schemaVersion: 2, type: "unsocketArtifact",
+          artifactInstanceId: artifact.instanceId,
+          towerId: artifact.socket.towerId,
+          slotId: artifact.socket.slotId
+        };
+        return PT.debugSession
+          ? dispatchPlaytestCommand(command, () => PT.mod.dispatchGameCommand(PT.game, command))
+          : PT.mod.dispatchGameCommand(PT.game, {
+            schemaVersion: 2, type: "unsocketArtifact",
+            artifactInstanceId: artifact.instanceId,
+            towerId: artifact.socket.towerId,
+            slotId: artifact.socket.slotId
+          });
+      });
     } else {
       const tower = presentation.artifacts.towerSlots?.find((item) => item.towerId === selectedTowerId);
       for (const slot of tower?.slots ?? []) {
         if (slot.slotType !== artifact.slotType || slot.artifactInstanceId !== null) continue;
-        addAction("socket", `Socket in ${slot.slotId}`, () => PT.mod.dispatchGameCommand(PT.game, {
-          schemaVersion: 2, type: "socketArtifact",
-          artifactInstanceId: artifact.instanceId,
-          towerId: tower.towerId,
-          slotId: slot.slotId
-        }));
+        addAction("socket", `Socket in ${slot.slotId}`, () => {
+          const command = {
+            schemaVersion: 2, type: "socketArtifact",
+            artifactInstanceId: artifact.instanceId,
+            towerId: tower.towerId,
+            slotId: slot.slotId
+          };
+          return PT.debugSession
+            ? dispatchPlaytestCommand(command, () => PT.mod.dispatchGameCommand(PT.game, command))
+            : PT.mod.dispatchGameCommand(PT.game, {
+              schemaVersion: 2, type: "socketArtifact",
+              artifactInstanceId: artifact.instanceId,
+              towerId: tower.towerId,
+              slotId: slot.slotId
+            });
+        });
       }
     }
     panel.append(row);
@@ -10878,13 +11896,19 @@ function renderPlaytestDebugger(snapshot = PT.game?.getSnapshot()) {
       ? `<div class="pt-inspector-head"><span><strong>${esc(type?.label || tower.typeId)}</strong> <code>${esc(tower.id)}</code></span><button class="btn btn-danger" type="button" data-pt-sell>Sell ${esc(Object.entries(refund ?? {}).filter(([, value]) => value > 0).map(([resourceId, value]) => `${value} ${resourceId}`).join(" + ") || "tower")}</button></div><div>level ${tower.level} · cooldown ${tower.cooldown.toFixed(2)}${tower.hp != null ? ` · HP ${Math.ceil(tower.hp)}/${type?.maxHp ?? "?"}` : ""}${tower.disabledFor ? ` · disabled ${tower.disabledFor.toFixed(1)}` : ""}</div>${targetMode ? `<label class="pt-target-mode">Target priority<select data-pt-target-mode>${targetOptions}</select></label>` : ""}`
       : `<code>${esc(selected.id)}</code> is no longer active.`;
     inspector.querySelector("[data-pt-sell]")?.addEventListener("click", () => {
-      const result = PT.game?.sellTower(selected.id) ?? { ok: false, reason: "No active game." };
+      const command = { schemaVersion: 1, type: "sellTower", towerId: selected.id };
+      const result = PT.game
+        ? dispatchPlaytestCommand(command, () => PT.game.sellTower(selected.id))
+        : { ok: false, reason: "No active game." };
       ptMsg(result, "Tower sold.");
       if (result.ok) PT.selectedDebug = null;
       renderPlaytestDebugger(PT.game?.getSnapshot());
     });
     inspector.querySelector("[data-pt-target-mode]")?.addEventListener("change", (event) => {
-      const result = PT.game?.setTowerTargetMode(selected.id, event.target.value) ?? { ok: false, reason: "No active game." };
+      const command = { schemaVersion: 1, type: "setTargetMode", towerId: selected.id, mode: event.target.value };
+      const result = PT.game
+        ? dispatchPlaytestCommand(command, () => PT.game.setTowerTargetMode(selected.id, event.target.value))
+        : { ok: false, reason: "No active game." };
       ptMsg(result, `Target priority: ${event.target.selectedOptions[0]?.textContent ?? event.target.value}.`);
       renderPlaytestDebugger(PT.game?.getSnapshot());
     });
@@ -10931,20 +11955,32 @@ function startPlaytestLoop() {
   PT.lastFrame = performance.now();
   const loop = now => {
     if (S.activeTab !== "playtest" || !PT.game) { PT.raf = null; return; }
+    if (PT.debugCursor?.snapshot) {
+      const historical = deep(PT.debugCursor.snapshot);
+      historical.lastEvents = [];
+      PT.renderer.drawSnapshot(historical);
+      updatePlaytestHud(historical);
+      PT.raf = requestAnimationFrame(loop);
+      return;
+    }
     const dt = Math.min(0.05, (now - PT.lastFrame) / 1000);
     PT.lastFrame = now;
     const speed = Number($("pt-speed")?.value) || 0;
     // Capture player-action events before tick() clears them, so their sounds/effects fire.
     let rsnap = PT.game.getRenderSnapshot();
-    const pending = rsnap.lastEvents;
+    const pending = PT.debugSession ? PT.debugPendingEvents.splice(0) : rsnap.lastEvents;
     const ticked = speed > 0 && rsnap.outcome === "playing";
     if (ticked) {
       const tu = PT.content.constants.timeUnitSeconds || 1;
-      PT.game.tick((dt / tu) * speed);
+      const units = (dt / tu) * speed;
+      const command = { schemaVersion: 1, type: "tick", units };
+      dispatchPlaytestCommand(command, () => PT.game.tick(units));
       rsnap = PT.game.getRenderSnapshot();
     }
-    const events = ticked ? pending.concat(rsnap.lastEvents) : pending;
-    PT.game.lastEvents = []; // consumed this frame — clear so nothing replays next frame
+    const current = PT.debugSession ? PT.debugPendingEvents.splice(0) : rsnap.lastEvents;
+    const events = ticked ? pending.concat(current) : pending;
+    // Debug sessions are journal-authoritative: presentation never mutates game.lastEvents.
+    if (!PT.debugSession) PT.game.lastEvents = [];
     rsnap.lastEvents = events;
     presentPlaytestSnapshot(rsnap, events);
     PT.raf = requestAnimationFrame(loop);
@@ -10984,7 +12020,12 @@ function updatePlaytestHud(s = PT.game.getSnapshot()) {
 function ptMsg(result, success = "Action completed.") { const el = $("pt-msg"); if (el) el.textContent = result.ok ? success : (result.reason || "Action rejected."); }
 $("pt-mission")?.addEventListener("change", () => { PT.missionId = $("pt-mission").value; clearNavigationOverlay("Mission changed"); newPlaytestGame(); renderPlaytestPalette(); void refreshNavigationOverlay(); const el = $("pt-msg"); if (el) el.textContent = "Mission loaded — place towers and start a wave."; });
 $("pt-difficulty")?.addEventListener("change", () => { PT.difficultyId = $("pt-difficulty").value; clearNavigationOverlay("Difficulty changed"); newPlaytestGame(); renderPlaytestPalette(); void refreshNavigationOverlay(); const el = $("pt-msg"); if (el) el.textContent = `Difficulty: ${PT.game?.getSnapshot().difficultyLabel ?? PT.difficultyId}.`; });
-$("pt-start")?.addEventListener("click", () => { PT.audio?.resume(); if (PT.game) ptMsg(PT.game.startNextWave(), "Wave started."); });
+$("pt-start")?.addEventListener("click", () => {
+  PT.audio?.resume();
+  if (!PT.game) return;
+  const command = { schemaVersion: 1, type: "startWave" };
+  ptMsg(dispatchPlaytestCommand(command, () => PT.game.startNextWave()), "Wave started.");
+});
 $("pt-reset")?.addEventListener("click", () => { clearNavigationOverlay("Run reset"); if (buildPlaytestContent()) { newPlaytestGame(); renderPlaytestPalette(); void refreshNavigationOverlay(); } const el = $("pt-msg"); if (el) el.textContent = "Run reset."; });
 $("pt-speed")?.addEventListener("input", () => { const o = $("pt-speed-out"); if (o) o.textContent = $("pt-speed").value + "×"; if (Number($("pt-speed").value) > 0) PT.resumeSpeed = Number($("pt-speed").value); syncPlaytestPauseButton(); });
 $("pt-pause")?.addEventListener("click", () => {
@@ -10998,12 +12039,39 @@ $("pt-step")?.addEventListener("click", () => {
   if (!PT.game || PT.game.getSnapshot().outcome !== "playing") return;
   const speed = $("pt-speed");
   if (speed) { speed.value = "0"; speed.dispatchEvent(new Event("input")); }
-  const pending = PT.game.getRenderSnapshot().lastEvents;
-  PT.game.tick(0.1);
+  const pending = PT.debugSession
+    ? PT.debugPendingEvents.splice(0)
+    : PT.game.getRenderSnapshot().lastEvents;
+  const command = { schemaVersion: 1, type: "tick", units: 0.1 };
+  dispatchPlaytestCommand(command, () => PT.game.tick(0.1));
   const snapshot = PT.game.getRenderSnapshot();
-  const events = pending.concat(snapshot.lastEvents);
-  PT.game.lastEvents = [];
+  const current = PT.debugSession ? PT.debugPendingEvents.splice(0) : snapshot.lastEvents;
+  const events = pending.concat(current);
+  if (!PT.debugSession) PT.game.lastEvents = [];
   presentPlaytestSnapshot(snapshot, events);
+});
+$("script-debug-enabled")?.addEventListener("change", () => {
+  if (!PT.content || !PT.mod) {
+    renderTowerScriptDebugger();
+    return;
+  }
+  clearNavigationOverlay("TowerScript debugger session reset");
+  newPlaytestGame();
+  renderPlaytestPalette();
+  const snapshot = PT.game?.getRenderSnapshot();
+  if (snapshot && PT.renderer) PT.renderer.drawSnapshot(snapshot);
+  const message = $("script-debug-enabled").checked
+    ? "TowerScript trace debugger enabled; playtest restarted."
+    : "TowerScript debugger disabled; legacy playtest restarted.";
+  toast(message, "ok");
+});
+$("btn-script-debug-step")?.addEventListener("click", stepTowerScriptDebugger);
+$("btn-script-debug-resume")?.addEventListener("click", resumeTowerScriptDebugger);
+$("btn-script-debug-rewind")?.addEventListener("click", rewindTowerScriptDebugger);
+$("script-debug-step-mode")?.addEventListener("change", () => {
+  PT.debugSession?.resume();
+  PT.debugCursor = null;
+  renderTowerScriptDebugger();
 });
 $("pt-interaction-mode")?.addEventListener("change", () => {
   PT.armed = null;
@@ -11033,11 +12101,19 @@ function actAtPlaytestCoord(coord) {
     const el = $("pt-msg"); if (el) el.textContent = PT.selectedDebug ? `${PT.selectedDebug.kind} selected.` : "Nothing active on this tile.";
     return;
   }
-  if (PT.armed) { const result = PT.game.useAbility(PT.armed, coord); ptMsg(result, "Ability used."); if (result.ok) PT.armed = null; renderPlaytestPalette(); return; }
+  if (PT.armed) {
+    const command = { schemaVersion: 1, type: "useAbility", abilityId: PT.armed, center: coord };
+    const result = dispatchPlaytestCommand(command, () => PT.game.useAbility(PT.armed, coord));
+    ptMsg(result, "Ability used.");
+    if (result.ok) PT.armed = null;
+    renderPlaytestPalette();
+    return;
+  }
   if (PT.towerId) {
     const preflight = PT.game.canPlaceTower(PT.towerId, coord);
     if (!preflight.ok) { ptMsg(preflight, "Tower can be placed."); return; }
-    const result = PT.game.placeTower(PT.towerId, coord);
+    const command = { schemaVersion: 1, type: "placeTower", towerTypeId: PT.towerId, coord };
+    const result = dispatchPlaytestCommand(command, () => PT.game.placeTower(PT.towerId, coord));
     ptMsg(result, "Tower planted.");
     if (result.ok) {
       clearNavigationOverlay("Placement changed");

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createGameContentRegistry, type GameContentInput } from "../content/registry.js";
 import {
+  canonicalJsonMetrics,
   canonicalStringify,
   getSimulationContentDigest,
   stableDigest
@@ -213,6 +214,16 @@ function reverseObjectKeys<T>(value: T): T {
 }
 
 describe("canonicalStringify", () => {
+  it("reports exact UTF-8 byte and visited-node metrics from the same strict traversal", () => {
+    const value = { message: "💥", nested: [true, null] };
+    const serialized = canonicalStringify(value);
+    expect(canonicalJsonMetrics(value)).toEqual({
+      bytes: new TextEncoder().encode(serialized).byteLength,
+      nodes: 5
+    });
+    expect(() => canonicalJsonMetrics(value, { maxNodes: 4 })).toThrow(/node/i);
+  });
+
   it("sorts every object by binary UTF-16 key order, including integer-like keys", () => {
     const value = { a: 2, "2": "two", ä: 3, Z: 1, "10": "ten" };
 

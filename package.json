@@ -36,7 +36,7 @@
     "data:validate": "node packages/cli/validate.mjs",
     "desktop:dev": "npm --workspace @towerforge/desktop run dev",
     "desktop:build": "npm --workspace @towerforge/desktop run build",
-    "desktop:build:mac": "npm --workspace @towerforge/desktop run build -- --bundles dmg",
+    "desktop:build:mac": "npm --workspace @towerforge/desktop run build -- --bundles dmg --target aarch64-apple-darwin",
     "desktop:build:win": "npm --workspace @towerforge/desktop run build -- --bundles nsis,msi",
     "desktop:build:linux": "npm --workspace @towerforge/desktop run build -- --bundles appimage,deb,rpm",
     "brand:build": "node scripts/build-brand-assets.mjs",

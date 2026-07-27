@@ -320,6 +320,26 @@ describe("validateGameContentRegistry", () => {
     expect(issue?.hint).toMatch(/describe_schema/);
   });
 
+  it("rejects unsupported tower footprint shapes", () => {
+    const content = abilityValidationContent({});
+    (content.towers ??= {}).broken_footprint = {
+      id: "broken_footprint",
+      label: "Broken footprint",
+      cost: {},
+      footprintRadius: 1,
+      footprintShape: "square-4",
+      range: 1,
+      attack: { kind: "single", fireRate: 1, damagePerStack: 1, startingStacks: 1, maxStacks: 1, upgradeCost: 1 }
+    } as unknown as GameContentInput["balance"]["towers"][string];
+
+    const result = validateGameContentRegistry(content);
+    expect(result.issues).toContainEqual(expect.objectContaining({
+      entityId: "broken_footprint",
+      fieldPath: "footprintShape",
+      code: "TOWER_FOOTPRINTSHAPE"
+    }));
+  });
+
   it("attaches a curated hint to the slowFactor<1 constraint (splash and statusOnHit.slow both)", () => {
     const content = abilityValidationContent({});
     (content.towers ??= {}).mortar = {

@@ -1359,6 +1359,88 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if (req.method === "GET" && pathname === "/api/towerscript/schema") {
+    try {
+      const engine = await loadEngine();
+      return jsonResp(res, 200, {
+        schemaVersion: 1,
+        towerScript: engine.TOWER_SCRIPT_SCHEMA,
+        nodeCatalog: engine.TOWER_SCRIPT_SCHEMA.completion?.catalog ?? null
+      });
+    } catch (e) {
+      return jsonResp(res, 500, { error: e.message });
+    }
+  }
+
+  if (req.method === "GET" && pathname === "/api/project/script/graph") {
+    try {
+      const pathArgument = url.searchParams.get("path");
+      const scriptId = url.searchParams.get("scriptId");
+      const result = await callTool("get_tower_script_graph", {
+        projectDir: PROJECT_DIR,
+        ...(pathArgument ? { path: pathArgument } : {}),
+        ...(scriptId ? { scriptId } : {})
+      }, { defaultProjectDir: PROJECT_DIR });
+      const { projectDir: _projectDir, ...wire } = result;
+      return jsonResp(res, 200, wire);
+    } catch (e) {
+      return jsonResp(res, 400, { error: e.message });
+    }
+  }
+
+  if (req.method === "POST" && (pathname === "/api/project/script/graph/preview" || pathname === "/api/project/script/graph/apply")) {
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { error: "Invalid JSON body" }); }
+    if (body.contentHash && body.contentHash !== projectHash()) {
+      return jsonResp(res, 409, {
+        error: "Project changed on disk since the graph was loaded. Reload before saving.",
+        serverHash: projectHash()
+      });
+    }
+    const applying = pathname.endsWith("/apply");
+    if (applying && (typeof body.ifRevision !== "string" || !body.ifRevision)) {
+      return jsonResp(res, 428, { code: "revision_required", error: "Graph apply requires the revision returned by preview." });
+    }
+    try {
+      const result = await callTool(
+        applying ? "apply_tower_script_graph" : "preview_tower_script_graph",
+        {
+          projectDir: PROJECT_DIR,
+          path: body.path,
+          graph: body.graph,
+          ...(body.layout === undefined ? {} : { layout: body.layout }),
+          ...(body.ifRevision === undefined ? {} : { ifRevision: body.ifRevision })
+        },
+        { defaultProjectDir: PROJECT_DIR }
+      );
+      const { projectDir: _projectDir, ...wire } = result;
+      const status = result.conflict ? 409 : result.ok ? 200 : 422;
+      if (applying && result.ok) {
+        writeRunTrace(PROJECT_DIR, {
+          source: "studio",
+          action: "script:graph-save",
+          status: "ok",
+          path: body.path,
+          scriptId: result.scriptId
+        });
+      }
+      return jsonResp(res, status, {
+        ...wire,
+        ...(applying && result.ok ? { newHash: projectHash() } : {})
+      });
+    } catch (e) {
+      writeRunTrace(PROJECT_DIR, {
+        source: "studio",
+        action: applying ? "script:graph-save" : "script:graph-preview",
+        status: "error",
+        path: body.path,
+        error: e.message
+      });
+      return jsonResp(res, 400, { error: e.message });
+    }
+  }
+
   if (req.method === "POST" && pathname === "/api/project/script/save") {
     let body;
     try { body = await readBody(req); }

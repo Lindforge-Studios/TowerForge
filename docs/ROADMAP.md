@@ -1,6 +1,6 @@
 # TowerForge — Roadmap расширяемых механик
 
-Последняя проверка: 2026-07-27
+Последняя проверка: 2026-07-28
 
 Цель программы — расширить TowerForge от классического TD до набора совместимых жанровых механик, не меняя поведение существующих проектов. Каждое расширение является opt-in: разработчик добавляет versioned-модуль в необязательный `content/mechanics.json`, а миссия выбирает профиль через `mission.mechanics`. Нет файла или выбора — игра, Studio, сборка и агенты работают по legacy-контракту.
 
@@ -41,7 +41,8 @@
 | R5.8A — local ammunition | Завершён; code + constructor sign-off; ADR Accepted | Logistics v2 nullable ammunition, local tower magazines, activation расход и nested checkpoint без refill/factory/transfer |
 | R5.8B — ammunition supply | Завершён; code + constructor sign-off; ADR Accepted | Logistics v3 factories, storage, bounded deterministic transfer и same-instance refill |
 | R5 | Завершён | Heroes v1–v7 и Logistics v1–v3 поставлены как независимые opt-in вертикальные срезы |
-| R6–R8 | Запланированы | Каждый срез закрывает engine, Studio, AI/MCP, renderers/player, docs и два независимых sign-off |
+| R6 — TowerScript DX 2.0 | Завершён; code + constructor sign-off; ADR Accepted | Structured trace, deterministic step/rewind, lossless Visual Graph, descriptor-driven Studio/MCP и bounded O(1)-append debug retention |
+| R7–R8 | Запланированы | Каждый срез закрывает engine, Studio, AI/MCP, renderers/player, docs и два независимых sign-off |
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Поставленные версии `combat`, `reactions`, `navigation` и `elevation` уже прошли полные вертикальные срезы. Остальные модули Mechanics Hub остаются planned, а preview/apply отклоняют их включение без записи.
 
@@ -404,7 +405,42 @@ balance, map compile, web build, plugin build/validate/smoke, harness audit и d
 
 ### R6 — TowerScript DX 2.0
 
-Structured trace и step modes работают через checkpoint + deterministic replay-to-cursor. Visual Graph является lossless-проекцией канонического TowerScript AST; layout хранится в `.towerforge/`. Неизвестные future nodes сохраняются raw. Invalid graph никогда не записывается, а completion генерируется из engine schema descriptors.
+R6 — opt-in authoring/debug capability, а не новый `mission.mechanics` module. Обычная симуляция,
+Studio Playtest и generated players не создают trace/ring/graph state, пока разработчик явно не открыл
+Graph или debug session. Project v3, TowerScript v6, `GameSnapshot`, outer `GameCheckpointV1`,
+GameCommand/Journal v6, profile, CampaignRun, mechanics и multiplayer version domains не повышаются.
+
+Engine-срез реализует independently versioned trace v1, graph v1 и debugger/cursor v1. Бounded
+structured trace следует реальному порядку
+`event → binding → handler → condition → action → state_diff/diagnostic`; без collector runtime не
+удерживает trace. `TowerScriptDebugSession` двигает live game через существующий journal, хранит
+bounded checkpoint ring и поддерживает `tick | event | handler | action`. Historical stepping
+восстанавливает validated pre-checkpoint и повторяет ту же команду до cursor в том же engine runtime;
+inspection frame имеет `live:false` и не заменяет live game. Rewind восстанавливает retained checkpoint,
+пересобирает точный journal prefix и отбрасывает abandoned future. Engine/content/checkpoint/digest
+mismatch отклоняется fail-closed.
+
+Visual Graph остаётся lossless-проекцией канонического `scripts/**/*.tower.json` AST. Stable AST paths
+и detached raw payload позволяют сохранить неизвестные future nodes без downgrade; duplicate/dangling
+graph и invalid materialized script не записываются. Completion, node palette и help генерируются из
+engine `TOWER_SCRIPT_SCHEMA`, включая events, actions, operators и scopes. Layout v1 хранит только
+позиции/viewport под `.towerforge/towerscript-layouts/`, имеет composite script+layout revision и не
+попадает в gameplay hash, PWA, single-file, web/native packages, `.tdpack` или generated players.
+
+Surface-контракт фиксирует CLI confined layout codec; MCP/AI
+`get_tower_script_graph → preview_tower_script_graph → apply_tower_script_graph(ifRevision) → validate_project`
+и compute-only `preview_tower_script_trace` с лимитом 128 `GameCommand`;
+Studio `GET /api/towerscript/schema`, `GET /api/project/script/graph`, отдельные preview/apply endpoints,
+JSON/Graph switch и явный Playtest debugger. Preview не пишет, apply требует exact revision и сохраняет
+canonical AST через validation/backup/rollback. Raw future nodes остаются видимыми и read-only, если
+текущий engine не может подтвердить их schema.
+
+R6 accepted: focused engine journal/trace/graph/debugger 101/101, CLI/MCP/Studio 39/39, full unit
+239 files / 2876/2876, Studio Playwright 2/2 и independent packaging/conformance 23/23 GREEN. Typecheck, engine/build, validation,
+tutorial simulation, balance, map compile, web build и plugin build/validate/smoke проходят.
+Journal append и trace-checkpoint pruning имеют bounded incremental hot path без роста от
+длины history. Оба независимых verifier выдали APPROVED без P0-P2.
+Архитектурная граница зафиксирована в [ADR 0047](adr/0047-towerscript-dx-2.md).
 
 ### R7 — Director и Generative Studio
 

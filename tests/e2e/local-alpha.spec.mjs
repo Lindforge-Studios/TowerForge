@@ -22,7 +22,16 @@ let playerServer;
 test.beforeAll(async () => {
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "towerforge-e2e-"));
   projectDir = path.join(tmpRoot, "starter.tdproj");
-  fs.cpSync(path.join(repoRoot, "examples", "starter.tdproj"), projectDir, { recursive: true });
+  const starterProject = path.join(repoRoot, "examples", "starter.tdproj");
+  const generatedRoots = new Set([".towerforge", "desktop", "dist", "mobile", "web"]);
+  fs.cpSync(starterProject, projectDir, {
+    recursive: true,
+    filter(source) {
+      const relative = path.relative(starterProject, source);
+      const root = relative.split(path.sep)[0];
+      return !generatedRoots.has(root);
+    }
+  });
   fs.mkdirSync(path.join(projectDir, "imports"), { recursive: true });
   fs.writeFileSync(path.join(projectDir, "imports", "tower.png"), Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
@@ -43,7 +52,13 @@ test.afterAll(async () => {
   playerServer?.close();
   if (studioProcess && studioProcess.exitCode === null && studioProcess.signalCode === null) {
     studioProcess.kill();
-    await new Promise((resolve) => studioProcess.once("exit", resolve));
+    await Promise.race([
+      new Promise((resolve) => studioProcess.once("exit", resolve)),
+      new Promise((resolve) => setTimeout(resolve, 5_000))
+    ]);
+    if (studioProcess.exitCode === null && studioProcess.signalCode === null) {
+      studioProcess.kill("SIGKILL");
+    }
   }
   if (tmpRoot) fs.rmSync(tmpRoot, { recursive: true, force: true });
 });
@@ -324,7 +339,10 @@ test("single-file build runs directly from file URL", async ({ page }) => {
   await page.goto(pathToFileURL(htmlPath).href, { waitUntil: "commit", timeout: 30_000 });
   await expect(page.getByRole("heading", { name: /Starter Tower Defense|TowerForge/i }))
     .toBeVisible({ timeout: 90_000 });
-  await expect(page.locator("#mission-select option")).toHaveCount(1, { timeout: 90_000 });
+  await expect.poll(async () => {
+    if (errors.length > 0) throw new Error(`single-file boot error: ${errors.join(" | ")}`);
+    return page.locator("#mission-select option").count();
+  }, { timeout: 90_000 }).toBe(1);
   await expect(page.locator("#story-overlay")).toBeVisible();
   await page.locator("#story-skip").click();
   await expect(page.locator("#story-overlay")).toBeHidden();
@@ -637,7 +655,7 @@ async function waitForHttp(url) {
   const started = Date.now();
   while (Date.now() - started < 20_000) {
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, { signal: AbortSignal.timeout(1_000) });
       if (response.ok) return;
     } catch {
       // server not ready yet

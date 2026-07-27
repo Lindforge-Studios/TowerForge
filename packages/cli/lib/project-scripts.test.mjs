@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   parseTowerScriptSource,
   readTowerScriptFiles,
@@ -37,6 +37,36 @@ describe("TowerScript project files", () => {
     expect(catalog.scripts.rules.id).toBe("rules");
     expect(catalog.files["scripts/gameplay/rules.tower.json"].source).toContain('"rules"');
     expect(scriptFileRevision(resolveTowerScriptPath(projectDir, "scripts/gameplay/rules.tower.json", { mustExist: true }))).toBe(first.revision);
+  });
+
+  it("does not perform a fallible revision read after committing a script rename", () => {
+    const scriptPath = "scripts/rules.tower.json";
+    writeTowerScriptAtomic(projectDir, scriptPath, source, { ifRevision: "missing" });
+    const absolutePath = resolveTowerScriptPath(projectDir, scriptPath, { mustExist: true });
+    const changed = JSON.stringify({
+      ...JSON.parse(source),
+      description: "committed without a post-rename read"
+    });
+    const originalRead = fs.readFileSync.bind(fs);
+    let revisionReads = 0;
+    const readSpy = vi.spyOn(fs, "readFileSync").mockImplementation((file, ...args) => {
+      if (path.resolve(String(file)) === absolutePath && new Error().stack?.includes("scriptFileRevision")) {
+        revisionReads += 1;
+        if (revisionReads > 1) throw new Error("injected post-rename revision read failure");
+      }
+      return originalRead(file, ...args);
+    });
+    let result;
+    try {
+      result = writeTowerScriptAtomic(projectDir, scriptPath, changed);
+    } finally {
+      readSpy.mockRestore();
+    }
+
+    expect(result).toMatchObject({ ok: true, revision: expect.stringMatching(/^[a-f0-9]{20}$/) });
+    expect(revisionReads).toBe(1);
+    expect(JSON.parse(fs.readFileSync(absolutePath, "utf8")).description).toBe("committed without a post-rename read");
+    expect(scriptFileRevision(absolutePath)).toBe(result.revision);
   });
 
   it("rejects traversal, malformed JSON, and non-script suffixes", () => {

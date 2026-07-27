@@ -47,6 +47,9 @@ describe("Studio AI tool policy", () => {
     expect(AI_TOOL_NAMES).toContain("apply_map_elevations");
     expect(AI_TOOL_NAMES).toContain("preview_mechanics_module");
     expect(AI_TOOL_NAMES).toContain("apply_mechanics_module");
+    expect(AI_TOOL_NAMES).toContain("get_tower_script_graph");
+    expect(AI_TOOL_NAMES).toContain("preview_tower_script_graph");
+    expect(AI_TOOL_NAMES).toContain("apply_tower_script_graph");
     expect(AI_TOOL_NAMES).toContain("describe_schema");
     expect(AI_TOOL_NAMES).toContain("get_recipe");
     expect(AI_TOOL_NAMES).not.toContain("analyze_terraforming");
