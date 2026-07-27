@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "heroes": {
+      "schemaVersion": 7,
+      "enabled": true,
+      "profiles": {
+        "blocking_commander": {
+          "selectedHeroId": "commander",
+          "definitions": {
+            "commander": {
+              "label": "Blocking Commander",
+              "spawn": "core",
+              "movement": { "movementProfileId": "hero_ground", "speed": 1 },
+              "durability": { "maxHp": 100, "shield": { "capacity": 25 } },
+              "mana": { "max": 100, "starting": 60, "regenerationPerUnit": 5 },
+              "activeAbility": {
+                "id": "arc_bolt",
+                "label": "Arc Bolt",
+                "target": "enemy",
+                "manaCost": 20,
+                "cooldown": 3,
+                "range": 6,
+                "damage": 30
+              },
+              "skillTree": null,
+              "passiveAura": null,
+              "blocking": { "blockCapacity": 2, "movementProfileIds": ["ground"] }
+            }
+          },
+          "movementProfiles": {
+            "hero_ground": {
+              "label": "Hero Ground",
+              "terrainMode": "respect_walkable",
+              "towerOccupancy": "blocked",
+              "defaultTerrainCost": 1000
+            }
+          }
+        }
+      }
+    },
+    "navigation": {
+      "schemaVersion": 1,
+      "enabled": true,
+      "profiles": {
+        "blocking_lane": {
+          "mode": "dynamic_flow",
+          "defaultMovementProfileId": "ground",
+          "movementProfiles": {
+            "ground": {
+              "label": "Ground",
+              "terrainMode": "respect_walkable",
+              "towerOccupancy": "blocked",
+              "defaultTerrainCost": 1000
+            }
+          },
+          "enemyMovementProfiles": {}
+        }
+      }
+    }
+  }
+}

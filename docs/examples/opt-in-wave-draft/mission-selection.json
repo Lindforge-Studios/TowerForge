@@ -1,0 +1,7 @@
+{
+  "mechanics": {
+    "profiles": {
+      "roguelite": "deterministic_wave_draft"
+    }
+  }
+}

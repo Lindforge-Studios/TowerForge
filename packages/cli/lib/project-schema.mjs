@@ -5,6 +5,9 @@ export const PROJECT_SCHEMA_VERSION = 3;
 const MECHANICS_SCHEMA_VERSION = 1;
 const COMBAT_MODULE_SCHEMA_VERSIONS = new Set([1, 2, 3]);
 const ELEVATION_MODULE_SCHEMA_VERSIONS = new Set([1, 2, 3]);
+const ROGUELITE_MODULE_SCHEMA_VERSIONS = new Set([1, 2, 3, 4]);
+const HEROES_MODULE_SCHEMA_VERSIONS = new Set([1, 2, 3, 4, 5, 6, 7]);
+const LOGISTICS_MODULE_SCHEMA_VERSIONS = new Set([1, 2, 3]);
 const BASE_MODULE_SCHEMA_VERSIONS = new Set([MECHANICS_SCHEMA_VERSION]);
 const MECHANICS_MODULE_IDS = new Set([
   "combat",
@@ -146,7 +149,7 @@ export function validateProjectSchemas(files) {
   }
   validateMapSources(files.mapSources ?? {}, err, warn);
   issues.push(...compileMapSources(files.mapSources ?? {}, files.balance?.terrainTypes ?? {}).issues);
-  validateVisuals(files.visuals, err, warn, files.balance, files.maps);
+  validateVisuals(files.visuals, err, warn, files.balance, files.maps, files.mechanics);
   validateNarrative(files, err, warn);
   validateBuildTargets(files.buildTargets, err);
 
@@ -198,7 +201,13 @@ function validateMechanics(files, err, warn) {
             ? COMBAT_MODULE_SCHEMA_VERSIONS
             : moduleId === "elevation"
               ? ELEVATION_MODULE_SCHEMA_VERSIONS
-              : BASE_MODULE_SCHEMA_VERSIONS;
+              : moduleId === "roguelite"
+                ? ROGUELITE_MODULE_SCHEMA_VERSIONS
+                : moduleId === "heroes"
+                  ? HEROES_MODULE_SCHEMA_VERSIONS
+                : moduleId === "logistics"
+                  ? LOGISTICS_MODULE_SCHEMA_VERSIONS
+                : BASE_MODULE_SCHEMA_VERSIONS;
           if (!supportedVersions.has(module.schemaVersion)) {
             const supported = [...supportedVersions].join(" or ");
             const message = Number.isInteger(module.schemaVersion)
@@ -509,7 +518,7 @@ export function listVisualAssetPaths(visuals) {
   return paths;
 }
 
-function validateVisuals(visuals, err, warn, balance, maps = {}) {
+function validateVisuals(visuals, err, warn, balance, maps = {}, mechanics = {}) {
   if (!visuals || typeof visuals !== "object") {
     err("visuals", "content/visuals.json", "root", "visuals.json must be an object.");
     return;
@@ -650,6 +659,31 @@ function validateVisuals(visuals, err, warn, balance, maps = {}) {
   for (const [mapId, tileSetId] of Object.entries(tileBindings.maps ?? {})) {
     if (!maps?.[mapId]) err("visuals", "content/visuals.json", `bindings.tileSets.maps.${mapId}`, `Map binding references unknown map "${mapId}".`);
     if (!visuals.tileSets?.[tileSetId]) err("visuals", "content/visuals.json", `bindings.tileSets.maps.${mapId}`, `Map binding references unknown tileset "${String(tileSetId)}".`);
+  }
+
+  // Hero bindings are optional and are deliberately absent from defaultVisuals. When authored,
+  // validate them against every closed heroes-v1 definition rather than synthesizing a roster
+  // from visuals or a mission selection.
+  const heroBindings = visuals.bindings?.heroes;
+  if (heroBindings !== undefined) {
+    if (!heroBindings || typeof heroBindings !== "object" || Array.isArray(heroBindings)) {
+      err("visuals", "content/visuals.json", "bindings.heroes", "bindings.heroes must be an object keyed by authored hero definition ID.");
+    } else {
+      const heroDefinitionIds = new Set();
+      const heroesModule = mechanics?.modules?.heroes;
+      for (const profile of Object.values(heroesModule?.profiles ?? {})) {
+        for (const heroId of Object.keys(profile?.definitions ?? {})) heroDefinitionIds.add(heroId);
+      }
+      for (const [heroId, spriteId] of Object.entries(heroBindings)) {
+        const fieldPath = `bindings.heroes.${heroId}`;
+        if (!heroDefinitionIds.has(heroId)) {
+          err("visuals", heroId, fieldPath, `Hero binding references unknown hero definition "${heroId}".`);
+        }
+        if (typeof spriteId !== "string" || !Object.hasOwn(visuals.sprites ?? {}, spriteId)) {
+          err("visuals", heroId, fieldPath, `Hero binding references unknown sprite "${String(spriteId)}".`);
+        }
+      }
+    }
   }
 
   const sounds = visuals.audio?.sounds ?? {};

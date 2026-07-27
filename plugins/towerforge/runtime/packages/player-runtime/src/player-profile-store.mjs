@@ -32,7 +32,7 @@ function unsupportedVersionFrom(error) {
 function decodedLoadResult(decoded) {
   const source = decoded.source;
   return frozenResult({
-    code: source === "v2" ? "profile_loaded" : "profile_migrated",
+    code: source === "v3" ? "profile_loaded" : "profile_migrated",
     profile: decoded.profile,
     source,
     migrations: frozenList(decoded.migrations),

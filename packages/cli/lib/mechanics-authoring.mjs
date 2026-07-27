@@ -32,7 +32,10 @@ const MECHANICS_MODULE_SCHEMA_VERSIONS = Object.freeze({
   navigation: Object.freeze([1]),
   elevation: Object.freeze([1, 2, 3]),
   physics: Object.freeze([1]),
-  terraforming: Object.freeze([1])
+  terraforming: Object.freeze([1]),
+  roguelite: Object.freeze([1, 2, 3, 4]),
+  heroes: Object.freeze([1, 2, 3, 4, 5, 6, 7]),
+  logistics: Object.freeze([1, 2, 3])
 });
 const SOURCE_BYTE_LIMITS = Object.freeze({
   project: 256 * 1024,
@@ -75,13 +78,28 @@ export async function inspectMechanicsAuthoring(projectDir, options = {}) {
     throw new MechanicsAuthoringError("mission_not_found", `Mission "${String(missionId)}" was not found.`);
   }
 
-  const capabilities = engine.resolveCapabilitySet(files.mechanics, mission.mechanics);
+  const resolvedCapabilities = engine.resolveCapabilitySet(files.mechanics, mission.mechanics);
+  const capabilities = Object.fromEntries(Object.entries(resolvedCapabilities).map(([moduleId, state]) => {
+    const authoredModule = ownValue(files.mechanics?.modules, moduleId);
+    return [moduleId, {
+      ...state,
+      ...(isRecord(authoredModule) && Number.isSafeInteger(authoredModule.schemaVersion)
+        ? { moduleSchemaVersion: authoredModule.schemaVersion }
+        : {})
+    }];
+  }));
   const combat = moduleAuthoringView(files, mission, "combat", engine.COMBAT_MECHANICS_SCHEMA);
   const reactions = moduleAuthoringView(files, mission, "reactions", engine.REACTIONS_MECHANICS_SCHEMA);
   const navigation = moduleAuthoringView(files, mission, "navigation", engine.NAVIGATION_MECHANICS_SCHEMA);
   const elevation = moduleAuthoringView(files, mission, "elevation", engine.ELEVATION_MECHANICS_SCHEMA);
   const physics = moduleAuthoringView(files, mission, "physics", engine.PHYSICS_MECHANICS_SCHEMA);
   const terraforming = moduleAuthoringView(files, mission, "terraforming", engine.TERRAFORMING_MECHANICS_SCHEMA);
+  const roguelite = {
+    ...moduleAuthoringView(files, mission, "roguelite", engine.ROGUELITE_MECHANICS_SCHEMA),
+    towerTagsByTowerId: authoredTowerTags(files.balance?.towers)
+  };
+  const heroes = moduleAuthoringView(files, mission, "heroes", engine.HEROES_MECHANICS_SCHEMA);
+  const logistics = moduleAuthoringView(files, mission, "logistics", engine.LOGISTICS_MECHANICS_SCHEMA);
 
   const rawProjectSchemaVersion = snapshot.rawFiles.manifest?.schemaVersion;
   const authoring = authoringAvailability(rawProjectSchemaVersion);
@@ -102,7 +120,10 @@ export async function inspectMechanicsAuthoring(projectDir, options = {}) {
     navigation,
     elevation,
     physics,
-    terraforming
+    terraforming,
+    roguelite,
+    heroes,
+    logistics
   };
 }
 
@@ -409,6 +430,15 @@ function createCandidate(rawFiles, request) {
   }
   manifest.schemaVersion = 3;
 
+  if (Object.hasOwn(request, "towerTags")
+    && (request.moduleId !== "roguelite" || request.enabled === false)) {
+    throw new CandidateInputError(
+      "roguelite_tower_tags_scope",
+      "towerTags",
+      "towerTags may only be changed while enabling the roguelite module."
+    );
+  }
+
   if (!isRecord(mechanics.modules)) {
     throw new CandidateInputError("mechanics_modules_invalid", "modules", "Mechanics modules must be an object before a module can be edited.");
   }
@@ -445,6 +475,13 @@ function createCandidate(rawFiles, request) {
       "Combat module schemaVersion can only be upgraded monotonically from v1/v2 to v2/v3."
     );
   }
+  if (request.moduleId === "logistics" && existingVersion === 1 && targetVersion === 3) {
+    throw new CandidateInputError(
+      "module_version_upgrade_unsupported",
+      "moduleSchemaVersion",
+      "Logistics v1 must be explicitly promoted to v2 before enabling the v3 supply contract."
+    );
+  }
   if (request.enabled === false) {
     if (!isRecord(existingModule)) {
       throw new CandidateInputError("module_missing", `modules.${request.moduleId}`, "A missing mechanics module cannot be disabled without synthesizing content.");
@@ -458,6 +495,21 @@ function createCandidate(rawFiles, request) {
     }
     existingModule.enabled = false;
     return { manifest, balance, mechanics };
+  }
+
+  if (request.moduleId === "roguelite" && isRecord(existingModule?.profiles)) {
+    for (const existingProfileId of Object.keys(existingModule.profiles).sort(compareBinary)) {
+      const existingProfile = ownValue(existingModule.profiles, existingProfileId);
+      const campaign = isRecord(existingProfile) ? ownValue(existingProfile, "campaign") : undefined;
+      const campaignSchemaVersion = isRecord(campaign) ? ownValue(campaign, "schemaVersion") : undefined;
+      if (Number.isSafeInteger(campaignSchemaVersion) && campaignSchemaVersion > 2) {
+        throw new CandidateInputError(
+          "nested_version_unsupported",
+          `modules.roguelite.profiles.${existingProfileId}.campaign.schemaVersion`,
+          `Roguelite profile "${existingProfileId}" contains a newer campaign marker and is read-only in this runtime.`
+        );
+      }
+    }
   }
 
   const missionId = resolveMissionId(request, balance, manifest);
@@ -494,6 +546,18 @@ function createCandidate(rawFiles, request) {
     throw new CandidateInputError("profile_required", `modules.${request.moduleId}.profiles.${profileId}`, "The selected mechanics profile does not exist and no profile payload was provided.");
   }
   defineOwn(module.profiles, profileId, profile);
+  if (request.moduleId === "logistics" && existingVersion === 1 && targetVersion === 2) {
+    promoteLogisticsProfilesToV2(module.profiles);
+  }
+  if (request.moduleId === "logistics" && existingVersion === 2 && targetVersion === 3) {
+    promoteLogisticsProfilesToV3(module.profiles);
+  }
+  if (request.moduleId === "heroes" && existingVersion === 5 && targetVersion === 6) {
+    promoteHeroesProfilesToV6(module.profiles);
+  }
+  if (request.moduleId === "heroes" && existingVersion === 6 && targetVersion === 7) {
+    promoteHeroesProfilesToV7(module.profiles);
+  }
   module.enabled = true;
 
   if (mission.mechanics !== undefined && !isRecord(mission.mechanics)) {
@@ -505,7 +569,104 @@ function createCandidate(rawFiles, request) {
   }
   mission.mechanics.profiles ??= {};
   defineOwn(mission.mechanics.profiles, request.moduleId, profileId);
+  if (Object.hasOwn(request, "towerTags")) applyTowerTags(balance, request.towerTags);
   return { manifest, balance, mechanics };
+}
+
+function promoteHeroesProfilesToV6(profiles) {
+  for (const profileId of Object.keys(profiles).sort(compareBinary)) {
+    const profile = ownValue(profiles, profileId);
+    const definitions = isRecord(profile) ? ownValue(profile, "definitions") : undefined;
+    if (!isRecord(definitions)) continue;
+    for (const heroId of Object.keys(definitions).sort(compareBinary)) {
+      const definition = ownValue(definitions, heroId);
+      if (isRecord(definition) && !Object.hasOwn(definition, "passiveAura")) {
+        defineOwn(definition, "passiveAura", null);
+      }
+    }
+  }
+}
+
+function promoteLogisticsProfilesToV2(profiles) {
+  for (const profileId of Object.keys(profiles).sort(compareBinary)) {
+    const profile = ownValue(profiles, profileId);
+    if (isRecord(profile) && Object.hasOwn(profile, "power") && !Object.hasOwn(profile, "ammunition")) {
+      defineOwn(profile, "ammunition", null);
+    }
+  }
+}
+
+function promoteLogisticsProfilesToV3(profiles) {
+  for (const profileId of Object.keys(profiles).sort(compareBinary)) {
+    const profile = ownValue(profiles, profileId);
+    if (isRecord(profile) && Object.hasOwn(profile, "power") && Object.hasOwn(profile, "ammunition")
+      && !Object.hasOwn(profile, "supply")) {
+      defineOwn(profile, "supply", null);
+    }
+  }
+}
+
+function promoteHeroesProfilesToV7(profiles) {
+  for (const profileId of Object.keys(profiles).sort(compareBinary)) {
+    const profile = ownValue(profiles, profileId);
+    const definitions = isRecord(profile) ? ownValue(profile, "definitions") : undefined;
+    if (!isRecord(definitions)) continue;
+    for (const heroId of Object.keys(definitions).sort(compareBinary)) {
+      const definition = ownValue(definitions, heroId);
+      if (isRecord(definition) && !Object.hasOwn(definition, "blocking")) {
+        defineOwn(definition, "blocking", null);
+      }
+    }
+  }
+}
+
+function applyTowerTags(balance, towerTags) {
+  if (!isRecord(towerTags)) {
+    throw new CandidateInputError("roguelite_tower_tags_invalid", "towerTags", "towerTags must be an object keyed by authored tower ID.");
+  }
+  if (!isRecord(balance.towers)) {
+    throw new CandidateInputError("roguelite_tower_tags_invalid", "content/balance.json.towers", "The project tower catalog must be an object.");
+  }
+  for (const towerId of Object.keys(towerTags).sort(compareBinary)) {
+    const tower = ownValue(balance.towers, towerId);
+    if (!isRecord(tower)) {
+      throw new CandidateInputError(
+        "roguelite_tower_not_found",
+        `towerTags.${towerId}`,
+        `towerTags references unknown tower "${towerId}".`
+      );
+    }
+    const tags = ownValue(towerTags, towerId);
+    if (!Array.isArray(tags) || tags.some((tag) => typeof tag !== "string" || tag.length === 0)) {
+      throw new CandidateInputError(
+        "roguelite_tower_tags_invalid",
+        `towerTags.${towerId}`,
+        `towerTags.${towerId} must be an array of non-empty strings.`
+      );
+    }
+    if (new Set(tags).size !== tags.length) {
+      throw new CandidateInputError(
+        "roguelite_tower_tags_invalid",
+        `towerTags.${towerId}`,
+        `towerTags.${towerId} must contain unique tags.`
+      );
+    }
+    if (tags.length === 0) delete tower.tags;
+    else tower.tags = [...tags].sort(compareBinary);
+  }
+}
+
+function authoredTowerTags(towers) {
+  const result = safeRecord();
+  if (!isRecord(towers)) return result;
+  for (const towerId of Object.keys(towers).sort(compareBinary)) {
+    const tags = ownValue(ownValue(towers, towerId), "tags");
+    if (!Array.isArray(tags)) continue;
+    const normalized = [...new Set(tags.filter((tag) => typeof tag === "string" && tag.length > 0))]
+      .sort(compareBinary);
+    if (normalized.length > 0) defineOwn(result, towerId, normalized);
+  }
+  return result;
 }
 
 async function validateCandidate(rawFiles, candidate, engine) {

@@ -156,7 +156,7 @@ describe("R3.4b C5A MCP and AI terraforming authoring contract", () => {
     const mechanics = await callTool("describe_schema", { domain: "mechanics" }, {});
 
     expect(terraforming).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 4,
       requestedDomain: "terraforming",
       terraforming: {
         authoring: engine.TERRAFORMING_MECHANICS_SCHEMA,
@@ -223,7 +223,7 @@ describe("R3.4b C5A MCP and AI terraforming authoring contract", () => {
     const projectDir = fixture();
     const before = snapshotTree(projectDir);
     const getRecipe = TOOLS.find((tool) => tool.name === "get_recipe");
-    expect(getRecipe.inputSchema.properties.parameters).toEqual(PARAMETER_SCHEMA);
+    expect(getRecipe.inputSchema.properties.parameters.oneOf).toContainEqual(PARAMETER_SCHEMA);
     expect(getRecipe.inputSchema.required).not.toContain("parameters");
 
     const listed = await callTool("list_recipes", { collection: "mechanics" }, {});
@@ -437,8 +437,8 @@ describe("R3.4b C5A MCP and AI terraforming authoring contract", () => {
     expect(snapshotTree(projectDir)).toEqual(before);
   });
 
-  it("publishes guide v15 with the exact safe AI order and enforces workspace-bound project selection", async () => {
-    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(15);
+  it("preserves the terraforming safe AI order in the additive guide and enforces workspace-bound project selection", async () => {
+    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBeGreaterThanOrEqual(16);
     for (const phrase of [
       "tagged_flood",
       "tagged_moat",

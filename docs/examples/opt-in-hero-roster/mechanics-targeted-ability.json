@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "heroes": {
+      "schemaVersion": 4,
+      "enabled": true,
+      "profiles": {
+        "field_commander": {
+          "selectedHeroId": "commander",
+          "definitions": {
+            "commander": {
+              "label": "Field Commander",
+              "spawn": "core",
+              "movement": {
+                "movementProfileId": "ground",
+                "speed": 2
+              },
+              "durability": {
+                "maxHp": 100,
+                "shield": {
+                  "capacity": 25
+                }
+              },
+              "mana": {
+                "max": 100,
+                "starting": 60,
+                "regenerationPerUnit": 5
+              },
+              "activeAbility": {
+                "id": "arc_bolt",
+                "label": "Arc Bolt",
+                "target": "enemy",
+                "manaCost": 20,
+                "cooldown": 3,
+                "range": 6,
+                "damage": 30
+              }
+            }
+          },
+          "movementProfiles": {
+            "ground": {
+              "label": "Ground",
+              "terrainMode": "respect_walkable",
+              "towerOccupancy": "blocked",
+              "defaultTerrainCost": 1000
+            }
+          }
+        }
+      }
+    }
+  }
+}

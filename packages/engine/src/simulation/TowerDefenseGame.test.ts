@@ -197,6 +197,24 @@ describe("TowerDefenseGame", () => {
     })]
   ] as const;
 
+  it("publishes the canonical map identity and normalized grid in gameplay and render snapshots", () => {
+    const game = new TowerDefenseGame({ missionId: "basic", content: buildContent() });
+
+    const gameplay = game.getSnapshot();
+    const render = game.getRenderSnapshot();
+
+    expect(gameplay).toMatchObject({
+      mapId: "lane",
+      grid: { kind: "hex", layout: "odd-r" }
+    });
+    expect(render).toMatchObject({
+      mapId: "lane",
+      grid: { kind: "hex", layout: "odd-r" }
+    });
+    expect(gameplay.grid).not.toBe(game.map.grid);
+    expect(render.grid).not.toBe(game.map.grid);
+  });
+
   it.each(incoherentBoundaryCases)("rejects %s before resolution or mutation", (_label, makeCase) => {
     const game = new TowerDefenseGame({ missionId: "basic", content: buildContent() });
     expect(game.startNextWave().ok).toBe(true);

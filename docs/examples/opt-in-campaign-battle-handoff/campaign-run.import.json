@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "seed": "campaign-handoff-reference",
+  "nodeId": null,
+  "deck": [
+    {
+      "instanceId": "carried_card_1",
+      "cardId": "reinforced_volley"
+    }
+  ],
+  "artifacts": [
+    {
+      "instanceId": "carried_artifact_1",
+      "artifactId": "boss_trophy"
+    }
+  ],
+  "runResources": {}
+}

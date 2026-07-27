@@ -163,7 +163,7 @@ describe("R3.3 MCP and agent high-ground surface contract", () => {
   });
 
   it("teaches agents and the bundled plugin the guarded v3 flow and forbidden scope", () => {
-    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(15);
+    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBeGreaterThanOrEqual(16);
     for (const phrase of [
       "basic_elevation_high_ground",
       "highGround",

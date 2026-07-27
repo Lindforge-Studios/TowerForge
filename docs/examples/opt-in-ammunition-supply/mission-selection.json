@@ -1,0 +1,7 @@
+{
+  "mechanics": {
+    "profiles": {
+      "logistics": "basic_factory_ammunition_supply"
+    }
+  }
+}

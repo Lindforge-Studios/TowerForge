@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "logistics": {
+      "schemaVersion": 3,
+      "enabled": true,
+      "profiles": {
+        "basic_factory_ammunition_supply": {
+          "power": null,
+          "ammunition": {
+            "types": {
+              "shell": {
+                "label": "Shell"
+              }
+            },
+            "towerInventories": {
+              "cannon_tower": {
+                "ammoTypeId": "shell",
+                "capacity": 30,
+                "startingAmount": 0,
+                "consumptionPerActivation": 1
+              }
+            }
+          },
+          "supply": {
+            "productionRecipes": {
+              "forge_shell": {
+                "label": "Forge shell",
+                "ammoTypeId": "shell",
+                "outputAmount": 4,
+                "interval": 1
+              }
+            },
+            "producers": {
+              "shell_factory": {
+                "recipeId": "forge_shell",
+                "capacity": 120,
+                "startingAmount": 0,
+                "transferRadius": 4,
+                "transferAmount": 8,
+                "transferInterval": 0.4
+              }
+            },
+            "storages": {
+              "shell_depot": {
+                "ammoTypeId": "shell",
+                "capacity": 240,
+                "startingAmount": 0,
+                "transferRadius": 5,
+                "transferAmount": 12,
+                "transferInterval": 0.4
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

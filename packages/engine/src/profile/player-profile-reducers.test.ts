@@ -13,7 +13,7 @@ import {
   validateGameContentRegistry,
   type GameContentInput,
   type GameContentRegistry,
-  type PlayerProfileV2
+  type PlayerProfileV3
 } from "../index.js";
 
 function reducerInput(options: {
@@ -159,13 +159,13 @@ function createContent(options: Parameters<typeof reducerInput>[0] = {}): GameCo
 
 function createProfile(
   content: GameContentRegistry,
-  overrides: Partial<Omit<PlayerProfileV2, "version">> = {}
-): PlayerProfileV2 {
+  overrides: Partial<Omit<PlayerProfileV3, "version">> = {}
+): PlayerProfileV3 {
   const empty = createEmptyPlayerProfile(content);
   return decodePlayerProfile({ ...empty, ...overrides }, content).profile;
 }
 
-function expectDeeplyFrozenProfile(profile: PlayerProfileV2): void {
+function expectDeeplyFrozenProfile(profile: PlayerProfileV3): void {
   expect(Object.isFrozen(profile)).toBe(true);
   expect(Object.isFrozen(profile.clearedMissionIds)).toBe(true);
   expect(Object.isFrozen(profile.starsByMission)).toBe(true);
@@ -174,8 +174,8 @@ function expectDeeplyFrozenProfile(profile: PlayerProfileV2): void {
 }
 
 function expectFailureUnchanged(
-  result: { readonly ok: boolean; readonly code: string; readonly profile: PlayerProfileV2 },
-  profile: PlayerProfileV2,
+  result: { readonly ok: boolean; readonly code: string; readonly profile: PlayerProfileV3 },
+  profile: PlayerProfileV3,
   code: string
 ): void {
   const before = serializePlayerProfile(profile);
@@ -209,6 +209,35 @@ describe("player profile reducers", () => {
       selected.profile,
       "unknown_difficulty"
     );
+  });
+
+  it("runs every profile reducer/query from one detached snapshot without ordinary proxy reads", () => {
+    const content = createContent();
+    const original = createProfile(content, {
+      clearedMissionIds: ["start"],
+      starsByMission: { start: 1 },
+      metaResources: { crystal: 20, dust: 20 }
+    });
+    const cases: readonly [string, (profile: PlayerProfileV3) => unknown][] = [
+      ["select difficulty", (profile) => selectPlayerDifficulty(profile, content, "hard")],
+      ["purchase upgrade", (profile) => purchasePlayerMetaUpgrade(profile, content, "focus")],
+      ["mission clear", (profile) => recordPlayerMissionClear(profile, content, "start", 2)],
+      ["mission unlock", (profile) => isPlayerMissionUnlocked(profile, content, "branch")],
+      ["new unlocks", (profile) => newlyUnlockedPlayerMissionIds(profile, content, "start")]
+    ];
+
+    for (const [label, invoke] of cases) {
+      let valueReads = 0;
+      const proxy = new Proxy({ ...original } as PlayerProfileV3, {
+        get() {
+          valueReads += 1;
+          throw new Error(`ordinary profile read reached for ${label}`);
+        }
+      });
+
+      expect(() => invoke(proxy), label).not.toThrow();
+      expect(valueReads, label).toBe(0);
+    }
   });
 
   it("purchases a multi-currency upgrade atomically and returns a detached immutable success", () => {
@@ -373,7 +402,7 @@ describe("player profile reducers", () => {
       newlyUnlockedMissionIds: ["branch"]
     });
     expect(serializePlayerProfile(recorded.profile)).toBe(
-      '{"clearedMissionIds":["start"],"metaResources":{"crystal":13,"dust":11},"selectedDifficultyId":"normal","starsByMission":{"start":3},"upgradeLevels":{"focus":0},"version":2}'
+      '{"clearedMissionIds":["start"],"metaResources":{"crystal":13,"dust":11},"selectedDifficultyId":"normal","starsByMission":{"start":3},"upgradeLevels":{"focus":0},"version":3}'
     );
   });
 
@@ -482,13 +511,13 @@ describe("player profile reducers", () => {
     }];
     const content = createGameContentRegistry(input);
     const profile = Object.freeze({
-      version: 2,
+      version: 3,
       clearedMissionIds: Object.freeze([] as string[]),
       starsByMission: Object.freeze({}),
       metaResources: Object.freeze({}),
       upgradeLevels: Object.freeze({}),
       selectedDifficultyId: "normal"
-    }) satisfies PlayerProfileV2;
+    }) satisfies PlayerProfileV3;
 
     const recorded = recordPlayerMissionClear(profile, content, "__proto__", 1);
 
@@ -518,13 +547,13 @@ describe("player profile reducers", () => {
     };
     const content = createGameContentRegistry(input);
     const profile = Object.freeze({
-      version: 2,
+      version: 3,
       clearedMissionIds: Object.freeze([] as string[]),
       starsByMission: Object.freeze({}),
       metaResources: Object.freeze({ crystal: 4 }),
       upgradeLevels: Object.freeze({}),
       selectedDifficultyId: "normal"
-    }) satisfies PlayerProfileV2;
+    }) satisfies PlayerProfileV3;
 
     const purchased = purchasePlayerMetaUpgrade(profile, content, "constructor");
 
@@ -550,7 +579,7 @@ describe("player profile reducers", () => {
     const profile = Object.freeze({
       ...createEmptyPlayerProfile(content),
       metaResources: Object.freeze({ crystal: Number.POSITIVE_INFINITY, dust: 10 })
-    }) as PlayerProfileV2;
+    }) as PlayerProfileV3;
     const contentBefore = JSON.stringify(content);
     const resourceEntriesBefore = Object.entries(profile.metaResources);
     const invoke = (): string => {
@@ -577,7 +606,7 @@ describe("player profile reducers", () => {
       ...createEmptyPlayerProfile(content),
       starsByMission: Object.freeze({ start: -1 }),
       metaResources: Object.freeze({ crystal: 10, dust: 10 })
-    }) as PlayerProfileV2;
+    }) as PlayerProfileV3;
     const profileBefore = JSON.stringify(profile);
     const contentBefore = JSON.stringify(content);
     const invoke = (): string => {

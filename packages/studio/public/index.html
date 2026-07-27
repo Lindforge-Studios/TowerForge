@@ -738,6 +738,216 @@
               </label>
             </div>
           </div>
+          <div id="mechanics-roguelite-editor" class="hidden">
+            <div class="mechanics-shield-section mechanics-roguelite-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Tower synergy tags</h4>
+                  <p>Tags are authored here as part of the guarded mechanics transaction. Ordinary tower forms stay unchanged.</p>
+                </div>
+              </div>
+              <div id="mechanics-roguelite-tower-tag-rows" class="mechanics-definition-rows"></div>
+            </div>
+            <div class="mechanics-shield-section mechanics-roguelite-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Global damage synergies</h4>
+                  <p>Count live placed towers by tag. Highest mode applies one tier; cumulative mode applies every reached tier.</p>
+                </div>
+                <button id="btn-mechanics-add-synergy" class="btn btn-outline" type="button">+ Add synergy</button>
+              </div>
+              <div id="mechanics-roguelite-synergy-rows" class="mechanics-definition-rows"></div>
+              <p class="text-muted">Tier lines use: <code>requiredCount operation value</code>, for example <code>2 additive_ratio 0.1</code>. Repeat a count to add another modifier to that tier.</p>
+            </div>
+            <div class="mechanics-shield-section mechanics-roguelite-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Artifacts, typed tower slots, and boss loot</h4>
+                  <p>Roguelite v2 drops enter a read-only battle inventory. Authored modifiers are reserved for the later socketing runtime and do not apply yet.</p>
+                </div>
+                <button id="btn-mechanics-add-artifact" class="btn btn-outline" type="button">+ Add artifact</button>
+              </div>
+              <div id="mechanics-roguelite-artifact-definition-rows" class="mechanics-definition-rows"></div>
+              <div id="mechanics-roguelite-tower-slot-rows" class="mechanics-definition-rows"></div>
+              <div id="mechanics-roguelite-boss-loot-table-rows" class="mechanics-definition-rows"></div>
+            </div>
+            <div class="mechanics-shield-section mechanics-roguelite-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Wave draft cards</h4>
+                  <p>Roguelite v3 offers three seeded choices between waves. Cards, weighted pools, and the default pool remain an independent opt-in slice.</p>
+                </div>
+                <div class="mechanics-inline-actions">
+                  <button id="btn-mechanics-add-draft-card" class="btn btn-outline" type="button">+ Add draft card</button>
+                  <button id="btn-mechanics-add-draft-pool" class="btn btn-outline" type="button">+ Add draft pool</button>
+                </div>
+              </div>
+              <label>Default pool ID<input id="mechanics-roguelite-draft-default-pool" type="text" autocomplete="off" spellcheck="false" placeholder="starter"></label>
+              <div id="mechanics-roguelite-draft-card-rows" class="mechanics-definition-rows"></div>
+              <div id="mechanics-roguelite-draft-pool-rows" class="mechanics-definition-rows"></div>
+            </div>
+            <div id="mechanics-roguelite-campaign-editor" class="mechanics-shield-section mechanics-roguelite-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Campaign Run map</h4>
+                  <p>Author an independent opt-in WorldCampaign v1/v2 run graph. Campaign marker v2 carries the run deck/cards and artifacts between battles; marker v1 remains a playable legacy campaign without handoff. Graph v2 also declares runResources and merchant/event choices. Supported node types: battle, elite, merchant, event, boss.</p>
+                </div>
+                <button id="btn-campaign-preview" class="btn btn-outline" type="button">Preview campaign</button>
+              </div>
+              <label>Rogue-lite profile ID
+                <input id="mechanics-roguelite-campaign-profile-id" type="text" autocomplete="off" spellcheck="false" placeholder="campaign_run">
+              </label>
+              <label>Campaign graph JSON
+                <textarea id="mechanics-roguelite-campaign-json" class="mono" spellcheck="false" rows="14" placeholder='{"schemaVersion":2,"rogueliteProfileId":"campaign_run","runResources":{},"entryNodeIds":[],"nodes":[]}'></textarea>
+              </label>
+              <div class="mechanics-inline-actions">
+                <button id="btn-campaign-enable" class="btn btn-primary" type="button">Enable campaign</button>
+                <button id="btn-campaign-disable" class="btn btn-danger" type="button">Disable campaign</button>
+              </div>
+              <pre id="campaign-preview-result" class="mechanics-preview-result" aria-live="polite">Load or preview the campaign graph.</pre>
+            </div>
+          </div>
+          <div id="mechanics-heroes-editor" class="hidden">
+            <div class="mechanics-heroes-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Hero definitions</h4>
+                  <p>Choose one commander definition. Later opt-in versions extend its authored combat and movement capabilities.</p>
+                </div>
+                <button id="btn-mechanics-add-hero" class="btn btn-outline" type="button">+ Add hero</button>
+              </div>
+              <div id="mechanics-heroes-read-only" class="mechanics-notice warning hidden" role="status"></div>
+              <label>Selected hero
+                <select id="mechanics-heroes-selected-id"></select>
+              </label>
+              <div id="mechanics-heroes-definition-rows" class="mechanics-definition-rows"></div>
+              <details id="mechanics-heroes-movement" class="mechanics-heroes-section">
+                <summary>Hero movement (v2 opt-in)</summary>
+                <p>Movement profiles belong to Heroes. They do not enable or depend on Dynamic Navigation.</p>
+                <div class="mechanics-section-head">
+                  <h4>Hero movement profiles</h4>
+                  <button id="btn-mechanics-add-hero-movement-profile" class="btn btn-outline" type="button">+ Add movement profile</button>
+                </div>
+                <div id="mechanics-heroes-movement-profile-rows" class="mechanics-definition-rows"></div>
+              </details>
+            </div>
+          </div>
+          <div id="mechanics-logistics-editor" class="hidden">
+            <div id="mechanics-logistics-read-only" class="mechanics-notice warning hidden" role="status"></div>
+            <div class="mechanics-shield-section mechanics-logistics-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Power grid</h4>
+                  <p>Explicit generators, relay pylons, and consumers. Engine snapshots own links, coverage, allocation, and brownout.</p>
+                </div>
+                <label class="mechanics-navigation-overlay-toggle">
+                  <input id="mechanics-logistics-power-enabled" type="checkbox">
+                  <span>Include power in this profile</span>
+                </label>
+              </div>
+              <div class="mechanics-section-head">
+                <h4>Generators</h4>
+                <button id="btn-mechanics-add-logistics-generator" class="btn btn-outline" type="button">+ Add generator</button>
+              </div>
+              <div id="mechanics-logistics-generator-rows" class="mechanics-definition-rows"></div>
+              <div class="mechanics-section-head">
+                <h4>Relays / pylons</h4>
+                <button id="btn-mechanics-add-logistics-relay" class="btn btn-outline" type="button">+ Add relay</button>
+              </div>
+              <div id="mechanics-logistics-relay-rows" class="mechanics-definition-rows"></div>
+              <div class="mechanics-section-head">
+                <h4>Consumers and brownout priority</h4>
+                <button id="btn-mechanics-add-logistics-consumer" class="btn btn-outline" type="button">+ Add consumer</button>
+              </div>
+              <div id="mechanics-logistics-consumer-rows" class="mechanics-definition-rows"></div>
+            </div>
+            <div class="mechanics-shield-section mechanics-logistics-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Local ammunition (v2 opt-in)</h4>
+                  <p>Finite magazines are authored only for explicitly selected fire-capable towers. Refill and supply infrastructure are not part of this slice.</p>
+                </div>
+                <button id="btn-mechanics-add-ammunition" class="btn btn-outline" type="button">Add ammunition</button>
+                <label class="mechanics-navigation-overlay-toggle">
+                  <input id="mechanics-logistics-ammunition-enabled" type="checkbox">
+                  <span>Include ammunition in this profile</span>
+                </label>
+              </div>
+              <div class="mechanics-section-head">
+                <h4>Ammunition types</h4>
+                <button id="btn-mechanics-add-ammunition-type" class="btn btn-outline" type="button">+ Add ammunition type</button>
+              </div>
+              <div id="mechanics-logistics-ammunition-type-rows" class="mechanics-definition-rows"></div>
+              <div class="mechanics-section-head">
+                <h4>Tower inventories</h4>
+                <button id="btn-mechanics-add-tower-inventory" class="btn btn-outline" type="button">+ Add tower inventory</button>
+              </div>
+              <div id="mechanics-logistics-tower-inventory-rows" class="mechanics-definition-rows"></div>
+            </div>
+            <div class="mechanics-shield-section mechanics-logistics-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Ammunition supply (v3 opt-in)</h4>
+                  <p>Factories, local storage, and bounded refill links remain inactive until this profile is explicitly promoted and saved.</p>
+                </div>
+                <button id="btn-mechanics-add-supply" class="btn btn-outline" type="button">Add supply</button>
+                <label class="mechanics-navigation-overlay-toggle">
+                  <input id="mechanics-logistics-supply-enabled" type="checkbox">
+                  <span>Include supply in this profile</span>
+                </label>
+              </div>
+              <div class="mechanics-section-head">
+                <h4>Production recipes</h4>
+                <button id="btn-mechanics-add-production-recipe" class="btn btn-outline" type="button">+ Add production recipe</button>
+              </div>
+              <div id="mechanics-logistics-production-recipe-rows" class="mechanics-definition-rows"></div>
+              <div class="mechanics-section-head">
+                <h4>Producers</h4>
+                <button id="btn-mechanics-add-producer" class="btn btn-outline" type="button">+ Add producer</button>
+              </div>
+              <div id="mechanics-logistics-producer-rows" class="mechanics-definition-rows"></div>
+              <div class="mechanics-section-head">
+                <h4>Storages</h4>
+                <button id="btn-mechanics-add-storage" class="btn btn-outline" type="button">+ Add storage</button>
+              </div>
+              <div id="mechanics-logistics-storage-rows" class="mechanics-definition-rows"></div>
+            </div>
+            <div class="mechanics-shield-section mechanics-logistics-section">
+              <div class="mechanics-section-head"><div><h4>Basic power-grid recipe</h4><p>Choose three distinct existing tower types. The recipe remains inert until preview/apply.</p></div></div>
+              <div class="mechanics-logistics-recipe-fields">
+                <label>Generator tower<select id="mechanics-logistics-recipe-generator"></select></label>
+                <label>Relay tower<select id="mechanics-logistics-recipe-relay"></select></label>
+                <label>Consumer tower<select id="mechanics-logistics-recipe-consumer"></select></label>
+              </div>
+              <div class="mechanics-section-head"><div><h4>Basic local-ammunition recipe</h4><p>Creates one inert finite magazine profile with power disabled.</p></div></div>
+              <div class="mechanics-logistics-recipe-fields">
+                <label>Ammunition type ID<input id="mechanics-logistics-recipe-ammo-type-id" value="shell"></label>
+                <label>Ammunition label<input id="mechanics-logistics-recipe-ammo-label" value="Shell"></label>
+                <label>Capacity<input id="mechanics-logistics-recipe-capacity" type="number" value="30"></label>
+                <label>Starting amount<input id="mechanics-logistics-recipe-starting-amount" type="number" value="12"></label>
+                <label>Consumption per activation<input id="mechanics-logistics-recipe-consumption" type="number" value="1"></label>
+              </div>
+              <div class="mechanics-section-head"><div><h4>Basic factory-ammunition-supply recipe</h4><p>Creates one inert v3 producer, storage, and consumer profile.</p></div></div>
+              <div class="mechanics-logistics-recipe-fields">
+                <label>Producer tower<select id="mechanics-logistics-recipe-producer"></select></label>
+                <label>Storage tower<select id="mechanics-logistics-recipe-storage"></select></label>
+                <label>Production recipe ID<input id="mechanics-logistics-recipe-production-id" value="forge_shell"></label>
+                <label>Production label<input id="mechanics-logistics-recipe-production-label" value="Forge shell"></label>
+                <label>Output amount<input id="mechanics-logistics-recipe-output-amount" type="number" value="4"></label>
+                <label>Production interval<input id="mechanics-logistics-recipe-production-interval" type="number" value="1"></label>
+                <label>Producer capacity<input id="mechanics-logistics-recipe-producer-capacity" type="number" value="120"></label>
+                <label>Producer starting amount<input id="mechanics-logistics-recipe-producer-starting" type="number" value="0"></label>
+                <label>Producer transfer radius<input id="mechanics-logistics-recipe-producer-radius" type="number" value="4"></label>
+                <label>Producer transfer amount<input id="mechanics-logistics-recipe-producer-amount" type="number" value="8"></label>
+                <label>Producer transfer interval<input id="mechanics-logistics-recipe-producer-interval" type="number" value="0.4"></label>
+                <label>Storage capacity<input id="mechanics-logistics-recipe-storage-capacity" type="number" value="240"></label>
+                <label>Storage starting amount<input id="mechanics-logistics-recipe-storage-starting" type="number" value="0"></label>
+                <label>Storage transfer radius<input id="mechanics-logistics-recipe-storage-radius" type="number" value="5"></label>
+                <label>Storage transfer amount<input id="mechanics-logistics-recipe-storage-amount" type="number" value="12"></label>
+                <label>Storage transfer interval<input id="mechanics-logistics-recipe-storage-interval" type="number" value="0.4"></label>
+              </div>
+            </div>
+          </div>
           <div class="mechanics-actions">
             <button id="btn-mechanics-preview" class="btn btn-outline" type="button">Preview</button>
             <button id="btn-mechanics-enable" class="btn btn-primary" type="button">Enable for mission</button>
@@ -934,6 +1144,9 @@
           <div class="pt-stat"><span class="k">Objectives</span><span class="v" id="pt-objectives">—</span></div>
           <div class="form-section-title pt-debug-title">Inspector</div>
           <div id="pt-inspector" class="pt-inspector">Click Inspect, then choose a tower or enemy.</div>
+          <div id="pt-wave-draft" class="pt-artifact-inventory" hidden></div>
+          <div id="pt-artifact-inventory" class="pt-artifact-inventory" hidden></div>
+          <div id="pt-logistics-power" class="pt-artifact-inventory" hidden></div>
           <div class="form-section-title pt-debug-title">Event timeline</div>
           <div id="pt-event-timeline" class="pt-event-timeline"></div>
           <div class="form-section-title" style="margin-top:6px">Build (click tower, then a tile)</div>
