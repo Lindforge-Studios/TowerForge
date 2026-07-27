@@ -25,10 +25,35 @@ describe("macOS release signing", () => {
     });
 
     expect(calls).toEqual([
-      ["codesign", ["--verify", "--deep", "--strict", "--verbose=4", "/tmp/TowerForge.app"]],
-      ["hdiutil", ["verify", "/tmp/TowerForge.dmg"]]
+      ["hdiutil", ["verify", "/tmp/TowerForge.dmg"]],
+      ["codesign", ["--verify", "--deep", "--strict", "--verbose=4", "/tmp/TowerForge.app"]]
     ]);
     expect(result).toEqual({ appPath: "/tmp/TowerForge.app", dmgPath: "/tmp/TowerForge.dmg" });
+  });
+
+  it("mounts the completed DMG when Tauri cleaned the intermediate app bundle", () => {
+    const calls = [];
+    const cleaned = [];
+    const result = verifyMacosBundle({
+      dmgPath: "/tmp/TowerForge.dmg",
+      exists: (filePath) => filePath === "/tmp/TowerForge.dmg",
+      createMountDirectory: () => "/tmp/towerforge-mount",
+      listApps: () => ["TowerForge.app"],
+      cleanupDirectory: (directory) => cleaned.push(directory),
+      run(command, args) {
+        calls.push([command, args]);
+        return { status: 0, stdout: "", stderr: "" };
+      }
+    });
+
+    expect(calls).toEqual([
+      ["hdiutil", ["verify", "/tmp/TowerForge.dmg"]],
+      ["hdiutil", ["attach", "-readonly", "-nobrowse", "-mountpoint", "/tmp/towerforge-mount", "/tmp/TowerForge.dmg"]],
+      ["codesign", ["--verify", "--deep", "--strict", "--verbose=4", path.join("/tmp/towerforge-mount", "TowerForge.app")]],
+      ["hdiutil", ["detach", "/tmp/towerforge-mount"]]
+    ]);
+    expect(cleaned).toEqual(["/tmp/towerforge-mount"]);
+    expect(result.dmgPath).toBe("/tmp/TowerForge.dmg");
   });
 
   it("rejects a malformed app signature", () => {
