@@ -61,6 +61,11 @@ jobs:
         working-directory: packages/desktop
         run: npm run build -- --bundles ${{ matrix.bundles }}
 
+      - name: Verify macOS app signature and DMG
+        if: runner.os == 'macOS'
+        working-directory: packages/desktop
+        run: npm run verify:macos-bundle
+
       - uses: actions/upload-artifact@v4
         with:
           name: towerforge-unsigned-${{ matrix.artifact }}

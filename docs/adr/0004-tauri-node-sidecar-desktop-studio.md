@@ -24,4 +24,5 @@ The app starts the sidecar on an ephemeral loopback port, waits for a machine-re
 - The first desktop release can ship `.exe`/`.msi`, `.dmg`, `.AppImage`, `.deb`, and `.rpm` artifacts without an Electron shell.
 - Binary size includes a Node runtime sidecar.
 - Production macOS and Windows releases still need external signing/notarization credentials.
+- Until Developer ID signing is configured, Tauri applies the explicit `-` ad-hoc identity to the complete macOS app bundle. Release CI rejects the artifact unless `codesign --verify --deep --strict` succeeds before DMG upload; DMG container verification alone is insufficient. The release remains an unsigned pre-release because ad-hoc signing proves bundle integrity, not publisher identity or notarization.
 - A future v2 can move selected APIs from the Node sidecar into Rust commands if the sidecar becomes a maintenance, startup, or security bottleneck.

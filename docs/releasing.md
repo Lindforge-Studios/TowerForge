@@ -1,10 +1,11 @@
 # Desktop Release Policy
 
-TowerForge desktop artifacts are built and published through GitHub Actions. Until platform signing credentials are configured, every macOS and Windows artifact is an internal/alpha **Unsigned build**.
+TowerForge desktop artifacts are built and published through GitHub Actions. Until authenticated platform signing credentials are configured, every macOS and Windows artifact is an internal/alpha **Unsigned build**. macOS bundles still receive a complete Tauri ad-hoc signature so Apple Silicon and Gatekeeper can validate bundle integrity; this signature does not identify or authenticate the publisher.
 
 ## Release Invariants
 
 - A release MUST point to the exact git tag and commit used for the build.
+- A macOS release MUST set Tauri `bundle.macOS.signingIdentity` to `-` until a Developer ID identity replaces it, and MUST pass strict deep `codesign` verification before upload.
 - An unsigned release MUST be a GitHub pre-release and MUST include `Unsigned build` in its title and warning block.
 - Release assets MUST include every platform installer and a plain-text `SHA256SUMS` file.
 - Release notes MUST repeat the full SHA-256 value for every attached installer and link to both the tag and tagged source tree.
@@ -55,7 +56,7 @@ Build and verify the Apple Silicon DMG:
 
 ```bash
 npm run desktop:build:mac
-hdiutil verify packages/desktop/src-tauri/target/release/bundle/dmg/TowerForge_<version>_aarch64.dmg
+npm --workspace @towerforge/desktop run verify:macos-bundle
 shasum -a 256 packages/desktop/src-tauri/target/release/bundle/dmg/TowerForge_<version>_aarch64.dmg
 ```
 
@@ -65,7 +66,7 @@ Write `SHA256SUMS` using the installer basename, not an absolute path:
 <sha256>  TowerForge_<version>_aarch64.dmg
 ```
 
-Users may install the app by moving it to Applications. If macOS blocks the first launch, the only supported override is **System Settings > Privacy & Security > Open Anyway** after verifying the checksum and release source.
+The verifier runs `codesign --verify --deep --strict` against `TowerForge.app` and `hdiutil verify` against the DMG. A valid ad-hoc signature prevents an incomplete bundle signature from being misreported as a damaged download, but it is not notarization. Users may install the app by moving it to Applications. If macOS blocks the first launch because the publisher is unidentified, the only supported override is **System Settings > Privacy & Security > Open Anyway** after verifying the checksum and release source.
 
 ## Publication Checklist
 
@@ -77,7 +78,7 @@ Users may install the app by moving it to Applications. If macOS blocks the firs
 6. Wait for all three native builds, release assembly, and publication to pass.
 7. Confirm the GitHub pre-release title contains `Unsigned build` and all six installer formats are attached when supported by the runners.
 8. Download the published installers and `SHA256SUMS`, recalculate the checksums, and compare them with the release notes.
-9. Verify the DMG with `hdiutil verify` on macOS.
+9. Run the macOS bundle verifier against the built or downloaded candidate; both strict `codesign` and `hdiutil` validation must pass.
 10. Confirm the tag, tagged source, and commit links resolve to the released commit.
 
 ## Rollback
@@ -91,3 +92,7 @@ If an asset, checksum, tag, or source link is wrong, immediately mark the releas
 3. Rebuild from the tagged source in a clean environment.
 4. Publish a corrected patch release; do not reuse the compromised version number.
 5. If signing credentials are introduced later, follow `docs/runbook.md` and the desktop ADR before removing the unsigned warning.
+
+### v0.3.0 macOS incident
+
+The `v0.3.0` DMG container and published checksum were valid, but the contained Apple Silicon app had only a partial linker ad-hoc signature. Strict bundle verification failed with `code has no resources but signature indicates they must be present`, so Gatekeeper reported the application as damaged. `v0.3.1` supersedes that macOS artifact by configuring Tauri's complete ad-hoc bundle signature and making strict signature verification a pre-upload CI gate. Published `v0.3.0` assets are never silently replaced.

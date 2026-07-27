@@ -22,7 +22,7 @@ Run the relevant checks before declaring work complete:
 - `npm run test` after shared logic, CLI library, engine, MCP, renderer, or migration changes.
 - `npm run test:e2e` after Studio, renderer, generated player, or browser interaction changes.
 - `cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml` after Tauri menu, bridge, lifecycle, or desktop-state changes.
-- `npm run desktop:build:mac` plus `hdiutil verify <dmg>` before publishing a macOS desktop artifact.
+- `npm run desktop:build:mac` plus `npm --workspace @towerforge/desktop run verify:macos-bundle` before publishing a macOS desktop artifact. The verifier checks both the complete app-bundle signature and the DMG container.
 
 ## Work Cycle
 
