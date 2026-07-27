@@ -1,2 +1,7 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Node ESM entrypoints with shebangs are imported by Vitest on Windows. Keep
+# their first line byte-stable so the loader never sees a CR in the hashbang.
+scripts/export-codex-plugin-repository.mjs text eol=lf
+distribution/codex-plugin/scripts/verify-release.mjs text eol=lf

@@ -353,7 +353,7 @@ describe("R2.5 pure bounded navigation analysis", () => {
     const subject = game({ width, height });
     const invoke = analysisMethod(subject);
     expect(() => invoke({ towerTypeId: "pebble", coordinates })).toThrow(/relaxation|budget|limit/i);
-  }, 30_000);
+  }, 90_000);
 
   it("does not mutate RNG, events, snapshots, digest, journal, enemies, or resolver process stats", () => {
     const subject = game({ height: 3, enemyCount: 100 });

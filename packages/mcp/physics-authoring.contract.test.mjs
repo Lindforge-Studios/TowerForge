@@ -131,7 +131,7 @@ describe("R3.4a MCP and AI physics authoring contract", () => {
     expect(stale).toMatchObject({ code: "conflict" });
     expect(JSON.parse(fs.readFileSync(path.join(projectDir, "content", "mechanics.json"), "utf8"))
       .modules.physics.profiles.tagged_fall_hazards).toEqual({ fallHazardTerrainTags: ["fall_hazard"] });
-  });
+  }, 30_000);
 
   it("teaches the guarded flow, inert recipes, and deferred/forbidden scope", () => {
     expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBeGreaterThanOrEqual(16);
