@@ -127,7 +127,7 @@ test.describe.serial("R5.7A Studio Logistics power lifecycle", () => {
     expect(browserErrors()).toEqual([]);
   });
 
-  test("keeps future Logistics v3 visible, byte-identical, and read-only", async ({ page }) => {
+  test("keeps future Logistics v4 visible, byte-identical, and read-only", async ({ page }) => {
     writeFutureLogistics(projectDir);
     const before = authoringBytes(projectDir);
     const browserErrors = captureBrowserErrors(page);
@@ -135,7 +135,7 @@ test.describe.serial("R5.7A Studio Logistics power lifecycle", () => {
     await openLogisticsMechanics(page);
 
     await expect(page.locator("#mechanics-logistics-read-only")).toBeVisible();
-    await expect(page.locator("#mechanics-logistics-read-only")).toContainText(/future|schemaVersion 3|read-only/i);
+    await expect(page.locator("#mechanics-logistics-read-only")).toContainText(/future|schemaVersion 4|read-only/i);
     await expect(page.locator("#mechanics-profile-id")).toHaveValue("future_power");
     await expect(generatorOutput(page)).toHaveValue("13");
     expect(await page.locator(
@@ -349,7 +349,7 @@ function writeFutureLogistics(projectDir) {
     schemaVersion: 1,
     modules: {
       logistics: {
-        schemaVersion: 3,
+        schemaVersion: 4,
         enabled: true,
         profiles: {
           future_power: {
@@ -359,6 +359,7 @@ function writeFutureLogistics(projectDir) {
               consumers: { arc_priority: { demand: 8, priority: 1 } }
             },
             ammunition: null,
+            supply: null,
             factories: ["opaque"]
           }
         }

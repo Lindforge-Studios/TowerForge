@@ -59,7 +59,7 @@ function recipeParameters(overrides = {}) {
 }
 
 describe("R5.8A MCP/AI local ammunition authoring RED", () => {
-  it("describes exact Logistics v1/v2 authoring, checkpoint, snapshot, and no refill tool", async () => {
+  it("preserves exact Logistics v1/v2 authoring within the v3 domain and exposes no refill tool", async () => {
     const logistics = await callTool("describe_schema", { domain: "logistics" }, {});
     expect(logistics).toMatchObject({
       requestedDomain: "logistics",
@@ -67,12 +67,15 @@ describe("R5.8A MCP/AI local ammunition authoring RED", () => {
       logistics: {
         authoring: {
           moduleId: "logistics",
-          supportedModuleSchemaVersions: [1, 2],
+          supportedModuleSchemaVersions: [1, 2, 3],
           versions: {
             1: expect.objectContaining({ requiredFields: ["power"], additionalProperties: false }),
             2: expect.objectContaining({
               requiredFields: ["power", "ammunition"], additionalProperties: false,
               ammunition: expect.objectContaining({ requiredFields: ["types", "towerInventories"] })
+            }),
+            3: expect.objectContaining({
+              requiredFields: ["power", "ammunition", "supply"], additionalProperties: false
             })
           },
           limits: expect.objectContaining({
@@ -84,8 +87,8 @@ describe("R5.8A MCP/AI local ammunition authoring RED", () => {
             labelUtf8Bytes: 128
           })
         },
-        checkpoint: expect.objectContaining({ field: "state.logistics.ammunition", schemaVersion: 1 }),
-        snapshot: expect.objectContaining({ field: "logistics", optional: true, supportedSchemaVersions: [1, 2] }),
+        checkpoint: expect.objectContaining({ field: "state.logistics", schemaVersion: 2 }),
+        snapshot: expect.objectContaining({ field: "logistics", optional: true, supportedSchemaVersions: [1, 2, 3] }),
         commands: []
       }
     });
@@ -173,7 +176,7 @@ describe("R5.8A MCP/AI local ammunition authoring RED", () => {
     expect(JSON.stringify(applyTool)).toMatch(/revision[\s\S]*validation[\s\S]*(?:backup[\s\S]*rollback|rollback[\s\S]*backup)/i);
   });
 
-  it("keeps future Logistics v3 opaque and refuses recipe application without changing bytes", async () => {
+  it("keeps future Logistics v4 opaque and refuses recipe application without changing bytes", async () => {
     const projectDir = fixture();
     const mechanicsPath = path.join(projectDir, "content", "mechanics.json");
     const balancePath = path.join(projectDir, "content", "balance.json");
@@ -184,15 +187,17 @@ describe("R5.8A MCP/AI local ammunition authoring RED", () => {
       schemaVersion: 1,
       modules: {
         logistics: {
-          schemaVersion: 3, enabled: true,
-          profiles: { future: { power: null, ammunition: null, factories: { opaque: [1, 2, 3] } } }
+          schemaVersion: 4, enabled: true,
+          profiles: {
+            future: { power: null, ammunition: null, supply: null, factories: { opaque: [1, 2, 3] } }
+          }
         }
       }
     });
     const before = projectTree(projectDir);
     const capabilities = await callTool("get_capabilities", { projectDir, missionId: "tutorial_01" }, {});
     expect(capabilities.capabilities.logistics).toMatchObject({
-      available: true, active: false, reason: "module_version_unsupported", moduleSchemaVersion: 3
+      available: true, active: false, reason: "module_version_unsupported", moduleSchemaVersion: 4
     });
     const recipe = await callTool("get_recipe", {
       projectDir, collection: "mechanics", recipeId: "basic_local_ammunition", parameters: recipeParameters()

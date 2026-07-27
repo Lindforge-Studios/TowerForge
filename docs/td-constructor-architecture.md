@@ -705,6 +705,38 @@ Hub use the inert `basic_local_ammunition` recipe plus the existing preview/revi
 backup/rollback workflow. See [ADR 0045](adr/0045-opt-in-local-ammunition.md) and
 `docs/examples/opt-in-local-ammunition/`.
 
+### R5.8B Ammunition supply
+
+R5.8B advances only `logistics` to v3 with an exact required nullable `supply` sibling. Non-null
+supply requires the same profile's non-null ammunition catalog and adds exact production recipes,
+producer compartments, and storage compartments on existing tower types. Reading v1/v2 never
+migrates them; Studio/MCP explicitly promote the whole profile while preserving power/ammunition.
+Missing, disabled, unselected, all-null, and `supply:null` paths retain their literal earlier state.
+
+The pure engine builds a bounded directed graph over live instances using topology distance minus
+both footprint radii. Producers connect to every in-range matching consumer/storage; storage
+connects to every in-range matching consumer even when a producer reaches the same target;
+same-instance compartment refill is allowed. Each recipe batch must fit every producer bound to it.
+Sources execute by binary tower ID and serve consumers before storage, then shorter edges, then
+binary destination ID. Production runs before one detached transfer plan, while ordinary attacks
+run after its atomic publish. Incoming stock cannot be forwarded and outgoing stock cannot free
+incoming headroom during the same tick.
+
+Power consumers use authoritative allocation; brownout and disruption freeze production/outgoing
+transfer but do not block passive receipt. Refill never resets cooldown, so a ready tower reaching
+its activation cost may fire in that tick through the unchanged R5.8A gate. Whole production
+batches, partial bounded transfer, removal semantics, and placement/move/checkpoint topology
+preflight preserve stock conservation and deterministic replay.
+
+Mutable producer/storage stock and progress use nested Logistics checkpoint v2. Derived edges are
+rebuilt. Snapshot v3 publishes detached producer/storage state, transfer configuration,
+powered/operational cues, and directed edges including tower/type identities. The shared renderer
+strictly validates this shape and exposes only presentation data; it does not route stock. Mechanics
+Hub, CLI, and MCP use the inert `basic_factory_ammunition_supply` recipe and the existing guarded
+transaction. No command, event, TowerScript action, raw material, conveyor, loot, campaign/profile
+carry, or host-side refill API is added. See [ADR 0046](adr/0046-opt-in-ammunition-supply.md) and
+`docs/examples/opt-in-ammunition-supply/`.
+
 ## Done Criteria For Constructor Changes
 
 - Engine changes pass `npm run typecheck`.

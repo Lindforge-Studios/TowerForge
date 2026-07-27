@@ -1097,7 +1097,60 @@ export interface LogisticsSnapshotV2 {
   } | null;
 }
 
-export type LogisticsSnapshot = LogisticsSnapshotV1 | LogisticsSnapshotV2;
+export interface LogisticsSupplyProducerSnapshotV3 {
+  readonly towerId: string;
+  readonly towerTypeId: string;
+  readonly recipeId: string;
+  readonly ammoTypeId: string;
+  readonly amount: number;
+  readonly capacity: number;
+  readonly productionProgress: number;
+  readonly productionInterval: number;
+  readonly transferProgress: number;
+  readonly transferInterval: number;
+  readonly transferAmount: number;
+  readonly transferRadius: number;
+  readonly powered: boolean;
+  readonly operational: boolean;
+}
+
+export interface LogisticsSupplyStorageSnapshotV3 {
+  readonly towerId: string;
+  readonly towerTypeId: string;
+  readonly ammoTypeId: string;
+  readonly amount: number;
+  readonly capacity: number;
+  readonly transferProgress: number;
+  readonly transferInterval: number;
+  readonly transferAmount: number;
+  readonly transferRadius: number;
+  readonly powered: boolean;
+  readonly operational: boolean;
+}
+
+export interface LogisticsSupplyEdgeSnapshotV3 {
+  readonly sourceTowerId: string;
+  readonly sourceTowerTypeId: string;
+  readonly sourceKind: "producer" | "storage";
+  readonly destinationTowerId: string;
+  readonly destinationTowerTypeId: string;
+  readonly destinationKind: "consumer" | "storage";
+  readonly ammoTypeId: string;
+  readonly distance: number;
+}
+
+export interface LogisticsSnapshotV3 {
+  readonly schemaVersion: 3;
+  readonly power: LogisticsSnapshotV1["power"] | null;
+  readonly ammunition: LogisticsSnapshotV2["ammunition"];
+  readonly supply: {
+    readonly producers: readonly LogisticsSupplyProducerSnapshotV3[];
+    readonly storages: readonly LogisticsSupplyStorageSnapshotV3[];
+    readonly edges: readonly LogisticsSupplyEdgeSnapshotV3[];
+  } | null;
+}
+
+export type LogisticsSnapshot = LogisticsSnapshotV1 | LogisticsSnapshotV2 | LogisticsSnapshotV3;
 
 export interface GameSnapshot {
   /** Canonical authored map identity for presentation and renderer adapters. */

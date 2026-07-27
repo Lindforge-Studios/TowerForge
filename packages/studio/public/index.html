@@ -885,6 +885,34 @@
               <div id="mechanics-logistics-tower-inventory-rows" class="mechanics-definition-rows"></div>
             </div>
             <div class="mechanics-shield-section mechanics-logistics-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Ammunition supply (v3 opt-in)</h4>
+                  <p>Factories, local storage, and bounded refill links remain inactive until this profile is explicitly promoted and saved.</p>
+                </div>
+                <button id="btn-mechanics-add-supply" class="btn btn-outline" type="button">Add supply</button>
+                <label class="mechanics-navigation-overlay-toggle">
+                  <input id="mechanics-logistics-supply-enabled" type="checkbox">
+                  <span>Include supply in this profile</span>
+                </label>
+              </div>
+              <div class="mechanics-section-head">
+                <h4>Production recipes</h4>
+                <button id="btn-mechanics-add-production-recipe" class="btn btn-outline" type="button">+ Add production recipe</button>
+              </div>
+              <div id="mechanics-logistics-production-recipe-rows" class="mechanics-definition-rows"></div>
+              <div class="mechanics-section-head">
+                <h4>Producers</h4>
+                <button id="btn-mechanics-add-producer" class="btn btn-outline" type="button">+ Add producer</button>
+              </div>
+              <div id="mechanics-logistics-producer-rows" class="mechanics-definition-rows"></div>
+              <div class="mechanics-section-head">
+                <h4>Storages</h4>
+                <button id="btn-mechanics-add-storage" class="btn btn-outline" type="button">+ Add storage</button>
+              </div>
+              <div id="mechanics-logistics-storage-rows" class="mechanics-definition-rows"></div>
+            </div>
+            <div class="mechanics-shield-section mechanics-logistics-section">
               <div class="mechanics-section-head"><div><h4>Basic power-grid recipe</h4><p>Choose three distinct existing tower types. The recipe remains inert until preview/apply.</p></div></div>
               <div class="mechanics-logistics-recipe-fields">
                 <label>Generator tower<select id="mechanics-logistics-recipe-generator"></select></label>
@@ -898,6 +926,25 @@
                 <label>Capacity<input id="mechanics-logistics-recipe-capacity" type="number" value="30"></label>
                 <label>Starting amount<input id="mechanics-logistics-recipe-starting-amount" type="number" value="12"></label>
                 <label>Consumption per activation<input id="mechanics-logistics-recipe-consumption" type="number" value="1"></label>
+              </div>
+              <div class="mechanics-section-head"><div><h4>Basic factory-ammunition-supply recipe</h4><p>Creates one inert v3 producer, storage, and consumer profile.</p></div></div>
+              <div class="mechanics-logistics-recipe-fields">
+                <label>Producer tower<select id="mechanics-logistics-recipe-producer"></select></label>
+                <label>Storage tower<select id="mechanics-logistics-recipe-storage"></select></label>
+                <label>Production recipe ID<input id="mechanics-logistics-recipe-production-id" value="forge_shell"></label>
+                <label>Production label<input id="mechanics-logistics-recipe-production-label" value="Forge shell"></label>
+                <label>Output amount<input id="mechanics-logistics-recipe-output-amount" type="number" value="4"></label>
+                <label>Production interval<input id="mechanics-logistics-recipe-production-interval" type="number" value="1"></label>
+                <label>Producer capacity<input id="mechanics-logistics-recipe-producer-capacity" type="number" value="120"></label>
+                <label>Producer starting amount<input id="mechanics-logistics-recipe-producer-starting" type="number" value="0"></label>
+                <label>Producer transfer radius<input id="mechanics-logistics-recipe-producer-radius" type="number" value="4"></label>
+                <label>Producer transfer amount<input id="mechanics-logistics-recipe-producer-amount" type="number" value="8"></label>
+                <label>Producer transfer interval<input id="mechanics-logistics-recipe-producer-interval" type="number" value="0.4"></label>
+                <label>Storage capacity<input id="mechanics-logistics-recipe-storage-capacity" type="number" value="240"></label>
+                <label>Storage starting amount<input id="mechanics-logistics-recipe-storage-starting" type="number" value="0"></label>
+                <label>Storage transfer radius<input id="mechanics-logistics-recipe-storage-radius" type="number" value="5"></label>
+                <label>Storage transfer amount<input id="mechanics-logistics-recipe-storage-amount" type="number" value="12"></label>
+                <label>Storage transfer interval<input id="mechanics-logistics-recipe-storage-interval" type="number" value="0.4"></label>
               </div>
             </div>
           </div>

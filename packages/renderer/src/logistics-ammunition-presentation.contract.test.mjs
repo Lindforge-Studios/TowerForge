@@ -140,7 +140,7 @@ describe("R5.8A shared Logistics v2 ammunition presentation RED", () => {
       { logistics: { schemaVersion: 2, power: null, ammunition: null } },
       { logistics: { schemaVersion: 2, power: null } },
       { logistics: { schemaVersion: 2, power: null, ammunition: { inventories: [] }, extra: true } },
-      { logistics: { schemaVersion: 3, power: null, ammunition: null, future: true } }
+      { logistics: { schemaVersion: 4, power: null, ammunition: null, supply: null, future: true } }
     ]) expect(Renderer.projectLogisticsPresentation(source)).toBe(inactive);
   });
 });

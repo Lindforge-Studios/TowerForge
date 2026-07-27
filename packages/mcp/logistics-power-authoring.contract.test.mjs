@@ -57,11 +57,6 @@ function projectTree(rootDir) {
   return rows;
 }
 
-async function rejection(promise) {
-  try { await promise; } catch (error) { return error; }
-  throw new Error("Expected operation to reject.");
-}
-
 describe("R5.7A MCP/AI Logistics power authoring RED", () => {
   it("describes the exact Logistics v1 domain, snapshot, bounds, and no second allocator tool", async () => {
     const logistics = await callTool("describe_schema", { domain: "logistics" }, {});
@@ -73,26 +68,30 @@ describe("R5.7A MCP/AI Logistics power authoring RED", () => {
       logistics: {
         authoring: {
           moduleId: "logistics",
-          schemaVersion: 2,
-          supportedModuleSchemaVersions: [1, 2],
+          schemaVersion: 3,
+          supportedModuleSchemaVersions: [1, 2, 3],
           versions: {
             1: expect.objectContaining({
               requiredFields: ["power"], additionalProperties: false,
               power: expect.objectContaining({ nullable: true, additionalProperties: false })
             }),
-            2: expect.any(Object)
+            2: expect.any(Object),
+            3: expect.any(Object)
           },
           limits: expect.objectContaining({
             idUtf8Bytes: 128,
             definitionsPerRole: 4_096,
             definitionsAcrossRoles: 4_096,
-            amount: 1_000_000_000_000,
-            radius: 64,
-            priority: 1_000_000,
-            liveParticipants: 4_096
+            power: expect.objectContaining({
+              output: 1_000_000_000_000,
+              demand: 1_000_000_000_000,
+              radius: 64,
+              priority: 1_000_000,
+              liveParticipants: 4_096
+            })
           })
         },
-        snapshot: { field: "logistics", optional: true, supportedSchemaVersions: [1, 2] },
+        snapshot: { field: "logistics", optional: true, supportedSchemaVersions: [1, 2, 3] },
         events: []
       }
     });
@@ -180,10 +179,10 @@ describe("R5.7A MCP/AI Logistics power authoring RED", () => {
     const preview = await callTool("preview_mechanics_module", request, {});
     fs.appendFileSync(path.join(projectDir, "content", "balance.json"), " ", "utf8");
     const afterConcurrentEdit = projectTree(projectDir);
-    const stale = await rejection(callTool("apply_mechanics_module", {
+    const stale = await callTool("apply_mechanics_module", {
       ...request, ifRevision: preview.revision
-    }, {}));
-    expect(stale).toMatchObject({ code: "conflict" });
+    }, {});
+    expect(stale).toMatchObject({ ok: false, conflict: true, written: false });
     expect(projectTree(projectDir)).toEqual(afterConcurrentEdit);
 
     const malformed = await callTool("preview_mechanics_module", {

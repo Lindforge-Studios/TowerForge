@@ -315,11 +315,11 @@ describe("R1 combat mechanics MCP contract", () => {
     });
     const logisticsSurface = mechanics.mechanics.modules.logistics;
     expect(logisticsSurface.authoring).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       moduleId: "logistics",
-      supportedModuleSchemaVersions: [1, 2],
+      supportedModuleSchemaVersions: [1, 2, 3],
       profile: {
-        requiredFields: ["power", "ammunition"],
+        requiredFields: ["power", "ammunition", "supply"],
         optionalFields: [],
         additionalProperties: false
       },
@@ -329,15 +329,22 @@ describe("R1 combat mechanics MCP contract", () => {
           requiredFields: ["power", "ammunition"],
           optionalFields: [],
           additionalProperties: false
+        },
+        3: {
+          requiredFields: ["power", "ammunition", "supply"],
+          optionalFields: [],
+          additionalProperties: false
         }
       },
       power: engine.LOGISTICS_MECHANICS_SCHEMA.power,
       ammunition: engine.LOGISTICS_MECHANICS_SCHEMA.ammunition,
+      supply: engine.LOGISTICS_MECHANICS_SCHEMA.supply,
       runtimeSnapshot: {
-        schemaVersion: 2,
-        fields: ["schemaVersion", "power", "ammunition"],
+        schemaVersion: 3,
+        fields: ["schemaVersion", "power", "ammunition", "supply"],
         powerFields: ["components", "nodes", "consumers"],
-        ammunitionFields: ["inventories"]
+        ammunitionFields: ["inventories"],
+        supplyFields: ["producers", "storages", "edges"]
       },
       versions: {
         1: {
@@ -352,6 +359,14 @@ describe("R1 combat mechanics MCP contract", () => {
           additionalProperties: false,
           power: engine.LOGISTICS_MECHANICS_SCHEMA.power,
           ammunition: engine.LOGISTICS_MECHANICS_SCHEMA.ammunition
+        },
+        3: {
+          requiredFields: ["power", "ammunition", "supply"],
+          optionalFields: [],
+          additionalProperties: false,
+          power: engine.LOGISTICS_MECHANICS_SCHEMA.power,
+          ammunition: engine.LOGISTICS_MECHANICS_SCHEMA.ammunition,
+          supply: engine.LOGISTICS_MECHANICS_SCHEMA.supply
         }
       }
     });
@@ -362,15 +377,16 @@ describe("R1 combat mechanics MCP contract", () => {
       definitionsAcrossRoles: engine.LOGISTICS_MECHANICS_SCHEMA.limits.power.entriesTotal,
       ammunitionTypes: engine.LOGISTICS_MECHANICS_SCHEMA.limits.ammunition.types,
       authoredTowerInventories: engine.LOGISTICS_MECHANICS_SCHEMA.limits.ammunition.towerInventories,
-      liveAmmunitionInventories: engine.LOGISTICS_MECHANICS_SCHEMA.limits.ammunition.liveInventories
+      liveAmmunitionInventories: engine.LOGISTICS_MECHANICS_SCHEMA.limits.ammunition.liveInventories,
+      supply: engine.LOGISTICS_MECHANICS_SCHEMA.limits.supply
     });
     expect(logisticsSurface).toMatchObject({
       checkpoint: {
-        field: "state.logistics.ammunition",
+        field: "state.logistics",
         optional: true,
-        schemaVersion: 1
+        schemaVersion: 2
       },
-      snapshot: { field: "logistics", optional: true, supportedSchemaVersions: [1, 2] },
+      snapshot: { field: "logistics", optional: true, supportedSchemaVersions: [1, 2, 3] },
       commands: [],
       events: []
     });

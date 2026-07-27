@@ -99,7 +99,7 @@ function input(options: {
     : options.profile;
   const modules = activation === "absent" ? {} : {
     logistics: {
-      schemaVersion: activation === "future" ? 3 : (options.moduleVersion ?? 2),
+      schemaVersion: activation === "future" ? 4 : (options.moduleVersion ?? 2),
       enabled: activation !== "disabled",
       profiles: { local: profile }
     }
@@ -200,11 +200,11 @@ describe("R5.8A Logistics v2 ammunition content contract (RED)", () => {
     expect(exports.LOGISTICS_AMMUNITION_LIMITS).toEqual(AMMUNITION_LIMITS_V2);
     expect(Object.isFrozen(exports.LOGISTICS_AMMUNITION_LIMITS)).toBe(true);
     expect(exports.LOGISTICS_MECHANICS_SCHEMA).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       moduleId: "logistics",
-      supportedModuleSchemaVersions: [1, 2],
+      supportedModuleSchemaVersions: [1, 2, 3],
       profile: {
-        requiredFields: ["power", "ammunition"], optionalFields: [], additionalProperties: false
+        requiredFields: ["power", "ammunition", "supply"], optionalFields: [], additionalProperties: false
       },
       profileVersions: {
         1: { requiredFields: ["power"], optionalFields: [], additionalProperties: false },
@@ -225,8 +225,8 @@ describe("R5.8A Logistics v2 ammunition content contract (RED)", () => {
         fireCapableAttackKinds: ["single", "pulse", "sniper", "antiair", "splash", "pipeline"]
       },
       runtimeSnapshot: {
-        schemaVersion: 2,
-        fields: ["schemaVersion", "power", "ammunition"],
+        schemaVersion: 3,
+        fields: ["schemaVersion", "power", "ammunition", "supply"],
         ammunitionFields: ["inventories"]
       }
     });
@@ -653,13 +653,13 @@ describe("R5.8A Logistics v2 ammunition content contract (RED)", () => {
     expect(getterCalls).toBe(0);
   });
 
-  it("keeps future v3 payload opaque, lossless, read-only, and runtime fail-closed", () => {
+  it("keeps future v4 payload opaque, lossless, read-only, and runtime fail-closed", () => {
     let calls = 0;
     const futureProfile = Object.defineProperty({ futureOnly: { factories: true } }, "ammunition", {
       enumerable: true,
       get() {
         calls += 1;
-        throw new Error("FUTURE_LOGISTICS_V3_MUST_STAY_OPAQUE");
+        throw new Error("FUTURE_LOGISTICS_V4_MUST_STAY_OPAQUE");
       }
     });
     const subject = registry({ activation: "future", profile: futureProfile });
@@ -668,10 +668,10 @@ describe("R5.8A Logistics v2 ammunition content contract (RED)", () => {
     });
     const result = validateGameContentRegistry(subject);
     expect(result.ok).toBe(false);
-    expect(hasIssue(result, "error", /logistics.*schemaVersion|schemaVersion/i, /future|unsupported|version|1|2/i))
+    expect(hasIssue(result, "error", /logistics.*schemaVersion|schemaVersion/i, /future|unsupported|version|1|2|3/i))
       .toBe(true);
     expect(result.issues.some((candidate) => /profiles\.local\.ammunition/i.test(candidate.fieldPath))).toBe(false);
-    expect(JSON.stringify(result)).not.toContain("FUTURE_LOGISTICS_V3_MUST_STAY_OPAQUE");
+    expect(JSON.stringify(result)).not.toContain("FUTURE_LOGISTICS_V4_MUST_STAY_OPAQUE");
     expect(calls).toBe(0);
     expect((subject.mechanics.modules as any).logistics.profiles.local).toBe(futureProfile);
     expect((Engine as any).resolveActiveLogisticsMechanics?.(subject, "ammo")).toBeUndefined();

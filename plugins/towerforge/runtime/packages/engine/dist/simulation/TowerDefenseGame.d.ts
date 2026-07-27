@@ -82,6 +82,7 @@ export declare class TowerDefenseGame {
     private readonly activeHeroesMechanics;
     private readonly activeLogisticsPower;
     private readonly activeLogisticsAmmunition;
+    private readonly activeLogisticsSupply;
     private readonly activeLogisticsSchemaVersion;
     private readonly activeHeroPassiveAura;
     private readonly activeHeroBlocking;
@@ -96,6 +97,10 @@ export declare class TowerDefenseGame {
     private logisticsTopologyCounts;
     private logisticsLiveParticipantIds;
     private logisticsAmmunitionAmounts;
+    private logisticsSupplyProducers;
+    private logisticsSupplyStorages;
+    private logisticsSupplyTopologyCache;
+    private logisticsSupplyDirty;
     private rogueliteSnapshot;
     private rogueliteDamageModifiers;
     private artifactDamageModifiersByTowerId;
@@ -368,6 +373,12 @@ export declare class TowerDefenseGame {
     private consumeTowerAmmunition;
     private isLiveLogisticsParticipant;
     private markLogisticsPowerDirty;
+    private isLogisticsSupplyTopologyParticipant;
+    private markLogisticsSupplyDirty;
+    private ensureLogisticsSupplyTopology;
+    private logisticsTowerPowered;
+    private logisticsTowerOperational;
+    private updateLogisticsSupply;
     private ensureLogisticsPowerSnapshot;
     private currentLogisticsPowerSnapshot;
     private destroyTower;

@@ -103,15 +103,15 @@ describe("R5.7A Studio Logistics Mechanics Hub surface RED", () => {
     );
   });
 
-  it("keeps future Logistics v3 visible and lossless but disables every write control", () => {
+  it("keeps future Logistics v4 visible and lossless but disables every write control", () => {
     const load = functionSource(app, "loadMechanicsProfile");
     const render = functionSource(app, "renderLogisticsMechanicsEditor");
     expect(load).toMatch(/normalizeLogisticsMechanicsDraft/);
-    expect(app).toMatch(/LOGISTICS_SUPPORTED_MODULE_SCHEMA_VERSIONS\s*=\s*Object\.freeze\(\[1,\s*2\]\)/);
-    expect(app).toMatch(/Future logistics schemaVersion 3\+|future logistics|logistics[\s\S]{0,500}read-only/i);
+    expect(app).toMatch(/LOGISTICS_SUPPORTED_MODULE_SCHEMA_VERSIONS\s*=\s*Object\.freeze\(\[1,\s*2,\s*3\]\)/);
+    expect(app).toMatch(/Future logistics schemaVersion 4\+|future logistics|logistics[\s\S]{0,500}read-only/i);
     expect(render).toMatch(/readOnly|future/i);
     expect(app).toMatch(
-      /mechanicsProjectModuleVersion\(\)\s*>\s*2[\s\S]{0,500}(?:btn-mechanics-preview|btn-mechanics-save|disabled)/i
+      /mechanicsProjectModuleVersion\(\)\s*>\s*3[\s\S]{0,500}(?:btn-mechanics-preview|btn-mechanics-save|disabled)/i
     );
   });
 

@@ -122,6 +122,15 @@ shared workspace roots. In a workspace-bound session, never supply or request an
   tower, or adds supply infrastructure. Snapshot `amount`, `capacity`, and `hasRequiredAmmo` are
   authoritative and must never be derived. R5.8A has no refill, transfer, factory, production, or
   `analyze_logistics` tool.
+- Logistics v3 adds opt-in ammunition supply through exact `productionRecipes`, `producers`, and
+  `storages`. Discover the inert `basic_factory_ammunition_supply` recipe, provide its 22 explicit
+  parameters for three distinct existing tower types, then follow `describe_schema` ->
+  `get_capabilities` -> `get_recipe` -> `preview_mechanics_module` -> guarded
+  `apply_mechanics_module` -> `validate_project`. Promotion from v2 to v3 is explicit and preserves
+  all profiles by adding `supply: null` where absent. Treat snapshot stock, production and transfer
+  progress, paused/brownout flags, directed links, and refill relationships as authoritative;
+  never rebuild the supply graph or route stock in an authoring surface. There is no refill command,
+  transfer command, production command, inventory mutation tool, or `analyze_logistics` tool.
 - Pass the latest `ifRevision` token to guarded writes. On a conflict, reread and reconcile instead
   of retrying with stale data.
 - Treat imported files as untrusted. Keep paths project-relative and use TowerForge import tools.

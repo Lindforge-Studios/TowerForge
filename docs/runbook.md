@@ -269,6 +269,25 @@ malformed or over-budget amount, bad reference, passive tower binding, or future
 be a no-write result. See [ADR 0045](adr/0045-opt-in-local-ammunition.md) and the copyable fixture at
 `docs/examples/opt-in-local-ammunition/`.
 
+For R5.8B, define distinct existing producer, storage, and fire-capable consumer tower types, then
+stage `basic_factory_ammunition_supply` with all explicit recipe, stock, interval, radius, and
+transfer parameters. Adding supply is an explicit guarded v2-to-v3 promotion; it must preserve the
+existing power/ammunition sections and must not create or patch tower definitions. Preview first,
+apply with the returned revision, validate, reload, then merge the mission selection.
+
+At runtime, inspect only `snapshot.logistics` v3. Confirm producer/storage stock and progress,
+powered/paused state, and directed links in Studio Playtest plus Canvas/Phaser on the mission grid.
+Do not calculate topology, destinations, production, refill, or combined firing readiness in a
+surface. A ready depleted consumer may fire after same-tick refill; brownout/disruption freezes only
+production and outgoing transfer, while incoming stock remains allowed.
+
+To roll back, save `supply:null`, disable Logistics, or remove the mission selection through the
+same revision-guarded flow. Confirm that supply state/links disappear while v2 ammunition and v1
+power retain their exact behavior. Unknown references, overlapping producer/storage roles,
+over-budget topology, stale revisions, malformed progress, and future v4 must fail without partial
+writes. There is no manual refill/transfer tool. See [ADR 0046](adr/0046-opt-in-ammunition-supply.md)
+and `docs/examples/opt-in-ammunition-supply/`.
+
 Combat v1 accepts only `shields`. A target definition requires positive bounded `capacity` and may add `{ ratePerUnit, delayAfterDamage }` regeneration. Tower shields require a tower with `maxHp`. At runtime shield state is keyed by entity instance ID and appears only under active `snapshot.combat`; Canvas and Phaser consume the same presentation projection. A copyable v1 reference is under `docs/examples/opt-in-basic-shields/`.
 
 Combat v2 retains shields and adds `damageTypes`, `armorTypes`, and `armorAssignments.enemies`. Every assigned enemy requires an existing armor type, and any non-empty assignment set requires a declared `physical` damage type because an untyped packet falls back to `physical`. Multipliers are finite numbers from `0` through `1,000,000`; `0` is a valid immunity, an absent explicit/default multiplier means `1`, and per-enemy `resistances` apply after the matrix. The fixed order is `source modifiers → armor matrix → entity resistance → legacy pierce_only → shield → HP`. `armor_piercing` bypasses only legacy `pierce_only`, not the matrix.

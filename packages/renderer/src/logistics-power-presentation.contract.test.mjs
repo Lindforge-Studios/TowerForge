@@ -397,6 +397,7 @@ describe("R5.7A shared authoritative logistics power presentation", () => {
     const sparseNodes = [...valid.nodes];
     delete sparseNodes[0];
     const invalid = [
+      { schemaVersion: 4, power: valid, ammunition: null, supply: null, opaque: true },
       { ...snapshot().logistics, schemaVersion: 2 },
       { schemaVersion: 1 },
       { schemaVersion: 1, power: { ...valid, extra: true } },

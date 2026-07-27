@@ -24,6 +24,7 @@ const BASIC_PASSIVE_HERO_AURA_ID = "basic_passive_hero_aura";
 const BASIC_DYNAMIC_HERO_BLOCKING_ID = "basic_dynamic_hero_blocking";
 const BASIC_POWER_GRID_ID = "basic_power_grid";
 const BASIC_LOCAL_AMMUNITION_ID = "basic_local_ammunition";
+const BASIC_FACTORY_AMMUNITION_SUPPLY_ID = "basic_factory_ammunition_supply";
 const TERRAFORMING_RECIPE_IDS = Object.freeze([
   TAGGED_FLOOD_ID,
   TAGGED_MOAT_ID,
@@ -92,6 +93,36 @@ const LOGISTICS_AMMUNITION_PARAMETER_SCHEMA = Object.freeze({
     startingAmount: Object.freeze({ type: "integer", minimum: 0, maximum: 1_000_000_000 }),
     consumptionPerActivation: Object.freeze({ type: "integer", minimum: 1, maximum: 1_000_000_000 })
   })
+});
+const LOGISTICS_SUPPLY_PARAMETER_NAMES = Object.freeze([
+  "producerTowerTypeId", "storageTowerTypeId", "consumerTowerTypeId", "ammoTypeId", "ammoLabel",
+  "productionRecipeId", "productionRecipeLabel", "consumerCapacity", "consumerStartingAmount",
+  "consumptionPerActivation", "outputAmount", "productionInterval", "producerCapacity",
+  "producerStartingAmount", "producerTransferRadius", "producerTransferAmount", "producerTransferInterval",
+  "storageCapacity", "storageStartingAmount", "storageTransferRadius", "storageTransferAmount",
+  "storageTransferInterval"
+]);
+const LOGISTICS_SUPPLY_PARAMETER_SCHEMA = Object.freeze({
+  type: "object",
+  required: LOGISTICS_SUPPLY_PARAMETER_NAMES,
+  additionalProperties: false,
+  properties: Object.freeze(Object.fromEntries(LOGISTICS_SUPPLY_PARAMETER_NAMES.map((name) => {
+    if (["producerTowerTypeId", "storageTowerTypeId", "consumerTowerTypeId", "ammoTypeId", "ammoLabel",
+      "productionRecipeId", "productionRecipeLabel"].includes(name)) {
+      return [name, Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 })];
+    }
+    if (["productionInterval", "producerTransferInterval", "storageTransferInterval"].includes(name)) {
+      return [name, Object.freeze({ type: "number", minimum: 0.2, maximum: 1_000_000 })];
+    }
+    if (["producerTransferRadius", "storageTransferRadius"].includes(name)) {
+      return [name, Object.freeze({ type: "integer", minimum: 0, maximum: 64 })];
+    }
+    return [name, Object.freeze({
+      type: "integer",
+      minimum: name.endsWith("StartingAmount") ? 0 : 1,
+      maximum: 1_000_000_000
+    })];
+  })))
 });
 export class MechanicsRecipeParameterError extends Error {
   constructor(code, message) {
@@ -313,6 +344,15 @@ const RECIPES = Object.freeze([
     suggestedId: BASIC_LOCAL_AMMUNITION_ID,
     moduleSchemaVersion: 2,
     parameterSchema: LOGISTICS_AMMUNITION_PARAMETER_SCHEMA
+  }),
+  Object.freeze({
+    id: BASIC_FACTORY_AMMUNITION_SUPPLY_ID,
+    moduleId: "logistics",
+    label: "Basic Factory Ammunition Supply",
+    description: "Inert logistics v3 profile with one producer, storage, and refillable fire-capable consumer.",
+    suggestedId: BASIC_FACTORY_AMMUNITION_SUPPLY_ID,
+    moduleSchemaVersion: 3,
+    parameterSchema: LOGISTICS_SUPPLY_PARAMETER_SCHEMA
   })
 ]);
 
@@ -387,6 +427,17 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
       throw invalidLogisticsRecipeParameter("Local ammunition recipe parameters must be enumerable own data.");
     }
     return materializeLocalAmmunitionRecipe(recipe, context, parameterField.value);
+  }
+  if (recipeId === BASIC_FACTORY_AMMUNITION_SUPPLY_ID) {
+    if (parameterField.kind === "absent") {
+      throw invalidLogisticsRecipeParameter(
+        "Factory ammunition supply recipe parameters are required and must define three distinct tower roles."
+      );
+    }
+    if (parameterField.kind === "invalid") {
+      throw invalidLogisticsRecipeParameter("Factory ammunition supply parameters must be enumerable own data.");
+    }
+    return materializeFactoryAmmunitionSupplyRecipe(recipe, context, parameterField.value);
   }
   if (parameterField.kind !== "absent") {
     throw new MechanicsRecipeParameterError(
@@ -850,6 +901,122 @@ function materializeLocalAmmunitionRecipe(recipe, context, parameterValue) {
   };
 }
 
+function materializeFactoryAmmunitionSupplyRecipe(recipe, context, parameterValue) {
+  const parameters = inspectFactoryAmmunitionSupplyParameters(parameterValue);
+  const producerTowerTypeId = boundedLogisticsRecipeId(parameters.producerTowerTypeId, "producerTowerTypeId");
+  const storageTowerTypeId = boundedLogisticsRecipeId(parameters.storageTowerTypeId, "storageTowerTypeId");
+  const consumerTowerTypeId = boundedLogisticsRecipeId(parameters.consumerTowerTypeId, "consumerTowerTypeId");
+  if (new Set([producerTowerTypeId, storageTowerTypeId, consumerTowerTypeId]).size !== 3) {
+    throw invalidLogisticsRecipeParameter(
+      "Factory ammunition supply producer, storage, and consumer roles must use three distinct tower IDs."
+    );
+  }
+  const towerIds = new Set(sortedSafeIds(ownDataValue(context, "towerIds")));
+  for (const towerTypeId of [producerTowerTypeId, storageTowerTypeId, consumerTowerTypeId]) {
+    if (!towerIds.has(towerTypeId)) {
+      throw invalidLogisticsRecipeParameter(
+        `Factory ammunition supply recipe references unknown authored tower "${towerTypeId}".`
+      );
+    }
+  }
+  const attackKind = ownDataValue(ownDataValue(context, "towerAttackKindsByTowerId"), consumerTowerTypeId);
+  if (!["single", "pulse", "sniper", "antiair", "splash", "pipeline"].includes(attackKind)) {
+    throw invalidLogisticsRecipeParameter(
+      `Factory ammunition supply consumer "${consumerTowerTypeId}" must use a fire-capable attack kind.`
+    );
+  }
+  const ammoTypeId = boundedLogisticsRecipeId(parameters.ammoTypeId, "ammoTypeId");
+  const ammoLabel = boundedLogisticsRecipeId(parameters.ammoLabel, "ammoLabel");
+  const productionRecipeId = boundedLogisticsRecipeId(parameters.productionRecipeId, "productionRecipeId");
+  const productionRecipeLabel = boundedLogisticsRecipeId(
+    parameters.productionRecipeLabel, "productionRecipeLabel"
+  );
+  const consumerCapacity = boundedLogisticsRecipeInteger(
+    parameters.consumerCapacity, "consumerCapacity", 1, 1_000_000_000
+  );
+  const consumerStartingAmount = boundedLogisticsRecipeInteger(
+    parameters.consumerStartingAmount, "consumerStartingAmount", 0, consumerCapacity
+  );
+  const consumptionPerActivation = boundedLogisticsRecipeInteger(
+    parameters.consumptionPerActivation, "consumptionPerActivation", 1, consumerCapacity
+  );
+  const producerCapacity = boundedLogisticsRecipeInteger(
+    parameters.producerCapacity, "producerCapacity", 1, 1_000_000_000
+  );
+  const producerStartingAmount = boundedLogisticsRecipeInteger(
+    parameters.producerStartingAmount, "producerStartingAmount", 0, producerCapacity
+  );
+  const outputAmount = boundedLogisticsRecipeInteger(
+    parameters.outputAmount, "outputAmount", 1, producerCapacity
+  );
+  const producerTransferRadius = boundedLogisticsRecipeInteger(
+    parameters.producerTransferRadius, "producerTransferRadius", 0, 64
+  );
+  const producerTransferAmount = boundedLogisticsRecipeInteger(
+    parameters.producerTransferAmount, "producerTransferAmount", 1, producerCapacity
+  );
+  const productionInterval = boundedLogisticsRecipeNumber(
+    parameters.productionInterval, "productionInterval", 0.2, 1_000_000
+  );
+  const producerTransferInterval = boundedLogisticsRecipeNumber(
+    parameters.producerTransferInterval, "producerTransferInterval", 0.2, 1_000_000
+  );
+  const storageCapacity = boundedLogisticsRecipeInteger(
+    parameters.storageCapacity, "storageCapacity", 1, 1_000_000_000
+  );
+  const storageStartingAmount = boundedLogisticsRecipeInteger(
+    parameters.storageStartingAmount, "storageStartingAmount", 0, storageCapacity
+  );
+  const storageTransferRadius = boundedLogisticsRecipeInteger(
+    parameters.storageTransferRadius, "storageTransferRadius", 0, 64
+  );
+  const storageTransferAmount = boundedLogisticsRecipeInteger(
+    parameters.storageTransferAmount, "storageTransferAmount", 1, storageCapacity
+  );
+  const storageTransferInterval = boundedLogisticsRecipeNumber(
+    parameters.storageTransferInterval, "storageTransferInterval", 0.2, 1_000_000
+  );
+
+  const types = safeRecord();
+  const towerInventories = safeRecord();
+  const productionRecipes = safeRecord();
+  const producers = safeRecord();
+  const storages = safeRecord();
+  defineOwn(types, ammoTypeId, { label: ammoLabel });
+  defineOwn(towerInventories, consumerTowerTypeId, {
+    ammoTypeId, capacity: consumerCapacity, startingAmount: consumerStartingAmount,
+    consumptionPerActivation
+  });
+  defineOwn(productionRecipes, productionRecipeId, {
+    label: productionRecipeLabel, ammoTypeId, outputAmount, interval: productionInterval
+  });
+  defineOwn(producers, producerTowerTypeId, {
+    recipeId: productionRecipeId, capacity: producerCapacity, startingAmount: producerStartingAmount,
+    transferRadius: producerTransferRadius, transferAmount: producerTransferAmount,
+    transferInterval: producerTransferInterval
+  });
+  defineOwn(storages, storageTowerTypeId, {
+    ammoTypeId, capacity: storageCapacity, startingAmount: storageStartingAmount,
+    transferRadius: storageTransferRadius, transferAmount: storageTransferAmount,
+    transferInterval: storageTransferInterval
+  });
+  const { description: _description, ...inertRecipe } = recipe;
+  return {
+    ...inertRecipe,
+    entity: {
+      moduleId: "logistics",
+      moduleSchemaVersion: 3,
+      missionId: chooseId(context.defaultMissionId, context.missionIds) ?? "",
+      profileId: recipe.suggestedId,
+      profile: {
+        power: null,
+        ammunition: { types, towerInventories },
+        supply: { productionRecipes, producers, storages }
+      }
+    }
+  };
+}
+
 function inspectLogisticsRecipeParameters(value) {
   if (!isPlainRecord(value)) {
     throw invalidLogisticsRecipeParameter("Logistics recipe parameters must be a closed ordinary object.");
@@ -903,10 +1070,50 @@ function inspectLocalAmmunitionRecipeParameters(value) {
   return result;
 }
 
+function inspectFactoryAmmunitionSupplyParameters(value) {
+  if (!isPlainRecord(value)) {
+    throw invalidLogisticsRecipeParameter(
+      "Factory ammunition supply recipe parameters must be a closed ordinary object."
+    );
+  }
+  let descriptors;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    throw invalidLogisticsRecipeParameter("Factory ammunition supply parameters could not be inspected safely.");
+  }
+  if (Reflect.ownKeys(descriptors).some((key) => typeof key !== "string"
+    || !LOGISTICS_SUPPLY_PARAMETER_NAMES.includes(key))) {
+    throw invalidLogisticsRecipeParameter(
+      "Factory ammunition supply recipe parameters are closed to the 22 explicit fields."
+    );
+  }
+  const result = safeRecord();
+  for (const key of LOGISTICS_SUPPLY_PARAMETER_NAMES) {
+    const descriptor = descriptors[key];
+    if (!descriptor?.enumerable || !("value" in descriptor)) {
+      throw invalidLogisticsRecipeParameter(
+        `Factory ammunition supply recipe parameter ${key} is required as enumerable own data.`
+      );
+    }
+    defineOwn(result, key, descriptor.value);
+  }
+  return result;
+}
+
 function boundedLogisticsRecipeInteger(value, name, minimum, maximum) {
   if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
     throw invalidLogisticsRecipeParameter(
       `Local ammunition recipe parameter ${name} must be a safe integer from ${minimum} through ${maximum}.`
+    );
+  }
+  return value;
+}
+
+function boundedLogisticsRecipeNumber(value, name, minimum, maximum) {
+  if (!Number.isFinite(value) || value < minimum || value > maximum) {
+    throw invalidLogisticsRecipeParameter(
+      `Factory ammunition supply recipe parameter ${name} must be a finite number from ${minimum} through ${maximum}.`
     );
   }
   return value;

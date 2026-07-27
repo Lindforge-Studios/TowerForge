@@ -1558,6 +1558,7 @@ export async function callTool(name, args = {}, ctx = {}) {
     const logisticsLimits = engine.LOGISTICS_MECHANICS_SCHEMA.limits;
     const logisticsPowerLimits = logisticsLimits.power ?? logisticsLimits;
     const logisticsAmmunitionLimits = logisticsLimits.ammunition ?? {};
+    const logisticsSupplyLimits = logisticsLimits.supply ?? {};
     const logisticsVersions = engine.LOGISTICS_MECHANICS_SCHEMA.profileVersions ?? {
       1: engine.LOGISTICS_MECHANICS_SCHEMA.profile
     };
@@ -1575,6 +1576,14 @@ export async function callTool(name, args = {}, ctx = {}) {
               power: engine.LOGISTICS_MECHANICS_SCHEMA.power,
               ammunition: engine.LOGISTICS_MECHANICS_SCHEMA.ammunition
             }
+          } : {}),
+          ...(logisticsVersions[3] ? {
+            3: {
+              ...logisticsVersions[3],
+              power: engine.LOGISTICS_MECHANICS_SCHEMA.power,
+              ammunition: engine.LOGISTICS_MECHANICS_SCHEMA.ammunition,
+              supply: engine.LOGISTICS_MECHANICS_SCHEMA.supply
+            }
           } : {})
         },
         limits: {
@@ -1590,16 +1599,24 @@ export async function callTool(name, args = {}, ctx = {}) {
           ammunitionTypes: logisticsAmmunitionLimits.types,
           authoredTowerInventories: logisticsAmmunitionLimits.towerInventories,
           liveAmmunitionInventories: logisticsAmmunitionLimits.liveInventories,
-          ammunitionAmount: logisticsAmmunitionLimits.capacity
+          ammunitionAmount: logisticsAmmunitionLimits.capacity,
+          ...logisticsSupplyLimits
+        },
+        transferOrdering: {
+          edge: [
+            "source tower id", "source kind (producer before storage)",
+            "destination kind (consumer before storage)", "distance", "destination tower id"
+          ],
+          sourceExecution: ["source tower id", "consumers before storage", "distance", "destination tower id"]
         }
       },
       checkpoint: {
-        field: "state.logistics.ammunition",
+        field: "state.logistics",
         optional: true,
-        schemaVersion: 1,
-        note: "Required only while an active Logistics v2 ammunition section is non-null."
+        schemaVersion: 2,
+        note: "Nested v2 is required while active Logistics v3 ammunition or supply is non-null; Logistics v2 ammunition retains nested v1."
       },
-      snapshot: { field: "logistics", optional: true, supportedSchemaVersions: [1, 2] },
+      snapshot: { field: "logistics", optional: true, supportedSchemaVersions: [1, 2, 3] },
       commands: [],
       events: []
     };
@@ -1886,7 +1903,7 @@ export async function callTool(name, args = {}, ctx = {}) {
       }
       {
         const result = await applyMechanicsModule(projectDir, mechanicsAuthoringRequest(args));
-        if (args.moduleId === "logistics" && args.moduleSchemaVersion === 2 && result?.conflict) {
+        if (args.moduleId === "logistics" && result?.conflict) {
           return scrubMechanicsResult(result);
         }
         const unwrapped = unwrapMechanicsAuthoringResult(result);

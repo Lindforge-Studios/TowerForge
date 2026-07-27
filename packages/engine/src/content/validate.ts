@@ -64,7 +64,9 @@ import {
   LogisticsProfileValidationError,
   normalizeLogisticsProfileV1,
   normalizeLogisticsProfileV2,
-  type LogisticsAmmunitionDefinitionV2
+  normalizeLogisticsProfileV3,
+  type LogisticsAmmunitionDefinitionV2,
+  type LogisticsSupplyDefinitionV3
 } from "./logistics-mechanics.js";
 import {
   normalizeAuthoredWorldCampaign,
@@ -2972,13 +2974,13 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
         err("mechanics", "logistics", `modules.logistics.${key}`, `Logistics module is closed; unknown field "${key}".`);
       }
     }
-    const supported = module.schemaVersion === 1 || module.schemaVersion === 2;
+    const supported = module.schemaVersion === 1 || module.schemaVersion === 2 || module.schemaVersion === 3;
     if (!supported) {
       err(
         "mechanics",
         "logistics",
         "modules.logistics.schemaVersion",
-        "Logistics future or unsupported schemaVersion; only versions 1 and 2 are supported."
+        "Logistics future or unsupported schemaVersion; only versions 1, 2, and 3 are supported."
       );
     }
     if (typeof module.enabled !== "boolean") {
@@ -3008,7 +3010,9 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
       try {
         profile = module.schemaVersion === 1
           ? normalizeLogisticsProfileV1(profiles[profileId])
-          : normalizeLogisticsProfileV2(profiles[profileId]);
+          : module.schemaVersion === 2
+            ? normalizeLogisticsProfileV2(profiles[profileId])
+            : normalizeLogisticsProfileV3(profiles[profileId]);
       } catch (error) {
         const relative = error instanceof LogisticsProfileValidationError
           ? error.fieldPath.replace(/^profile(?=\.|$)/, "")
@@ -3091,6 +3095,64 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
               path,
               `Logistics ammunition tower "${towerTypeId}" must use a fire-capable attack; `
                 + `passive ${tower.attack.kind} is unsupported${active ? "." : " in this inactive profile."}`
+            );
+          }
+        }
+      }
+      const profileSupply = "supply" in profile
+        ? profile.supply as LogisticsSupplyDefinitionV3 | null
+        : undefined;
+      if (profileSupply && profileAmmunition) {
+        for (const [recipeId, recipe] of Object.entries(profileSupply.productionRecipes)) {
+          if (!Object.prototype.hasOwnProperty.call(profileAmmunition.types, recipe.ammoTypeId)) {
+            semantic(
+              "mechanics",
+              profileId,
+              `${root}.supply.productionRecipes.${recipeId}.ammoTypeId`,
+              `Logistics production recipe references unknown ammunition type "${recipe.ammoTypeId}"`
+                + `${active ? "." : " in this inactive or unselected profile."}`
+            );
+          }
+        }
+        for (const [towerTypeId, producer] of Object.entries(profileSupply.producers)) {
+          const path = `${root}.supply.producers.${towerTypeId}`;
+          if (!Object.prototype.hasOwnProperty.call(profileSupply.productionRecipes, producer.recipeId)) {
+            semantic(
+              "mechanics",
+              profileId,
+              `${path}.recipeId`,
+              `Logistics producer references unknown production recipe "${producer.recipeId}"`
+                + `${active ? "." : " in this inactive or unselected profile."}`
+            );
+          }
+          if (!Object.prototype.hasOwnProperty.call(content.towers, towerTypeId)) {
+            semantic(
+              "mechanics",
+              profileId,
+              path,
+              `Logistics producer references unknown tower type "${towerTypeId}"`
+                + `${active ? "." : " in this inactive or unselected profile."}`
+            );
+          }
+        }
+        for (const [towerTypeId, storage] of Object.entries(profileSupply.storages)) {
+          const path = `${root}.supply.storages.${towerTypeId}`;
+          if (!Object.prototype.hasOwnProperty.call(profileAmmunition.types, storage.ammoTypeId)) {
+            semantic(
+              "mechanics",
+              profileId,
+              `${path}.ammoTypeId`,
+              `Logistics storage references unknown ammunition type "${storage.ammoTypeId}"`
+                + `${active ? "." : " in this inactive or unselected profile."}`
+            );
+          }
+          if (!Object.prototype.hasOwnProperty.call(content.towers, towerTypeId)) {
+            semantic(
+              "mechanics",
+              profileId,
+              path,
+              `Logistics storage references unknown tower type "${towerTypeId}"`
+                + `${active ? "." : " in this inactive or unselected profile."}`
             );
           }
         }

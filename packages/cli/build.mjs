@@ -1788,6 +1788,41 @@ function updateLogisticsStatus(snapshot) {
       }
     }
   }
+  if (presentation.supply) {
+    const supply = presentation.supply;
+    for (const source of [...supply.producers, ...supply.storages]) {
+      const stock = document.createElement("span");
+      stock.className = "logistics-supply-stock-cue";
+      stock.textContent = source.towerId + ": " + source.amount + "/" + source.capacity
+        + " " + source.ammoTypeId;
+      panel.append(stock);
+      const progress = document.createElement("span");
+      progress.className = "logistics-supply-progress-cue";
+      progress.textContent = "productionProgress" in source
+        ? source.towerId + ": production " + source.productionProgress + "/" + source.productionInterval
+          + ", transfer " + source.transferProgress + "/" + source.transferInterval
+        : source.towerId + ": transfer " + source.transferProgress + "/" + source.transferInterval;
+      panel.append(progress);
+      if (!source.operational) {
+        const paused = document.createElement("span");
+        paused.className = "logistics-supply-paused-cue";
+        paused.textContent = "Paused/brownout: " + source.towerId;
+        panel.append(paused);
+      }
+    }
+    for (const edge of supply.edges) {
+      const link = document.createElement("span");
+      link.className = "logistics-supply-link-cue";
+      link.textContent = "Supply link: " + edge.sourceTowerId + " → " + edge.destinationTowerId;
+      panel.append(link);
+      if (edge.destinationKind === "consumer") {
+        const refill = document.createElement("span");
+        refill.className = "logistics-refill-cue";
+        refill.textContent = "Refill: " + edge.sourceTowerId + " → " + edge.destinationTowerId;
+        panel.append(refill);
+      }
+    }
+  }
 }
 
 function updateTargetMode(snap) {
@@ -3569,6 +3604,41 @@ function updateLogisticsStatus(snapshot) {
         depleted.className = "logistics-depleted-cue";
         depleted.textContent = "Depleted: " + inventory.towerId;
         panel.append(depleted);
+      }
+    }
+  }
+  if (presentation.supply) {
+    const supply = presentation.supply;
+    for (const source of [...supply.producers, ...supply.storages]) {
+      const stock = document.createElement("span");
+      stock.className = "logistics-supply-stock-cue";
+      stock.textContent = source.towerId + ": " + source.amount + "/" + source.capacity
+        + " " + source.ammoTypeId;
+      panel.append(stock);
+      const progress = document.createElement("span");
+      progress.className = "logistics-supply-progress-cue";
+      progress.textContent = "productionProgress" in source
+        ? source.towerId + ": production " + source.productionProgress + "/" + source.productionInterval
+          + ", transfer " + source.transferProgress + "/" + source.transferInterval
+        : source.towerId + ": transfer " + source.transferProgress + "/" + source.transferInterval;
+      panel.append(progress);
+      if (!source.operational) {
+        const paused = document.createElement("span");
+        paused.className = "logistics-supply-paused-cue";
+        paused.textContent = "Paused/brownout: " + source.towerId;
+        panel.append(paused);
+      }
+    }
+    for (const edge of supply.edges) {
+      const link = document.createElement("span");
+      link.className = "logistics-supply-link-cue";
+      link.textContent = "Supply link: " + edge.sourceTowerId + " → " + edge.destinationTowerId;
+      panel.append(link);
+      if (edge.destinationKind === "consumer") {
+        const refill = document.createElement("span");
+        refill.className = "logistics-refill-cue";
+        refill.textContent = "Refill: " + edge.sourceTowerId + " → " + edge.destinationTowerId;
+        panel.append(refill);
       }
     }
   }

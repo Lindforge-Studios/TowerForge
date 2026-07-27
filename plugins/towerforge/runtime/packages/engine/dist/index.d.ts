@@ -18,6 +18,7 @@ export * from "./simulation/line-of-sight.js";
 export * from "./simulation/displacement.js";
 export * from "./simulation/logistics-power.js";
 export * from "./simulation/logistics-ammunition.js";
+export * from "./simulation/logistics-supply.js";
 export * from "./simulation/shields.js";
 export * from "./simulation/reactions.js";
 export * from "./simulation/rng.js";

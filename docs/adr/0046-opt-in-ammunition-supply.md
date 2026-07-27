@@ -1,6 +1,6 @@
 # ADR 0046: Opt-in ammunition supply
 
-Status: Proposed
+Status: Accepted
 
 Date: 2026-07-27
 
@@ -116,18 +116,21 @@ The fixed limits are:
 ```
 
 Amounts and capacities are safe integers. Capacity is `1..1_000_000_000`, starting amount is
-`0..capacity`, output and transfer amounts are `1..capacity`, radius is an integer `0..64`, and
-intervals are finite `0.2..1_000_000`. Placement, movement, and restore validate source and edge
-budgets before mutation or resource spending.
+`0..capacity`, every producer's referenced recipe output is `1..producer.capacity`, and each
+transfer amount is `1..source.capacity`. Radius is an integer `0..64`, and intervals are finite
+`0.2..1_000_000`. Placement, movement, and restore validate source and edge budgets before mutation
+or resource spending.
 
 ### Transfer topology and ordering
 
 The engine builds a directed graph over live towers (`hp` absent or positive). Edge distance is
 `max(0, topology.distance(source.coord, destination.coord) - source.footprintRadius -
 destination.footprintRadius)`. Matching-ammo edges are producer to consumer or storage, and storage
-to consumer. Storage-to-storage and transfer into producer are forbidden. A self-edge between
-different compartments on one instance is allowed. Terrain, line of sight, elevation, and power
-topology do not alter edges.
+to consumer. Every matching in-range edge remains present even when another source can reach the
+same destination; stock, power, disruption, and alternate paths never suppress topology.
+Storage-to-storage and transfer into producer are forbidden. A self-edge between different
+compartments on one instance is allowed. Terrain, line of sight, elevation, and power topology do
+not alter edges.
 
 Canonical edge order is binary source tower ID, source kind (`producer` before `storage`),
 destination kind (`consumer` before `storage`), distance, then binary destination tower ID.
@@ -194,10 +197,13 @@ does not. Continuous, restored, and journal-replayed runs produce the same diges
 
 The v3 snapshot has exact `{ schemaVersion:3, power, ammunition, supply }`; the first two sections
 retain their contracts. Supply publishes canonical detached producers, storages, and edges. Source
-rows include authored IDs, stock/capacity, production/transfer progress and intervals, authoritative
-`powered`, and engine-derived `operational`. If all three sections are null, Logistics is absent.
-Renderer and Studio validate and display this projection; they never rebuild topology, route stock,
-or derive combined firing state.
+rows include authored IDs, stock/capacity, production/transfer progress and intervals,
+`transferAmount`, `transferRadius`, authoritative `powered`, and engine-derived `operational`.
+Directed edges additionally include source/destination tower type IDs so overlays never need to
+join against authored content. If all three sections are null, Logistics is absent. The shared
+renderer strictly validates this richer engine shape and may expose a smaller immutable
+presentation projection; Studio and players never rebuild topology, route stock, or derive combined
+firing state.
 
 ### Constructor and agent surfaces
 
@@ -235,3 +241,17 @@ power-ammunition-supply interaction, lifecycle and atomicity, checkpoint/digest/
 MCP guarded authoring, shared projector security, player/package matrices, and conservation/property
 tests. Acceptance requires all applicable `AGENTS.md` gates plus independent Code Verifier and
 Constructor Integration Verifier PASS; no implementation author may perform either sign-off.
+
+## Acceptance evidence
+
+The independent RED waves failed before production work in the content, runtime, and constructor
+surfaces. Verifier-led RED→GREEN remediation additionally covered complete storage-to-consumer
+topology, ammunition-only checkpoint limits, recipe/producer capacity compatibility, linear edge
+grouping, and exact restore diagnostics.
+
+Final Vitest passed 2,800/2,800 tests in 230 files and Playwright passed 122/122. The independent
+Code Verifier passed 442/442 focused engine contracts; the independent Constructor Integration
+Verifier passed 98/98 focused authoring/build/package contracts and 15/15 Logistics browser
+scenarios. Typecheck, engine and web builds, validation, tutorial simulation, balance, map compile,
+plugin build/validation/smoke, harness audit, and diff checks passed. Both verifiers reported no
+remaining P0–P3 findings.

@@ -58,7 +58,7 @@ describe("R5.8A Studio Logistics ammunition Hub RED", () => {
     const normalize = functionSource(app, "normalizeLogisticsMechanicsDraft");
     const load = functionSource(app, "loadMechanicsProfile");
     const render = functionSource(app, "renderLogisticsMechanicsEditor");
-    expect(app).toMatch(/LOGISTICS_SUPPORTED_MODULE_SCHEMA_VERSIONS\s*=\s*Object\.freeze\(\[1,\s*2\]\)/);
+    expect(app).toMatch(/LOGISTICS_SUPPORTED_MODULE_SCHEMA_VERSIONS\s*=\s*Object\.freeze\(\[1,\s*2,\s*3\]\)/);
     expect(normalize).toMatch(/return\s+deep\(source\)/);
     expect(normalize).not.toMatch(/ammunition\s*\?\?=|schemaVersion\s*=\s*2/);
     expect(load).toMatch(/normalizeLogisticsMechanicsDraft/);
@@ -85,7 +85,7 @@ describe("R5.8A Studio Logistics ammunition Hub RED", () => {
     expect(request).not.toMatch(/delete\s+profile\.(?:ammunition|types|towerInventories)/);
   });
 
-  it("supports v2 null/disable/re-enable while future v3 stays visible, lossless, and fully read-only", () => {
+  it("supports v2 null/disable/re-enable while future v4 stays visible, lossless, and fully read-only", () => {
     const renderHub = functionSource(app, "renderMechanicsHub");
     const apply = functionSource(app, "applyMechanics");
     const render = functionSource(app, "renderLogisticsMechanicsEditor");
@@ -93,9 +93,9 @@ describe("R5.8A Studio Logistics ammunition Hub RED", () => {
     expect(renderHub).toMatch(/btn-mechanics-enable[\s\S]*applyMechanics\(true\)/);
     expect(apply).toMatch(/previewMechanics[\s\S]*(?:ifRevision|preview\.revision)[\s\S]*await\s+load\(\)/);
     expect(render).toMatch(/ammunition\s*===\s*null|ammunition\s*:\s*null/);
-    expect(app).toMatch(/Future logistics schemaVersion 3\+|future logistics[\s\S]{0,160}3\+|schemaVersion 3\+/i);
+    expect(app).toMatch(/Future logistics schemaVersion 4\+|future logistics[\s\S]{0,160}4\+|schemaVersion 4\+/i);
     expect(app).toMatch(
-      /mechanicsProjectModuleVersion\(\)\s*>\s*2[\s\S]{0,800}(?:btn-mechanics-preview|btn-mechanics-save|disabled)/i
+      /mechanicsProjectModuleVersion\(\)\s*>\s*3[\s\S]{0,800}(?:btn-mechanics-preview|btn-mechanics-save|disabled)/i
     );
   });
 

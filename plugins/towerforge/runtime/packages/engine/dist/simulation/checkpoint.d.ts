@@ -187,6 +187,28 @@ export interface LogisticsCheckpointStateV1 {
         }[];
     };
 }
+export interface LogisticsCheckpointStateV2 {
+    readonly schemaVersion: 2;
+    readonly ammunition: {
+        readonly inventories: readonly {
+            readonly towerId: string;
+            readonly amount: number;
+        }[];
+    } | null;
+    readonly supply: {
+        readonly producers: readonly {
+            readonly towerId: string;
+            readonly amount: number;
+            readonly productionProgress: number;
+            readonly transferProgress: number;
+        }[];
+        readonly storages: readonly {
+            readonly towerId: string;
+            readonly amount: number;
+            readonly transferProgress: number;
+        }[];
+    } | null;
+}
 /** Authoritative mutable simulation state. Map occupancy and water cues are rebuilt derivatives. */
 export interface GameCheckpointStateV1 {
     readonly coreHp: number;
@@ -226,7 +248,7 @@ export interface GameCheckpointStateV1 {
     readonly draft?: DraftCheckpointState;
     readonly campaignBattle?: CampaignBattleCheckpointStateV1;
     readonly heroes?: HeroesCheckpointStateV1 | HeroesCheckpointStateV2 | HeroesCheckpointStateV3 | HeroesCheckpointStateV4;
-    readonly logistics?: LogisticsCheckpointStateV1;
+    readonly logistics?: LogisticsCheckpointStateV1 | LogisticsCheckpointStateV2;
 }
 export interface GameCheckpointV1 {
     readonly schemaVersion: typeof GAME_CHECKPOINT_SCHEMA_VERSION;

@@ -9,6 +9,9 @@ const MAX_COMPONENT_DEMAND = MAX_PARTICIPANTS * MAX_ENTRY_AMOUNT;
 const MAX_PRIORITY = 1_000_000;
 const MAX_AMMUNITION_INVENTORIES = 4_096;
 const MAX_AMMUNITION_AMOUNT = 1_000_000_000;
+const MAX_SUPPLY_SOURCES = 1_024;
+const MAX_SUPPLY_EDGES = 65_536;
+const MAX_SUPPLY_DISTANCE = 64;
 
 const INACTIVE = Object.freeze({ active: false, power: null });
 
@@ -291,6 +294,149 @@ function projectAmmunition(value) {
   return inventories ? Object.freeze({ inventories }) : null;
 }
 
+function projectSupplyProducer(value) {
+  const row = ownRecord(value, [
+    "towerId", "towerTypeId", "recipeId", "ammoTypeId", "amount", "capacity",
+    "productionProgress", "productionInterval", "transferProgress", "transferInterval",
+    "transferAmount", "transferRadius", "powered", "operational"
+  ]);
+  if (!row || ![12, 14].includes(Object.keys(row).length)
+    || (Object.hasOwn(row, "transferAmount") !== Object.hasOwn(row, "transferRadius"))) return null;
+  const towerId = id(row.towerId);
+  const towerTypeId = id(row.towerTypeId);
+  const recipeId = id(row.recipeId);
+  const ammoTypeId = id(row.ammoTypeId);
+  const validAmount = Number.isSafeInteger(row.amount) && row.amount >= 0
+    && row.amount <= MAX_AMMUNITION_AMOUNT;
+  const validCapacity = Number.isSafeInteger(row.capacity) && row.capacity >= 1
+    && row.capacity <= MAX_AMMUNITION_AMOUNT && row.amount <= row.capacity;
+  const validProduction = Number.isFinite(row.productionInterval) && row.productionInterval >= 0.2
+    && row.productionInterval <= 1_000_000 && Number.isFinite(row.productionProgress)
+    && row.productionProgress >= 0 && row.productionProgress <= row.productionInterval;
+  const validTransfer = Number.isFinite(row.transferInterval) && row.transferInterval >= 0.2
+    && row.transferInterval <= 1_000_000 && Number.isFinite(row.transferProgress)
+    && row.transferProgress >= 0 && row.transferProgress <= row.transferInterval;
+  const validAuthoredTransfer = !Object.hasOwn(row, "transferAmount") || (
+    Number.isSafeInteger(row.transferAmount) && row.transferAmount >= 1 && row.transferAmount <= row.capacity
+    && Number.isSafeInteger(row.transferRadius) && row.transferRadius >= 0
+    && row.transferRadius <= MAX_SUPPLY_DISTANCE
+  );
+  if (!towerId || !towerTypeId || !recipeId || !ammoTypeId || !validAmount || !validCapacity
+    || !validProduction || !validTransfer || !validAuthoredTransfer || typeof row.powered !== "boolean"
+    || typeof row.operational !== "boolean" || (row.operational && !row.powered)) return null;
+  return Object.freeze({
+    towerId, towerTypeId, recipeId, ammoTypeId, amount: row.amount, capacity: row.capacity,
+    productionProgress: row.productionProgress, productionInterval: row.productionInterval,
+    transferProgress: row.transferProgress, transferInterval: row.transferInterval,
+    powered: row.powered, operational: row.operational
+  });
+}
+
+function projectSupplyStorage(value) {
+  const row = ownRecord(value, [
+    "towerId", "towerTypeId", "ammoTypeId", "amount", "capacity",
+    "transferProgress", "transferInterval", "transferAmount", "transferRadius", "powered", "operational"
+  ]);
+  if (!row || ![9, 11].includes(Object.keys(row).length)
+    || (Object.hasOwn(row, "transferAmount") !== Object.hasOwn(row, "transferRadius"))) return null;
+  const towerId = id(row.towerId);
+  const towerTypeId = id(row.towerTypeId);
+  const ammoTypeId = id(row.ammoTypeId);
+  const validAmount = Number.isSafeInteger(row.amount) && row.amount >= 0
+    && row.amount <= MAX_AMMUNITION_AMOUNT;
+  const validCapacity = Number.isSafeInteger(row.capacity) && row.capacity >= 1
+    && row.capacity <= MAX_AMMUNITION_AMOUNT && row.amount <= row.capacity;
+  const validTransfer = Number.isFinite(row.transferInterval) && row.transferInterval >= 0.2
+    && row.transferInterval <= 1_000_000 && Number.isFinite(row.transferProgress)
+    && row.transferProgress >= 0 && row.transferProgress <= row.transferInterval;
+  const validAuthoredTransfer = !Object.hasOwn(row, "transferAmount") || (
+    Number.isSafeInteger(row.transferAmount) && row.transferAmount >= 1 && row.transferAmount <= row.capacity
+    && Number.isSafeInteger(row.transferRadius) && row.transferRadius >= 0
+    && row.transferRadius <= MAX_SUPPLY_DISTANCE
+  );
+  if (!towerId || !towerTypeId || !ammoTypeId || !validAmount || !validCapacity || !validTransfer
+    || !validAuthoredTransfer
+    || typeof row.powered !== "boolean" || typeof row.operational !== "boolean"
+    || (row.operational && !row.powered)) return null;
+  return Object.freeze({
+    towerId, towerTypeId, ammoTypeId, amount: row.amount, capacity: row.capacity,
+    transferProgress: row.transferProgress, transferInterval: row.transferInterval,
+    powered: row.powered, operational: row.operational
+  });
+}
+
+function projectSupplyEdge(value) {
+  const row = ownRecord(value, [
+    "sourceTowerId", "sourceTowerTypeId", "sourceKind", "destinationTowerId",
+    "destinationTowerTypeId", "destinationKind", "ammoTypeId", "distance"
+  ]);
+  if (!row || ![6, 8].includes(Object.keys(row).length)
+    || (Object.hasOwn(row, "sourceTowerTypeId") !== Object.hasOwn(row, "destinationTowerTypeId"))) return null;
+  const sourceTowerId = id(row.sourceTowerId);
+  const destinationTowerId = id(row.destinationTowerId);
+  const ammoTypeId = id(row.ammoTypeId);
+  const sourceTowerTypeId = row.sourceTowerTypeId === undefined ? undefined : id(row.sourceTowerTypeId);
+  const destinationTowerTypeId = row.destinationTowerTypeId === undefined
+    ? undefined
+    : id(row.destinationTowerTypeId);
+  if (!sourceTowerId || !destinationTowerId || !ammoTypeId
+    || (row.sourceTowerTypeId !== undefined && (!sourceTowerTypeId || !destinationTowerTypeId))
+    || (row.sourceKind !== "producer" && row.sourceKind !== "storage")
+    || (row.destinationKind !== "consumer" && row.destinationKind !== "storage")
+    || (row.sourceKind === "storage" && row.destinationKind === "storage")
+    || !Number.isSafeInteger(row.distance) || row.distance < 0 || row.distance > MAX_SUPPLY_DISTANCE) return null;
+  return Object.freeze({
+    sourceTowerId, sourceKind: row.sourceKind, destinationTowerId,
+    destinationKind: row.destinationKind, ammoTypeId, distance: row.distance
+  });
+}
+
+function compareSupplyEdges(left, right) {
+  return compareBinary(left.sourceTowerId, right.sourceTowerId)
+    || (left.sourceKind === right.sourceKind ? 0 : left.sourceKind === "producer" ? -1 : 1)
+    || (left.destinationKind === right.destinationKind ? 0 : left.destinationKind === "consumer" ? -1 : 1)
+    || left.distance - right.distance
+    || compareBinary(left.destinationTowerId, right.destinationTowerId);
+}
+
+function projectSupply(value, ammunition) {
+  const supply = ownRecord(value, ["producers", "storages", "edges"]);
+  if (!supply || Object.keys(supply).length !== 3 || !ammunition) return null;
+  const producers = projectSortedRows(
+    supply.producers, projectSupplyProducer, "towerId", MAX_SUPPLY_SOURCES
+  );
+  const storages = projectSortedRows(
+    supply.storages, projectSupplyStorage, "towerId", MAX_SUPPLY_SOURCES
+  );
+  const edgeValues = denseArray(supply.edges, MAX_SUPPLY_EDGES);
+  if (!producers || !storages || !edgeValues || producers.length + storages.length > MAX_SUPPLY_SOURCES) return null;
+  const producerById = new Map(producers.map((row) => [row.towerId, row]));
+  const storageById = new Map(storages.map((row) => [row.towerId, row]));
+  const inventoryById = new Map(ammunition.inventories.map((row) => [row.towerId, row]));
+  const edges = [];
+  let previous;
+  for (const candidate of edgeValues) {
+    const edge = projectSupplyEdge(candidate);
+    if (!edge || (previous && compareSupplyEdges(previous, edge) >= 0)) return null;
+    const source = edge.sourceKind === "producer"
+      ? producerById.get(edge.sourceTowerId)
+      : storageById.get(edge.sourceTowerId);
+    const destination = edge.destinationKind === "consumer"
+      ? inventoryById.get(edge.destinationTowerId)
+      : storageById.get(edge.destinationTowerId);
+    const candidateSourceTowerTypeId = ownValue(candidate, "sourceTowerTypeId");
+    const candidateDestinationTowerTypeId = ownValue(candidate, "destinationTowerTypeId");
+    if (!source || !destination || source.ammoTypeId !== edge.ammoTypeId
+      || destination.ammoTypeId !== edge.ammoTypeId
+      || (candidateSourceTowerTypeId !== undefined && candidateSourceTowerTypeId !== source.towerTypeId)
+      || (candidateDestinationTowerTypeId !== undefined && candidateDestinationTowerTypeId !== destination.towerTypeId)
+      || edge.destinationKind === "storage" && edge.sourceTowerId === edge.destinationTowerId) return null;
+    previous = edge;
+    edges.push(edge);
+  }
+  return Object.freeze({ producers, storages, edges: Object.freeze(edges) });
+}
+
 /**
  * Detach the authoritative engine snapshot for presentation. Invalid, absent, and future
  * projections fail closed to one immutable inactive value; this module never derives topology.
@@ -315,6 +461,18 @@ export function projectLogisticsPresentation(snapshot) {
         || (logistics.ammunition !== null && ammunition === null)
         || (power === null && ammunition === null)) return INACTIVE;
       return Object.freeze({ active: true, power, ammunition });
+    }
+    if (schemaVersion === 3) {
+      const logistics = ownRecord(source, ["schemaVersion", "power", "ammunition", "supply"]);
+      if (!logistics || Object.keys(logistics).length !== 4) return INACTIVE;
+      const power = logistics.power === null ? null : projectPower(logistics.power);
+      const ammunition = logistics.ammunition === null ? null : projectAmmunition(logistics.ammunition);
+      const supply = logistics.supply === null ? null : projectSupply(logistics.supply, ammunition);
+      if ((logistics.power !== null && power === null)
+        || (logistics.ammunition !== null && ammunition === null)
+        || (logistics.supply !== null && supply === null)
+        || (power === null && ammunition === null && supply === null)) return INACTIVE;
+      return Object.freeze({ active: true, power, ammunition, supply });
     }
     return INACTIVE;
   } catch {

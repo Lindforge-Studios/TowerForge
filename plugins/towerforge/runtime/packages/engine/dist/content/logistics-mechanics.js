@@ -20,12 +20,29 @@ export const LOGISTICS_AMMUNITION_LIMITS = Object.freeze({
     labelUtf8Bytes: 128,
     capacity: 1_000_000_000
 });
+/** Closed structural and runtime budgets for opt-in Logistics v3 ammunition supply. */
+export const LOGISTICS_SUPPLY_LIMITS = Object.freeze({
+    productionRecipes: 256,
+    producers: 4_096,
+    storages: 4_096,
+    authoredSourcesTotal: 4_096,
+    liveSources: 1_024,
+    liveAmmunitionInventories: 4_096,
+    directedTransferEdges: 65_536,
+    idUtf8Bytes: 128,
+    labelUtf8Bytes: 128,
+    inventoryCapacity: 1_000_000_000,
+    amount: 1_000_000_000,
+    transferRadius: 64,
+    minimumInterval: 0.2,
+    maximumInterval: 1_000_000
+});
 export const LOGISTICS_MECHANICS_SCHEMA = Object.freeze({
-    schemaVersion: 2,
+    schemaVersion: 3,
     moduleId: "logistics",
-    supportedModuleSchemaVersions: Object.freeze([1, 2]),
+    supportedModuleSchemaVersions: Object.freeze([1, 2, 3]),
     profile: Object.freeze({
-        requiredFields: Object.freeze(["power", "ammunition"]),
+        requiredFields: Object.freeze(["power", "ammunition", "supply"]),
         optionalFields: Object.freeze([]),
         additionalProperties: false
     }),
@@ -37,6 +54,11 @@ export const LOGISTICS_MECHANICS_SCHEMA = Object.freeze({
         }),
         2: Object.freeze({
             requiredFields: Object.freeze(["power", "ammunition"]),
+            optionalFields: Object.freeze([]),
+            additionalProperties: false
+        }),
+        3: Object.freeze({
+            requiredFields: Object.freeze(["power", "ammunition", "supply"]),
             optionalFields: Object.freeze([]),
             additionalProperties: false
         })
@@ -84,15 +106,48 @@ export const LOGISTICS_MECHANICS_SCHEMA = Object.freeze({
         ]),
         limits: LOGISTICS_AMMUNITION_LIMITS
     }),
+    supply: Object.freeze({
+        nullable: true,
+        requiredFields: Object.freeze(["productionRecipes", "producers", "storages"]),
+        optionalFields: Object.freeze([]),
+        additionalProperties: false,
+        productionRecipe: Object.freeze({
+            requiredFields: Object.freeze(["label", "ammoTypeId", "outputAmount", "interval"]),
+            optionalFields: Object.freeze([]),
+            additionalProperties: false
+        }),
+        producer: Object.freeze({
+            requiredFields: Object.freeze([
+                "recipeId", "capacity", "startingAmount", "transferRadius", "transferAmount", "transferInterval"
+            ]),
+            optionalFields: Object.freeze([]),
+            additionalProperties: false
+        }),
+        storage: Object.freeze({
+            requiredFields: Object.freeze([
+                "ammoTypeId", "capacity", "startingAmount", "transferRadius", "transferAmount", "transferInterval"
+            ]),
+            optionalFields: Object.freeze([]),
+            additionalProperties: false
+        }),
+        limits: LOGISTICS_SUPPLY_LIMITS
+    }),
     limits: Object.freeze({
         power: LOGISTICS_POWER_LIMITS,
-        ammunition: LOGISTICS_AMMUNITION_LIMITS
+        ammunition: LOGISTICS_AMMUNITION_LIMITS,
+        supply: LOGISTICS_SUPPLY_LIMITS
     }),
     runtimeSnapshot: Object.freeze({
-        schemaVersion: 2,
-        fields: Object.freeze(["schemaVersion", "power", "ammunition"]),
+        schemaVersion: 3,
+        fields: Object.freeze(["schemaVersion", "power", "ammunition", "supply"]),
         powerFields: Object.freeze(["components", "nodes", "consumers"]),
-        ammunitionFields: Object.freeze(["inventories"])
+        ammunitionFields: Object.freeze(["inventories"]),
+        supplyFields: Object.freeze(["producers", "storages", "edges"])
+    }),
+    checkpoint: Object.freeze({
+        schemaVersion: 2,
+        fields: Object.freeze(["schemaVersion", "ammunition", "supply"]),
+        supplyFields: Object.freeze(["producers", "storages"])
     })
 });
 export class LogisticsProfileValidationError extends Error {
@@ -348,15 +403,144 @@ export function normalizeLogisticsProfileV2(value) {
     const ammunition = profile.ammunition === null ? null : normalizeAmmunition(profile.ammunition);
     return Object.freeze({ power, ammunition });
 }
-/** Resolve only a selected, enabled, supported Logistics v1 profile. */
+function inspectSupplyRecord(value, fieldPath, label, limit) {
+    let prototype;
+    let descriptors;
+    try {
+        prototype = value !== null && typeof value === "object" ? Object.getPrototypeOf(value) : null;
+        descriptors = value !== null && typeof value === "object"
+            ? Object.getOwnPropertyDescriptors(value)
+            : {};
+    }
+    catch {
+        throw new LogisticsProfileValidationError(fieldPath, `${label} could not be inspected safely.`);
+    }
+    if (value === null || typeof value !== "object" || Array.isArray(value)
+        || (prototype !== Object.prototype && prototype !== null)) {
+        throw new LogisticsProfileValidationError(fieldPath, `${label} must be a plain object with own data fields.`);
+    }
+    if (Object.getOwnPropertySymbols(descriptors).length > 0) {
+        throw new LogisticsProfileValidationError(fieldPath, `${label} must not contain symbol fields.`);
+    }
+    const ids = Object.keys(descriptors);
+    if (ids.length > limit) {
+        throw new LogisticsProfileValidationError(fieldPath, `${label} exceeds the ${limit} entry budget.`);
+    }
+    const record = Object.create(null);
+    for (const id of ids) {
+        boundedUtf8String(id, LOGISTICS_SUPPLY_LIMITS.idUtf8Bytes, `${fieldPath}.${id}`, `${label} id`);
+        const descriptor = descriptors[id];
+        if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+            throw new LogisticsProfileValidationError(`${fieldPath}.${id}`, `${label} field "${id}" must be an enumerable own data field; accessors are not allowed.`);
+        }
+        record[id] = descriptor.value;
+    }
+    return record;
+}
+function boundedSupplyInterval(value, fieldPath) {
+    if (typeof value !== "number" || !Number.isFinite(value)
+        || value < LOGISTICS_SUPPLY_LIMITS.minimumInterval
+        || value > LOGISTICS_SUPPLY_LIMITS.maximumInterval) {
+        throw new LogisticsProfileValidationError(fieldPath, `${fieldPath} must be finite and in ${LOGISTICS_SUPPLY_LIMITS.minimumInterval}`
+            + `..${LOGISTICS_SUPPLY_LIMITS.maximumInterval}.`);
+    }
+    return value;
+}
+function boundedSupplyRadius(value, fieldPath) {
+    if (typeof value !== "number" || !Number.isFinite(value) || !Number.isSafeInteger(value)
+        || value < 0 || value > LOGISTICS_SUPPLY_LIMITS.transferRadius) {
+        throw new LogisticsProfileValidationError(fieldPath, `${fieldPath} must be a finite safe integer in 0..${LOGISTICS_SUPPLY_LIMITS.transferRadius}.`);
+    }
+    return value;
+}
+function normalizeSupply(value) {
+    const root = "profile.supply";
+    const supply = inspectOwnDataRecord(value, root, "Logistics supply definition");
+    exactFields(supply, ["productionRecipes", "producers", "storages"], root, "Logistics supply definition");
+    // Inspect every top-level record and enforce budgets before reading a nested authored value.
+    const recipeRecord = inspectSupplyRecord(supply.productionRecipes, `${root}.productionRecipes`, "Logistics production recipes", LOGISTICS_SUPPLY_LIMITS.productionRecipes);
+    const producerRecord = inspectSupplyRecord(supply.producers, `${root}.producers`, "Logistics producers", LOGISTICS_SUPPLY_LIMITS.producers);
+    const storageRecord = inspectSupplyRecord(supply.storages, `${root}.storages`, "Logistics storages", LOGISTICS_SUPPLY_LIMITS.storages);
+    if (Object.keys(producerRecord).length + Object.keys(storageRecord).length
+        > LOGISTICS_SUPPLY_LIMITS.authoredSourcesTotal) {
+        throw new LogisticsProfileValidationError(root, `Logistics producers and storages exceed the ${LOGISTICS_SUPPLY_LIMITS.authoredSourcesTotal}`
+            + " combined source budget.");
+    }
+    for (const towerTypeId of Object.keys(producerRecord)) {
+        if (Object.prototype.hasOwnProperty.call(storageRecord, towerTypeId)) {
+            throw new LogisticsProfileValidationError(`${root}.storages.${towerTypeId}`, `Tower type "${towerTypeId}" cannot have both producer and storage supply roles.`);
+        }
+    }
+    const productionRecipes = Object.freeze(Object.fromEntries(Object.keys(recipeRecord).sort().map((recipeId) => {
+        const path = `${root}.productionRecipes.${recipeId}`;
+        const definition = inspectOwnDataRecord(recipeRecord[recipeId], path, "Logistics production recipe");
+        exactFields(definition, ["label", "ammoTypeId", "outputAmount", "interval"], path, "Logistics production recipe");
+        return [recipeId, Object.freeze({
+                label: boundedUtf8String(definition.label, LOGISTICS_SUPPLY_LIMITS.labelUtf8Bytes, `${path}.label`, "Logistics production recipe label"),
+                ammoTypeId: boundedUtf8String(definition.ammoTypeId, LOGISTICS_SUPPLY_LIMITS.idUtf8Bytes, `${path}.ammoTypeId`, "Logistics ammunition type reference"),
+                outputAmount: boundedSafeInteger(definition.outputAmount, 1, LOGISTICS_SUPPLY_LIMITS.amount, `${path}.outputAmount`),
+                interval: boundedSupplyInterval(definition.interval, `${path}.interval`)
+            })];
+    })));
+    const producers = Object.freeze(Object.fromEntries(Object.keys(producerRecord).sort().map((towerTypeId) => {
+        const path = `${root}.producers.${towerTypeId}`;
+        const definition = inspectOwnDataRecord(producerRecord[towerTypeId], path, "Logistics producer");
+        exactFields(definition, ["recipeId", "capacity", "startingAmount", "transferRadius", "transferAmount", "transferInterval"], path, "Logistics producer");
+        const capacity = boundedSafeInteger(definition.capacity, 1, LOGISTICS_SUPPLY_LIMITS.inventoryCapacity, `${path}.capacity`);
+        return [towerTypeId, Object.freeze({
+                recipeId: boundedUtf8String(definition.recipeId, LOGISTICS_SUPPLY_LIMITS.idUtf8Bytes, `${path}.recipeId`, "Logistics production recipe reference"),
+                capacity,
+                startingAmount: boundedSafeInteger(definition.startingAmount, 0, capacity, `${path}.startingAmount`),
+                transferRadius: boundedSupplyRadius(definition.transferRadius, `${path}.transferRadius`),
+                transferAmount: boundedSafeInteger(definition.transferAmount, 1, capacity, `${path}.transferAmount`),
+                transferInterval: boundedSupplyInterval(definition.transferInterval, `${path}.transferInterval`)
+            })];
+    })));
+    const storages = Object.freeze(Object.fromEntries(Object.keys(storageRecord).sort().map((towerTypeId) => {
+        const path = `${root}.storages.${towerTypeId}`;
+        const definition = inspectOwnDataRecord(storageRecord[towerTypeId], path, "Logistics storage");
+        exactFields(definition, ["ammoTypeId", "capacity", "startingAmount", "transferRadius", "transferAmount", "transferInterval"], path, "Logistics storage");
+        const capacity = boundedSafeInteger(definition.capacity, 1, LOGISTICS_SUPPLY_LIMITS.inventoryCapacity, `${path}.capacity`);
+        return [towerTypeId, Object.freeze({
+                ammoTypeId: boundedUtf8String(definition.ammoTypeId, LOGISTICS_SUPPLY_LIMITS.idUtf8Bytes, `${path}.ammoTypeId`, "Logistics ammunition type reference"),
+                capacity,
+                startingAmount: boundedSafeInteger(definition.startingAmount, 0, capacity, `${path}.startingAmount`),
+                transferRadius: boundedSupplyRadius(definition.transferRadius, `${path}.transferRadius`),
+                transferAmount: boundedSafeInteger(definition.transferAmount, 1, capacity, `${path}.transferAmount`),
+                transferInterval: boundedSupplyInterval(definition.transferInterval, `${path}.transferInterval`)
+            })];
+    })));
+    for (const [towerTypeId, producer] of Object.entries(producers)) {
+        if (!Object.prototype.hasOwnProperty.call(productionRecipes, producer.recipeId))
+            continue;
+        const recipe = productionRecipes[producer.recipeId];
+        if (recipe.outputAmount > producer.capacity) {
+            throw new LogisticsProfileValidationError(`${root}.producers.${towerTypeId}.capacity`, `Logistics producer capacity must be at least referenced recipe outputAmount ${recipe.outputAmount}.`);
+        }
+    }
+    return Object.freeze({ productionRecipes, producers, storages });
+}
+/** Normalize one supported v3 profile without executing accessors or retaining authored references. */
+export function normalizeLogisticsProfileV3(value) {
+    const profile = inspectOwnDataRecord(value, "profile", "Logistics profile");
+    exactFields(profile, ["power", "ammunition", "supply"], "profile", "Logistics profile");
+    const base = normalizeLogisticsProfileV2({ power: profile.power, ammunition: profile.ammunition });
+    if (profile.supply !== null && base.ammunition === null) {
+        throw new LogisticsProfileValidationError("profile.supply", "Logistics supply requires a non-null ammunition definition.");
+    }
+    const supply = profile.supply === null ? null : normalizeSupply(profile.supply);
+    return Object.freeze({ power: base.power, ammunition: base.ammunition, supply });
+}
+/** Resolve only a selected, enabled, supported Logistics profile. */
 export function resolveActiveLogisticsMechanics(content, missionId) {
     const mission = content.missions[missionId];
     const capability = mission?.capabilities.logistics;
     if (!mission || !capability?.active || capability.profileId === undefined)
         return undefined;
     const module = content.mechanics.modules.logistics;
-    if (!module || (module.schemaVersion !== 1 && module.schemaVersion !== 2))
+    if (!module || (module.schemaVersion !== 1 && module.schemaVersion !== 2 && module.schemaVersion !== 3)) {
         return undefined;
+    }
     const authored = module.profiles[capability.profileId];
     try {
         if (module.schemaVersion === 1) {
@@ -367,12 +551,22 @@ export function resolveActiveLogisticsMechanics(content, missionId) {
                 power: normalized.power
             });
         }
-        const normalized = normalizeLogisticsProfileV2(authored);
+        if (module.schemaVersion === 2) {
+            const normalized = normalizeLogisticsProfileV2(authored);
+            return Object.freeze({
+                schemaVersion: 2,
+                profileId: capability.profileId,
+                power: normalized.power,
+                ammunition: normalized.ammunition
+            });
+        }
+        const normalized = normalizeLogisticsProfileV3(authored);
         return Object.freeze({
-            schemaVersion: 2,
+            schemaVersion: 3,
             profileId: capability.profileId,
             power: normalized.power,
-            ammunition: normalized.ammunition
+            ammunition: normalized.ammunition,
+            supply: normalized.supply
         });
     }
     catch {

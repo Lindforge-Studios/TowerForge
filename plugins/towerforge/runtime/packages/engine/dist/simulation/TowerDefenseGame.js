@@ -7,7 +7,7 @@ import { PHYSICS_LIMITS, inspectOwnDataEffect, parseDisplacementEffectV1, resolv
 import { TERRAFORMING_LIMITS, resolveActiveTerraformingMechanics } from "../content/terraforming-mechanics.js";
 import { ROGUELITE_ARTIFACT_INVENTORY_LIMIT, ROGUELITE_DAMAGE_MODIFIER_RESERVE, ROGUELITE_DRAFT_LIMITS, deriveRogueliteSynergyStateV1, rogueliteSynergyWorstCaseModifierCount, resolveActiveRogueliteMechanics } from "../content/roguelite-mechanics.js";
 import { activeHeroAuraModifierReserve, heroPassiveAuraModifierIdV6, heroSkillModifierIdV5, resolveActiveHeroesMechanics } from "../content/heroes-mechanics.js";
-import { LOGISTICS_AMMUNITION_LIMITS, resolveActiveLogisticsMechanics } from "../content/logistics-mechanics.js";
+import { LOGISTICS_AMMUNITION_LIMITS, LOGISTICS_SUPPLY_LIMITS, resolveActiveLogisticsMechanics } from "../content/logistics-mechanics.js";
 import { CAMPAIGN_RUN_LIMITS } from "../run/campaign-run.js";
 import { campaignBattleWorstCaseModifierCount, preflightHeroAuraDamageFinite } from "../run/campaign-battle-policy.js";
 import { evaluateTowerScriptExpression } from "../scripting/expression.js";
@@ -36,6 +36,7 @@ import { createGridTopology, normalizeGridDefinition } from "./topology.js";
 import { planTileDisplacement } from "./displacement.js";
 import { buildLogisticsPowerSnapshotV1, cloneLogisticsPowerSnapshotV1, isLiveLogisticsPowerTower, preflightLogisticsPowerMoveV1, preflightLogisticsPowerPlacementV1, preflightLogisticsPowerRemovalV1, preflightLogisticsPowerTopologyV1 } from "./logistics-power.js";
 import { assertLogisticsAmmunitionPlacement, buildLogisticsAmmunitionSnapshotV2, getLogisticsAmmunitionTowerInventory, isAmmunitionBoundTowerType, isLiveLogisticsAmmunitionTower } from "./logistics-ammunition.js";
+import { buildLogisticsSupplyTopologyV3, getLogisticsProducerDefinitionV3, getLogisticsStorageDefinitionV3, isLogisticsSupplySourceTypeV3, preflightLogisticsSupplyTopologyV3 } from "./logistics-supply.js";
 function emptyDataRecord() {
     return Object.create(null);
 }
@@ -328,6 +329,7 @@ export class TowerDefenseGame {
     activeHeroesMechanics;
     activeLogisticsPower;
     activeLogisticsAmmunition;
+    activeLogisticsSupply;
     activeLogisticsSchemaVersion;
     activeHeroPassiveAura;
     activeHeroBlocking;
@@ -346,6 +348,10 @@ export class TowerDefenseGame {
     });
     logisticsLiveParticipantIds = new Set();
     logisticsAmmunitionAmounts = new Map();
+    logisticsSupplyProducers = new Map();
+    logisticsSupplyStorages = new Map();
+    logisticsSupplyTopologyCache;
+    logisticsSupplyDirty = false;
     rogueliteSnapshot;
     rogueliteDamageModifiers = Object.freeze([]);
     artifactDamageModifiersByTowerId = new Map();
@@ -456,9 +462,14 @@ export class TowerDefenseGame {
         this.activeLogisticsSchemaVersion = activeLogistics?.schemaVersion;
         this.activeLogisticsPower = activeLogistics?.power ?? undefined;
         this.activeLogisticsAmmunition = activeLogistics?.schemaVersion === 2
+            || activeLogistics?.schemaVersion === 3
             ? activeLogistics.ammunition ?? undefined
             : undefined;
+        this.activeLogisticsSupply = activeLogistics?.schemaVersion === 3
+            ? activeLogistics.supply ?? undefined
+            : undefined;
         this.logisticsPowerDirty = this.activeLogisticsPower !== undefined;
+        this.logisticsSupplyDirty = this.activeLogisticsSupply !== undefined;
         const passiveAuraDefinition = this.activeHeroesMechanics?.schemaVersion === 6
             || this.activeHeroesMechanics?.schemaVersion === 7
             ? this.activeHeroesMechanics.definitions[this.activeHeroesMechanics.selectedHeroId]
@@ -699,6 +710,10 @@ export class TowerDefenseGame {
         }
         this.towers = [];
         this.logisticsAmmunitionAmounts.clear();
+        this.logisticsSupplyProducers.clear();
+        this.logisticsSupplyStorages.clear();
+        this.logisticsSupplyTopologyCache = undefined;
+        this.logisticsSupplyDirty = this.activeLogisticsSupply !== undefined;
         this.logisticsTopologyCounts = Object.freeze({ participants: 0, nodes: 0, undirectedEdges: 0 });
         this.logisticsLiveParticipantIds.clear();
         this.logisticsPowerSnapshotCache = undefined;
@@ -801,6 +816,14 @@ export class TowerDefenseGame {
                 return this.fail(error instanceof Error ? error.message : "Logistics ammunition inventory limit exceeded.", "reason.noBuildSpace");
             }
         }
+        if (this.activeLogisticsSupply && this.activeLogisticsAmmunition) {
+            try {
+                preflightLogisticsSupplyTopologyV3(this.activeLogisticsSupply, this.activeLogisticsAmmunition, [...this.towers, { id: `tower_${this.towerCounter + 1}`, typeId, coord }], this.towerTypes, this.map);
+            }
+            catch (error) {
+                return this.fail(error instanceof Error ? error.message : "Logistics supply topology limit exceeded.", "reason.noBuildSpace");
+            }
+        }
         return { ok: true };
     }
     canPlaceTowerAnywhere(typeId) {
@@ -875,6 +898,25 @@ export class TowerDefenseGame {
         if (ammunitionDefinition) {
             this.logisticsAmmunitionAmounts.set(towerId, ammunitionDefinition.startingAmount);
         }
+        if (this.activeLogisticsSupply) {
+            const producer = getLogisticsProducerDefinitionV3(this.activeLogisticsSupply, typeId);
+            const storage = getLogisticsStorageDefinitionV3(this.activeLogisticsSupply, typeId);
+            if (producer) {
+                this.logisticsSupplyProducers.set(towerId, {
+                    amount: producer.startingAmount,
+                    productionProgress: 0,
+                    transferProgress: producer.transferInterval
+                });
+            }
+            else if (storage) {
+                this.logisticsSupplyStorages.set(towerId, {
+                    amount: storage.startingAmount,
+                    transferProgress: storage.transferInterval
+                });
+            }
+            if (producer || storage || ammunitionDefinition)
+                this.markLogisticsSupplyDirty();
+        }
         if (this.isLogisticsParticipantType(typeId)) {
             this.logisticsTopologyCounts = logisticsCounts;
             this.logisticsLiveParticipantIds.add(towerId);
@@ -923,6 +965,14 @@ export class TowerDefenseGame {
                 return this.fail(error instanceof Error ? error.message : "Logistics power topology limit exceeded.", "reason.noBuildSpace");
             }
         }
+        if (this.activeLogisticsSupply && this.activeLogisticsAmmunition) {
+            try {
+                preflightLogisticsSupplyTopologyV3(this.activeLogisticsSupply, this.activeLogisticsAmmunition, this.towers.map((candidate) => candidate.id === towerId ? { ...candidate, coord } : candidate), this.towerTypes, this.map);
+            }
+            catch (error) {
+                return this.fail(error instanceof Error ? error.message : "Logistics supply topology limit exceeded.", "reason.noBuildSpace");
+            }
+        }
         return { ok: true };
     }
     moveTower(towerId, coord) {
@@ -953,6 +1003,8 @@ export class TowerDefenseGame {
             this.logisticsTopologyCounts = logisticsCounts;
             this.markLogisticsPowerDirty();
         }
+        if (this.isLogisticsSupplyTopologyParticipant(tower.typeId))
+            this.markLogisticsSupplyDirty();
         this.syncNavigationOccupancy();
         this.lastEvents.push({ type: "towerMoved", towerId, from, to: this.cleanCoord(coord), cost: this.cloneResources(moveTowerCost) });
         this.finishScriptedAction();
@@ -1663,6 +1715,7 @@ export class TowerDefenseGame {
         this.applyDotDamage(delta);
         this.updateTowerDisruptions(delta);
         this.updateEnemyTowerAttacks(delta);
+        this.updateLogisticsSupply(delta);
         this.updateTowers(delta);
         this.triggerEnemyPhaseSpawns();
         this.removeDeadEnemies();
@@ -2884,24 +2937,64 @@ export class TowerDefenseGame {
                             })
                     }))
                 };
-        const logistics = this.activeLogisticsAmmunition === undefined
-            ? undefined
+        const ammunitionCheckpoint = this.activeLogisticsAmmunition === undefined
+            ? null
             : {
-                schemaVersion: 1,
-                ammunition: {
-                    inventories: this.towers
-                        .filter((tower) => isLiveLogisticsAmmunitionTower(tower)
-                        && isAmmunitionBoundTowerType(this.activeLogisticsAmmunition, tower.typeId))
-                        .sort((left, right) => compareBinary(left.id, right.id))
-                        .map((tower) => {
-                        const amount = this.logisticsAmmunitionAmounts.get(tower.id);
-                        if (amount === undefined) {
-                            throw new Error(`Logistics ammunition inventory for tower "${tower.id}" is missing.`);
-                        }
-                        return { towerId: tower.id, amount };
-                    })
-                }
+                inventories: this.towers
+                    .filter((tower) => isLiveLogisticsAmmunitionTower(tower)
+                    && isAmmunitionBoundTowerType(this.activeLogisticsAmmunition, tower.typeId))
+                    .sort((left, right) => compareBinary(left.id, right.id))
+                    .map((tower) => {
+                    const amount = this.logisticsAmmunitionAmounts.get(tower.id);
+                    if (amount === undefined) {
+                        throw new Error(`Logistics ammunition inventory for tower "${tower.id}" is missing.`);
+                    }
+                    return { towerId: tower.id, amount };
+                })
             };
+        const logistics = this.activeLogisticsSchemaVersion === 3
+            ? (!this.activeLogisticsAmmunition && !this.activeLogisticsSupply
+                ? undefined
+                : {
+                    schemaVersion: 2,
+                    ammunition: ammunitionCheckpoint,
+                    supply: this.activeLogisticsSupply === undefined
+                        ? null
+                        : {
+                            producers: this.towers
+                                .filter((tower) => isLiveLogisticsAmmunitionTower(tower)
+                                && getLogisticsProducerDefinitionV3(this.activeLogisticsSupply, tower.typeId) !== undefined)
+                                .sort((left, right) => compareBinary(left.id, right.id))
+                                .map((tower) => {
+                                const runtime = this.logisticsSupplyProducers.get(tower.id);
+                                if (!runtime)
+                                    throw new Error(`Logistics supply producer state for tower "${tower.id}" is missing.`);
+                                return {
+                                    towerId: tower.id,
+                                    amount: runtime.amount,
+                                    productionProgress: runtime.productionProgress,
+                                    transferProgress: runtime.transferProgress
+                                };
+                            }),
+                            storages: this.towers
+                                .filter((tower) => isLiveLogisticsAmmunitionTower(tower)
+                                && getLogisticsStorageDefinitionV3(this.activeLogisticsSupply, tower.typeId) !== undefined)
+                                .sort((left, right) => compareBinary(left.id, right.id))
+                                .map((tower) => {
+                                const runtime = this.logisticsSupplyStorages.get(tower.id);
+                                if (!runtime)
+                                    throw new Error(`Logistics supply storage state for tower "${tower.id}" is missing.`);
+                                return {
+                                    towerId: tower.id,
+                                    amount: runtime.amount,
+                                    transferProgress: runtime.transferProgress
+                                };
+                            })
+                        }
+                })
+            : this.activeLogisticsAmmunition === undefined
+                ? undefined
+                : { schemaVersion: 1, ammunition: ammunitionCheckpoint };
         const state = {
             coreHp: this.coreHp,
             resources: { ...this.resources },
@@ -3013,7 +3106,11 @@ export class TowerDefenseGame {
         const checkpointHeroes = resolveActiveHeroesMechanics(content, identity.missionId);
         const checkpointLogisticsMechanics = resolveActiveLogisticsMechanics(content, identity.missionId);
         const checkpointAmmunition = checkpointLogisticsMechanics?.schemaVersion === 2
+            || checkpointLogisticsMechanics?.schemaVersion === 3
             ? checkpointLogisticsMechanics.ammunition ?? undefined
+            : undefined;
+        const checkpointSupply = checkpointLogisticsMechanics?.schemaVersion === 3
+            ? checkpointLogisticsMechanics.supply ?? undefined
             : undefined;
         const mission = content.missions[identity.missionId];
         const requiresArtifactCheckpoint = checkpointRoguelite?.artifacts !== undefined;
@@ -3067,10 +3164,10 @@ export class TowerDefenseGame {
         if (hasHeroesCheckpoint)
             checkpointDataField(descriptors, "heroes", "Game checkpoint state");
         const hasLogisticsCheckpoint = Object.prototype.hasOwnProperty.call(descriptors, "logistics");
-        if (checkpointAmmunition && !hasLogisticsCheckpoint) {
-            throw new Error("Game checkpoint Logistics ammunition state is required.");
+        if ((checkpointAmmunition || checkpointSupply) && !hasLogisticsCheckpoint) {
+            throw new Error("Game checkpoint Logistics ammunition or supply state is required.");
         }
-        if (!checkpointAmmunition && hasLogisticsCheckpoint) {
+        if (!checkpointAmmunition && !checkpointSupply && hasLogisticsCheckpoint) {
             throw new Error("Game checkpoint Logistics ammunition state is unsupported for an inactive capability.");
         }
         if (hasLogisticsCheckpoint)
@@ -3664,45 +3761,128 @@ export class TowerDefenseGame {
         if (checkpointPower) {
             preflightLogisticsPowerTopologyV1(checkpointPower, state.towers, content.towers, topology);
         }
-        if (checkpointAmmunition) {
-            const logisticsState = closed(state.logistics, "Logistics ammunition checkpoint", ["schemaVersion", "ammunition"]);
-            if (checkpointDataField(logisticsState, "schemaVersion", "Logistics ammunition checkpoint") !== 1) {
-                throw new Error("Game checkpoint Logistics ammunition schema version is invalid.");
+        if (checkpointAmmunition || checkpointSupply) {
+            const isV3 = checkpointLogisticsMechanics?.schemaVersion === 3;
+            const logisticsState = closed(state.logistics, "Logistics checkpoint", isV3 ? ["schemaVersion", "ammunition", "supply"] : ["schemaVersion", "ammunition"]);
+            const expectedSchema = isV3 ? 2 : 1;
+            if (checkpointDataField(logisticsState, "schemaVersion", "Logistics checkpoint") !== expectedSchema) {
+                throw new Error("Game checkpoint Logistics schema version is invalid.");
             }
-            const ammunitionState = closed(checkpointDataField(logisticsState, "ammunition", "Logistics ammunition checkpoint"), "Logistics ammunition checkpoint ammunition", ["inventories"]);
-            const rows = array(checkpointDataField(ammunitionState, "inventories", "Logistics ammunition checkpoint ammunition"), "Logistics ammunition inventories");
-            if (rows.length > LOGISTICS_AMMUNITION_LIMITS.liveInventories) {
-                throw new Error(`Game checkpoint Logistics ammunition inventory limit ${LOGISTICS_AMMUNITION_LIMITS.liveInventories} exceeded.`);
+            const ammunitionValue = checkpointDataField(logisticsState, "ammunition", "Logistics checkpoint");
+            if (!checkpointAmmunition) {
+                if (ammunitionValue !== null)
+                    throw new Error("Game checkpoint Logistics ammunition must be null.");
             }
-            const expected = state.towers
-                .filter((tower) => isLiveLogisticsAmmunitionTower(tower)
-                && isAmmunitionBoundTowerType(checkpointAmmunition, tower.typeId))
-                .sort((left, right) => compareBinary(left.id, right.id));
-            if (expected.length > LOGISTICS_AMMUNITION_LIMITS.liveInventories) {
-                throw new Error(`Game checkpoint Logistics ammunition inventory limit ${LOGISTICS_AMMUNITION_LIMITS.liveInventories} exceeded.`);
-            }
-            if (rows.length !== expected.length) {
-                throw new Error("Game checkpoint Logistics ammunition inventories have a missing or extra live tower row.");
-            }
-            let previousTowerId;
-            for (let index = 0; index < rows.length; index += 1) {
-                const row = closed(rows[index], `Logistics ammunition inventory ${index}`, ["towerId", "amount"]);
-                const towerId = stringValue(checkpointDataField(row, "towerId", "Logistics ammunition inventory"), `Logistics ammunition inventory ${index} towerId`);
-                if (previousTowerId !== undefined && compareBinary(previousTowerId, towerId) >= 0) {
-                    throw new Error("Game checkpoint Logistics ammunition inventory order is not canonical or contains duplicates.");
+            else {
+                const ammunitionState = closed(ammunitionValue, "Logistics ammunition checkpoint ammunition", ["inventories"]);
+                const rows = array(checkpointDataField(ammunitionState, "inventories", "Logistics ammunition checkpoint ammunition"), "Logistics ammunition inventories");
+                if (rows.length > LOGISTICS_AMMUNITION_LIMITS.liveInventories) {
+                    throw new Error(`Game checkpoint Logistics ammunition inventory limit ${LOGISTICS_AMMUNITION_LIMITS.liveInventories} exceeded.`);
                 }
-                previousTowerId = towerId;
-                const tower = expected[index];
-                if (!tower || tower.id !== towerId) {
-                    throw new Error("Game checkpoint Logistics ammunition inventory references an unknown, extra, or downed tower.");
+                const expected = state.towers
+                    .filter((tower) => isLiveLogisticsAmmunitionTower(tower)
+                    && isAmmunitionBoundTowerType(checkpointAmmunition, tower.typeId))
+                    .sort((left, right) => compareBinary(left.id, right.id));
+                if (rows.length !== expected.length) {
+                    throw new Error("Game checkpoint Logistics ammunition inventories have a missing or extra live tower row.");
                 }
-                const definition = getLogisticsAmmunitionTowerInventory(checkpointAmmunition, tower.typeId);
-                if (!definition) {
-                    throw new Error("Game checkpoint Logistics ammunition inventory references an unbound tower type.");
+                let previousTowerId;
+                for (let index = 0; index < rows.length; index += 1) {
+                    const row = closed(rows[index], `Logistics ammunition inventory ${index}`, ["towerId", "amount"]);
+                    const towerId = stringValue(checkpointDataField(row, "towerId", "Logistics ammunition inventory"), `Logistics ammunition inventory ${index} towerId`);
+                    if (previousTowerId !== undefined && compareBinary(previousTowerId, towerId) >= 0) {
+                        throw new Error("Game checkpoint Logistics ammunition inventory order is not canonical or contains duplicates.");
+                    }
+                    previousTowerId = towerId;
+                    const tower = expected[index];
+                    if (!tower || tower.id !== towerId) {
+                        throw new Error("Game checkpoint Logistics ammunition inventory references an unknown, extra, or downed tower.");
+                    }
+                    const definition = getLogisticsAmmunitionTowerInventory(checkpointAmmunition, tower.typeId);
+                    if (!definition)
+                        throw new Error("Game checkpoint Logistics ammunition inventory references an unbound tower type.");
+                    const amount = integer(checkpointDataField(row, "amount", "Logistics ammunition inventory"), `Logistics ammunition inventory ${towerId} amount`);
+                    const hasActiveSupply = isV3 && checkpointSupply !== undefined;
+                    const maximum = hasActiveSupply ? definition.capacity : definition.startingAmount;
+                    if (amount > maximum) {
+                        throw new Error(`Game checkpoint Logistics ammunition amount exceeds the authored ${hasActiveSupply ? "capacity" : "starting amount"}.`);
+                    }
                 }
-                const amount = integer(checkpointDataField(row, "amount", "Logistics ammunition inventory"), `Logistics ammunition inventory ${towerId} amount`);
-                if (amount > definition.startingAmount) {
-                    throw new Error("Game checkpoint Logistics ammunition amount exceeds the authored starting amount.");
+            }
+            if (isV3) {
+                const supplyValue = checkpointDataField(logisticsState, "supply", "Logistics checkpoint");
+                if (!checkpointSupply) {
+                    if (supplyValue !== null)
+                        throw new Error("Game checkpoint Logistics supply must be null.");
+                }
+                else {
+                    const supplyState = closed(supplyValue, "Logistics supply checkpoint", ["producers", "storages"]);
+                    const producerRows = array(checkpointDataField(supplyState, "producers", "Logistics supply checkpoint"), "Logistics supply producers");
+                    const storageRows = array(checkpointDataField(supplyState, "storages", "Logistics supply checkpoint"), "Logistics supply storages");
+                    if (producerRows.length + storageRows.length > LOGISTICS_SUPPLY_LIMITS.liveSources) {
+                        throw new Error(`Game checkpoint Logistics supply source limit ${LOGISTICS_SUPPLY_LIMITS.liveSources} exceeded.`);
+                    }
+                    const expectedProducers = state.towers
+                        .filter((tower) => isLiveLogisticsAmmunitionTower(tower)
+                        && getLogisticsProducerDefinitionV3(checkpointSupply, tower.typeId) !== undefined)
+                        .sort((left, right) => compareBinary(left.id, right.id));
+                    const expectedStorages = state.towers
+                        .filter((tower) => isLiveLogisticsAmmunitionTower(tower)
+                        && getLogisticsStorageDefinitionV3(checkpointSupply, tower.typeId) !== undefined)
+                        .sort((left, right) => compareBinary(left.id, right.id));
+                    if (producerRows.length !== expectedProducers.length || storageRows.length !== expectedStorages.length) {
+                        throw new Error("Game checkpoint Logistics supply has a missing or extra live producer or storage row.");
+                    }
+                    const validateProgress = (value, label, maximum, inclusive) => {
+                        if (typeof value !== "number" || !Number.isFinite(value) || value < 0
+                            || (inclusive ? value > maximum : value >= maximum)) {
+                            throw new Error(`Game checkpoint Logistics supply ${label} is invalid.`);
+                        }
+                        return value;
+                    };
+                    let previousProducerId;
+                    for (let index = 0; index < producerRows.length; index += 1) {
+                        const row = closed(producerRows[index], `Logistics supply producer ${index}`, ["towerId", "amount", "productionProgress", "transferProgress"]);
+                        const towerId = stringValue(checkpointDataField(row, "towerId", "Logistics supply producer"), `Logistics supply producer ${index} towerId`);
+                        if (previousProducerId !== undefined && compareBinary(previousProducerId, towerId) >= 0) {
+                            throw new Error("Game checkpoint Logistics supply producer order is not canonical or contains duplicates.");
+                        }
+                        previousProducerId = towerId;
+                        const tower = expectedProducers[index];
+                        if (!tower || tower.id !== towerId) {
+                            throw new Error("Game checkpoint Logistics supply producer references an unknown or downed tower.");
+                        }
+                        const definition = getLogisticsProducerDefinitionV3(checkpointSupply, tower.typeId);
+                        const recipe = Object.prototype.hasOwnProperty.call(checkpointSupply.productionRecipes, definition.recipeId)
+                            ? checkpointSupply.productionRecipes[definition.recipeId]
+                            : undefined;
+                        if (!recipe)
+                            throw new Error("Game checkpoint Logistics supply producer recipe is missing.");
+                        const amount = integer(checkpointDataField(row, "amount", "Logistics supply producer"), `Logistics supply producer ${towerId} amount`);
+                        if (amount > definition.capacity)
+                            throw new Error("Game checkpoint Logistics supply producer amount exceeds capacity.");
+                        validateProgress(checkpointDataField(row, "productionProgress", "Logistics supply producer"), "producer production progress", recipe.interval, false);
+                        validateProgress(checkpointDataField(row, "transferProgress", "Logistics supply producer"), "producer transfer progress", definition.transferInterval, true);
+                    }
+                    let previousStorageId;
+                    for (let index = 0; index < storageRows.length; index += 1) {
+                        const row = closed(storageRows[index], `Logistics supply storage ${index}`, ["towerId", "amount", "transferProgress"]);
+                        const towerId = stringValue(checkpointDataField(row, "towerId", "Logistics supply storage"), `Logistics supply storage ${index} towerId`);
+                        if (previousStorageId !== undefined && compareBinary(previousStorageId, towerId) >= 0) {
+                            throw new Error("Game checkpoint Logistics supply storage order is not canonical or contains duplicates.");
+                        }
+                        previousStorageId = towerId;
+                        const tower = expectedStorages[index];
+                        if (!tower || tower.id !== towerId) {
+                            throw new Error("Game checkpoint Logistics supply storage references an unknown or downed tower.");
+                        }
+                        const definition = getLogisticsStorageDefinitionV3(checkpointSupply, tower.typeId);
+                        const amount = integer(checkpointDataField(row, "amount", "Logistics supply storage"), `Logistics supply storage ${towerId} amount`);
+                        if (amount > definition.capacity)
+                            throw new Error("Game checkpoint Logistics supply storage amount exceeds capacity.");
+                        validateProgress(checkpointDataField(row, "transferProgress", "Logistics supply storage"), "storage transfer progress", definition.transferInterval, true);
+                    }
+                    preflightLogisticsSupplyTopologyV3(checkpointSupply, checkpointAmmunition, state.towers, content.towers, topology);
                 }
             }
         }
@@ -5081,7 +5261,20 @@ export class TowerDefenseGame {
         }));
         this.navigationEnemyFields?.clear();
         this.towers = [...state.towers];
-        this.logisticsAmmunitionAmounts = new Map(state.logistics?.ammunition.inventories.map((entry) => [entry.towerId, entry.amount]) ?? []);
+        this.logisticsAmmunitionAmounts = new Map(state.logistics?.ammunition?.inventories.map((entry) => [entry.towerId, entry.amount]) ?? []);
+        this.logisticsSupplyProducers = new Map(state.logistics?.schemaVersion === 2 && state.logistics.supply
+            ? state.logistics.supply.producers.map((entry) => [entry.towerId, {
+                    amount: entry.amount,
+                    productionProgress: entry.productionProgress,
+                    transferProgress: entry.transferProgress
+                }])
+            : []);
+        this.logisticsSupplyStorages = new Map(state.logistics?.schemaVersion === 2 && state.logistics.supply
+            ? state.logistics.supply.storages.map((entry) => [entry.towerId, {
+                    amount: entry.amount,
+                    transferProgress: entry.transferProgress
+                }])
+            : []);
         if (state.campaignBattle) {
             this.campaignBattle = Object.freeze({
                 schemaVersion: 1,
@@ -5265,6 +5458,8 @@ export class TowerDefenseGame {
         this.logisticsPowerSnapshotCache = undefined;
         this.logisticsPoweredConsumerIds = undefined;
         this.logisticsPowerDirty = this.activeLogisticsPower !== undefined;
+        this.logisticsSupplyTopologyCache = undefined;
+        this.logisticsSupplyDirty = this.activeLogisticsSupply !== undefined;
     }
     buildSnapshot(copyStaticState) {
         const combat = this.buildCombatState();
@@ -8487,6 +8682,169 @@ export class TowerDefenseGame {
         if (this.activeLogisticsPower)
             this.logisticsPowerDirty = true;
     }
+    isLogisticsSupplyTopologyParticipant(towerTypeId) {
+        if (!this.activeLogisticsSupply || !this.activeLogisticsAmmunition)
+            return false;
+        return isLogisticsSupplySourceTypeV3(this.activeLogisticsSupply, towerTypeId)
+            || getLogisticsAmmunitionTowerInventory(this.activeLogisticsAmmunition, towerTypeId) !== undefined;
+    }
+    markLogisticsSupplyDirty() {
+        if (this.activeLogisticsSupply)
+            this.logisticsSupplyDirty = true;
+    }
+    ensureLogisticsSupplyTopology() {
+        if (!this.activeLogisticsSupply || !this.activeLogisticsAmmunition) {
+            throw new Error("Logistics supply topology requested without active ammunition supply.");
+        }
+        if (!this.logisticsSupplyTopologyCache || this.logisticsSupplyDirty) {
+            this.logisticsSupplyTopologyCache = buildLogisticsSupplyTopologyV3(this.activeLogisticsSupply, this.activeLogisticsAmmunition, this.towers, this.towerTypes, this.map);
+            this.logisticsSupplyDirty = false;
+        }
+        return this.logisticsSupplyTopologyCache;
+    }
+    logisticsTowerPowered(tower) {
+        if (!this.activeLogisticsPower
+            || !Object.prototype.hasOwnProperty.call(this.activeLogisticsPower.consumers, tower.typeId))
+            return true;
+        this.ensureLogisticsPowerSnapshot();
+        return this.logisticsPoweredConsumerIds?.has(tower.id) ?? false;
+    }
+    logisticsTowerOperational(tower) {
+        return isLiveLogisticsAmmunitionTower(tower)
+            && this.logisticsTowerPowered(tower)
+            && !(tower.disabledFor && tower.disabledFor > 0);
+    }
+    updateLogisticsSupply(delta) {
+        const supply = this.activeLogisticsSupply;
+        const ammunition = this.activeLogisticsAmmunition;
+        if (!supply || !ammunition)
+            return;
+        const topology = this.ensureLogisticsSupplyTopology();
+        const towerById = new Map(this.towers.map((tower) => [tower.id, tower]));
+        // Production is applied first and is visible to the detached transfer plan in this tick.
+        for (const tower of [...this.towers].sort((left, right) => compareBinary(left.id, right.id))) {
+            const definition = getLogisticsProducerDefinitionV3(supply, tower.typeId);
+            const state = this.logisticsSupplyProducers.get(tower.id);
+            if (!definition || !state || !this.logisticsTowerOperational(tower))
+                continue;
+            const recipe = Object.prototype.hasOwnProperty.call(supply.productionRecipes, definition.recipeId)
+                ? supply.productionRecipes[definition.recipeId]
+                : undefined;
+            if (!recipe || state.amount + recipe.outputAmount > definition.capacity)
+                continue;
+            let progress = Math.min(recipe.interval, state.productionProgress + delta);
+            if (progress >= recipe.interval) {
+                state.amount += recipe.outputAmount;
+                progress -= recipe.interval;
+            }
+            state.productionProgress = progress;
+        }
+        // Planning reads post-production but pre-transfer balances. Reservations make earlier sources
+        // win headroom without allowing incoming stock to be forwarded or outgoing stock to make room.
+        const sourceAvailable = new Map();
+        const destinationBase = new Map();
+        const destinationReserved = new Map();
+        for (const [towerId, state] of this.logisticsSupplyProducers)
+            sourceAvailable.set(towerId, state.amount);
+        for (const [towerId, state] of this.logisticsSupplyStorages) {
+            sourceAvailable.set(towerId, state.amount);
+            destinationBase.set(`storage:${towerId}`, state.amount);
+        }
+        for (const [towerId, amount] of this.logisticsAmmunitionAmounts) {
+            destinationBase.set(`consumer:${towerId}`, amount);
+        }
+        const outgoing = new Map();
+        const incoming = new Map();
+        const edgesBySource = new Map();
+        for (const edge of topology.edges) {
+            const entries = edgesBySource.get(edge.sourceTowerId);
+            if (entries)
+                entries.push(edge);
+            else
+                edgesBySource.set(edge.sourceTowerId, [edge]);
+        }
+        for (const towerId of [...sourceAvailable.keys()].sort(compareBinary)) {
+            const tower = towerById.get(towerId);
+            if (!tower || !this.logisticsTowerOperational(tower))
+                continue;
+            const producerDefinition = getLogisticsProducerDefinitionV3(supply, tower.typeId);
+            const storageDefinition = getLogisticsStorageDefinitionV3(supply, tower.typeId);
+            const definition = producerDefinition ?? storageDefinition;
+            const state = producerDefinition
+                ? this.logisticsSupplyProducers.get(towerId)
+                : this.logisticsSupplyStorages.get(towerId);
+            if (!definition || !state)
+                continue;
+            const available = sourceAvailable.get(towerId) ?? 0;
+            const candidates = (edgesBySource.get(towerId) ?? []).filter((edge) => {
+                const destination = towerById.get(edge.destinationTowerId);
+                if (!destination || !isLiveLogisticsAmmunitionTower(destination))
+                    return false;
+                const key = `${edge.destinationKind}:${edge.destinationTowerId}`;
+                const base = destinationBase.get(key);
+                if (base === undefined)
+                    return false;
+                const capacity = edge.destinationKind === "consumer"
+                    ? getLogisticsAmmunitionTowerInventory(ammunition, destination.typeId)?.capacity
+                    : getLogisticsStorageDefinitionV3(supply, destination.typeId)?.capacity;
+                return capacity !== undefined && base + (destinationReserved.get(key) ?? 0) < capacity;
+            });
+            if (available <= 0 || candidates.length === 0)
+                continue;
+            let progress = state.transferProgress >= definition.transferInterval
+                ? definition.transferInterval
+                : Math.min(definition.transferInterval, state.transferProgress + delta);
+            if (progress < definition.transferInterval) {
+                state.transferProgress = progress;
+                continue;
+            }
+            let remaining = Math.min(definition.transferAmount, available);
+            let moved = 0;
+            for (const edge of candidates) {
+                if (remaining <= 0)
+                    break;
+                const destination = towerById.get(edge.destinationTowerId);
+                const key = `${edge.destinationKind}:${edge.destinationTowerId}`;
+                const base = destinationBase.get(key);
+                const capacity = edge.destinationKind === "consumer"
+                    ? getLogisticsAmmunitionTowerInventory(ammunition, destination.typeId).capacity
+                    : getLogisticsStorageDefinitionV3(supply, destination.typeId).capacity;
+                const headroom = capacity - base - (destinationReserved.get(key) ?? 0);
+                const amount = Math.min(remaining, headroom);
+                if (amount <= 0)
+                    continue;
+                remaining -= amount;
+                moved += amount;
+                destinationReserved.set(key, (destinationReserved.get(key) ?? 0) + amount);
+                incoming.set(key, (incoming.get(key) ?? 0) + amount);
+            }
+            if (moved <= 0)
+                continue;
+            outgoing.set(towerId, moved);
+            state.transferProgress = progress - definition.transferInterval;
+        }
+        for (const [towerId, amount] of outgoing) {
+            const producer = this.logisticsSupplyProducers.get(towerId);
+            const storage = this.logisticsSupplyStorages.get(towerId);
+            if (producer)
+                producer.amount -= amount;
+            else if (storage)
+                storage.amount -= amount;
+        }
+        for (const [key, amount] of incoming) {
+            const separator = key.indexOf(":");
+            const kind = key.slice(0, separator);
+            const towerId = key.slice(separator + 1);
+            if (kind === "consumer") {
+                this.logisticsAmmunitionAmounts.set(towerId, (this.logisticsAmmunitionAmounts.get(towerId) ?? 0) + amount);
+            }
+            else {
+                const storage = this.logisticsSupplyStorages.get(towerId);
+                if (storage)
+                    storage.amount += amount;
+            }
+        }
+    }
     ensureLogisticsPowerSnapshot() {
         if (!this.activeLogisticsPower) {
             throw new Error("Logistics power snapshot requested without an active power profile.");
@@ -8506,8 +8864,9 @@ export class TowerDefenseGame {
                 ? cloneLogisticsPowerSnapshotV1(this.ensureLogisticsPowerSnapshot())
                 : undefined;
         }
-        if (this.activeLogisticsSchemaVersion !== 2
-            || (!this.activeLogisticsPower && !this.activeLogisticsAmmunition))
+        if (this.activeLogisticsSchemaVersion !== 2 && this.activeLogisticsSchemaVersion !== 3)
+            return undefined;
+        if (!this.activeLogisticsPower && !this.activeLogisticsAmmunition && !this.activeLogisticsSupply)
             return undefined;
         const power = this.activeLogisticsPower
             ? cloneLogisticsPowerSnapshotV1(this.ensureLogisticsPowerSnapshot()).power
@@ -8515,6 +8874,72 @@ export class TowerDefenseGame {
         const ammunition = this.activeLogisticsAmmunition
             ? buildLogisticsAmmunitionSnapshotV2(this.activeLogisticsAmmunition, this.towers, this.logisticsAmmunitionAmounts)
             : null;
+        if (this.activeLogisticsSchemaVersion === 3) {
+            const supplyDefinition = this.activeLogisticsSupply;
+            const supply = supplyDefinition && this.activeLogisticsAmmunition
+                ? (() => {
+                    const topology = this.ensureLogisticsSupplyTopology();
+                    const producers = this.towers
+                        .filter((tower) => isLiveLogisticsAmmunitionTower(tower)
+                        && getLogisticsProducerDefinitionV3(supplyDefinition, tower.typeId) !== undefined)
+                        .sort((left, right) => compareBinary(left.id, right.id))
+                        .map((tower) => {
+                        const definition = getLogisticsProducerDefinitionV3(supplyDefinition, tower.typeId);
+                        const recipe = Object.prototype.hasOwnProperty.call(supplyDefinition.productionRecipes, definition.recipeId) ? supplyDefinition.productionRecipes[definition.recipeId] : undefined;
+                        const state = this.logisticsSupplyProducers.get(tower.id);
+                        if (!recipe || !state)
+                            throw new Error(`Logistics supply producer state for tower "${tower.id}" is missing.`);
+                        const powered = this.logisticsTowerPowered(tower);
+                        return Object.freeze({
+                            towerId: tower.id,
+                            towerTypeId: tower.typeId,
+                            recipeId: definition.recipeId,
+                            ammoTypeId: recipe.ammoTypeId,
+                            amount: state.amount,
+                            capacity: definition.capacity,
+                            productionProgress: state.productionProgress,
+                            productionInterval: recipe.interval,
+                            transferProgress: state.transferProgress,
+                            transferInterval: definition.transferInterval,
+                            transferAmount: definition.transferAmount,
+                            transferRadius: definition.transferRadius,
+                            powered,
+                            operational: powered && !(tower.disabledFor && tower.disabledFor > 0)
+                        });
+                    });
+                    const storages = this.towers
+                        .filter((tower) => isLiveLogisticsAmmunitionTower(tower)
+                        && getLogisticsStorageDefinitionV3(supplyDefinition, tower.typeId) !== undefined)
+                        .sort((left, right) => compareBinary(left.id, right.id))
+                        .map((tower) => {
+                        const definition = getLogisticsStorageDefinitionV3(supplyDefinition, tower.typeId);
+                        const state = this.logisticsSupplyStorages.get(tower.id);
+                        if (!state)
+                            throw new Error(`Logistics supply storage state for tower "${tower.id}" is missing.`);
+                        const powered = this.logisticsTowerPowered(tower);
+                        return Object.freeze({
+                            towerId: tower.id,
+                            towerTypeId: tower.typeId,
+                            ammoTypeId: definition.ammoTypeId,
+                            amount: state.amount,
+                            capacity: definition.capacity,
+                            transferProgress: state.transferProgress,
+                            transferInterval: definition.transferInterval,
+                            transferAmount: definition.transferAmount,
+                            transferRadius: definition.transferRadius,
+                            powered,
+                            operational: powered && !(tower.disabledFor && tower.disabledFor > 0)
+                        });
+                    });
+                    return Object.freeze({
+                        producers: Object.freeze(producers),
+                        storages: Object.freeze(storages),
+                        edges: Object.freeze(topology.edges.map((edge) => Object.freeze({ ...edge })))
+                    });
+                })()
+                : null;
+            return Object.freeze({ schemaVersion: 3, power, ammunition, supply });
+        }
         return Object.freeze({
             schemaVersion: 2,
             power,
@@ -8538,6 +8963,10 @@ export class TowerDefenseGame {
         this.map.clearOccupied(towerId); // free the footprint tiles for rebuilding
         this.towers.splice(index, 1);
         this.logisticsAmmunitionAmounts.delete(towerId);
+        this.logisticsSupplyProducers.delete(towerId);
+        this.logisticsSupplyStorages.delete(towerId);
+        if (this.isLogisticsSupplyTopologyParticipant(tower.typeId))
+            this.markLogisticsSupplyDirty();
         if (wasCounted) {
             this.logisticsTopologyCounts = logisticsCounts;
             this.logisticsLiveParticipantIds.delete(towerId);

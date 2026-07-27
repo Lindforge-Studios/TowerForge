@@ -35,7 +35,7 @@ const MECHANICS_MODULE_SCHEMA_VERSIONS = Object.freeze({
   terraforming: Object.freeze([1]),
   roguelite: Object.freeze([1, 2, 3, 4]),
   heroes: Object.freeze([1, 2, 3, 4, 5, 6, 7]),
-  logistics: Object.freeze([1, 2])
+  logistics: Object.freeze([1, 2, 3])
 });
 const SOURCE_BYTE_LIMITS = Object.freeze({
   project: 256 * 1024,
@@ -475,6 +475,13 @@ function createCandidate(rawFiles, request) {
       "Combat module schemaVersion can only be upgraded monotonically from v1/v2 to v2/v3."
     );
   }
+  if (request.moduleId === "logistics" && existingVersion === 1 && targetVersion === 3) {
+    throw new CandidateInputError(
+      "module_version_upgrade_unsupported",
+      "moduleSchemaVersion",
+      "Logistics v1 must be explicitly promoted to v2 before enabling the v3 supply contract."
+    );
+  }
   if (request.enabled === false) {
     if (!isRecord(existingModule)) {
       throw new CandidateInputError("module_missing", `modules.${request.moduleId}`, "A missing mechanics module cannot be disabled without synthesizing content.");
@@ -542,6 +549,9 @@ function createCandidate(rawFiles, request) {
   if (request.moduleId === "logistics" && existingVersion === 1 && targetVersion === 2) {
     promoteLogisticsProfilesToV2(module.profiles);
   }
+  if (request.moduleId === "logistics" && existingVersion === 2 && targetVersion === 3) {
+    promoteLogisticsProfilesToV3(module.profiles);
+  }
   if (request.moduleId === "heroes" && existingVersion === 5 && targetVersion === 6) {
     promoteHeroesProfilesToV6(module.profiles);
   }
@@ -582,6 +592,16 @@ function promoteLogisticsProfilesToV2(profiles) {
     const profile = ownValue(profiles, profileId);
     if (isRecord(profile) && Object.hasOwn(profile, "power") && !Object.hasOwn(profile, "ammunition")) {
       defineOwn(profile, "ammunition", null);
+    }
+  }
+}
+
+function promoteLogisticsProfilesToV3(profiles) {
+  for (const profileId of Object.keys(profiles).sort(compareBinary)) {
+    const profile = ownValue(profiles, profileId);
+    if (isRecord(profile) && Object.hasOwn(profile, "power") && Object.hasOwn(profile, "ammunition")
+      && !Object.hasOwn(profile, "supply")) {
+      defineOwn(profile, "supply", null);
     }
   }
 }

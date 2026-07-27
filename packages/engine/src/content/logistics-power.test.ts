@@ -92,7 +92,7 @@ function logisticsInput(options: {
   const profile = options.profile === undefined ? { power: power() } : options.profile;
   const modules = activation === "absent" ? {} : {
     logistics: {
-      schemaVersion: activation === "future" ? 3 : 1,
+      schemaVersion: activation === "future" ? 4 : 1,
       enabled: activation !== "disabled",
       profiles: { grid: profile }
     }
@@ -185,7 +185,7 @@ function hasIssue(
 }
 
 describe("R5.7A Logistics power authoring contract (RED)", () => {
-  it("preserves the exact Logistics v1 power contract inside the versioned v2 descriptor", () => {
+  it("preserves the exact Logistics v1 power contract inside the versioned v3 descriptor", () => {
     expect(Engine.IMPLEMENTED_MECHANICS_MODULE_IDS).toEqual([
       "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes",
       "logistics"
@@ -196,9 +196,9 @@ describe("R5.7A Logistics power authoring contract (RED)", () => {
     };
     expect(exported.LOGISTICS_POWER_LIMITS).toEqual(POWER_LIMITS_V1);
     expect(exported.LOGISTICS_MECHANICS_SCHEMA).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       moduleId: "logistics",
-      supportedModuleSchemaVersions: [1, 2],
+      supportedModuleSchemaVersions: [1, 2, 3],
       profileVersions: {
         1: {
           requiredFields: ["power"], optionalFields: [], additionalProperties: false
@@ -225,8 +225,8 @@ describe("R5.7A Logistics power authoring contract (RED)", () => {
         power: POWER_LIMITS_V1
       },
       runtimeSnapshot: {
-        schemaVersion: 2,
-        fields: ["schemaVersion", "power", "ammunition"],
+        schemaVersion: 3,
+        fields: ["schemaVersion", "power", "ammunition", "supply"],
         powerFields: ["components", "nodes", "consumers"]
       }
     });
@@ -582,7 +582,7 @@ describe("R5.7A Logistics power authoring contract (RED)", () => {
     expect(getterCalls).toBe(0);
   });
 
-  it("keeps future v3 profile payload opaque, lossless, read-only, and runtime fail-closed", () => {
+  it("keeps future v4 profile payload opaque, lossless, read-only, and runtime fail-closed", () => {
     let calls = 0;
     const futureProfile = Object.defineProperty({ futureOnly: { batteries: true } }, "power", {
       enumerable: true,
@@ -597,7 +597,7 @@ describe("R5.7A Logistics power authoring contract (RED)", () => {
     });
     const result = validateGameContentRegistry(subject);
     expect(result.ok).toBe(false);
-    expect(hasIssue(result, "error", /logistics.*schemaVersion|schemaVersion/i, /future|unsupported|version|1|2/i))
+    expect(hasIssue(result, "error", /logistics.*schemaVersion|schemaVersion/i, /future|unsupported|version|1|2|3/i))
       .toBe(true);
     expect(result.issues.some((candidate) => /profiles\.grid\.power/i.test(candidate.fieldPath))).toBe(false);
     expect(JSON.stringify(result)).not.toContain("FUTURE_LOGISTICS_MUST_STAY_OPAQUE");
