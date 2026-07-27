@@ -24,7 +24,9 @@ export const IMPLEMENTED_MECHANICS_MODULE_IDS = [
   "elevation",
   "physics",
   "terraforming",
-  "roguelite"
+  "roguelite",
+  "heroes",
+  "logistics"
 ] as const satisfies readonly MechanicsModuleId[];
 
 export const SHIELD_LIMITS = Object.freeze({
@@ -218,6 +220,11 @@ export function resolveCapabilitySet(
         ? schemaVersion === 1 || schemaVersion === 2 || schemaVersion === 3
         : moduleId === "roguelite"
           ? schemaVersion === 1 || schemaVersion === 2 || schemaVersion === 3 || schemaVersion === 4
+          : moduleId === "heroes"
+            ? schemaVersion === 1 || schemaVersion === 2 || schemaVersion === 3 || schemaVersion === 4
+              || schemaVersion === 5 || schemaVersion === 6 || schemaVersion === 7
+          : moduleId === "logistics"
+            ? schemaVersion === 1 || schemaVersion === 2 || schemaVersion === 3
           : schemaVersion === 1;
     const profiles = ownEnumerableDataValue(module, "profiles");
     const profile = profileId === undefined ? undefined : ownEnumerableDataValue(profiles, profileId);
@@ -248,6 +255,47 @@ export function resolveCapabilitySet(
         && combatProfile !== undefined
         ? "active"
         : "dependency_missing";
+    } else if (moduleId === "heroes" && schemaVersion === 7) {
+      const selectedHeroId = ownEnumerableDataValue(profile, "selectedHeroId");
+      const heroDefinition = typeof selectedHeroId === "string"
+        ? ownEnumerableDataValue(ownEnumerableDataValue(profile, "definitions"), selectedHeroId)
+        : undefined;
+      const blocking = ownEnumerableDataValue(heroDefinition, "blocking");
+      if (blocking === null) {
+        reason = "active";
+      } else {
+        const navigationModuleValue = ownEnumerableDataValue(modules, "navigation");
+        const navigationModule = navigationModuleValue !== null && typeof navigationModuleValue === "object"
+          && !Array.isArray(navigationModuleValue)
+          ? navigationModuleValue
+          : undefined;
+        const navigationProfileId = ownEnumerableDataValue(selectedProfiles, "navigation");
+        const navigationProfile = typeof navigationProfileId === "string"
+          ? ownEnumerableDataValue(ownEnumerableDataValue(navigationModule, "profiles"), navigationProfileId)
+          : undefined;
+        const movementProfiles = ownEnumerableDataValue(navigationProfile, "movementProfiles");
+        const movementProfileIds = ownEnumerableDataValue(blocking, "movementProfileIds");
+        let referencesExist = false;
+        try {
+          referencesExist = Array.isArray(movementProfileIds)
+            && movementProfileIds.length > 0
+            && movementProfileIds.every((movementProfileId) => (
+              typeof movementProfileId === "string"
+              && ownEnumerableDataValue(movementProfiles, movementProfileId) !== undefined
+            ));
+        } catch {
+          referencesExist = false;
+        }
+        reason = navigationModule
+          && availableIds.has("navigation")
+          && ownEnumerableDataValue(navigationModule, "enabled") === true
+          && ownEnumerableDataValue(navigationModule, "schemaVersion") === 1
+          && typeof navigationProfileId === "string"
+          && ownEnumerableDataValue(navigationProfile, "mode") === "dynamic_flow"
+          && referencesExist
+          ? "active"
+          : "dependency_missing";
+      }
     } else reason = "active";
 
     const state: CapabilityState = {

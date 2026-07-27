@@ -1,0 +1,7 @@
+{
+  "mechanics": {
+    "profiles": {
+      "logistics": "basic_power_grid"
+    }
+  }
+}

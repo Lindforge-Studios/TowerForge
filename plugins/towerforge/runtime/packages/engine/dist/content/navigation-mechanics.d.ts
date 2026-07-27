@@ -45,6 +45,33 @@ export type ActiveNavigationMechanicsV1 = NavigationProfileV1 & {
     readonly schemaVersion: 1;
     readonly profileId: string;
 };
+/** Closed descriptor for the shared deterministic movement-profile value shape. */
+export declare const MOVEMENT_PROFILE_V1_SCHEMA: Readonly<{
+    requiredFields: readonly ["label", "terrainMode", "towerOccupancy", "defaultTerrainCost"];
+    optionalFields: readonly ["terrainCosts"];
+    additionalProperties: false;
+    label: Readonly<{
+        minLength: 1;
+        maxLength: 128;
+    }>;
+    terrainModeValues: readonly ["respect_walkable", "ignore_walkable"];
+    towerOccupancyValues: readonly ["blocked", "ignored"];
+    defaultTerrainCost: Readonly<{
+        integer: true;
+        minimum: 1;
+        maximum: 1000000;
+        nullable: true;
+    }>;
+    terrainCosts: Readonly<{
+        maximumEntries: 256;
+        values: Readonly<{
+            integer: true;
+            minimum: 1;
+            maximum: 1000000;
+            nullable: true;
+        }>;
+    }>;
+}>;
 /** Machine-readable authoring descriptor shared with future Studio/MCP surfaces. */
 export declare const NAVIGATION_MECHANICS_SCHEMA: Readonly<{
     schemaVersion: 1;
@@ -61,6 +88,32 @@ export declare const NAVIGATION_MECHANICS_SCHEMA: Readonly<{
             dynamic_flow: Readonly<{
                 requiredFields: readonly ["mode", "defaultMovementProfileId", "movementProfiles"];
                 optionalFields: readonly ["enemyMovementProfiles"];
+            }>;
+        }>;
+    }>;
+    movementProfile: Readonly<{
+        requiredFields: readonly ["label", "terrainMode", "towerOccupancy", "defaultTerrainCost"];
+        optionalFields: readonly ["terrainCosts"];
+        additionalProperties: false;
+        label: Readonly<{
+            minLength: 1;
+            maxLength: 128;
+        }>;
+        terrainModeValues: readonly ["respect_walkable", "ignore_walkable"];
+        towerOccupancyValues: readonly ["blocked", "ignored"];
+        defaultTerrainCost: Readonly<{
+            integer: true;
+            minimum: 1;
+            maximum: 1000000;
+            nullable: true;
+        }>;
+        terrainCosts: Readonly<{
+            maximumEntries: 256;
+            values: Readonly<{
+                integer: true;
+                minimum: 1;
+                maximum: 1000000;
+                nullable: true;
             }>;
         }>;
     }>;
@@ -96,6 +149,8 @@ export declare class NavigationProfileValidationError extends Error {
     readonly fieldPath: string;
     constructor(fieldPath: string, message: string);
 }
+/** Normalize one closed movement profile for navigation-owned and other opt-in modules. */
+export declare function normalizeMovementProfileV1(value: unknown, fieldPath?: string): MovementProfileV1;
 /**
  * Safely detaches one navigation v1 profile into canonical binary-key order.
  * Cross-project references are intentionally resolved by content validation/resolution.

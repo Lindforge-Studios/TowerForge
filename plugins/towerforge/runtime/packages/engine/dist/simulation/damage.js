@@ -236,6 +236,10 @@ function validateTarget(target) {
             validateId(target.towerId, "Tower target towerId");
             validateId(target.towerTypeId, "Tower target towerTypeId");
             return;
+        case "hero":
+            validateId(target.heroId, "Hero target heroId");
+            validateId(target.heroDefinitionId, "Hero target heroDefinitionId");
+            return;
         case "core":
             return;
         default:

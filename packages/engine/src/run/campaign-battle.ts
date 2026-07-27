@@ -17,7 +17,10 @@ import {
   type CampaignBattleLoadoutV1
 } from "../simulation/TowerDefenseGame.js";
 import { CAMPAIGN_RUN_LIMITS, decodeCampaignRun, type CampaignRunV1 } from "./campaign-run.js";
-import { campaignBattleWorstCaseModifierCount } from "./campaign-battle-policy.js";
+import {
+  campaignBattleWorstCaseModifierCount,
+  preflightHeroAuraDamageFinite
+} from "./campaign-battle-policy.js";
 import {
   validateCampaignRunAgainstContent,
   type CampaignRunContentValidationResult,
@@ -201,6 +204,9 @@ function prepareValidatedCampaignBattle(
     > CAMPAIGN_RUN_LIMITS.collectionEntries
   ) return fail("run_capacity_exceeded");
   if (campaignBattleWorstCaseModifierCount(captured.deck, content, node.missionId) > MAX_MODIFIERS_PER_RESOLUTION) {
+    return fail("modifier_budget_exceeded");
+  }
+  if (!preflightHeroAuraDamageFinite(content, node.missionId, { deck: captured.deck }).ok) {
     return fail("modifier_budget_exceeded");
   }
   const maxNewArtifactInstances = Math.min(

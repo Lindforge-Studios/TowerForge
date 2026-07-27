@@ -169,6 +169,71 @@ export interface CampaignBattleCheckpointStateV1 {
   readonly artifacts: readonly { readonly instanceId: string; readonly artifactId: string }[];
 }
 
+export interface HeroesCheckpointStateV1 {
+  readonly schemaVersion: 1;
+  readonly unit: {
+    readonly definitionId: string;
+    readonly currentCoord: Readonly<{ q: number; r: number }>;
+    readonly targetCoord: Readonly<{ q: number; r: number }> | null;
+    readonly nextCoord: Readonly<{ q: number; r: number }> | null;
+    readonly edgeProgress: number;
+  };
+}
+
+export interface HeroesCheckpointStateV2 {
+  readonly schemaVersion: 2;
+  readonly unit: HeroesCheckpointStateV1["unit"] & {
+    readonly hp: number;
+    readonly shieldCurrent: number;
+  };
+}
+
+export interface HeroesCheckpointStateV3 {
+  readonly schemaVersion: 3;
+  readonly unit: HeroesCheckpointStateV2["unit"] & {
+    readonly mana: number;
+    readonly abilityCooldownRemaining: number;
+  };
+}
+
+export interface HeroesCheckpointStateV4 {
+  readonly schemaVersion: 4;
+  readonly unit: HeroesCheckpointStateV3["unit"] & {
+    readonly skillPoints: number;
+    readonly unlockedSkillIds: readonly string[];
+  };
+}
+
+export interface LogisticsCheckpointStateV1 {
+  readonly schemaVersion: 1;
+  readonly ammunition: {
+    readonly inventories: readonly {
+      readonly towerId: string;
+      readonly amount: number;
+    }[];
+  };
+}
+
+export interface LogisticsCheckpointStateV2 {
+  readonly schemaVersion: 2;
+  readonly ammunition: {
+    readonly inventories: readonly { readonly towerId: string; readonly amount: number }[];
+  } | null;
+  readonly supply: {
+    readonly producers: readonly {
+      readonly towerId: string;
+      readonly amount: number;
+      readonly productionProgress: number;
+      readonly transferProgress: number;
+    }[];
+    readonly storages: readonly {
+      readonly towerId: string;
+      readonly amount: number;
+      readonly transferProgress: number;
+    }[];
+  } | null;
+}
+
 /** Authoritative mutable simulation state. Map occupancy and water cues are rebuilt derivatives. */
 export interface GameCheckpointStateV1 {
   readonly coreHp: number;
@@ -207,6 +272,12 @@ export interface GameCheckpointStateV1 {
   readonly artifacts?: ArtifactCheckpointState;
   readonly draft?: DraftCheckpointState;
   readonly campaignBattle?: CampaignBattleCheckpointStateV1;
+  readonly heroes?:
+    | HeroesCheckpointStateV1
+    | HeroesCheckpointStateV2
+    | HeroesCheckpointStateV3
+    | HeroesCheckpointStateV4;
+  readonly logistics?: LogisticsCheckpointStateV1 | LogisticsCheckpointStateV2;
 }
 
 export interface GameCheckpointV1 {

@@ -4,7 +4,7 @@ import { MAX_MODIFIERS_PER_RESOLUTION } from "../simulation/modifiers.js";
 import { canonicalStringify, getSimulationContentDigest, stableDigest } from "../simulation/stable-digest.js";
 import { TowerDefenseGame } from "../simulation/TowerDefenseGame.js";
 import { CAMPAIGN_RUN_LIMITS, decodeCampaignRun } from "./campaign-run.js";
-import { campaignBattleWorstCaseModifierCount } from "./campaign-battle-policy.js";
+import { campaignBattleWorstCaseModifierCount, preflightHeroAuraDamageFinite } from "./campaign-battle-policy.js";
 import { validateCampaignRunAgainstContent } from "./campaign-world.js";
 function isBattleNode(node) {
     return Boolean(node
@@ -107,6 +107,9 @@ function prepareValidatedCampaignBattle(validation, content, nodeId, construct) 
         > CAMPAIGN_RUN_LIMITS.collectionEntries)
         return fail("run_capacity_exceeded");
     if (campaignBattleWorstCaseModifierCount(captured.deck, content, node.missionId) > MAX_MODIFIERS_PER_RESOLUTION) {
+        return fail("modifier_budget_exceeded");
+    }
+    if (!preflightHeroAuraDamageFinite(content, node.missionId, { deck: captured.deck }).ok) {
         return fail("modifier_budget_exceeded");
     }
     const maxNewArtifactInstances = Math.min(CAMPAIGN_RUN_LIMITS.collectionEntries

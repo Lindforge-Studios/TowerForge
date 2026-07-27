@@ -489,6 +489,254 @@ boundaries; constructor verification covered guarded Studio/AI authoring, future
 both renderers/grids/input families, packaging, legacy paths, and plugin parity. Both sign-offs are
 PASS with no open P0–P3.
 
+### R5.1A static hero roster foundation
+
+R5.1A activates the planned `heroes` module as schema v1 while keeping active control in a later
+increment. A closed profile contains `selectedHeroId` and 1–32 binary-keyed definitions. Every
+definition is exactly `{label, spawn:"core"}`; definition IDs and labels are bounded to 128 real
+UTF-8 bytes. Structural shape and budgets are always validated. A missing selected definition is a
+semantic cross-reference: it is an error for an active selected profile and a warning while the
+profile is inactive.
+
+The simulation derives one immutable selected unit from content and the map core. Only an active
+capability publishes `snapshot.heroes` schema v1, whose exact unit fields are `id`, `definitionId`,
+`label`, and `coord`. The roster is presentation-visible but has no mutable simulation behavior.
+There is no RNG stream, command, event, TowerScript surface, HP, mana, ability, aura, blocking, or
+navigation allocation. Checkpoint v1 and `towerforge-sim-v2` remain unchanged and contain no hero
+state; restore safely re-derives the unit because the checkpoint content digest already binds the
+profile and map.
+
+Studio authors the roster only in Mechanics Hub through the existing revision-guarded three-file
+mechanics transaction. MCP/AI uses the same descriptor and `describe -> capabilities -> recipe ->
+preview -> guarded apply -> validate` flow. Canvas and Phaser consume one shared fail-closed hero
+projection. `visuals.bindings.heroes` is optional and no empty binding is synthesized for legacy
+projects. Missing, disabled, unselected, and unsupported future modules publish no hero snapshot or UI.
+This v1 path remains static and byte-compatible; the separately selected v2 movement extension is
+described below. See [ADR 0037](adr/0037-opt-in-static-hero-roster-foundation.md).
+
+### R5.1B deterministic hero movement
+
+Heroes v2 adds movement as an independent opt-in profile extension. The profile owns
+`movementProfiles` in the same closed shape as `MovementProfileV1`; each selected definition adds
+exact nested `movement: {movementProfileId, speed}`. This reuses the engine topology and bounded
+reverse-field implementation but does not require, enable, select, or mutate the separate
+`navigation` module. The inert `basic_mobile_commander_hero` recipe likewise writes nothing until
+the normal preview/revision/apply transaction is explicitly committed.
+
+Movement enters simulation only through exact `GameCommandV4 moveHero`. Mutable coordinate,
+nullable target/next coordinate, and fractional edge progress live in the optional active heroes
+checkpoint section and replay through journal v4. The optional `snapshot.heroes` v2 is the only
+renderer input. Its movement record is exact and nullable; the shared renderer projects an
+interpolated point and presentation-only hit test. Canvas and Phaser keep selection outside the
+snapshot and dispatch commands for pointer/touch and Enter, with Escape and every run-context
+handoff clearing selection. Heroes v1 remains the static snapshot contract and receives no new
+input behavior. HP, mana, abilities, skills, auras, blocking, and TowerScript hero actions remain
+outside this slice. See [ADR 0038](adr/0038-opt-in-deterministic-hero-movement.md).
+
+### R5.2A hero durability
+
+Heroes v3 retains the exact v2 movement profile and requires each definition to add closed
+`durability: {maxHp,shield}`. HP and capacity are finite positive values bounded at
+`1_000_000_000_000`; shield is `null` or exact `{capacity}`. Structural validation applies while
+disabled, while activation and runtime allocation still require the ordinary enabled module plus
+mission profile selection.
+
+A live in-range v3 hero can be targeted by enemy `towerAttack`. Damage passes the shared
+`DamagePacket` / `DamageResolver` boundary and the authored hero shield absorbs the resolved amount
+before HP. Zero HP emits one defeat transition, disables movement, and removes the hero from future
+attack targeting. There is no regeneration, healing, revival, threat configuration, mana, ability,
+aura, blocking, or TowerScript hero surface in R5.2A.
+
+The optional snapshot advances to heroes v3 with exact `durability: {hp,maxHp,shield,defeated}`.
+The optional nested heroes checkpoint advances to v2 for current HP/shield while outer
+`GameCheckpointV1`, engine v2, GameCommand/Journal v4, replay, project v3, and mechanics catalog v1
+stay unchanged. Studio v3 authoring is isolated in Mechanics Hub; future v4+ data remains exact and
+read-only. CLI/MCP share the engine descriptor, inert `basic_durable_commander_hero` recipe, and
+existing revision/validation/backup/rollback transaction. Canvas and Phaser consume only bounded
+snapshot/event projections. See [ADR 0039](adr/0039-opt-in-hero-durability.md) and
+`docs/examples/opt-in-hero-roster/mechanics-durable.json`.
+
+### R5.3A targeted hero ability
+
+Heroes v4 retains v3 and adds exact bounded `mana` plus one inline enemy-targeted
+`activeAbility`. Exact `GameCommandV5 useHeroAbility` carries only hero, ability, and live target
+IDs. The engine checks outcome, defeat, range, mana, and cooldown before spending state and routing
+one ability packet through the shared resolver. Deterministic regeneration/cooldown state appears
+only in optional snapshot v4 and nested heroes checkpoint v3; the outer checkpoint remains v1.
+
+Studio and MCP use the inert `basic_targeted_hero_ability` recipe and the ordinary guarded
+revision/validation/backup/rollback transaction. Canvas and Phaser read authoritative readiness and
+dispatch the same command across pointer, touch, and keyboard. V1–v3 and absent/disabled paths keep
+their earlier shape. See [ADR 0040](adr/0040-opt-in-targeted-hero-ability.md) and
+`docs/examples/opt-in-hero-roster/mechanics-targeted-ability.json`.
+
+### R5.4A battle-local hero skill tree
+
+Heroes v5 retains the exact v4 definition and adds required nullable `skillTree`. `null` is an
+explicit opt-out that continues to publish snapshot v4/checkpoint v3. A non-null tree contains
+bounded starting/interwave points and a canonical all-of-prerequisite DAG. Nodes can contain one
+to four allowlisted modifier effects, all scoped to `hero_ability_damage`; the engine compiles them
+to collision-safe `run` modifiers for that packet only and rejects sequences that can overflow the
+shared damage bounds.
+
+Exact `GameCommandV6 unlockHeroSkill` is accepted only during setup or a clear non-final
+interwave. Unlocking is atomic and deterministic, while the tree itself never pauses automatic
+wave scheduling. Non-final clears emit `waveCleared` then `heroSkillPointsGranted` before an
+optional draft offer. Snapshot v5 publishes authoritative points, phase availability,
+prerequisites, and unlockability. Nested heroes checkpoint v4 validates binary unlock order,
+prerequisite closure, earned-minus-spent accounting, retained event order, and authoritative final
+state. Outer checkpoint v1, project v3, PlayerProfile v3, and CampaignRun v1 do not change.
+
+Mechanics Hub owns explicit v4→v5 promotion and materializes `skillTree:null` on definitions that
+do not opt in. MCP exposes guide v25 and inert `basic_hero_skill_tree`; both players create controls
+only from valid snapshot v5 and dispatch command v6. No XP, respec, aura, blocking, logistics,
+TowerScript hero scope, or cross-battle carry is added. See
+[ADR 0041](adr/0041-opt-in-battle-local-hero-skill-tree.md) and
+`docs/examples/opt-in-hero-roster/mechanics-skill-tree.json`.
+
+### R5.5A passive hero damage aura
+
+Heroes v6 retains every v5 field and adds required nullable `passiveAura`, independently of the
+nullable skill tree. A non-null closed aura contains an ID, label, integer topology radius, and
+one-to-four typed `tower_damage` modifier effects. The engine evaluates membership from the living
+hero's authoritative `currentCoord` and tower anchors. Only immediate packets from live affected
+towers receive the effects at the common `spatial` stage; DoT, status, hero/mission abilities,
+range, fire rate, and adjacent mechanics are unchanged.
+
+Snapshot v6 appears only for a non-null selected aura. It contains the v4 base, `skills` as the v5
+projection or literal null, and authoritative aura activity plus binary-sorted affected tower IDs.
+Renderers validate and display that set without recomputing gameplay. Aura state is derived from
+already checkpointed hero/tower/outcome data, so nested checkpoint v3/v4 remains unchanged. Null
+aura definitions keep literal snapshot v4/v5 behavior.
+
+The shared finite-damage preflight follows canonical meta → run → spatial ordering and covers
+direct construction, campaign preparation/loadout, artifact socket preflight, and checkpoint
+restore. It is capability-aware and exits for no-aura projects, preserving old Roguelite timing.
+Mechanics Hub performs explicit all-definition v5→v6 null promotion; MCP guide v26 and the inert
+`basic_passive_hero_aura` recipe use guarded preview/apply. GameCommand/Journal v6, events, outer
+checkpoint v1, project v3, PlayerProfile v3, CampaignRun v1, and TowerScript v6 do not change. See
+[ADR 0042](adr/0042-opt-in-passive-hero-damage-aura.md) and
+`docs/examples/opt-in-hero-roster/mechanics-passive-aura.json`.
+
+### R5.6A dynamic hero blocking
+
+Heroes v7 retains the complete v6 definition and adds required nullable `blocking`. A non-null
+value has a safe-integer `blockCapacity` from 1 through 64 and one-to-32 unique, binary-sorted
+`movementProfileIds`. These IDs are explicit references into the same mission's selected, enabled
+Navigation v1 `dynamic_flow` profile. Structural checks always fail closed; broken cross-capability
+references are activation errors only on the selected active path and warnings otherwise. Neither
+the engine nor authoring surfaces infer eligibility from profile names, terrain mode, enemy class,
+or tower-occupancy policy.
+
+The living selected hero blocks at its authoritative `currentCoord`; interpolation remains a
+presentation detail. At each enemy movement boundary the engine derives up to the authored
+capacity of eligible co-located enemies in binary ID order. An exact-boundary arrival can take a
+free slot before consuming remaining movement or leaking at the core. Overflow continues normally.
+The hero is never inserted into flow-field occupancy, so blocking does not dirty or rebuild a
+resolver, alter reachability or placement, or run per-enemy pathfinding.
+
+Only non-null active blocking publishes snapshot v7 with nullable skills/aura and an authoritative
+`blocking:{blockCapacity,active,blockedEnemyIds}` section. Null blocking retains literal snapshot
+v4/v5/v6 and nested checkpoint v3/v4 forms; held IDs are derived after restore, so no checkpoint
+field is added. Mechanics Hub performs an explicit module-wide v6→v7 null promotion. MCP guide v27
+and the inert `basic_dynamic_hero_blocking` recipe use guarded preview/apply and never enable or
+select Navigation. GameCommand/Journal v6, events, outer checkpoint v1, project v3, profile v3,
+CampaignRun v1, and TowerScript v6 remain unchanged. See
+[ADR 0043](adr/0043-opt-in-dynamic-hero-blocking.md) and
+`docs/examples/opt-in-hero-roster/mechanics-blocking.json`.
+
+### R5.7A Logistics power grid
+
+Logistics v1 is an independent opt-in module with required nullable `power`. `null`, missing,
+disabled, and unselected profiles preserve infinite legacy supply and add no snapshot or UI. A
+non-null closed profile assigns disjoint tower types to generators, relays, and fire-capable
+consumers. It does not add fields to ordinary tower or mission forms and does not imply ammo,
+inventory, factories, production, or transfer.
+
+The pure engine owns footprint-edge link distance, deterministic connected components, nearest-node
+consumer coverage, and full-demand prefix allocation by ascending priority then binary tower ID.
+An unpowered consumer freezes its exact cooldown and cannot acquire a target, fire, run a pipeline,
+or keep a pulse field active. Generator and relay attack/support behavior remains independent.
+Only towers with absent HP or positive HP are live power participants.
+
+The derived graph rebuilds only after placement, movement, sale, destruction, or checkpoint restore.
+It is bounded to 4,096 live participants, 1,024 generator/relay nodes, and 65,536 undirected links;
+candidate placement, movement, and restore perform bounded preflight before mutation. Graph state is
+not checkpointed. Restore derives it from the existing tower state while retaining runtime tower
+order, so continuous and checkpoint/replay suffixes produce the same digest.
+
+Optional `snapshot.logistics` v1 is authoritative for components, node links, consumer coverage,
+and powered/brownout state. The shared fail-closed renderer projector validates the complete bounded
+relationship graph; Studio Playtest and generated Canvas/Phaser players display the same visible
+link and coverage cues without recalculating topology. Mechanics Hub, CLI, and MCP use the inert
+`basic_power_grid` recipe and existing revision/validation/backup/rollback transaction. Future v2+
+content is opaque/read-only. Commands, events, journal v6, outer checkpoint v1, project v3, profile
+v3, CampaignRun v1, and TowerScript v6 do not change. See
+[ADR 0044](adr/0044-opt-in-logistics-power-grid.md) and
+`docs/examples/opt-in-logistics-power/`.
+
+### R5.8A Local ammunition
+
+R5.8A advances only the opt-in `logistics` module to v2. Its profile is the exact closed
+`{power,ammunition}` pair with both fields required and nullable. V1 is read without migration;
+adding ammunition is an explicit revision-guarded promotion that preserves the current power
+section. Missing, disabled, unselected, `ammunition:null`, and all-null profiles allocate no
+magazine, checkpoint section, snapshot, or UI and retain infinite legacy ammunition.
+
+The ammunition catalog owns at most 256 exact `{label}` definitions and 4,096 tower-type bindings.
+Each binding is exact `{ammoTypeId,capacity,startingAmount,consumptionPerActivation}` and may target
+only an existing fire-capable attack kind. IDs and labels are limited to 128 UTF-8 bytes; amounts
+are safe integers bounded by capacity and 1,000,000,000. Active reference faults are errors,
+inactive faults are warnings, and structural or budget faults always fail closed.
+
+The firing order is fixed as `disabled → power → ammunition → cooldown → target → consume →
+effects`. Consumption is atomic once per successful single, pulse, sniper, antiair, splash, or
+pipeline activation; target fan-out and secondary effects do not spend additional rounds. No
+target spends nothing. Depletion freezes the precise cooldown and suppresses targeting, firing
+events, damage, status, displacement, resources, and pulse refresh. Move and upgrade preserve the
+live amount; sell, destruction, and reset remove it. There is no refill path in this slice.
+
+Mutable amounts use nested Logistics checkpoint v1 without changing the outer checkpoint, engine,
+command, journal, RNG, TowerScript, profile, or campaign versions. Snapshot v2 exposes independent
+nullable power and ammunition sections; inventory rows are complete, detached, binary-sorted, and
+include authoritative `hasRequiredAmmo`. The shared renderer projector validates that shape and
+Canvas, Phaser, and Studio Playtest show only amount/capacity and depletion cues. MCP and Mechanics
+Hub use the inert `basic_local_ammunition` recipe plus the existing preview/revision/validation/
+backup/rollback workflow. See [ADR 0045](adr/0045-opt-in-local-ammunition.md) and
+`docs/examples/opt-in-local-ammunition/`.
+
+### R5.8B Ammunition supply
+
+R5.8B advances only `logistics` to v3 with an exact required nullable `supply` sibling. Non-null
+supply requires the same profile's non-null ammunition catalog and adds exact production recipes,
+producer compartments, and storage compartments on existing tower types. Reading v1/v2 never
+migrates them; Studio/MCP explicitly promote the whole profile while preserving power/ammunition.
+Missing, disabled, unselected, all-null, and `supply:null` paths retain their literal earlier state.
+
+The pure engine builds a bounded directed graph over live instances using topology distance minus
+both footprint radii. Producers connect to every in-range matching consumer/storage; storage
+connects to every in-range matching consumer even when a producer reaches the same target;
+same-instance compartment refill is allowed. Each recipe batch must fit every producer bound to it.
+Sources execute by binary tower ID and serve consumers before storage, then shorter edges, then
+binary destination ID. Production runs before one detached transfer plan, while ordinary attacks
+run after its atomic publish. Incoming stock cannot be forwarded and outgoing stock cannot free
+incoming headroom during the same tick.
+
+Power consumers use authoritative allocation; brownout and disruption freeze production/outgoing
+transfer but do not block passive receipt. Refill never resets cooldown, so a ready tower reaching
+its activation cost may fire in that tick through the unchanged R5.8A gate. Whole production
+batches, partial bounded transfer, removal semantics, and placement/move/checkpoint topology
+preflight preserve stock conservation and deterministic replay.
+
+Mutable producer/storage stock and progress use nested Logistics checkpoint v2. Derived edges are
+rebuilt. Snapshot v3 publishes detached producer/storage state, transfer configuration,
+powered/operational cues, and directed edges including tower/type identities. The shared renderer
+strictly validates this shape and exposes only presentation data; it does not route stock. Mechanics
+Hub, CLI, and MCP use the inert `basic_factory_ammunition_supply` recipe and the existing guarded
+transaction. No command, event, TowerScript action, raw material, conveyor, loot, campaign/profile
+carry, or host-side refill API is added. See [ADR 0046](adr/0046-opt-in-ammunition-supply.md) and
+`docs/examples/opt-in-ammunition-supply/`.
+
 ## Done Criteria For Constructor Changes
 
 - Engine changes pass `npm run typecheck`.

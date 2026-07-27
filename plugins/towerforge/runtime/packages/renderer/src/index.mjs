@@ -18,6 +18,7 @@ import {
 export { projectLineOfSightAnalysis } from "./line-of-sight-presentation.mjs";
 import { projectElevationCues } from "./elevation-presentation.mjs";
 import { projectPhysicsPresentationCues } from "./physics-presentation.mjs";
+import { projectHeroPresentationPoint, projectHeroesPresentation } from "./heroes-presentation.mjs";
 export * from "./autotile.mjs";
 export * from "./combat-presentation.mjs";
 export * from "./navigation-presentation.mjs";
@@ -26,6 +27,18 @@ export * from "./physics-presentation.mjs";
 export * from "./terraforming-presentation.mjs";
 export * from "./roguelite-presentation.mjs";
 export * from "./campaign-presentation.mjs";
+export * from "./heroes-presentation.mjs";
+export { projectLogisticsPresentation } from "./logistics-power-presentation.mjs";
+
+function ownDataValue(record, key) {
+  if (record === null || typeof record !== "object") return undefined;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(record, key);
+    return descriptor?.enumerable === true && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 // Max canvas backbuffer area (pixels). Above this, high-DPR mobile GPUs stall or OOM. ~1.35M px
 // ≈ 1600x844 — plenty for a hex playfield while keeping cheap Android devices stable.
@@ -66,6 +79,8 @@ export class TowerForgeCanvasRenderer {
       core: "#3f6f43",
       tower: "#8ac783",
       towerStroke: "#e8f4db",
+      hero: "#e6b85c",
+      heroStroke: "#fff0bd",
       danger: "#df6a59",
       ...options.theme
     };
@@ -127,7 +142,13 @@ export class TowerForgeCanvasRenderer {
     this.drawNavigationOverlay(geom);
     if (this.focusCoord) this.drawFocusCell(this.focusCoord, geom);
     for (const tower of snapshot.towers ?? []) this.drawTower(tower, snapshot, geom);
+    const heroPresentation = projectHeroesPresentation(snapshot);
+    for (const hero of heroPresentation.units) {
+      this.drawPassiveHeroAura(hero, towerPositions, geom);
+      this.drawHero(hero, geom);
+    }
     for (const enemy of snapshot.enemies ?? []) this.drawEnemy(enemy, snapshot, geom);
+    for (const hero of heroPresentation.units) this.drawHeroBlocking(hero, positions, geom);
     this.drawEffects(geom);
 
     this.ctx.restore();
@@ -466,16 +487,17 @@ export class TowerForgeCanvasRenderer {
    *  A sprite is either a standalone image ({ src }) or a frame of an atlas ({ atlas, frame }). */
   spriteFor(kind, id) {
     const visuals = this.content.visuals;
-    const spriteId = visuals && visuals.bindings && visuals.bindings[kind] ? visuals.bindings[kind][id] : null;
+    const bindings = ownDataValue(ownDataValue(visuals, "bindings"), kind);
+    const spriteId = ownDataValue(bindings, id);
     return this.spriteById(spriteId);
   }
 
   spriteById(spriteId) {
     const visuals = this.content.visuals;
-    const sprite = spriteId && visuals?.sprites ? visuals.sprites[spriteId] : null;
+    const sprite = spriteId ? ownDataValue(ownDataValue(visuals, "sprites"), spriteId) : null;
     if (!sprite || typeof sprite !== "object") return null;
     if (sprite.atlas && sprite.frame) {
-      const atlas = visuals.atlases ? visuals.atlases[sprite.atlas] : null;
+      const atlas = ownDataValue(ownDataValue(visuals, "atlases"), sprite.atlas);
       const img = this.loadImage(atlas && atlas.src);
       if (!img) return null;
       const f = sprite.frame;
@@ -626,6 +648,114 @@ export class TowerForgeCanvasRenderer {
     }
     const shield = resolveShieldPresentation(snapshot, "tower", tower.id);
     if (shield) this.drawShieldRing(p, geom.r * 0.7, shield);
+  }
+
+  drawHero(hero, geom) {
+    const p = projectHeroPresentationPoint(hero, (coord) => this.center(coord, geom));
+    if (!p) return;
+    const sprite = this.spriteFor("heroes", hero.definitionId);
+    this.ctx.save();
+    if (hero.durability?.defeated) this.ctx.globalAlpha = 0.38;
+    if (sprite) {
+      const size = geom.r * 1.35;
+      this.ctx.drawImage(sprite.img, sprite.sx, sprite.sy, sprite.sw, sprite.sh, p.x - size / 2, p.y - size / 2, size, size);
+    } else {
+      this.ctx.beginPath();
+      this.ctx.arc(p.x, p.y, geom.r * 0.5, 0, Math.PI * 2);
+      this.ctx.fillStyle = this.theme.hero;
+      this.ctx.fill();
+      this.ctx.strokeStyle = this.theme.heroStroke;
+      this.ctx.lineWidth = Math.max(1, geom.r * 0.08);
+      this.ctx.stroke();
+      this.ctx.fillStyle = this.theme.bg;
+      this.ctx.font = `bold ${Math.max(10, geom.r * 0.38)}px sans-serif`;
+      this.ctx.textAlign = "center";
+      this.ctx.textBaseline = "middle";
+      this.ctx.fillText(hero.label.slice(0, 2), p.x, p.y);
+    }
+    this.ctx.restore();
+    const durability = hero.durability;
+    if (!durability) return;
+    const width = geom.r * 1.05;
+    const height = Math.max(3, geom.r * 0.13);
+    const x = p.x - width / 2;
+    const y = p.y - geom.r * 0.82;
+    const hpRatio = durability.hp / durability.maxHp;
+    this.ctx.save();
+    this.ctx.fillStyle = "rgba(0,0,0,.65)";
+    this.ctx.fillRect(x - 1, y - 1, width + 2, height + 2);
+    this.ctx.fillStyle = hpRatio > 0.35 ? "#73cf82" : "#df6a59";
+    this.ctx.fillRect(x, y, width * hpRatio, height);
+    if (durability.shield) {
+      const shieldRatio = durability.shield.current / durability.shield.capacity;
+      this.ctx.strokeStyle = "rgba(99,217,255,.28)";
+      this.ctx.lineWidth = Math.max(1.5, geom.r * 0.08);
+      this.ctx.beginPath();
+      this.ctx.arc(p.x, p.y, geom.r * 0.62, 0, Math.PI * 2);
+      this.ctx.stroke();
+      if (shieldRatio > 0) {
+        this.ctx.strokeStyle = "#63d9ff";
+        this.ctx.beginPath();
+        this.ctx.arc(p.x, p.y, geom.r * 0.62, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * shieldRatio);
+        this.ctx.stroke();
+      }
+    }
+    if (durability.defeated) {
+      const radius = geom.r * 0.38;
+      this.ctx.strokeStyle = "#df6a59";
+      this.ctx.lineWidth = Math.max(2, geom.r * 0.1);
+      this.ctx.beginPath();
+      this.ctx.moveTo(p.x - radius, p.y - radius);
+      this.ctx.lineTo(p.x + radius, p.y + radius);
+      this.ctx.moveTo(p.x + radius, p.y - radius);
+      this.ctx.lineTo(p.x - radius, p.y + radius);
+      this.ctx.stroke();
+    }
+    this.ctx.restore();
+  }
+
+  drawPassiveHeroAura(hero, towerPositions, geom) {
+    const passiveAura = hero.passiveAura;
+    if (!passiveAura?.active) return;
+    const heroPoint = projectHeroPresentationPoint(hero, (coord) => this.center(coord, geom));
+    if (!heroPoint) return;
+    this.ctx.save();
+    this.ctx.strokeStyle = "rgba(122, 232, 214, .55)";
+    this.ctx.lineWidth = Math.max(1.5, geom.r * 0.08);
+    this.ctx.setLineDash([Math.max(3, geom.r * 0.18), Math.max(2, geom.r * 0.12)]);
+    this.ctx.beginPath();
+    this.ctx.arc(heroPoint.x, heroPoint.y, Math.max(geom.r * 0.72, passiveAura.radius * geom.r), 0, Math.PI * 2);
+    this.ctx.stroke();
+    this.ctx.setLineDash([]);
+    for (const towerId of passiveAura.affectedTowerIds) {
+      const towerPoint = towerPositions.get(towerId);
+      if (!towerPoint) continue;
+      this.ctx.beginPath();
+      this.ctx.arc(towerPoint.x, towerPoint.y, geom.r * 0.62, 0, Math.PI * 2);
+      this.ctx.stroke();
+    }
+    this.ctx.restore();
+  }
+
+  drawHeroBlocking(hero, enemyPositions, geom) {
+    const blocking = hero.blocking;
+    if (!blocking?.active) return;
+    const heroPoint = projectHeroPresentationPoint(hero, (coord) => this.center(coord, geom));
+    if (!heroPoint) return;
+    this.ctx.save();
+    this.ctx.strokeStyle = "rgba(255, 187, 92, .92)";
+    this.ctx.lineWidth = Math.max(2, geom.r * 0.11);
+    this.ctx.beginPath();
+    this.ctx.arc(heroPoint.x, heroPoint.y, geom.r * 0.72, 0, Math.PI * 2);
+    this.ctx.stroke();
+    for (const enemyId of blocking.blockedEnemyIds) {
+      const enemyPoint = enemyPositions.get(enemyId);
+      if (!enemyPoint) continue;
+      this.ctx.beginPath();
+      this.ctx.arc(enemyPoint.x, enemyPoint.y, geom.r * 0.54, 0, Math.PI * 2);
+      this.ctx.stroke();
+    }
+    this.ctx.restore();
   }
 
   drawEnemy(enemy, snapshot, geom) {

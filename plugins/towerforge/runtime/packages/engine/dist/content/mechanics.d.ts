@@ -2,7 +2,7 @@
 export declare const MECHANICS_MODULE_IDS: readonly ["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "director", "scriptingDx", "multiplayer"];
 export type MechanicsModuleId = (typeof MECHANICS_MODULE_IDS)[number];
 /** Modules with executable engine support. Authoring any other module remains capability-inactive. */
-export declare const IMPLEMENTED_MECHANICS_MODULE_IDS: readonly ["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite"];
+export declare const IMPLEMENTED_MECHANICS_MODULE_IDS: readonly ["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics"];
 export declare const SHIELD_LIMITS: Readonly<{
     capacity: 1000000000000;
     ratePerUnit: 1000000000;

@@ -64,7 +64,7 @@ const BALANCE_PATCH_KEYS = [
   "enemies", "towers", "waveSets", "missions", "abilities", "constants", "currencies", "defaultMissionId",
   "defaultDifficultyId", "difficulties", "metaProgression", "terrainTypes"
 ];
-const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
+const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
 
 // Maps an upsert_entity/delete_entity `collection` to (a) the balance.json key, (b) the shape
 // (a map keyed by id, or an array of {id,...} items — currencies only), and (c) the
@@ -550,7 +550,7 @@ export const TOOLS = [
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
         moduleId: { type: "string", description: "Engine-owned mechanics module id." },
-        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3, 4], description: "Module contract version: navigation, physics, and terraforming support v1; roguelite supports v1 for synergies, v2 for artifact loot, v3 for optional wave draft, and v4 for an optional campaign marker; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Omitted edits preserve an existing version and new modules default to v1." },
+        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3, 4, 5, 6, 7], description: "Module contract version: navigation, physics, and terraforming support v1; roguelite supports v1 for synergies, v2 for artifact loot, v3 for optional wave draft, and v4 for an optional campaign marker; heroes supports v1 for a static roster, v2 for movement, v3 for durability, v4 for mana plus one targeted ability, v5 for an optional battle-local skill tree, v6 for an optional passive tower-damage aura, and v7 for explicit dynamic-navigation blocking; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Omitted edits preserve an existing version and new modules default to v1." },
         missionId: { type: "string", description: "Mission that would select the profile; defaults to the project's default mission." },
         profileId: { type: "string", description: "Profile id to preview." },
         profile: { type: "object", description: "Versioned module profile payload." },
@@ -572,7 +572,7 @@ export const TOOLS = [
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
         moduleId: { type: "string", description: "Engine-owned mechanics module id." },
-        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3, 4], description: "Module contract version: navigation, physics, and terraforming support v1; roguelite supports v1 for synergies, v2 for artifact loot, v3 for optional wave draft, and v4 for an optional campaign marker; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Upgrades are guarded and version downgrades are rejected." },
+        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3, 4, 5, 6, 7], description: "Module contract version: navigation, physics, and terraforming support v1; roguelite supports v1 for synergies, v2 for artifact loot, v3 for optional wave draft, and v4 for an optional campaign marker; heroes supports v1 for a static roster, v2 for movement, v3 for durability, v4 for mana plus one targeted ability, v5 for an optional battle-local skill tree, v6 for an optional passive tower-damage aura, and v7 for explicit dynamic-navigation blocking; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Upgrades are guarded and version downgrades are rejected." },
         missionId: { type: "string", description: "Mission that would select the profile; defaults to the project's default mission." },
         profileId: { type: "string", description: "Profile id to enable." },
         profile: { type: "object", description: "Versioned module profile payload." },
@@ -1102,12 +1102,12 @@ export const TOOLS = [
   },
   {
     name: "bind_sprite",
-    description: "Bind an existing sprite id to a tower, enemy, tile, or UI id in content/visuals.json and validate before writing.",
+    description: "Bind an existing sprite id to a tower, enemy, static hero definition, tile, or UI id in content/visuals.json and validate before writing.",
     inputSchema: {
       type: "object",
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory." },
-        kind: { type: "string", enum: ["towers", "enemies", "tiles", "ui"] },
+        kind: { type: "string", enum: ["towers", "enemies", "heroes", "tiles", "ui"] },
         entityId: { type: "string" },
         spriteId: { type: "string", description: "Existing sprite id. Empty string removes the binding." },
         ifRevision: { ...IF_REVISION_PROPERTY, description: "Optional. The visuals revision (not the balance one) last read, to guard against a concurrent visuals.json edit." }
@@ -1453,6 +1453,173 @@ export async function callTool(name, args = {}, ctx = {}) {
         }
       }
     };
+    const heroesAuthoringV5 = engine.HEROES_MECHANICS_SCHEMA.versions?.[5];
+    const heroesAuthoringV6 = engine.HEROES_MECHANICS_SCHEMA.versions?.[6];
+    const heroesAuthoringV7 = engine.HEROES_MECHANICS_SCHEMA.versions?.[7];
+    const heroesSnapshotV5 = engine.HEROES_MECHANICS_SCHEMA.runtimeSnapshot.versions?.[5];
+    const heroesSnapshotV6 = engine.HEROES_MECHANICS_SCHEMA.runtimeSnapshot.versions?.[6];
+    const heroesSnapshotV7 = engine.HEROES_MECHANICS_SCHEMA.runtimeSnapshot.versions?.[7];
+    const heroes = {
+      authoring: {
+        ...engine.HEROES_MECHANICS_SCHEMA,
+        versions: {
+          ...engine.HEROES_MECHANICS_SCHEMA.versions,
+          ...(heroesAuthoringV5 ? {
+            5: {
+              ...heroesAuthoringV5,
+              points: heroesAuthoringV5.skillPoints,
+              node: heroesAuthoringV5.skillNode,
+              effect: heroesAuthoringV5.skillEffect,
+              modifier: heroesAuthoringV5.skillModifier
+            }
+          } : {}),
+          ...(heroesAuthoringV6 ? { 6: { ...heroesAuthoringV6 } } : {}),
+          ...(heroesAuthoringV7 ? {
+            7: {
+              ...heroesAuthoringV7,
+              limits: heroesAuthoringV7.limits
+            }
+          } : {})
+        }
+      },
+      snapshot: {
+        field: "heroes",
+        optional: true,
+        supportedSchemaVersions: [1, 2, 3, 4, 5, 6, 7],
+        versions: {
+          ...engine.HEROES_MECHANICS_SCHEMA.runtimeSnapshot.versions,
+          ...(heroesSnapshotV5 ? {
+            5: {
+              ...heroesSnapshotV5,
+              skillNodeFields: [
+                "id", "label", "description", "cost", "requiresSkillIds", "missingRequirementIds",
+                "unlocked", "unlockable"
+              ]
+            }
+          } : {}),
+          ...(heroesSnapshotV6 ? { 6: { ...heroesSnapshotV6 } } : {}),
+          ...(heroesSnapshotV7 ? { 7: { ...heroesSnapshotV7 } } : {})
+        }
+      },
+      commands: {
+        schemaVersion: 6,
+        moveHero: {
+          requiredFields: ["heroId", "target"],
+          optionalFields: [],
+          additionalProperties: false
+        },
+        useHeroAbility: {
+          requiredFields: ["heroId", "abilityId", "targetEnemyId"],
+          optionalFields: [],
+          additionalProperties: false
+        },
+        unlockHeroSkill: {
+          requiredFields: ["heroId", "skillId"],
+          optionalFields: [],
+          additionalProperties: false
+        }
+      },
+      events: {
+        heroShieldChanged: {
+          requiredFields: ["heroId", "previous", "current", "capacity", "cause", "amount"],
+          optionalFields: ["overflowDamage"],
+          causeValues: ["damage"]
+        },
+        heroAttacked: {
+          requiredFields: ["enemyId", "enemyTypeId", "heroId", "damage", "shieldAbsorbed", "hpDamage"],
+          optionalFields: []
+        },
+        heroDefeated: {
+          requiredFields: ["heroId", "heroDefinitionId", "enemyId"],
+          optionalFields: []
+        },
+        heroAbilityUsed: {
+          requiredFields: [
+            "heroId", "heroDefinitionId", "abilityId", "targetEnemyId", "targetEnemyTypeId",
+            "previousMana", "currentMana", "manaSpent", "cooldownApplied", "requestedDamage",
+            "resolvedDamage", "shieldAbsorbed", "hpDamage"
+          ],
+          optionalFields: []
+        },
+        heroSkillPointsGranted: {
+          requiredFields: [
+            "type", "heroId", "heroDefinitionId", "waveIndex", "previousPoints", "currentPoints", "amount"
+          ],
+          optionalFields: []
+        },
+        heroSkillUnlocked: {
+          requiredFields: [
+            "type", "heroId", "heroDefinitionId", "skillId", "cost", "previousPoints", "currentPoints"
+          ],
+          optionalFields: []
+        }
+      }
+    };
+    const logisticsLimits = engine.LOGISTICS_MECHANICS_SCHEMA.limits;
+    const logisticsPowerLimits = logisticsLimits.power ?? logisticsLimits;
+    const logisticsAmmunitionLimits = logisticsLimits.ammunition ?? {};
+    const logisticsSupplyLimits = logisticsLimits.supply ?? {};
+    const logisticsVersions = engine.LOGISTICS_MECHANICS_SCHEMA.profileVersions ?? {
+      1: engine.LOGISTICS_MECHANICS_SCHEMA.profile
+    };
+    const logistics = {
+      authoring: {
+        ...engine.LOGISTICS_MECHANICS_SCHEMA,
+        versions: {
+          1: {
+            ...logisticsVersions[1],
+            power: engine.LOGISTICS_MECHANICS_SCHEMA.power
+          },
+          ...(logisticsVersions[2] ? {
+            2: {
+              ...logisticsVersions[2],
+              power: engine.LOGISTICS_MECHANICS_SCHEMA.power,
+              ammunition: engine.LOGISTICS_MECHANICS_SCHEMA.ammunition
+            }
+          } : {}),
+          ...(logisticsVersions[3] ? {
+            3: {
+              ...logisticsVersions[3],
+              power: engine.LOGISTICS_MECHANICS_SCHEMA.power,
+              ammunition: engine.LOGISTICS_MECHANICS_SCHEMA.ammunition,
+              supply: engine.LOGISTICS_MECHANICS_SCHEMA.supply
+            }
+          } : {})
+        },
+        limits: {
+          ...logisticsLimits,
+          idUtf8Bytes: logisticsAmmunitionLimits.idUtf8Bytes ?? logisticsPowerLimits.idUtf8Bytes,
+          labelUtf8Bytes: logisticsAmmunitionLimits.labelUtf8Bytes,
+          definitionsPerRole: logisticsPowerLimits.entriesPerRole,
+          definitionsAcrossRoles: logisticsPowerLimits.entriesTotal,
+          amount: Math.max(logisticsPowerLimits.output, logisticsPowerLimits.demand),
+          radius: logisticsPowerLimits.radius,
+          priority: logisticsPowerLimits.priority,
+          liveParticipants: logisticsPowerLimits.liveParticipants,
+          ammunitionTypes: logisticsAmmunitionLimits.types,
+          authoredTowerInventories: logisticsAmmunitionLimits.towerInventories,
+          liveAmmunitionInventories: logisticsAmmunitionLimits.liveInventories,
+          ammunitionAmount: logisticsAmmunitionLimits.capacity,
+          ...logisticsSupplyLimits
+        },
+        transferOrdering: {
+          edge: [
+            "source tower id", "source kind (producer before storage)",
+            "destination kind (consumer before storage)", "distance", "destination tower id"
+          ],
+          sourceExecution: ["source tower id", "consumers before storage", "distance", "destination tower id"]
+        }
+      },
+      checkpoint: {
+        field: "state.logistics",
+        optional: true,
+        schemaVersion: 2,
+        note: "Nested v2 is required while active Logistics v3 ammunition or supply is non-null; Logistics v2 ammunition retains nested v1."
+      },
+      snapshot: { field: "logistics", optional: true, supportedSchemaVersions: [1, 2, 3] },
+      commands: [],
+      events: []
+    };
     return {
       schemaVersion: 4,
       agentGuideVersion: TOWERFORGE_AGENT_GUIDE_VERSION,
@@ -1496,6 +1663,8 @@ export async function callTool(name, args = {}, ctx = {}) {
       ...(includes("physics") ? { physics } : {}),
       ...(includes("terraforming") ? { terraforming } : {}),
       ...(includes("roguelite") ? { roguelite } : {}),
+      ...(includes("heroes") ? { heroes } : {}),
+      ...(includes("logistics") ? { logistics } : {}),
       ...(includes("assets") ? {
         assetAuthoring: {
           themePacks: "Call list_theme_packs, preview_theme_pack, then apply_theme_pack with ifRevision.",
@@ -1512,7 +1681,7 @@ export async function callTool(name, args = {}, ctx = {}) {
           schemaVersion: 1,
           moduleIds: [...engine.MECHANICS_MODULE_IDS],
           implementedModuleIds: [...engine.IMPLEMENTED_MECHANICS_MODULE_IDS],
-          modules: { combat: combatShields, reactions, navigation, elevation, physics, terraforming, roguelite }
+          modules: { combat: combatShields, reactions, navigation, elevation, physics, terraforming, roguelite, heroes, logistics }
         }
       } : {})
     };
@@ -1663,7 +1832,7 @@ export async function callTool(name, args = {}, ctx = {}) {
           engine.ELEVATION_MECHANICS_SCHEMA
         );
       }
-      for (const moduleId of ["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite"]) {
+      for (const moduleId of ["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes"]) {
         if (!Number.isSafeInteger(result[moduleId]?.moduleSchemaVersion)) continue;
         result.capabilities = {
           ...result.capabilities,
@@ -1709,20 +1878,41 @@ export async function callTool(name, args = {}, ctx = {}) {
 
     case "preview_mechanics_module":
       await assertMechanicsModuleAvailable(args.moduleId);
-      return unwrapMechanicsAuthoringResult(await previewMechanicsModule(
+      {
+        const result = await previewMechanicsModule(
         projectDir,
         mechanicsAuthoringRequest(args)
-      ));
+        );
+        const blockingDiagnostic = args.moduleId === "heroes" && args.moduleSchemaVersion === 7
+          && result?.ok === false && result?.conflict !== true
+          && result?.validation?.issues?.some((issue) => (
+            issue?.severity === "error" && /(?:heroes|blocking|navigation)/i.test(issue?.fieldPath ?? "")
+              && /(?:dynamic_flow|Navigation)/i.test(issue?.message ?? "")
+          ));
+        const logisticsDiagnostic = args.moduleId === "logistics"
+          && result?.ok === false && result?.conflict !== true;
+        return blockingDiagnostic || logisticsDiagnostic
+          ? scrubMechanicsResult(result)
+          : unwrapMechanicsAuthoringResult(result);
+      }
 
     case "apply_mechanics_module":
       await assertMechanicsModuleAvailable(args.moduleId);
       if (typeof args.ifRevision !== "string" || args.ifRevision.length === 0) {
         throw mechanicsToolError("revision_required", "apply_mechanics_module requires ifRevision from a current preview.");
       }
-      return unwrapMechanicsAuthoringResult(await applyMechanicsModule(
-        projectDir,
-        mechanicsAuthoringRequest(args)
-      ));
+      {
+        const result = await applyMechanicsModule(projectDir, mechanicsAuthoringRequest(args));
+        if (args.moduleId === "logistics" && result?.conflict) {
+          return scrubMechanicsResult(result);
+        }
+        const unwrapped = unwrapMechanicsAuthoringResult(result);
+        if (args.moduleId !== "logistics" || !result?.backup?.directory) return unwrapped;
+        return {
+          ...unwrapped,
+          backup: { directory: `.towerforge/backups/${path.basename(result.backup.directory)}` }
+        };
+      }
 
     case "get_progression": {
       const files = loadProjectFiles(projectDir);
@@ -2605,7 +2795,7 @@ function setPngPixel(image, x, y, color) {
 
 async function bindSprite(projectDir, args) {
   const { kind, entityId, spriteId, ifRevision } = args;
-  if (!["towers", "enemies", "tiles", "ui"].includes(kind)) throw new Error("bind_sprite kind must be towers, enemies, tiles, or ui.");
+  if (!["towers", "enemies", "heroes", "tiles", "ui"].includes(kind)) throw new Error("bind_sprite kind must be towers, enemies, heroes, tiles, or ui.");
   if (typeof entityId !== "string" || !entityId) throw new Error("bind_sprite requires entityId.");
   if (typeof spriteId !== "string") throw new Error("bind_sprite requires spriteId.");
   // Raw is the write source (persist only the author's delta, not normalizeVisuals defaults);
@@ -2615,7 +2805,14 @@ async function bindSprite(projectDir, args) {
   const files = normalizeProjectFiles(raw);
   if (kind === "towers" && !files.balance.towers?.[entityId]) throw new Error(`Tower "${entityId}" not found.`);
   if (kind === "enemies" && !files.balance.enemies?.[entityId]) throw new Error(`Enemy "${entityId}" not found.`);
-  if (spriteId && !files.visuals?.sprites?.[spriteId]) throw new Error(`Sprite "${spriteId}" not found.`);
+  if (kind === "heroes") {
+    const definitions = new Set();
+    for (const profile of Object.values(files.mechanics?.modules?.heroes?.profiles ?? {})) {
+      for (const heroId of Object.keys(profile?.definitions ?? {})) definitions.add(heroId);
+    }
+    if (!definitions.has(entityId)) throw new Error(`Hero definition "${entityId}" not found.`);
+  }
+  if (spriteId && !Object.hasOwn(files.visuals?.sprites ?? {}, spriteId)) throw new Error(`Sprite "${spriteId}" not found.`);
 
   const beforeRevision = computeRevision(files.visuals);
   if (ifRevision && beforeRevision !== ifRevision) {
@@ -2623,10 +2820,18 @@ async function bindSprite(projectDir, args) {
   }
 
   const visuals = structuredCloneCompat(raw.visuals ?? {});
-  visuals.bindings ??= {};
-  visuals.bindings[kind] ??= {};
-  if (spriteId) visuals.bindings[kind][entityId] = spriteId;
-  else delete visuals.bindings[kind][entityId];
+  let bindings = ownDataValue(visuals, "bindings");
+  if (!bindings || typeof bindings !== "object" || Array.isArray(bindings)) {
+    bindings = {};
+    defineOwnData(visuals, "bindings", bindings);
+  }
+  let kindBindings = ownDataValue(bindings, kind);
+  if (!kindBindings || typeof kindBindings !== "object" || Array.isArray(kindBindings)) {
+    kindBindings = {};
+    defineOwnData(bindings, kind, kindBindings);
+  }
+  if (spriteId) defineOwnData(kindBindings, entityId, spriteId);
+  else Reflect.deleteProperty(kindBindings, entityId);
 
   // Validate the EFFECTIVE (normalized) result of writing this raw payload.
   const candidate = normalizeProjectFiles({ ...raw, visuals });
@@ -3405,6 +3610,25 @@ function mechanicsToolError(code, message) {
   const error = new Error(message);
   error.code = code;
   return error;
+}
+
+function ownDataValue(record, key) {
+  if (record === null || typeof record !== "object") return undefined;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(record, key);
+    return descriptor?.enumerable === true && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function defineOwnData(record, key, value) {
+  Object.defineProperty(record, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true
+  });
 }
 
 function mechanicsModuleAuthoringView(files, missionId, moduleId, authoring) {

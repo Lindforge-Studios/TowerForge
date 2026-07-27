@@ -135,6 +135,159 @@ enforce this boundary. A future nested campaign marker (v3+) is opaque and read-
 `preview_mechanics_module`, and `preview_campaign` reject writes rather than dropping or
 downgrading it; disabling such a marker also requires a compatible runtime.
 
+For R5.1A, enable a static hero roster only through Mechanics Hub or the ordinary guarded mechanics
+flow: `describe_schema({domain:"heroes"})` -> `get_capabilities` ->
+`get_recipe({collection:"mechanics",recipeId:"basic_commander_hero"})` ->
+`preview_mechanics_module` -> `apply_mechanics_module` with the preview revision ->
+`validate_project`. The recipe stages one `heroes` v1 profile and never enables the module or
+selects a mission by itself. The profile must contain 1–32 definitions, one own
+`selectedHeroId`, and exact definitions `{label,spawn:"core"}`. IDs and labels are limited to 128
+UTF-8 bytes.
+
+An active v1 profile displays exactly one engine-derived hero at the map core through
+`snapshot.heroes` v1. Renderers may use an explicitly authored `visuals.bindings.heroes` sprite or
+their built-in shape fallback. Do not infer roster activation from `mechanics.json` or add v1 hero
+state to a checkpoint. Disabling or unselecting removes the snapshot and presentation without
+rewriting the roster.
+
+For deterministic movement, select the separate inert `basic_mobile_commander_hero` recipe and run
+the same guarded flow. It stages `heroes` v2 with heroes-owned `movementProfiles` and exact nested
+`movement: {movementProfileId,speed}`; it does not create, enable, or select `navigation`. Inspect
+the complete shared MovementProfileV1 shape through `describe_schema({domain:"heroes"})`, then
+preview before guarded apply. Active movement accepts only exact `GameCommandV4 moveHero` and
+publishes `snapshot.heroes` v2 with nullable target/next coordinates and edge progress. Mouse,
+touch, keyboard, headless dispatch, checkpoint, and journal replay all use that command; never
+mutate snapshot state. Heroes v1 stays static, while unsupported future modules are lossless/read-only.
+Use `docs/examples/opt-in-hero-roster/mechanics-mobile.json` for the v2 profile. HP, mana,
+abilities, auras, blocking, and TowerScript hero extensions remain later opt-in increments.
+
+For R5.2A durability, choose the separate inert `basic_durable_commander_hero` recipe or copy
+`docs/examples/opt-in-hero-roster/mechanics-durable.json`, then use the same
+`describe -> capabilities -> recipe -> preview -> guarded apply -> validate` flow. Heroes v3 keeps
+the complete v2 movement contract and requires exact `durability: {maxHp,shield}` on every
+definition. `maxHp` and shield `capacity` are finite, positive, and at most `1_000_000_000_000`;
+shield may be `null`. The recipe never enables Heroes, selects a mission, enables Navigation, or
+binds a sprite.
+
+At runtime, read HP, capacity/current shield, and defeat only from `snapshot.heroes` v3. Enemy
+attacks are resolved by the engine and consume shield before HP. A defeated hero cannot move and
+is no longer attacked. Never mutate snapshot durability or reconstruct it from renderer cues.
+Disabling/unselecting Heroes and all v1/v2 profiles keep their earlier snapshot/checkpoint shapes.
+Future heroes v4+ remains lossless/read-only in Studio. This slice has no healing, regeneration,
+revival, mana, abilities, auras, blocking, or TowerScript hero actions. See
+[ADR 0039](adr/0039-opt-in-hero-durability.md).
+
+For R5.3A, stage `basic_targeted_hero_ability` or copy
+`docs/examples/opt-in-hero-roster/mechanics-targeted-ability.json`. Heroes v4 adds bounded mana and
+one enemy-targeted damage ability without activating any other module. Dispatch only exact
+`GameCommandV5 useHeroAbility`; read mana, cooldown, target readiness, and results from snapshot v4
+and `heroAbilityUsed`. See [ADR 0040](adr/0040-opt-in-targeted-hero-ability.md).
+
+For R5.4A, use the separate inert `basic_hero_skill_tree` recipe or
+`docs/examples/opt-in-hero-roster/mechanics-skill-tree.json`, then follow the same
+`describe -> capabilities -> recipe -> preview -> guarded apply -> validate` flow. Heroes v5
+requires `skillTree` on every definition: use `null` for explicit opt-out. A non-null tree owns
+battle-local `points` and a bounded DAG of `nodes`; every effect is a data-only
+`hero_ability_damage` modifier. Mechanics Hub exposes all one-to-four effects and prevents invalid
+trees from being saved.
+
+At runtime, dispatch only exact `GameCommandV6 unlockHeroSkill` during setup or a clear non-final
+interwave. Read `managementAvailable`, points, missing prerequisites, and `unlockable` from
+snapshot v5; do not reconstruct them in Studio or renderer code. A tree does not pause normal wave
+scheduling. Its state resets with the battle and is not exported through CampaignRun or profile.
+Definitions with `skillTree:null`, v1–v4, disabled/unselected, and future v6 paths retain their
+previous or fail-closed behavior. See [ADR 0041](adr/0041-opt-in-battle-local-hero-skill-tree.md).
+
+For R5.5A, use the inert `basic_passive_hero_aura` recipe or
+`docs/examples/opt-in-hero-roster/mechanics-passive-aura.json`. Heroes v6 requires nullable
+`passiveAura` on every definition. An explicit v5→v6 edit atomically materializes
+`passiveAura:null` for every definition in every existing Heroes profile inside the preview
+candidate. Read, validation, and build never migrate content; preview never mutates project source,
+and only the guarded apply writes the validated module-wide promotion. Then use the ordinary
+`describe -> capabilities -> recipe -> preview -> guarded apply -> validate` transaction.
+
+The engine owns aura membership and modifier resolution. Consume `snapshot.heroes` v6
+`passiveAura.active` and `affectedTowerIds`; do not calculate radius, liveness, or affected towers
+in Studio, renderers, or player code. The aura affects only immediate live-tower damage packets.
+It adds no command, event, pause, persistent profile/run state, navigation, blocking, logistics, or
+TowerScript surface. A null aura retains snapshot v4/v5 and nested checkpoint v3/v4. See
+[ADR 0042](adr/0042-opt-in-passive-hero-damage-aura.md).
+
+For R5.6A, stage the inert `basic_dynamic_hero_blocking` recipe or copy
+`docs/examples/opt-in-hero-roster/mechanics-blocking.json`. Heroes v7 requires nullable `blocking`
+on every definition. A non-null value contains `blockCapacity` and explicit Dynamic Navigation
+`movementProfileIds`. Before enabling it, independently author and select an enabled Navigation v1
+`dynamic_flow` profile for the same mission; the recipe and Studio never create or auto-enable that
+dependency. Use `mission-blocking-selection.json` as the reference selection fragment.
+
+Follow `describe -> capabilities -> recipe -> preview -> guarded apply -> validate`. Promotion is
+an explicit atomic v6→v7 transaction that writes `blocking:null` to every definition in every
+Heroes profile. A missing profile, `authored_routes`, unknown movement-profile ID, stale revision,
+or malformed candidate must remain a no-write result. Future Heroes v8 remains opaque/read-only.
+
+At runtime, consume only snapshot v7 `blocking.active` and `blockedEnemyIds`. Do not recompute
+co-location, liveness, reachability, profile eligibility, capacity, or assignment in Studio or a
+renderer. Blocking does not modify flow-field occupancy and must not trigger navigation rebuilds.
+It adds no input, command, event, checkpoint field, campaign/profile state, logistics, or
+TowerScript surface. A null value retains the literal v4/v5/v6 snapshot path. See
+[ADR 0043](adr/0043-opt-in-dynamic-hero-blocking.md).
+
+For R5.7A, define three distinct existing tower types, then stage the inert `basic_power_grid`
+recipe with exact `generatorTowerTypeId`, `relayTowerTypeId`, and fire-capable
+`consumerTowerTypeId` parameters, or copy `docs/examples/opt-in-logistics-power/mechanics.json`.
+The recipe does not create tower types, enable Logistics, select a mission, or add ammo/factory
+content. Follow `describe -> capabilities -> recipe -> preview -> guarded apply -> validate`, then
+merge the mission selection only after preview is valid. A stale revision, duplicate role, broken
+reference, passive consumer, future v3 module, or malformed candidate must remain a no-write result.
+
+At runtime, consume only `snapshot.logistics` v1 for components, links, coverage, and powered state.
+Do not solve the network in Studio or a renderer. Test Canvas and Phaser on the mission grid and
+confirm visible component supply, brownout, link, and coverage cues. Placement/movement/restore over
+4,096 participants, 1,024 nodes, or 65,536 links must fail before mutation. Removing the selection,
+disabling Logistics, or saving `power:null` must remove the snapshot and power UI and restore the
+literal infinite-supply legacy path. This slice adds no input, command, event, checkpoint field,
+profile/run state, TowerScript surface, ammo, inventory, production, or transfer graph. See
+[ADR 0044](adr/0044-opt-in-logistics-power-grid.md).
+
+For R5.8A, select an existing fire-capable tower and stage `basic_local_ammunition` with explicit
+ammo ID/label, capacity, starting amount, and cost per activation. Reading Logistics v1 does not
+migrate it: use Mechanics Hub **Add ammunition** or the MCP preview/apply transaction to promote
+the complete module to v2 while preserving `power`. Always inspect the dry-run, apply with its
+revision, then run `npm run validate` and reload before playtesting.
+
+At runtime, treat `snapshot.logistics` v2 as the only source of magazine amount/capacity and
+depleted state. Do not subtract shots, combine brownout with ammo, or infer refill in Studio or a
+renderer. Verify Canvas and Phaser on the mission's square/hex grid: amount decreases once per
+successful activation, multi-target effects cost once, no-target costs nothing, and zero ammo
+freezes cooldown and removes active pulse cues. This slice cannot refill a live tower; move/upgrade
+must preserve its amount, while sell/destruction/reset remove it.
+
+To roll back gameplay, disable Logistics, remove the mission selection, or save
+`ammunition:null` through the same guarded authoring path. Confirm that the inventory checkpoint,
+snapshot, panel, and cues disappear and that legacy infinite ammunition returns. A stale revision,
+malformed or over-budget amount, bad reference, passive tower binding, or future Logistics v3 must
+be a no-write result. See [ADR 0045](adr/0045-opt-in-local-ammunition.md) and the copyable fixture at
+`docs/examples/opt-in-local-ammunition/`.
+
+For R5.8B, define distinct existing producer, storage, and fire-capable consumer tower types, then
+stage `basic_factory_ammunition_supply` with all explicit recipe, stock, interval, radius, and
+transfer parameters. Adding supply is an explicit guarded v2-to-v3 promotion; it must preserve the
+existing power/ammunition sections and must not create or patch tower definitions. Preview first,
+apply with the returned revision, validate, reload, then merge the mission selection.
+
+At runtime, inspect only `snapshot.logistics` v3. Confirm producer/storage stock and progress,
+powered/paused state, and directed links in Studio Playtest plus Canvas/Phaser on the mission grid.
+Do not calculate topology, destinations, production, refill, or combined firing readiness in a
+surface. A ready depleted consumer may fire after same-tick refill; brownout/disruption freezes only
+production and outgoing transfer, while incoming stock remains allowed.
+
+To roll back, save `supply:null`, disable Logistics, or remove the mission selection through the
+same revision-guarded flow. Confirm that supply state/links disappear while v2 ammunition and v1
+power retain their exact behavior. Unknown references, overlapping producer/storage roles,
+over-budget topology, stale revisions, malformed progress, and future v4 must fail without partial
+writes. There is no manual refill/transfer tool. See [ADR 0046](adr/0046-opt-in-ammunition-supply.md)
+and `docs/examples/opt-in-ammunition-supply/`.
+
 Combat v1 accepts only `shields`. A target definition requires positive bounded `capacity` and may add `{ ratePerUnit, delayAfterDamage }` regeneration. Tower shields require a tower with `maxHp`. At runtime shield state is keyed by entity instance ID and appears only under active `snapshot.combat`; Canvas and Phaser consume the same presentation projection. A copyable v1 reference is under `docs/examples/opt-in-basic-shields/`.
 
 Combat v2 retains shields and adds `damageTypes`, `armorTypes`, and `armorAssignments.enemies`. Every assigned enemy requires an existing armor type, and any non-empty assignment set requires a declared `physical` damage type because an untyped packet falls back to `physical`. Multipliers are finite numbers from `0` through `1,000,000`; `0` is a valid immunity, an absent explicit/default multiplier means `1`, and per-enemy `resistances` apply after the matrix. The fixed order is `source modifiers → armor matrix → entity resistance → legacy pierce_only → shield → HP`. `armor_piercing` bypasses only legacy `pierce_only`, not the matrix.

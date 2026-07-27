@@ -148,7 +148,7 @@ describe("R2.1 navigation v1 MCP authoring surface", () => {
     });
     expect(navigation.navigation.authoring.limits).toEqual(engine.NAVIGATION_LIMITS);
     expect(mechanics.availableDomains).toContain("navigation");
-    expect(mechanics.mechanics.implementedModuleIds).toEqual(["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite"]);
+    expect(mechanics.mechanics.implementedModuleIds).toEqual(["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics"]);
     expect(mechanics.mechanics.modules.navigation).toEqual(navigation.navigation);
 
     const projectDir = copyStarter();

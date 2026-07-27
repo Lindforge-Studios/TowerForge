@@ -153,6 +153,10 @@ export function contentRecipeContext(files) {
     mapIds: Object.keys(files.maps ?? {}),
     waveSetIds: Object.keys(balance.waveSets ?? files.waveSets ?? {}),
     towerIds: towerEntries.map(([id]) => id).sort(compareBinary),
+    towerAttackKindsByTowerId: Object.fromEntries(towerEntries
+      .map(([id, tower]) => [id, tower?.attack?.kind])
+      .filter(([, kind]) => typeof kind === "string")
+      .sort(([left], [right]) => compareBinary(left, right))),
     towerTagsByTowerId: authoredTowerTags(towerEntries),
     abilityIds: Object.keys(balance.abilities ?? files.abilities ?? {}),
     defaultMissionId,

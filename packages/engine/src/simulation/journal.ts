@@ -5,7 +5,11 @@ import {
   parseGameCommand,
   type GameCommand,
   type GameCommandV1,
-  type GameCommandV2
+  type GameCommandV2,
+  type GameCommandV3,
+  type GameCommandV4,
+  type GameCommandV5,
+  type GameCommandV6
 } from "./command-internal.js";
 import {
   cloneCheckpointJson,
@@ -23,8 +27,8 @@ import {
 } from "./journal-result-internal.js";
 import type { ActionResult } from "./types.js";
 
-export const GAME_COMMAND_JOURNAL_SCHEMA_VERSION = 3 as const;
-export const GAME_COMMAND_JOURNAL_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2, 3] as const);
+export const GAME_COMMAND_JOURNAL_SCHEMA_VERSION = 6 as const;
+export const GAME_COMMAND_JOURNAL_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4, 5, 6] as const);
 
 export const GAME_COMMAND_JOURNAL_LIMITS = Object.freeze({
   entries: 100_000,
@@ -71,7 +75,7 @@ export interface GameCommandJournalV2 {
 
 export interface GameCommandJournalEntryV3 {
   readonly sequence: number;
-  readonly command: GameCommand;
+  readonly command: GameCommandV1 | GameCommandV2 | GameCommandV3;
   readonly result: GameCommandJournalResultV1;
   readonly postStateDigest: string;
 }
@@ -84,7 +88,58 @@ export interface GameCommandJournalV3 {
   readonly entries: readonly GameCommandJournalEntryV3[];
 }
 
-export type GameCommandJournal = GameCommandJournalV1 | GameCommandJournalV2 | GameCommandJournalV3;
+export interface GameCommandJournalEntryV4 {
+  readonly sequence: number;
+  readonly command: GameCommandV1 | GameCommandV2 | GameCommandV3 | GameCommandV4;
+  readonly result: GameCommandJournalResultV1;
+  readonly postStateDigest: string;
+}
+
+export interface GameCommandJournalV4 {
+  readonly schemaVersion: 4;
+  readonly engineVersion: typeof SIMULATION_ENGINE_VERSION;
+  readonly contentDigest: string;
+  readonly initialCheckpoint: GameCheckpointV1;
+  readonly entries: readonly GameCommandJournalEntryV4[];
+}
+
+export interface GameCommandJournalEntryV5 {
+  readonly sequence: number;
+  readonly command: GameCommandV1 | GameCommandV2 | GameCommandV3 | GameCommandV4 | GameCommandV5;
+  readonly result: GameCommandJournalResultV1;
+  readonly postStateDigest: string;
+}
+
+export interface GameCommandJournalV5 {
+  readonly schemaVersion: 5;
+  readonly engineVersion: typeof SIMULATION_ENGINE_VERSION;
+  readonly contentDigest: string;
+  readonly initialCheckpoint: GameCheckpointV1;
+  readonly entries: readonly GameCommandJournalEntryV5[];
+}
+
+export interface GameCommandJournalEntryV6 {
+  readonly sequence: number;
+  readonly command: GameCommandV1 | GameCommandV2 | GameCommandV3 | GameCommandV4 | GameCommandV5 | GameCommandV6;
+  readonly result: GameCommandJournalResultV1;
+  readonly postStateDigest: string;
+}
+
+export interface GameCommandJournalV6 {
+  readonly schemaVersion: 6;
+  readonly engineVersion: typeof SIMULATION_ENGINE_VERSION;
+  readonly contentDigest: string;
+  readonly initialCheckpoint: GameCheckpointV1;
+  readonly entries: readonly GameCommandJournalEntryV6[];
+}
+
+export type GameCommandJournal =
+  | GameCommandJournalV1
+  | GameCommandJournalV2
+  | GameCommandJournalV3
+  | GameCommandJournalV4
+  | GameCommandJournalV5
+  | GameCommandJournalV6;
 
 const STATE_DIGEST_RE = /^tf-state-v1:[0-9a-f]{16}$/;
 
@@ -173,8 +228,8 @@ function decodeResult(value: unknown): GameCommandJournalResultV1 {
 function detachedJournal(
   initialCheckpoint: GameCheckpointV1,
   contentDigest: string,
-  entries: readonly GameCommandJournalEntryV3[],
-  schemaVersion: 1 | 2 | 3
+  entries: readonly GameCommandJournalEntryV6[],
+  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6
 ): GameCommandJournal {
   const common = {
     engineVersion: SIMULATION_ENGINE_VERSION,
@@ -197,7 +252,16 @@ function detachedJournal(
   if (schemaVersion === 2) {
     return { schemaVersion: 2, ...common, entries: common.entries as GameCommandJournalEntryV2[] };
   }
-  return { schemaVersion: 3, ...common };
+  if (schemaVersion === 3) {
+    return { schemaVersion: 3, ...common, entries: common.entries as GameCommandJournalEntryV3[] };
+  }
+  if (schemaVersion === 4) {
+    return { schemaVersion: 4, ...common, entries: common.entries as GameCommandJournalEntryV4[] };
+  }
+  if (schemaVersion === 5) {
+    return { schemaVersion: 5, ...common, entries: common.entries as GameCommandJournalEntryV5[] };
+  }
+  return { schemaVersion: 6, ...common };
 }
 
 /**
@@ -210,8 +274,8 @@ export class JournaledGameSession {
   private readonly mutableGame: TowerDefenseGame;
   private readonly initialCheckpoint: GameCheckpointV1;
   private readonly contentDigest: string;
-  private readonly entries: GameCommandJournalEntryV3[] = [];
-  private journalSchemaVersion: 1 | 2 | 3 = 1;
+  private readonly entries: GameCommandJournalEntryV6[] = [];
+  private journalSchemaVersion: 1 | 2 | 3 | 4 | 5 | 6 = 1;
   private expectedStateDigest: string;
   private faulted = false;
 
@@ -255,7 +319,7 @@ export class JournaledGameSession {
     // Reserve the entire per-result allowance before simulation execution. This
     // makes capacity rejection mutation-free even when the eventual result is
     // close to its maximum encoded size.
-    const capacityProbe: GameCommandJournalEntryV3 = {
+    const capacityProbe: GameCommandJournalEntryV6 = {
       sequence: this.entries.length,
       command,
       result: {
@@ -301,7 +365,7 @@ export class JournaledGameSession {
     try {
       postStateDigest = this.mutableGame.getStateDigest();
       durableResult = normalizeGameCommandJournalResult(result);
-      const entry: GameCommandJournalEntryV3 = {
+      const entry: GameCommandJournalEntryV6 = {
         sequence: this.entries.length,
         command,
         result: durableResult,
@@ -345,7 +409,8 @@ export function decodeGameCommandJournal(options: {
 }): GameCommandJournal {
   const descriptors = checkpointObjectDescriptors(options.journal, "Game command journal");
   const schemaVersion = checkpointDataField(descriptors, "schemaVersion", "Game command journal");
-  if (schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3) {
+  if (schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3 && schemaVersion !== 4
+    && schemaVersion !== 5 && schemaVersion !== 6) {
     throw new Error(`Unsupported game command journal schema version "${String(schemaVersion)}".`);
   }
   const engineVersion = checkpointDataField(descriptors, "engineVersion", "Game command journal");
@@ -381,7 +446,7 @@ export function decodeGameCommandJournal(options: {
     throw new Error("Game command journal and initial checkpoint content digests differ.");
   }
 
-  const entries: GameCommandJournalEntryV3[] = [];
+  const entries: GameCommandJournalEntryV6[] = [];
   for (let index = 0; index < entryValues.length; index += 1) {
     const entryDescriptors = checkpointObjectDescriptors(
       entryValues[index],
@@ -417,8 +482,17 @@ export function decodeGameCommandJournal(options: {
     if (schemaVersion === 1 && command.schemaVersion !== 1) {
       throw new Error(`Game command journal v1 entry ${index} must contain a v1 command.`);
     }
-    if (schemaVersion === 2 && command.schemaVersion === 3) {
-      throw new Error(`Game command journal v2 entry ${index} cannot contain a v3 command.`);
+    if (schemaVersion === 2 && command.schemaVersion > 2) {
+      throw new Error(`Game command journal v2 entry ${index} cannot contain a later command.`);
+    }
+    if (schemaVersion === 3 && command.schemaVersion > 3) {
+      throw new Error(`Game command journal v3 entry ${index} cannot contain a later command.`);
+    }
+    if (schemaVersion === 4 && command.schemaVersion > 4) {
+      throw new Error(`Game command journal v4 entry ${index} cannot contain a later command.`);
+    }
+    if (schemaVersion === 5 && command.schemaVersion > 5) {
+      throw new Error(`Game command journal v5 entry ${index} cannot contain a later command.`);
     }
     const result = decodeResult(checkpointDataField(
       entryDescriptors,

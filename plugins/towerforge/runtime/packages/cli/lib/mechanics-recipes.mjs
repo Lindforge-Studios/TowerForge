@@ -15,6 +15,16 @@ const TAGGED_MOAT_ID = "tagged_moat";
 const TAGGED_DESTRUCTIBLE_BRIDGE_ID = "tagged_destructible_bridge";
 const BASIC_ELEMENTAL_SYNERGY_ID = "basic_elemental_synergy";
 const BASIC_BOSS_ARTIFACT_LOOT_ID = "basic_boss_artifact_loot";
+const BASIC_COMMANDER_HERO_ID = "basic_commander_hero";
+const BASIC_MOBILE_COMMANDER_HERO_ID = "basic_mobile_commander_hero";
+const BASIC_DURABLE_COMMANDER_HERO_ID = "basic_durable_commander_hero";
+const BASIC_TARGETED_HERO_ABILITY_ID = "basic_targeted_hero_ability";
+const BASIC_HERO_SKILL_TREE_ID = "basic_hero_skill_tree";
+const BASIC_PASSIVE_HERO_AURA_ID = "basic_passive_hero_aura";
+const BASIC_DYNAMIC_HERO_BLOCKING_ID = "basic_dynamic_hero_blocking";
+const BASIC_POWER_GRID_ID = "basic_power_grid";
+const BASIC_LOCAL_AMMUNITION_ID = "basic_local_ammunition";
+const BASIC_FACTORY_AMMUNITION_SUPPLY_ID = "basic_factory_ammunition_supply";
 const TERRAFORMING_RECIPE_IDS = Object.freeze([
   TAGGED_FLOOD_ID,
   TAGGED_MOAT_ID,
@@ -57,6 +67,62 @@ const ROGUELITE_ARTIFACT_PARAMETER_SCHEMA = Object.freeze({
     towerTypeIds: ROGUELITE_TOWER_TAG_PARAMETER_SCHEMA.properties.towerTypeIds,
     bossEnemyTypeId: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 })
   })
+});
+const LOGISTICS_POWER_PARAMETER_SCHEMA = Object.freeze({
+  type: "object",
+  required: Object.freeze(["generatorTowerTypeId", "relayTowerTypeId", "consumerTowerTypeId"]),
+  additionalProperties: false,
+  properties: Object.freeze({
+    generatorTowerTypeId: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 }),
+    relayTowerTypeId: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 }),
+    consumerTowerTypeId: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 })
+  })
+});
+const LOGISTICS_AMMUNITION_PARAMETER_SCHEMA = Object.freeze({
+  type: "object",
+  required: Object.freeze([
+    "consumerTowerTypeId", "ammoTypeId", "ammoLabel", "capacity",
+    "startingAmount", "consumptionPerActivation"
+  ]),
+  additionalProperties: false,
+  properties: Object.freeze({
+    consumerTowerTypeId: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 }),
+    ammoTypeId: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 }),
+    ammoLabel: Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 }),
+    capacity: Object.freeze({ type: "integer", minimum: 1, maximum: 1_000_000_000 }),
+    startingAmount: Object.freeze({ type: "integer", minimum: 0, maximum: 1_000_000_000 }),
+    consumptionPerActivation: Object.freeze({ type: "integer", minimum: 1, maximum: 1_000_000_000 })
+  })
+});
+const LOGISTICS_SUPPLY_PARAMETER_NAMES = Object.freeze([
+  "producerTowerTypeId", "storageTowerTypeId", "consumerTowerTypeId", "ammoTypeId", "ammoLabel",
+  "productionRecipeId", "productionRecipeLabel", "consumerCapacity", "consumerStartingAmount",
+  "consumptionPerActivation", "outputAmount", "productionInterval", "producerCapacity",
+  "producerStartingAmount", "producerTransferRadius", "producerTransferAmount", "producerTransferInterval",
+  "storageCapacity", "storageStartingAmount", "storageTransferRadius", "storageTransferAmount",
+  "storageTransferInterval"
+]);
+const LOGISTICS_SUPPLY_PARAMETER_SCHEMA = Object.freeze({
+  type: "object",
+  required: LOGISTICS_SUPPLY_PARAMETER_NAMES,
+  additionalProperties: false,
+  properties: Object.freeze(Object.fromEntries(LOGISTICS_SUPPLY_PARAMETER_NAMES.map((name) => {
+    if (["producerTowerTypeId", "storageTowerTypeId", "consumerTowerTypeId", "ammoTypeId", "ammoLabel",
+      "productionRecipeId", "productionRecipeLabel"].includes(name)) {
+      return [name, Object.freeze({ type: "string", minLength: 1, maxUtf8Bytes: 128 })];
+    }
+    if (["productionInterval", "producerTransferInterval", "storageTransferInterval"].includes(name)) {
+      return [name, Object.freeze({ type: "number", minimum: 0.2, maximum: 1_000_000 })];
+    }
+    if (["producerTransferRadius", "storageTransferRadius"].includes(name)) {
+      return [name, Object.freeze({ type: "integer", minimum: 0, maximum: 64 })];
+    }
+    return [name, Object.freeze({
+      type: "integer",
+      minimum: name.endsWith("StartingAmount") ? 0 : 1,
+      maximum: 1_000_000_000
+    })];
+  })))
 });
 export class MechanicsRecipeParameterError extends Error {
   constructor(code, message) {
@@ -204,6 +270,89 @@ const RECIPES = Object.freeze([
     suggestedId: BASIC_BOSS_ARTIFACT_LOOT_ID,
     moduleSchemaVersion: 2,
     parameterSchema: ROGUELITE_ARTIFACT_PARAMETER_SCHEMA
+  }),
+  Object.freeze({
+    id: BASIC_COMMANDER_HERO_ID,
+    moduleId: "heroes",
+    label: "Basic Commander Hero",
+    description: "Inert heroes v1 profile with one static commander spawned at the authored mission core.",
+    suggestedId: BASIC_COMMANDER_HERO_ID,
+    moduleSchemaVersion: 1
+  }),
+  Object.freeze({
+    id: BASIC_MOBILE_COMMANDER_HERO_ID,
+    moduleId: "heroes",
+    label: "Basic Mobile Commander Hero",
+    description: "Inert heroes v2 profile with one commander and a heroes-owned deterministic ground movement profile.",
+    suggestedId: BASIC_MOBILE_COMMANDER_HERO_ID,
+    moduleSchemaVersion: 2
+  }),
+  Object.freeze({
+    id: BASIC_DURABLE_COMMANDER_HERO_ID,
+    moduleId: "heroes",
+    label: "Basic Durable Commander Hero",
+    description: "Inert heroes v3 profile with deterministic movement, bounded HP, and an optional absorb-first shield.",
+    suggestedId: BASIC_DURABLE_COMMANDER_HERO_ID,
+    moduleSchemaVersion: 3
+  }),
+  Object.freeze({
+    id: BASIC_TARGETED_HERO_ABILITY_ID,
+    moduleId: "heroes",
+    label: "Basic Targeted Hero Ability",
+    description: "Inert heroes v4 profile with bounded mana and one deterministic enemy-targeted damage ability.",
+    suggestedId: BASIC_TARGETED_HERO_ABILITY_ID,
+    moduleSchemaVersion: 4
+  }),
+  Object.freeze({
+    id: BASIC_HERO_SKILL_TREE_ID,
+    moduleId: "heroes",
+    label: "Basic Hero Skill Tree",
+    description: "Inert heroes v5 profile with a battle-local deterministic active-ability damage skill tree.",
+    suggestedId: BASIC_HERO_SKILL_TREE_ID,
+    moduleSchemaVersion: 5
+  }),
+  Object.freeze({
+    id: BASIC_PASSIVE_HERO_AURA_ID,
+    moduleId: "heroes",
+    label: "Basic Passive Hero Aura",
+    description: "Inert heroes v6 profile with a tower-damage aura whose membership is engine-owned.",
+    suggestedId: BASIC_PASSIVE_HERO_AURA_ID,
+    moduleSchemaVersion: 6
+  }),
+  Object.freeze({
+    id: BASIC_DYNAMIC_HERO_BLOCKING_ID,
+    moduleId: "heroes",
+    label: "Basic Dynamic Hero Blocking",
+    description: "Inert heroes v7 profile that holds only explicitly authored dynamic-navigation movement profiles.",
+    suggestedId: BASIC_DYNAMIC_HERO_BLOCKING_ID,
+    moduleSchemaVersion: 7
+  }),
+  Object.freeze({
+    id: BASIC_POWER_GRID_ID,
+    moduleId: "logistics",
+    label: "Basic Power Grid",
+    description: "Inert logistics v1 profile with one explicit generator, relay, and fire-capable consumer.",
+    suggestedId: BASIC_POWER_GRID_ID,
+    moduleSchemaVersion: 1,
+    parameterSchema: LOGISTICS_POWER_PARAMETER_SCHEMA
+  }),
+  Object.freeze({
+    id: BASIC_LOCAL_AMMUNITION_ID,
+    moduleId: "logistics",
+    label: "Basic Local Ammunition",
+    description: "Inert logistics v2 profile with one finite local magazine for a fire-capable tower.",
+    suggestedId: BASIC_LOCAL_AMMUNITION_ID,
+    moduleSchemaVersion: 2,
+    parameterSchema: LOGISTICS_AMMUNITION_PARAMETER_SCHEMA
+  }),
+  Object.freeze({
+    id: BASIC_FACTORY_AMMUNITION_SUPPLY_ID,
+    moduleId: "logistics",
+    label: "Basic Factory Ammunition Supply",
+    description: "Inert logistics v3 profile with one producer, storage, and refillable fire-capable consumer.",
+    suggestedId: BASIC_FACTORY_AMMUNITION_SUPPLY_ID,
+    moduleSchemaVersion: 3,
+    parameterSchema: LOGISTICS_SUPPLY_PARAMETER_SCHEMA
   })
 ]);
 
@@ -257,6 +406,39 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
     }
     return materializeTerraformingRecipe(recipe, context, parameterField.value);
   }
+  if (recipeId === BASIC_POWER_GRID_ID) {
+    if (parameterField.kind === "absent") {
+      throw invalidLogisticsRecipeParameter(
+        "Logistics recipe parameters are required and must name generator, relay, and consumer tower roles."
+      );
+    }
+    if (parameterField.kind === "invalid") {
+      throw invalidLogisticsRecipeParameter("Logistics recipe parameters must be enumerable own data.");
+    }
+    return materializePowerGridRecipe(recipe, context, parameterField.value);
+  }
+  if (recipeId === BASIC_LOCAL_AMMUNITION_ID) {
+    if (parameterField.kind === "absent") {
+      throw invalidLogisticsRecipeParameter(
+        "Local ammunition recipe parameters are required and must define one finite magazine."
+      );
+    }
+    if (parameterField.kind === "invalid") {
+      throw invalidLogisticsRecipeParameter("Local ammunition recipe parameters must be enumerable own data.");
+    }
+    return materializeLocalAmmunitionRecipe(recipe, context, parameterField.value);
+  }
+  if (recipeId === BASIC_FACTORY_AMMUNITION_SUPPLY_ID) {
+    if (parameterField.kind === "absent") {
+      throw invalidLogisticsRecipeParameter(
+        "Factory ammunition supply recipe parameters are required and must define three distinct tower roles."
+      );
+    }
+    if (parameterField.kind === "invalid") {
+      throw invalidLogisticsRecipeParameter("Factory ammunition supply parameters must be enumerable own data.");
+    }
+    return materializeFactoryAmmunitionSupplyRecipe(recipe, context, parameterField.value);
+  }
   if (parameterField.kind !== "absent") {
     throw new MechanicsRecipeParameterError(
       "terraform_recipe_parameter_invalid",
@@ -270,6 +452,283 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
   }
   if (recipeId === BASIC_DYNAMIC_NAVIGATION_ID) {
     return materializeDynamicNavigationRecipe(recipe, missionId);
+  }
+  if (recipeId === BASIC_COMMANDER_HERO_ID) {
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "heroes",
+        moduleSchemaVersion: 1,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: {
+          selectedHeroId: "commander",
+          definitions: {
+            commander: { label: "Commander", spawn: "core" }
+          }
+        }
+      }
+    };
+  }
+  if (recipeId === BASIC_MOBILE_COMMANDER_HERO_ID) {
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "heroes",
+        moduleSchemaVersion: 2,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: {
+          selectedHeroId: "commander",
+          definitions: {
+            commander: {
+              label: "Commander",
+              spawn: "core",
+              movement: { movementProfileId: "ground", speed: 1 }
+            }
+          },
+          movementProfiles: {
+            ground: {
+              label: "Ground",
+              terrainMode: "respect_walkable",
+              towerOccupancy: "blocked",
+              defaultTerrainCost: 1_000
+            }
+          }
+        }
+      }
+    };
+  }
+  if (recipeId === BASIC_DURABLE_COMMANDER_HERO_ID) {
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "heroes",
+        moduleSchemaVersion: 3,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: {
+          selectedHeroId: "commander",
+          definitions: {
+            commander: {
+              label: "Commander",
+              spawn: "core",
+              movement: { movementProfileId: "ground", speed: 1 },
+              durability: { maxHp: 100, shield: { capacity: 25 } }
+            }
+          },
+          movementProfiles: {
+            ground: {
+              label: "Ground",
+              terrainMode: "respect_walkable",
+              towerOccupancy: "blocked",
+              defaultTerrainCost: 1_000
+            }
+          }
+        }
+      }
+    };
+  }
+  if (recipeId === BASIC_TARGETED_HERO_ABILITY_ID) {
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "heroes",
+        moduleSchemaVersion: 4,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: {
+          selectedHeroId: "commander",
+          definitions: {
+            commander: {
+              label: "Commander",
+              spawn: "core",
+              movement: { movementProfileId: "ground", speed: 1 },
+              durability: { maxHp: 100, shield: { capacity: 25 } },
+              mana: { max: 100, starting: 60, regenerationPerUnit: 5 },
+              activeAbility: {
+                id: "arc_bolt",
+                label: "Arc Bolt",
+                target: "enemy",
+                manaCost: 20,
+                cooldown: 3,
+                range: 6,
+                damage: 30
+              }
+            }
+          },
+          movementProfiles: {
+            ground: {
+              label: "Ground",
+              terrainMode: "respect_walkable",
+              towerOccupancy: "blocked",
+              defaultTerrainCost: 1_000
+            }
+          }
+        }
+      }
+    };
+  }
+  if (recipeId === BASIC_HERO_SKILL_TREE_ID) {
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "heroes",
+        moduleSchemaVersion: 5,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: {
+          selectedHeroId: "commander",
+          definitions: {
+            commander: {
+              label: "Commander",
+              spawn: "core",
+              movement: { movementProfileId: "ground", speed: 1 },
+              durability: { maxHp: 100, shield: { capacity: 25 } },
+              mana: { max: 100, starting: 60, regenerationPerUnit: 5 },
+              activeAbility: {
+                id: "arc_bolt",
+                label: "Arc Bolt",
+                target: "enemy",
+                manaCost: 20,
+                cooldown: 3,
+                range: 6,
+                damage: 30
+              },
+              skillTree: {
+                points: { starting: 1, perInterwave: 1 },
+                nodes: {
+                  focused_cast: {
+                    label: "Focused Cast",
+                    description: "Increase active ability damage by twenty-five percent.",
+                    cost: 1,
+                    requires: [],
+                    effects: [{
+                      kind: "modifier",
+                      scope: "hero_ability_damage",
+                      modifier: { target: "damage", operation: "multiplier", value: 1.25 }
+                    }]
+                  },
+                  overcharge: {
+                    label: "Overcharge",
+                    description: "Add ten damage after Focused Cast is unlocked.",
+                    cost: 1,
+                    requires: ["focused_cast"],
+                    effects: [{
+                      kind: "modifier",
+                      scope: "hero_ability_damage",
+                      modifier: { target: "damage", operation: "flat", value: 10 }
+                    }]
+                  }
+                }
+              }
+            }
+          },
+          movementProfiles: {
+            ground: {
+              label: "Ground",
+              terrainMode: "respect_walkable",
+              towerOccupancy: "blocked",
+              defaultTerrainCost: 1_000
+            }
+          }
+        }
+      }
+    };
+  }
+  if (recipeId === BASIC_PASSIVE_HERO_AURA_ID) {
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "heroes",
+        moduleSchemaVersion: 6,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: {
+          selectedHeroId: "commander",
+          definitions: {
+            commander: {
+              label: "Aura Commander",
+              spawn: "core",
+              movement: { movementProfileId: "ground", speed: 1 },
+              durability: { maxHp: 100, shield: { capacity: 25 } },
+              mana: { max: 100, starting: 60, regenerationPerUnit: 5 },
+              activeAbility: {
+                id: "arc_bolt",
+                label: "Arc Bolt",
+                target: "enemy",
+                manaCost: 20,
+                cooldown: 3,
+                range: 6,
+                damage: 30
+              },
+              skillTree: null,
+              passiveAura: {
+                id: "command_link",
+                label: "Command Link",
+                radius: 3,
+                effects: [{
+                  kind: "modifier",
+                  scope: "tower_damage",
+                  modifier: { target: "damage", operation: "additive_ratio", value: 0.2 }
+                }]
+              }
+            }
+          },
+          movementProfiles: {
+            ground: {
+              label: "Ground",
+              terrainMode: "respect_walkable",
+              towerOccupancy: "blocked",
+              defaultTerrainCost: 1_000
+            }
+          }
+        }
+      }
+    };
+  }
+  if (recipeId === BASIC_DYNAMIC_HERO_BLOCKING_ID) {
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "heroes",
+        moduleSchemaVersion: 7,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: {
+          selectedHeroId: "commander",
+          definitions: {
+            commander: {
+              label: "Blocking Commander",
+              spawn: "core",
+              movement: { movementProfileId: "hero_ground", speed: 1 },
+              durability: { maxHp: 100, shield: { capacity: 25 } },
+              mana: { max: 100, starting: 60, regenerationPerUnit: 5 },
+              activeAbility: {
+                id: "arc_bolt",
+                label: "Arc Bolt",
+                target: "enemy",
+                manaCost: 20,
+                cooldown: 3,
+                range: 6,
+                damage: 30
+              },
+              skillTree: null,
+              passiveAura: null,
+              blocking: { blockCapacity: 2, movementProfileIds: ["ground"] }
+            }
+          },
+          movementProfiles: {
+            hero_ground: {
+              label: "Hero Ground",
+              terrainMode: "respect_walkable",
+              towerOccupancy: "blocked",
+              defaultTerrainCost: 1_000
+            }
+          }
+        }
+      }
+    };
   }
   if (recipeId === BASIC_AUTHORED_ELEVATION_ID) {
     return {
@@ -359,6 +818,316 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
       profile: { shields: { enemies, towers } }
     }
   };
+}
+
+function materializePowerGridRecipe(recipe, context, parameterValue) {
+  const parameters = inspectLogisticsRecipeParameters(parameterValue);
+  const generatorTowerTypeId = boundedLogisticsRecipeId(parameters.generatorTowerTypeId, "generatorTowerTypeId");
+  const relayTowerTypeId = boundedLogisticsRecipeId(parameters.relayTowerTypeId, "relayTowerTypeId");
+  const consumerTowerTypeId = boundedLogisticsRecipeId(parameters.consumerTowerTypeId, "consumerTowerTypeId");
+  if (new Set([generatorTowerTypeId, relayTowerTypeId, consumerTowerTypeId]).size !== 3) {
+    throw invalidLogisticsRecipeParameter("Logistics generator, relay, and consumer roles must use three distinct tower IDs.");
+  }
+  const towerIds = new Set(sortedSafeIds(ownDataValue(context, "towerIds")));
+  for (const towerTypeId of [generatorTowerTypeId, relayTowerTypeId, consumerTowerTypeId]) {
+    if (!towerIds.has(towerTypeId)) {
+      throw invalidLogisticsRecipeParameter(`Logistics recipe references unknown authored tower "${towerTypeId}".`);
+    }
+  }
+  const attackKinds = ownDataValue(context, "towerAttackKindsByTowerId");
+  const consumerAttackKind = ownDataValue(attackKinds, consumerTowerTypeId);
+  if (!["single", "pulse", "sniper", "antiair", "splash", "pipeline"].includes(consumerAttackKind)) {
+    throw invalidLogisticsRecipeParameter(
+      `Logistics consumer "${consumerTowerTypeId}" must use a fire-capable attack kind.`
+    );
+  }
+  const generators = safeRecord();
+  const relays = safeRecord();
+  const consumers = safeRecord();
+  defineOwn(generators, generatorTowerTypeId, { output: 20, linkRadius: 4, coverageRadius: 3 });
+  defineOwn(relays, relayTowerTypeId, { linkRadius: 5, coverageRadius: 4 });
+  defineOwn(consumers, consumerTowerTypeId, { demand: 8, priority: 10 });
+  return {
+    ...recipe,
+    entity: {
+      moduleId: "logistics",
+      moduleSchemaVersion: 1,
+      missionId: chooseId(context.defaultMissionId, context.missionIds) ?? "",
+      profileId: recipe.suggestedId,
+      profile: { power: { generators, relays, consumers } }
+    }
+  };
+}
+
+function materializeLocalAmmunitionRecipe(recipe, context, parameterValue) {
+  const parameters = inspectLocalAmmunitionRecipeParameters(parameterValue);
+  const consumerTowerTypeId = boundedLogisticsRecipeId(parameters.consumerTowerTypeId, "consumerTowerTypeId");
+  const ammoTypeId = boundedLogisticsRecipeId(parameters.ammoTypeId, "ammoTypeId");
+  const ammoLabel = boundedLogisticsRecipeId(parameters.ammoLabel, "ammoLabel");
+  const towerIds = new Set(sortedSafeIds(ownDataValue(context, "towerIds")));
+  if (!towerIds.has(consumerTowerTypeId)) {
+    throw invalidLogisticsRecipeParameter(
+      `Local ammunition recipe references unknown authored tower "${consumerTowerTypeId}".`
+    );
+  }
+  const attackKind = ownDataValue(ownDataValue(context, "towerAttackKindsByTowerId"), consumerTowerTypeId);
+  if (!["single", "pulse", "sniper", "antiair", "splash", "pipeline"].includes(attackKind)) {
+    throw invalidLogisticsRecipeParameter(
+      `Local ammunition consumer "${consumerTowerTypeId}" must use a fire-capable attack kind.`
+    );
+  }
+  const capacity = boundedLogisticsRecipeInteger(parameters.capacity, "capacity", 1, 1_000_000_000);
+  const consumptionPerActivation = boundedLogisticsRecipeInteger(
+    parameters.consumptionPerActivation, "consumptionPerActivation", 1, capacity
+  );
+  const startingAmount = boundedLogisticsRecipeInteger(
+    parameters.startingAmount, "startingAmount", 0, capacity
+  );
+  const types = safeRecord();
+  const towerInventories = safeRecord();
+  defineOwn(types, ammoTypeId, { label: ammoLabel });
+  defineOwn(towerInventories, consumerTowerTypeId, {
+    ammoTypeId, capacity, startingAmount, consumptionPerActivation
+  });
+  return {
+    ...recipe,
+    entity: {
+      moduleId: "logistics",
+      moduleSchemaVersion: 2,
+      missionId: chooseId(context.defaultMissionId, context.missionIds) ?? "",
+      profileId: recipe.suggestedId,
+      profile: { power: null, ammunition: { types, towerInventories } }
+    }
+  };
+}
+
+function materializeFactoryAmmunitionSupplyRecipe(recipe, context, parameterValue) {
+  const parameters = inspectFactoryAmmunitionSupplyParameters(parameterValue);
+  const producerTowerTypeId = boundedLogisticsRecipeId(parameters.producerTowerTypeId, "producerTowerTypeId");
+  const storageTowerTypeId = boundedLogisticsRecipeId(parameters.storageTowerTypeId, "storageTowerTypeId");
+  const consumerTowerTypeId = boundedLogisticsRecipeId(parameters.consumerTowerTypeId, "consumerTowerTypeId");
+  if (new Set([producerTowerTypeId, storageTowerTypeId, consumerTowerTypeId]).size !== 3) {
+    throw invalidLogisticsRecipeParameter(
+      "Factory ammunition supply producer, storage, and consumer roles must use three distinct tower IDs."
+    );
+  }
+  const towerIds = new Set(sortedSafeIds(ownDataValue(context, "towerIds")));
+  for (const towerTypeId of [producerTowerTypeId, storageTowerTypeId, consumerTowerTypeId]) {
+    if (!towerIds.has(towerTypeId)) {
+      throw invalidLogisticsRecipeParameter(
+        `Factory ammunition supply recipe references unknown authored tower "${towerTypeId}".`
+      );
+    }
+  }
+  const attackKind = ownDataValue(ownDataValue(context, "towerAttackKindsByTowerId"), consumerTowerTypeId);
+  if (!["single", "pulse", "sniper", "antiair", "splash", "pipeline"].includes(attackKind)) {
+    throw invalidLogisticsRecipeParameter(
+      `Factory ammunition supply consumer "${consumerTowerTypeId}" must use a fire-capable attack kind.`
+    );
+  }
+  const ammoTypeId = boundedLogisticsRecipeId(parameters.ammoTypeId, "ammoTypeId");
+  const ammoLabel = boundedLogisticsRecipeId(parameters.ammoLabel, "ammoLabel");
+  const productionRecipeId = boundedLogisticsRecipeId(parameters.productionRecipeId, "productionRecipeId");
+  const productionRecipeLabel = boundedLogisticsRecipeId(
+    parameters.productionRecipeLabel, "productionRecipeLabel"
+  );
+  const consumerCapacity = boundedLogisticsRecipeInteger(
+    parameters.consumerCapacity, "consumerCapacity", 1, 1_000_000_000
+  );
+  const consumerStartingAmount = boundedLogisticsRecipeInteger(
+    parameters.consumerStartingAmount, "consumerStartingAmount", 0, consumerCapacity
+  );
+  const consumptionPerActivation = boundedLogisticsRecipeInteger(
+    parameters.consumptionPerActivation, "consumptionPerActivation", 1, consumerCapacity
+  );
+  const producerCapacity = boundedLogisticsRecipeInteger(
+    parameters.producerCapacity, "producerCapacity", 1, 1_000_000_000
+  );
+  const producerStartingAmount = boundedLogisticsRecipeInteger(
+    parameters.producerStartingAmount, "producerStartingAmount", 0, producerCapacity
+  );
+  const outputAmount = boundedLogisticsRecipeInteger(
+    parameters.outputAmount, "outputAmount", 1, producerCapacity
+  );
+  const producerTransferRadius = boundedLogisticsRecipeInteger(
+    parameters.producerTransferRadius, "producerTransferRadius", 0, 64
+  );
+  const producerTransferAmount = boundedLogisticsRecipeInteger(
+    parameters.producerTransferAmount, "producerTransferAmount", 1, producerCapacity
+  );
+  const productionInterval = boundedLogisticsRecipeNumber(
+    parameters.productionInterval, "productionInterval", 0.2, 1_000_000
+  );
+  const producerTransferInterval = boundedLogisticsRecipeNumber(
+    parameters.producerTransferInterval, "producerTransferInterval", 0.2, 1_000_000
+  );
+  const storageCapacity = boundedLogisticsRecipeInteger(
+    parameters.storageCapacity, "storageCapacity", 1, 1_000_000_000
+  );
+  const storageStartingAmount = boundedLogisticsRecipeInteger(
+    parameters.storageStartingAmount, "storageStartingAmount", 0, storageCapacity
+  );
+  const storageTransferRadius = boundedLogisticsRecipeInteger(
+    parameters.storageTransferRadius, "storageTransferRadius", 0, 64
+  );
+  const storageTransferAmount = boundedLogisticsRecipeInteger(
+    parameters.storageTransferAmount, "storageTransferAmount", 1, storageCapacity
+  );
+  const storageTransferInterval = boundedLogisticsRecipeNumber(
+    parameters.storageTransferInterval, "storageTransferInterval", 0.2, 1_000_000
+  );
+
+  const types = safeRecord();
+  const towerInventories = safeRecord();
+  const productionRecipes = safeRecord();
+  const producers = safeRecord();
+  const storages = safeRecord();
+  defineOwn(types, ammoTypeId, { label: ammoLabel });
+  defineOwn(towerInventories, consumerTowerTypeId, {
+    ammoTypeId, capacity: consumerCapacity, startingAmount: consumerStartingAmount,
+    consumptionPerActivation
+  });
+  defineOwn(productionRecipes, productionRecipeId, {
+    label: productionRecipeLabel, ammoTypeId, outputAmount, interval: productionInterval
+  });
+  defineOwn(producers, producerTowerTypeId, {
+    recipeId: productionRecipeId, capacity: producerCapacity, startingAmount: producerStartingAmount,
+    transferRadius: producerTransferRadius, transferAmount: producerTransferAmount,
+    transferInterval: producerTransferInterval
+  });
+  defineOwn(storages, storageTowerTypeId, {
+    ammoTypeId, capacity: storageCapacity, startingAmount: storageStartingAmount,
+    transferRadius: storageTransferRadius, transferAmount: storageTransferAmount,
+    transferInterval: storageTransferInterval
+  });
+  const { description: _description, ...inertRecipe } = recipe;
+  return {
+    ...inertRecipe,
+    entity: {
+      moduleId: "logistics",
+      moduleSchemaVersion: 3,
+      missionId: chooseId(context.defaultMissionId, context.missionIds) ?? "",
+      profileId: recipe.suggestedId,
+      profile: {
+        power: null,
+        ammunition: { types, towerInventories },
+        supply: { productionRecipes, producers, storages }
+      }
+    }
+  };
+}
+
+function inspectLogisticsRecipeParameters(value) {
+  if (!isPlainRecord(value)) {
+    throw invalidLogisticsRecipeParameter("Logistics recipe parameters must be a closed ordinary object.");
+  }
+  let descriptors;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    throw invalidLogisticsRecipeParameter("Logistics recipe parameters could not be inspected safely.");
+  }
+  const allowed = ["generatorTowerTypeId", "relayTowerTypeId", "consumerTowerTypeId"];
+  if (Reflect.ownKeys(descriptors).some((key) => typeof key !== "string" || !allowed.includes(key))) {
+    throw invalidLogisticsRecipeParameter("Logistics recipe parameters are closed to the three explicit power roles.");
+  }
+  const result = safeRecord();
+  for (const key of allowed) {
+    const descriptor = descriptors[key];
+    if (!descriptor?.enumerable || !("value" in descriptor)) {
+      throw invalidLogisticsRecipeParameter(`Logistics recipe parameter ${key} is required as enumerable own data.`);
+    }
+    defineOwn(result, key, descriptor.value);
+  }
+  return result;
+}
+
+function inspectLocalAmmunitionRecipeParameters(value) {
+  if (!isPlainRecord(value)) {
+    throw invalidLogisticsRecipeParameter("Local ammunition recipe parameters must be a closed ordinary object.");
+  }
+  let descriptors;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    throw invalidLogisticsRecipeParameter("Local ammunition recipe parameters could not be inspected safely.");
+  }
+  const allowed = [
+    "consumerTowerTypeId", "ammoTypeId", "ammoLabel", "capacity",
+    "startingAmount", "consumptionPerActivation"
+  ];
+  if (Reflect.ownKeys(descriptors).some((key) => typeof key !== "string" || !allowed.includes(key))) {
+    throw invalidLogisticsRecipeParameter("Local ammunition recipe parameters are closed to six explicit fields.");
+  }
+  const result = safeRecord();
+  for (const key of allowed) {
+    const descriptor = descriptors[key];
+    if (!descriptor?.enumerable || !("value" in descriptor)) {
+      throw invalidLogisticsRecipeParameter(`Local ammunition recipe parameter ${key} is required as enumerable own data.`);
+    }
+    defineOwn(result, key, descriptor.value);
+  }
+  return result;
+}
+
+function inspectFactoryAmmunitionSupplyParameters(value) {
+  if (!isPlainRecord(value)) {
+    throw invalidLogisticsRecipeParameter(
+      "Factory ammunition supply recipe parameters must be a closed ordinary object."
+    );
+  }
+  let descriptors;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    throw invalidLogisticsRecipeParameter("Factory ammunition supply parameters could not be inspected safely.");
+  }
+  if (Reflect.ownKeys(descriptors).some((key) => typeof key !== "string"
+    || !LOGISTICS_SUPPLY_PARAMETER_NAMES.includes(key))) {
+    throw invalidLogisticsRecipeParameter(
+      "Factory ammunition supply recipe parameters are closed to the 22 explicit fields."
+    );
+  }
+  const result = safeRecord();
+  for (const key of LOGISTICS_SUPPLY_PARAMETER_NAMES) {
+    const descriptor = descriptors[key];
+    if (!descriptor?.enumerable || !("value" in descriptor)) {
+      throw invalidLogisticsRecipeParameter(
+        `Factory ammunition supply recipe parameter ${key} is required as enumerable own data.`
+      );
+    }
+    defineOwn(result, key, descriptor.value);
+  }
+  return result;
+}
+
+function boundedLogisticsRecipeInteger(value, name, minimum, maximum) {
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw invalidLogisticsRecipeParameter(
+      `Local ammunition recipe parameter ${name} must be a safe integer from ${minimum} through ${maximum}.`
+    );
+  }
+  return value;
+}
+
+function boundedLogisticsRecipeNumber(value, name, minimum, maximum) {
+  if (!Number.isFinite(value) || value < minimum || value > maximum) {
+    throw invalidLogisticsRecipeParameter(
+      `Factory ammunition supply recipe parameter ${name} must be a finite number from ${minimum} through ${maximum}.`
+    );
+  }
+  return value;
+}
+
+function boundedLogisticsRecipeId(value, name) {
+  if (typeof value !== "string" || value.length === 0 || utf8ByteLength(value) > 128) {
+    throw invalidLogisticsRecipeParameter(`Logistics recipe parameter ${name} must contain 1..128 UTF-8 bytes.`);
+  }
+  return value;
+}
+
+function invalidLogisticsRecipeParameter(message) {
+  return new MechanicsRecipeParameterError("logistics_recipe_parameter_invalid", message);
 }
 
 function materializeElementalSynergyRecipe(recipe, context, parameterValue) {

@@ -1,8 +1,8 @@
 import type { TowerScriptJson } from "../scripting/types.js";
 import type { TowerDefenseGame } from "./TowerDefenseGame.js";
 import { type ActionResult, type GridCoord, type MissionAbilityId, type TowerTargetMode } from "./types.js";
-export declare const GAME_COMMAND_SCHEMA_VERSION: 3;
-export declare const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS: readonly [1, 2, 3];
+export declare const GAME_COMMAND_SCHEMA_VERSION: 6;
+export declare const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS: readonly [1, 2, 3, 4, 5, 6];
 export type GameCommandV1 = {
     readonly schemaVersion: 1;
     readonly type: "tick";
@@ -108,7 +108,26 @@ export type GameCommandV3 = WithCommandSchemaVersion<GameCommandV2, 3> | {
     readonly offerId: string;
     readonly cardId: string;
 };
-export type GameCommand = GameCommandV1 | GameCommandV2 | GameCommandV3;
+export type GameCommandV4 = WithCommandSchemaVersion<GameCommandV3, 4> | {
+    readonly schemaVersion: 4;
+    readonly type: "moveHero";
+    readonly heroId: string;
+    readonly target: Readonly<GridCoord>;
+};
+export type GameCommandV5 = WithCommandSchemaVersion<GameCommandV4, 5> | {
+    readonly schemaVersion: 5;
+    readonly type: "useHeroAbility";
+    readonly heroId: string;
+    readonly abilityId: string;
+    readonly targetEnemyId: string;
+};
+export type GameCommandV6 = WithCommandSchemaVersion<GameCommandV5, 6> | {
+    readonly schemaVersion: 6;
+    readonly type: "unlockHeroSkill";
+    readonly heroId: string;
+    readonly skillId: string;
+};
+export type GameCommand = GameCommandV1 | GameCommandV2 | GameCommandV3 | GameCommandV4 | GameCommandV5 | GameCommandV6;
 export declare function invalidGameCommandResult(): ActionResult;
 /**
  * Strict descriptor-safe parser shared by direct dispatch and command journals.

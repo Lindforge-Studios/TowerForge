@@ -79,6 +79,28 @@ export declare class TowerDefenseGame {
     private readonly activePhysicsMechanics;
     private readonly activeTerraformingMechanics;
     private readonly activeRogueliteMechanics;
+    private readonly activeHeroesMechanics;
+    private readonly activeLogisticsPower;
+    private readonly activeLogisticsAmmunition;
+    private readonly activeLogisticsSupply;
+    private readonly activeLogisticsSchemaVersion;
+    private readonly activeHeroPassiveAura;
+    private readonly activeHeroBlocking;
+    private readonly heroesSnapshotV1;
+    private heroStateV2;
+    private heroMovementField;
+    private readonly heroMovementLookupCache;
+    private heroMovementDirty;
+    private logisticsPowerSnapshotCache;
+    private logisticsPoweredConsumerIds;
+    private logisticsPowerDirty;
+    private logisticsTopologyCounts;
+    private logisticsLiveParticipantIds;
+    private logisticsAmmunitionAmounts;
+    private logisticsSupplyProducers;
+    private logisticsSupplyStorages;
+    private logisticsSupplyTopologyCache;
+    private logisticsSupplyDirty;
     private rogueliteSnapshot;
     private rogueliteDamageModifiers;
     private artifactDamageModifiersByTowerId;
@@ -196,6 +218,12 @@ export declare class TowerDefenseGame {
      */
     emitScriptSignal(signal: string, payload?: TowerScriptJson): ActionResult;
     getTowerIdAt(coord: HexCoord): string | undefined;
+    /** Retarget the single opt-in v2 hero through a canonical shared flow field. */
+    moveHero(heroId: string, target: HexCoord): ActionResult;
+    /** Use the single deterministic enemy-targeted ability authored by an active heroes v4 profile. */
+    useHeroAbility(heroId: string, abilityId: string, targetEnemyId: string): ActionResult;
+    /** Atomically spend battle-local points on one authored v5 hero skill. */
+    unlockHeroSkill(heroId: string, skillId: string): ActionResult;
     tick(deltaUnits: number): void;
     getSnapshot(): GameSnapshot;
     getRenderSnapshot(): GameSnapshot;
@@ -286,6 +314,16 @@ export declare class TowerDefenseGame {
     /** Resolve one opt-in displacement effect without adding persistent physics state. */
     private applyDisplacementEffect;
     private navigationMovementProfileId;
+    private activeHeroesV2;
+    private heroSkillManagementAvailable;
+    private heroAbilitySkillModifiers;
+    private heroPassiveAuraActive;
+    private heroPassiveAuraAffectedTowerIds;
+    private heroPassiveAuraModifiersForTower;
+    private buildHeroMovementField;
+    private stabilizeHeroMovement;
+    private moveHeroUnit;
+    private updateHeroAbility;
     private navigationField;
     private createEnemyNavigationState;
     private createDynamicChildEnemyState;
@@ -312,6 +350,10 @@ export declare class TowerDefenseGame {
     private buildSunlightTilesSnapshot;
     private moveEnemies;
     private moveDynamicEnemies;
+    private heroBlockingActive;
+    private heroBlockingCandidate;
+    private deriveHeroBlockedEnemyIds;
+    private tryAcquireHeroBlock;
     private leakDynamicEnemy;
     private applyDotDamage;
     private isPulseTower;
@@ -321,11 +363,24 @@ export declare class TowerDefenseGame {
     private applyHealAuras;
     /** Boss pattern: enemies with `towerDisrupt` periodically silence towers within radius. */
     private updateTowerDisruptions;
-    /** Boss pattern: enemies with `towerAttack` periodically damage the nearest tower with hp; destroy it at 0. */
+    /** Boss pattern: enemies with `towerAttack` damage the nearest durable tower or opt-in durable hero. */
     private updateEnemyTowerAttacks;
     private artifactManagementAvailability;
     private replaceArtifactSocket;
     private autoUnsocketTowerArtifacts;
+    private isLogisticsParticipantType;
+    private towerHasRequiredAmmunition;
+    private consumeTowerAmmunition;
+    private isLiveLogisticsParticipant;
+    private markLogisticsPowerDirty;
+    private isLogisticsSupplyTopologyParticipant;
+    private markLogisticsSupplyDirty;
+    private ensureLogisticsSupplyTopology;
+    private logisticsTowerPowered;
+    private logisticsTowerOperational;
+    private updateLogisticsSupply;
+    private ensureLogisticsPowerSnapshot;
+    private currentLogisticsPowerSnapshot;
     private destroyTower;
     private rebuildRogueliteSynergies;
     private currentRogueliteSnapshot;
@@ -373,6 +428,7 @@ export declare class TowerDefenseGame {
     private applyResolvedEnemyDamage;
     private applyResolvedCoreDamage;
     private applyResolvedTowerEntityDamage;
+    private applyResolvedHeroDamage;
     private resolveAndApplyDamage;
     private planAndApplyReactions;
     private applyEnemyExposure;
@@ -405,6 +461,7 @@ export declare class TowerDefenseGame {
     private routePathKey;
     private isTemporaryWaterTile;
     private isInsideAnyPulse;
+    private logisticsPulseFieldActive;
     private isInsideSupportAura;
     private buildNavigationWavePairs;
     private buildNavigationMandatoryPairs;
@@ -421,6 +478,7 @@ export declare class TowerDefenseGame {
     private syncNavigationTerrain;
     private syncNavigationOccupancy;
     private syncNavigationResolver;
+    private revalidateHeroMovementAfterMapMutation;
     private canOccupyTowerFootprint;
     private dependentsKeepSupportAfterMove;
     private dependentsKeepSupportAfterRemoval;

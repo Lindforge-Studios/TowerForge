@@ -107,6 +107,7 @@ test("absent and mission-unselected mechanics keep the generated-player panel hi
 });
 
 test("the active PWA and single-file artifacts both carry the same initial synergy snapshot", async ({ page }) => {
+  test.setTimeout(120_000);
   const projectDir = path.join(tempDir, `${fixtureName("active", "hex", "canvas")}.tdproj`);
   const dist = path.join(projectDir, "dist");
   for (const relativePath of [

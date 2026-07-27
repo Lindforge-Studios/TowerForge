@@ -55,6 +55,27 @@ describe("project schema", () => {
     expect(v3Result.issues.some((issue) => issue.entityKind === "project" && issue.fieldPath === "schemaVersion")).toBe(false);
   });
 
+  it("accepts heroes v7 independently and rejects future heroes v8", () => {
+    const valid = mechanicsSchemaFiles(3, {
+      schemaVersion: 1,
+      modules: {
+        heroes: { schemaVersion: 7, enabled: false, profiles: {} }
+      }
+    });
+    expect(validateProjectSchemas(valid).issues.filter((issue) => (
+      issue.entityKind === "mechanics" && issue.fieldPath === "modules.heroes.schemaVersion"
+    ))).toEqual([]);
+
+    const future = structuredClone(valid);
+    future.mechanics.modules.heroes.schemaVersion = 8;
+    expect(validateProjectSchemas(future).issues).toContainEqual(expect.objectContaining({
+      severity: "error",
+      entityKind: "mechanics",
+      fieldPath: "modules.heroes.schemaVersion",
+      message: expect.stringMatching(/newer|supported|must be.*7/i)
+    }));
+  });
+
   it("versions shields, armor, and marks independently from the project and mechanics catalog", () => {
     const armorProfile = {
       damageTypes: {

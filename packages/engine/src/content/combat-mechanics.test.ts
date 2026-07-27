@@ -129,7 +129,8 @@ function validate(profile: CombatProfileFixture, options?: CombatFixtureOptions)
 describe("combat mechanics profile contract", () => {
   it("keeps combat limits stable after reactions and navigation become independently available", () => {
     expect(IMPLEMENTED_MECHANICS_MODULE_IDS).toEqual([
-      "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite"
+      "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes",
+      "logistics"
     ]);
     expect((Engine as unknown as { SHIELD_LIMITS?: unknown }).SHIELD_LIMITS).toEqual({
       capacity: 1_000_000_000_000,

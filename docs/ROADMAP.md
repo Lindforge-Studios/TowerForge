@@ -1,6 +1,6 @@
 # TowerForge — Roadmap расширяемых механик
 
-Последняя проверка: 2026-07-26
+Последняя проверка: 2026-07-27
 
 Цель программы — расширить TowerForge от классического TD до набора совместимых жанровых механик, не меняя поведение существующих проектов. Каждое расширение является opt-in: разработчик добавляет versioned-модуль в необязательный `content/mechanics.json`, а миссия выбирает профиль через `mission.mechanics`. Нет файла или выбора — игра, Studio, сборка и агенты работают по legacy-контракту.
 
@@ -30,7 +30,18 @@
 | R4.4A — campaign graph + run lifecycle | Завершён; code + constructor sign-off; ADR Accepted | Opt-in typed DAG, отдельные run/profile reducers, guarded Studio/MCP и explicit player import/export без battle-state coupling |
 | R4.4B — structural campaign choices | Завершён; code + constructor sign-off; ADR Accepted | Campaign graph v2, declared run resources и атомарные merchant/event choices без battle-state coupling |
 | R4.4C — campaign battle handoff | Завершён; code + constructor sign-off; ADR Accepted | Marker v2 переносит run deck/artifacts через deterministic prepare/checkpoint/atomic settlement; marker v1 остаётся legacy |
-| R5–R8 | Запланированы | Каждый срез закрывает engine, Studio, AI/MCP, renderers/player, docs и два независимых sign-off |
+| R5.1A — static hero roster foundation | Завершён; code + constructor sign-off; ADR Accepted | Opt-in `heroes` v1: bounded roster, один selected unit на core, optional snapshot и shared presentation без commands/checkpoint |
+| R5.1B — deterministic hero movement | Завершён; code + constructor sign-off; ADR Accepted | Heroes v2, own movement profiles, exact GameCommand/Journal v4, checkpoint/replay и Canvas/Phaser input без navigation activation |
+| R5.2A — hero durability | Завершён; code + constructor sign-off; ADR Accepted | Heroes v3, exact HP/optional shield, shared resolver, optional snapshot/checkpoint state, guarded authoring и legacy v1/v2 paths |
+| R5.3A — targeted hero ability | Завершён; code + constructor sign-off; ADR Accepted | Heroes v4, bounded mana regeneration, один enemy-targeted damage spell, cooldown, GameCommand/Journal v5 и nested checkpoint v3 |
+| R5.4A — battle-local hero skill tree | Завершён; code + constructor sign-off; ADR Accepted | Heroes v5 nullable tree, GameCommand/Journal v6, authoritative snapshot v5, nested checkpoint v4 без CampaignRun/Profile carry |
+| R5.5A — passive hero damage aura | Завершён; code + constructor sign-off; ADR Accepted | Heroes v6 nullable aura, authoritative topology membership и tower-only `spatial` modifiers без нового command/event/checkpoint state |
+| R5.6A — dynamic hero blocking | Завершён; code + constructor sign-off; ADR Accepted | Heroes v7 nullable blocking, explicit dynamic movement-profile eligibility и bounded engine-owned holds без hero occupancy/path rebuild |
+| R5.7A — logistics power grid | Завершён; code + constructor sign-off; ADR Accepted | Logistics v1 nullable power, bounded deterministic generators/relays/components, priority brownout и authoritative visible overlay без ammo/factory |
+| R5.8A — local ammunition | Завершён; code + constructor sign-off; ADR Accepted | Logistics v2 nullable ammunition, local tower magazines, activation расход и nested checkpoint без refill/factory/transfer |
+| R5.8B — ammunition supply | Завершён; code + constructor sign-off; ADR Accepted | Logistics v3 factories, storage, bounded deterministic transfer и same-instance refill |
+| R5 | Завершён | Heroes v1–v7 и Logistics v1–v3 поставлены как независимые opt-in вертикальные срезы |
+| R6–R8 | Запланированы | Каждый срез закрывает engine, Studio, AI/MCP, renderers/player, docs и два независимых sign-off |
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Поставленные версии `combat`, `reactions`, `navigation` и `elevation` уже прошли полные вертикальные срезы. Остальные модули Mechanics Hub остаются planned, а preview/apply отклоняют их включение без записи.
 
@@ -181,6 +192,215 @@ R4.4C независимо версионирует только campaign marker
 ### R5 — Heroes и Logistics
 
 Два независимых трека. Heroes получают детерминированное движение, HP/shield, mana/cooldowns, active abilities, skill tree, passive auras и optional blocking только при dynamic navigation. Logistics сначала вводит power components/brownout ordering, затем bounded inventory/ammo/production graph. Без logistics profile сохраняется бесконечное штатное снабжение.
+
+R5.1A отдельно вводит только статический foundation-контракт `heroes` v1. Профиль закрытой формы `{selectedHeroId, definitions}` выбирает одного героя из 1–32 определений `{label, spawn:"core"}`; ID и label ограничены 128 реальными UTF-8 bytes. Активная миссия выводит один immutable unit в `map.coreCoord` и публикует optional `snapshot.heroes` v1 с полями `id`, `definitionId`, `label`, `coord`. Engine остаётся единственным источником selection/spawn, а Canvas и Phaser используют общий fail-closed projector и необязательный `visuals.bindings.heroes` с shape fallback.
+
+В самостоятельном v1-пути R5.1A намеренно нет `moveHero`, hero HP/shield, mana, cooldowns, abilities, skills, auras, blocking, TowerScript scope/events/actions, RNG или mutable runtime state. Поэтому его checkpoint не получает hero-секцию: restore повторно выводит unit из уже привязанного content digest и map core. Missing selected-definition reference является error только для active-selected профиля и warning в выключенном/невыбранном профиле. Движение, GameCommand/Journal v4 и nested hero checkpoint принадлежат отдельному opt-in R5.1B циклу ниже; v1 остаётся byte-compatible.
+
+R5.1A принят 2026-07-26. Начальный независимый RED дал 29 падений из 36 contracts в восьми файлах; verifier-циклы отдельно закрепили revoked/self-revoking Proxy, exact `{q,r}`, own-safe `__proto__` bind/remove и sprite lookup, inherited renderer bindings, Phaser `undefined` coercion и запрет преждевременно рекламировать active hero mechanics. Финальный focused набор — 50/50, full Vitest — 2 042/2 042 в 179 файлах, full Playwright — 49/49. Typecheck, engine/build, validate, sim, balance, maps, web build и plugin build/validate/smoke прошли; source↔plugin parity подтверждена. Независимая constructor-проверка также подтвердила Studio lifecycle, Canvas/Phaser × hex/square, 4 templates × 2 grids × 2 renderers, PWA/single-file/file-URL boot, web-package и `.tdpack` export/import/validate. Code verifier и constructor-integration verifier выдали PASS без открытых P0–P3 findings. Контракт описан в [ADR 0037](adr/0037-opt-in-static-hero-roster-foundation.md), copyable fixture — `docs/examples/opt-in-hero-roster/`; последующий отдельный R5.1B срез принят ниже.
+
+R5.1B принят 2026-07-26 отдельным RED/GREEN-срезом. `heroes` v2 получает собственные
+`movementProfiles` и nested `{movementProfileId,speed}` без зависимости от opt-in `navigation`;
+движение принимает только exact `GameCommandV4 moveHero`, а checkpoint/journal/replay версии
+эволюционируют независимо. `snapshot.heroes` v2 публикует точные nullable target/next/progress,
+Canvas и Phaser используют общий fail-closed interpolation/hit-test и хранят selection только в
+UI. V1 остаётся статическим, absent/disabled path не получает новых DOM/input/runtime секций.
+
+Независимый engine RED дал 8 ожидаемых падений из 38 focused tests, surface RED — 13 из 32;
+последующие verifier RED отдельно закрыли dirty-checkpoint canonicalization, чистоту read-only
+snapshot/digest/checkpoint, unsafe map-cell product, terrain references/budgets и lossless Studio
+preview. Финальный full Vitest — 2 075/2 075 в 182 файлах; full Playwright — 63/63, включая точную
+матрицу `Canvas/Phaser × hex/square × mouse/touch/keyboard`, malformed-v2 preview и полный Studio
+v2 lifecycle. `describe_schema` раскрывает shared closed `MovementProfileV1`, а automated MCP flow
+проходит `describe → read → recipe → preview → guarded apply → validate → stale revision` без
+активации navigation. Typecheck, engine/build, validate, sim, balance, maps, web build,
+plugin build/validate/smoke, PWA/single-file/file URL, web-package и `.tdpack` прошли. Независимые
+code verifier и constructor-integration verifier выдали PASS без открытых P0–P3 findings. Контракт
+зафиксирован в [ADR 0038](adr/0038-opt-in-deterministic-hero-movement.md), copyable v2 fixture —
+`docs/examples/opt-in-hero-roster/mechanics-mobile.json`.
+
+R5.2A — отдельный opt-in durability-срез. `heroes` v3 сохраняет полный v2-
+контракт и требует для каждого definition точный `durability: {maxHp,shield}`, где
+`shield` равен `null` или `{capacity}`. Входящая enemy `towerAttack` проходит общий
+`DamagePacket`/`DamageResolver`, затем shield поглощает урон до HP; defeat срабатывает
+ровно один раз и блокирует движение. Optional `snapshot.heroes` v3 публикует
+`{hp,maxHp,shield,defeated}`, а nested heroes checkpoint эволюционирует в v2 без изменения
+внешнего `GameCheckpointV1`, GameCommand/Journal v4 и replay envelope.
+
+Studio редактирует v3 только в Mechanics Hub, MCP/AI раскрывает descriptor и инертный
+`basic_durable_commander_hero` через обычный guarded flow, а Canvas/Phaser читают только
+авторитетный snapshot/events. Нет mana, abilities, regeneration, revival, auras, blocking и
+TowerScript hero actions. V1/v2, absent/disabled/unselected пути не получают durability state. Контракт:
+[ADR 0039](adr/0039-opt-in-hero-durability.md); fixture:
+`docs/examples/opt-in-hero-roster/mechanics-durable.json`.
+
+R5.2A принят 2026-07-26. Независимые verifier-циклы дополнительно закрепили невозможные
+checkpoint-состояния shield/HP, forged hero events, точный MCP event descriptor, невалидные
+видимые Studio-значения и source↔plugin parity. Full Vitest прошёл 2 092/2 092 теста в 185
+файлах; full Playwright — 68/68. Active v3 acceptance покрывает Canvas/Phaser × hex/square,
+движение, HP/shield/defeat cues, PWA, single-file, web package и `.tdpack`; absent, v1 и v2
+пути остались совместимыми. Typecheck, engine/build, validate, sim, balance, maps и plugin
+build/validate/smoke прошли. Code verifier и constructor-integration verifier выдали PASS без
+открытых P0–P3 findings.
+
+R5.3A принят 2026-07-26 как отдельный opt-in срез. `heroes` v4 сохраняет
+полный v3-контракт и добавляет bounded mana/regeneration плюс одну inline
+enemy-targeted damage ability. Exact `GameCommandV5 useHeroAbility` и journal v5 передают
+только authoritative IDs; engine атомарно проверяет outcome, defeat, target, range,
+mana и cooldown, а урон идёт через общий `DamageResolver`. Nested heroes checkpoint v3
+хранит mana/cooldown без изменения outer `GameCheckpointV1`.
+
+Исходный engine RED дал 13 ожидаемых падений из 66 focused contracts; authoring/player
+RED-волны — ещё 12 и 5. Независимый code verifier добавил test-first регрессии
+для ended-mission readiness, hostile event↔checkpoint mismatch и двух допустимых
+zero-cooldown cast до tick. Constructor verifier закрепил точный MCP stale-revision flow,
+Studio lifecycle, public skill и source↔plugin parity. Оба verifier выдали PASS без открытых
+P0–P3 findings.
+
+Финальный Vitest — 2 137/2 137 в 190 файлах. Playwright подтвердил все 81 сценарий:
+79 прошли в общем прогоне, два тяжёлых legacy single-file сценария, достигшие общего
+timeout под параллельной нагрузкой, отдельно прошли 1/1 каждый. Active v4 покрыт
+матрицей `Canvas/Phaser × hex/square × mouse/touch/keyboard` (12/12), полным Studio
+enable/edit/preview/save/reload/disable/re-enable и PWA/single-file/web-package/`.tdpack`. Typecheck,
+engine/build, validate, sim, balance, maps, web build и plugin build/validate/smoke прошли. Контракт:
+[ADR 0040](adr/0040-opt-in-targeted-hero-ability.md); fixture:
+`docs/examples/opt-in-hero-roster/mechanics-targeted-ability.json`.
+
+R5.4A — отдельный opt-in срез дерева навыков. `heroes` v5 требует
+nullable `skillTree`: `null` сохраняет snapshot v4/checkpoint v3, а non-null DAG владеет
+battle-local points и модификаторами только hero ability damage. Exact `GameCommandV6
+unlockHeroSkill` доступен в setup/чистом non-final interwave; само дерево не
+создаёт обязательную паузу. Snapshot v5 остаётся единственным источником
+points/availability/unlockability, а nested checkpoint v4 проверяет exact accounting,
+dependency order и retained event chain. `CampaignRunV1`, `PlayerProfileV3` и outer checkpoint v1
+не меняются; каждый battle начинает дерево заново.
+
+Исходный engine/content RED дал 19 ожидаемых падений при 2 baseline PASS; surface
+RED — 28 при 82 baseline PASS и два целевых Playwright RED. Code verifier добавил
+отдельные RED для overflow, precondition order, UTF-8 modifier IDs, hostile checkpoint chains,
+defeated unlockability и запрета renderer пересчитывать gameplay. Финальный Vitest прошёл
+2 186/2 186 тестов в 196 файлах, Playwright — 96/96; focused surface contracts — 106/106,
+verifier engine/content/renderer — 39/39, package acceptance для PWA/single-file/web/`.tdpack` —
+1/1. Typecheck, engine/build, validate, sim, balance, maps и plugin build/validate/smoke прошли.
+Независимые Code Verifier и Constructor Integration Verifier выдали PASS без открытых P0–P3.
+Контракт:
+[ADR 0041](adr/0041-opt-in-battle-local-hero-skill-tree.md); fixture:
+`docs/examples/opt-in-hero-roster/mechanics-skill-tree.json`.
+
+R5.5A завершён как самостоятельный opt-in TDD-срез. `heroes` v6 добавляет required nullable
+`passiveAura`, независимую от nullable `skillTree`. Ненулевая аура публикует authoritative snapshot v6 с
+бинарно отсортированными `affectedTowerIds`; membership считает только engine
+по topology distance от authoritative `currentCoord`. Аура добавляет 1–4 engine-owned
+`spatial` modifier только к immediate tower damage и не влияет на DoT, status,
+range/fire-rate, hero/mission abilities или другие источники.
+
+Аура не требует дерева навыков: active v6 с tree `null` публикует snapshot v6
+с `skills:null`, но продолжает использовать nested checkpoint v3; аура + tree используют
+тот же checkpoint v4. Аура `null` сохраняет буквальные snapshot v4/v5 и не
+добавляет runtime-работу. `GameCommandV6`, journal v6, outer checkpoint v1,
+CampaignRun/Profile и TowerScript не меняются; нового aura event нет. Blocking,
+Dynamic Navigation, logistics и TowerScript hero surface остаются отдельными срезами.
+
+Начальный engine/content RED дал 35 ожидаемых падений при 2 baseline PASS; surface RED —
+31 падение при 91 baseline PASS. Независимый code verifier добавил отдельные RED для
+промежуточного и cross-source numeric overflow, zero-allocation legacy path, terminal renderer
+state, impossible-true fail-close и module-wide multi-profile v5→v6 promotion. Финальный Vitest
+прошёл 2 257/2 257 тестов в 201 файле, Playwright — 102/102. Constructor acceptance отдельно
+подтвердил полный heroes Studio/player lifecycle 55/55, AI/MCP/CLI/renderer/build/package
+контракты 154/154, Canvas/Phaser × hex/square, PWA/single-file/web/`.tdpack` и legacy paths.
+Typecheck, engine/build, validate, sim, balance, maps и plugin build/validate/smoke прошли.
+Независимые Code Verifier и Constructor Integration Verifier выдали PASS без открытых P0–P3.
+Контракт: [ADR 0042](adr/0042-opt-in-passive-hero-damage-aura.md); fixture:
+`docs/examples/opt-in-hero-roster/mechanics-passive-aura.json`.
+
+R5.6A завершён как отдельный opt-in blocking-срез. `heroes` v7 добавляет required nullable
+`blocking:{blockCapacity,movementProfileIds}`. Ненулевая настройка требует выбранный той же миссией
+active Navigation v1 `dynamic_flow`; автор явно перечисляет профили, которые герой способен
+удерживать, без вывода слоя из ID, label, `terrainMode` или `towerOccupancy`. Engine на каждой
+границе движения выбирает до 64 живых врагов на authoritative `currentCoord` героя в binary ID
+порядке. Входящий враг занимает свободный слот на границе клетки до траты остатка движения и до
+core leak.
+
+Герой не становится occupancy для flow field: blocking не перестраивает NavigationResolver, не
+влияет на last-path placement/terraforming и не запускает отдельный поиск. Snapshot v7 публикует
+только authoritative `blockedEnemyIds`; держатели выводятся из уже checkpointed hero/enemy state,
+поэтому GameCommand/Journal v6, outer checkpoint v1, nested heroes checkpoint v3/v4 и TowerScript
+v6 не меняются. `blocking:null` сохраняет буквальный snapshot v4/v5/v6 в зависимости от независимо
+включённых tree/aura. Studio и MCP выполняют только явную module-wide v6→v7 promotion с
+`blocking:null`, никогда не включая Navigation автоматически.
+
+Начальный engine/content RED дал 44 ожидаемых падения при 8 baseline PASS; surface RED — 32
+падения при 49 baseline PASS. Code Verifier нашёл terminal-defeat P2: заранее вычисленный holder
+мог пережить переход в defeat после более раннего неблокируемого core leak. Отдельный regression
+воспроизвёл ошибку RED 1/1, после минимального исправления прошёл 1/1; повторный verifier run дал
+121/121 focused и 508/508 expanded PASS. Финальный Vitest прошёл 2 325/2 325 тестов в 206 файлах,
+Playwright — 107/107. Constructor Integration Verifier отдельно подтвердил 168/168 вертикальных
+контрактов, 61/61 Heroes regression, stale/rollback 4/4, v7/future-v8 E2E 6/6, template contracts
+19/19 и полный browser matrix. Typecheck, engine build, validation, tutorial simulation, balance,
+map compile, web build и plugin build/validate/smoke прошли. Оба независимых verifier выдали PASS
+без открытых P0–P3. Контракт: [ADR 0043](adr/0043-opt-in-dynamic-hero-blocking.md); fixtures:
+`docs/examples/opt-in-hero-roster/mechanics-blocking.json` и
+`docs/examples/opt-in-hero-roster/mission-blocking-selection.json`.
+
+R5.7A завершён как первый независимый Logistics-срез. `logistics` v1 получает required nullable
+`power`; null и отсутствие выбора сохраняют literal infinite-supply legacy path. Non-null профиль
+явно назначает tower types в непересекающиеся generators, relays и fire-capable consumers. Engine
+строит topology/footprint-aware connected components только при dirty placement/move/sell/destroy,
+назначает consumer ближайшему covering node и выполняет full-demand prefix allocation по priority,
+затем binary tower instance ID. Brownout замораживает точный cooldown и все fire/pulse effects;
+после питания башня продолжает штатный отсчёт/атаку.
+
+Snapshot v1 является единственным источником components, links, coverage и powered IDs для Studio,
+Canvas и Phaser. Сеть полностью выводится из уже checkpointed towers/content, поэтому commands,
+events, checkpoint, journal, profile, CampaignRun и TowerScript не меняются. `basic_power_grid`
+остаётся инертным recipe; Studio/MCP не создают tower types и не включают/выбирают модуль. Ammo,
+inventory, storage, factory, production и transfer graph остаются отдельным следующим TDD-срезом.
+
+Первичные независимые RED-волны дали 42 content, 23 runtime и 23 constructor failure при сохранении
+legacy compatibility passes. Проверяющие отдельно воспроизвели и закрыли pulse без питания,
+resource-bound graph, `hp<=0`, checkpoint-order digest, premature brownout, hostile snapshot и
+data-only overlay дефекты. Финальный Vitest прошёл 2 465/2 465 тестов в 214 файлах, Playwright —
+112/112. Code Verifier подтвердил 142/142 focused contracts; Constructor Integration Verifier —
+41/41 focused и 6/6 Chromium scenarios, включая Studio/MCP guarded flow, Canvas/Phaser × hex/square,
+package/template matrix и plugin parity. Typecheck, engine build, validation, tutorial simulation,
+balance, map compile, web build и plugin build/validate/smoke прошли. Оба независимых verifier выдали
+PASS без открытых P0–P3. Accepted contract: [ADR 0044](adr/0044-opt-in-logistics-power-grid.md);
+fixture: `docs/examples/opt-in-logistics-power/`.
+
+R5.8A спроектирован отдельным от power grid и factory/transfer инкрементом. Logistics v2 сохраняет
+required nullable `power` и добавляет required nullable `ammunition`: author-defined ammo types и
+один локальный магазин для выбранного fire-capable tower type. Engine расходует authored amount
+ровно один раз на успешную attack activation; secondary targets/effects бесплатны, no-target не
+расходует ammo, а depleted gate замораживает точный cooldown до конца жизни экземпляра. Mutable
+amount получает отдельный nested Logistics checkpoint state и authoritative snapshot v2.
+
+R5.8A намеренно не вводит refill API/command, factories, production, storage или transfer graph.
+Same-instance refill/resume вместе с supply ordering будет отдельным R5.8B, не меняющим установленный
+gate order и activation cost. Независимые RED-волны зафиксировали content/runtime/surface контракты;
+Code Verifier дополнительно нашёл и через отдельные RED→GREEN циклы закрыл повторный target lookup
+после exhaustion, legacy helper overhead и prototype-sensitive IDs. Финальные Vitest 2 651/2 651 и
+Playwright 117/117 прошли; оба независимых verifier выдали PASS без P0–P3. Accepted contract:
+[ADR 0045](adr/0045-opt-in-local-ammunition.md); fixture:
+`docs/examples/opt-in-local-ammunition/`.
+
+R5.8B завершён отдельным финальным Logistics-срезом. Logistics v3 добавляет required nullable
+`supply`: production recipes, producer/storage compartments и bounded directed transfer graph с
+фиксированным topology-aware ordering. Production и outgoing transfer учитывают authoritative power
+и disruption; план transfer атомарен, incoming stock не пересылается в том же tick, а refill может
+возобновить ready tower без изменения cooldown. Mutable stock/progress получает nested Logistics
+checkpoint v2 и authoritative snapshot v3. Ручных refill/transfer commands, TowerScript действий,
+сырья, conveyor routing и renderer-owned симуляции нет.
+
+Независимые RED-волны покрыли content, runtime и surfaces. Code Verifier нашёл и через отдельные
+RED→GREEN циклы закрыл полный `storage→consumer` topology, строгий `supply:null` checkpoint limit,
+recipe/capacity invariant, линейную edge grouping и точный diagnostic. Финальные Vitest
+2 800/2 800 в 230 файлах и Playwright 122/122 прошли. Code Verifier подтвердил 442/442 focused
+engine contracts; Constructor Integration Verifier — 98/98 focused surface/package contracts и
+15/15 Logistics Chromium scenarios. Typecheck, engine/build, validation, tutorial simulation,
+balance, map compile, web build, plugin build/validate/smoke, harness audit и diff checks зелёные.
+Оба независимых verifier выдали PASS без P0–P3. Accepted contract:
+[ADR 0046](adr/0046-opt-in-ammunition-supply.md); fixture:
+`docs/examples/opt-in-ammunition-supply/`.
 
 ### R6 — TowerScript DX 2.0
 

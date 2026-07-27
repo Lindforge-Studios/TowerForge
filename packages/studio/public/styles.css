@@ -177,6 +177,8 @@ html[data-sidebar="collapsed"] .sidebar-toggle-expand { display: block; }
 .mechanics-profile-controls label { min-width: 180px; }
 .mechanics-shield-section { margin-top: 17px; }
 .mechanics-shield-section h4 { margin: 0 0 4px; font-size: 11px; }
+.mechanics-heroes-section { margin-top: 17px; }
+.mechanics-heroes-section h4 { margin: 0 0 4px; font-size: 11px; }
 .mechanics-shield-rows { display: grid; gap: 7px; margin-top: 9px; }
 .mechanics-shield-row { display: grid; grid-template-columns: minmax(190px, 1.4fr) repeat(3, minmax(115px, .7fr)); gap: 8px; align-items: end; padding: 9px; border: 1px solid var(--border); border-radius: 6px; opacity: .7; }
 .mechanics-shield-row.enabled { opacity: 1; border-color: color-mix(in srgb, var(--accent) 32%, var(--border)); }

@@ -71,12 +71,14 @@ const MECHANICS_MODULES = [
   { id: "physics", title: "Physics", description: "Bounded push/pull displacement, immunities, and explicit fall hazards." },
   { id: "terraforming", title: "Terraforming", description: "Transactional terrain transitions and bounded elevation edits authored as an independent opt-in profile." },
   { id: "roguelite", title: "Rogue-lite", description: "Synergies, artifacts, draft choices, and campaign runs." },
-  { id: "heroes", title: "Heroes", description: "Command units, abilities, auras, and skill trees." },
+  { id: "heroes", title: "Heroes", description: "Optional opt-in hero roster spawning at the core; later versions add movement, durability, an ability, skill tree, aura, and explicit dynamic-navigation blocking." },
   { id: "logistics", title: "Logistics", description: "Power grids, inventories, ammunition, and production." },
   { id: "director", title: "AI Director", description: "Deterministic adaptation and generative Studio hooks." },
   { id: "scriptingDx", title: "TowerScript DX", description: "Visual graphs, structured traces, and step debugging." },
   { id: "multiplayer", title: "Multiplayer", description: "Deterministic matches, replay, and local transport." }
 ];
+const HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4, 5, 6, 7]);
+const LOGISTICS_SUPPORTED_MODULE_SCHEMA_VERSIONS = Object.freeze([1, 2, 3]);
 const REACTION_RECIPE_IDS = new Set(["elemental_shatter", "wet_chain_shock", "poison_combustion"]);
 const ELEVATION_RECIPE_IDS = new Set([
   "basic_authored_elevation",
@@ -689,6 +691,8 @@ function mechanicsSelectedProfile() {
 }
 
 function normalizeMechanicsDraft(profile) {
+  if (MechanicsUI.selectedModuleId === "logistics") return normalizeLogisticsMechanicsDraft(profile);
+  if (MechanicsUI.selectedModuleId === "heroes") return normalizeHeroesMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "roguelite") return normalizeRogueliteMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "terraforming") {
     const moduleSchemaVersion = mechanicsProjectModuleVersion();
@@ -739,6 +743,11 @@ function normalizeMechanicsDraft(profile) {
       : {};
   }
   return draft;
+}
+
+function normalizeLogisticsMechanicsDraft(profile) {
+  const source = profile ?? { power: null };
+  return deep(source);
 }
 
 function normalizeRogueliteMechanicsDraft(profile) {
@@ -835,6 +844,13 @@ function normalizePhysicsMechanicsDraft(profile) {
   if (fallImmuneEnemyTypeIds.length) draft.fallImmuneEnemyTypeIds = fallImmuneEnemyTypeIds;
   if (fallHazardTerrainTags.length) draft.fallHazardTerrainTags = fallHazardTerrainTags;
   return draft;
+}
+
+function normalizeHeroesMechanicsDraft(profile) {
+  const source = profile && typeof profile === "object" && !Array.isArray(profile) ? profile : {};
+  // Supported authored profiles stay exact until the shared preview validator accepts them.
+  // Defaults belong to explicit recipes and add-button actions, never to load-time repair.
+  return deep(source);
 }
 
 function normalizeElevationLineOfSightDraft(profile) {
@@ -990,6 +1006,15 @@ function mechanicsRogueliteDraftLimits() {
   return source && typeof source === "object" && !Array.isArray(source) ? source : {};
 }
 
+function mechanicsHeroesAuthoringLimits() {
+  const source = MechanicsUI.capabilities?.heroes?.authoring?.limits;
+  return {
+    definitions: Number.isSafeInteger(source?.definitions) ? source.definitions : 32,
+    idUtf8Bytes: Number.isSafeInteger(source?.idUtf8Bytes) ? source.idUtf8Bytes : 128,
+    labelUtf8Bytes: Number.isSafeInteger(source?.labelUtf8Bytes) ? source.labelUtf8Bytes : 128
+  };
+}
+
 function mechanicsBoundedEntries(record, limit) {
   const entries = Object.entries(record ?? {});
   return Number.isInteger(limit) && limit >= 0 ? entries.slice(0, limit) : entries;
@@ -1008,6 +1033,28 @@ function mechanicsAuthoredMatrixEntryCount() {
 }
 
 function mechanicsEffectiveModuleSchemaVersion() {
+  if (MechanicsUI.selectedModuleId === "heroes") {
+    const authoredVersion = Math.max(
+      mechanicsProjectModuleVersion(),
+      Number.isInteger(MechanicsUI.moduleSchemaVersion) ? MechanicsUI.moduleSchemaVersion : 1
+    );
+    const hasDurability = Object.values(MechanicsUI.draft?.definitions ?? {})
+      .some((definition) => definition?.durability !== undefined);
+    const hasActiveAbility = Object.values(MechanicsUI.draft?.definitions ?? {})
+      .some((definition) => definition?.mana !== undefined || definition?.activeAbility !== undefined);
+    const hasSkillTree = Object.values(MechanicsUI.draft?.definitions ?? {})
+      .some((definition) => definition?.skillTree !== undefined);
+    const hasPassiveAura = Object.values(MechanicsUI.draft?.definitions ?? {})
+      .some((definition) => definition?.passiveAura !== undefined);
+    const hasBlocking = Object.values(MechanicsUI.draft?.definitions ?? {})
+      .some((definition) => definition?.blocking !== undefined);
+    if (hasBlocking) return Math.max(authoredVersion, 7);
+    if (hasPassiveAura) return Math.max(authoredVersion, 6);
+    if (hasSkillTree) return Math.max(authoredVersion, 5);
+    if (hasActiveAbility) return Math.max(authoredVersion, 4);
+    if (hasDurability) return Math.max(authoredVersion, 3);
+    return MechanicsUI.draft?.movementProfiles ? Math.max(authoredVersion, 2) : authoredVersion;
+  }
   if (MechanicsUI.selectedModuleId === "roguelite") {
     const authoredVersion = Math.max(
       mechanicsProjectModuleVersion(),
@@ -1017,6 +1064,16 @@ function mechanicsEffectiveModuleSchemaVersion() {
       return Math.max(authoredVersion, 3);
     }
     return MechanicsUI.draft?.artifacts
+      ? Math.max(authoredVersion, 2)
+      : authoredVersion;
+  }
+  if (MechanicsUI.selectedModuleId === "logistics") {
+    const authoredVersion = Math.max(
+      mechanicsProjectModuleVersion(),
+      Number.isInteger(MechanicsUI.moduleSchemaVersion) ? MechanicsUI.moduleSchemaVersion : 1
+    );
+    if (Object.hasOwn(MechanicsUI.draft ?? {}, "supply")) return Math.max(authoredVersion, 3);
+    return Object.hasOwn(MechanicsUI.draft ?? {}, "ammunition")
       ? Math.max(authoredVersion, 2)
       : authoredVersion;
   }
@@ -1076,6 +1133,10 @@ function initializeMechanicsDraft() {
             ? "basic_displacement_physics"
             : MechanicsUI.selectedModuleId === "terraforming"
               ? "tagged_flood"
+              : MechanicsUI.selectedModuleId === "heroes"
+                ? "basic_commander_hero"
+              : MechanicsUI.selectedModuleId === "logistics"
+                ? "basic_power_grid"
               : MechanicsUI.selectedModuleId === "roguelite" ? "basic_elemental_synergy" : "basic_regenerating_shields");
   MechanicsUI.draft = normalizeMechanicsDraft(selectedProfile ?? mechanicsRecipeProfile());
   if (MechanicsUI.selectedModuleId === "roguelite") initializeRogueliteTowerTags();
@@ -1141,11 +1202,15 @@ function loadMechanicsProfile() {
   MechanicsUI.profileId = profileId;
   MechanicsUI.loadedProfileId = profileId;
   const authoredVersion = MechanicsUI.capabilities?.[MechanicsUI.selectedModuleId]?.moduleSchemaVersion;
-  MechanicsUI.moduleSchemaVersion = [1, 2, 3, 4].includes(authoredVersion)
+  MechanicsUI.moduleSchemaVersion = [1, 2, 3, 4, 5, 6, 7].includes(authoredVersion)
     ? authoredVersion
     : mechanicsProjectModuleVersion();
   MechanicsUI.draft = MechanicsUI.selectedModuleId === "navigation"
     ? normalizeNavigationMechanicsDraft(profile)
+    : MechanicsUI.selectedModuleId === "heroes"
+      ? normalizeHeroesMechanicsDraft(profile)
+      : MechanicsUI.selectedModuleId === "logistics"
+        ? normalizeLogisticsMechanicsDraft(profile)
     : normalizeMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "roguelite") initializeRogueliteTowerTags();
   MechanicsUI.preview = null;
@@ -1166,6 +1231,12 @@ function nextMechanicsProfileId(suggestedId) {
 
 async function newMechanicsProfile() {
   try {
+    if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 6) {
+      throw new Error("Future heroes schemaVersion 7+ modules are read-only in this Studio version.");
+    }
+    if (MechanicsUI.selectedModuleId === "logistics" && mechanicsProjectModuleVersion() > 3) {
+      throw new Error("Future Logistics schemaVersion 4+ modules are preserved losslessly and read-only.");
+    }
     await loadMechanicsRecipe();
     const selectedRecipeId = $("mechanics-recipe-select")?.value || MechanicsUI.recipeId;
     const recipe = MechanicsUI.recipes.find((candidate) => candidate.id === selectedRecipeId) ?? MechanicsUI.recipe;
@@ -1175,6 +1246,10 @@ async function newMechanicsProfile() {
     }
     if (MechanicsUI.selectedModuleId === "roguelite") {
       await materializeRogueliteRecipeDraft(recipe);
+      return;
+    }
+    if (MechanicsUI.selectedModuleId === "logistics") {
+      await materializeLogisticsRecipeDraft(recipe);
       return;
     }
     if (!recipe?.entity?.profile) throw new Error("The selected mechanics recipe is unavailable.");
@@ -1198,6 +1273,83 @@ async function newMechanicsProfile() {
     MechanicsUI.error = error;
     renderMechanicsPreviewResult();
   }
+}
+
+async function materializeLogisticsRecipeDraft(recipe) {
+  if (mechanicsProjectModuleVersion() > 3) {
+    throw new Error("Future Logistics schemaVersion 4+ modules are preserved losslessly and read-only.");
+  }
+  if (!["basic_power_grid", "basic_local_ammunition", "basic_factory_ammunition_supply"].includes(recipe?.id)) {
+    throw new Error("The selected Logistics recipe is unavailable.");
+  }
+  const generatorTowerTypeId = $("mechanics-logistics-recipe-generator")?.value ?? "";
+  const relayTowerTypeId = $("mechanics-logistics-recipe-relay")?.value ?? "";
+  const consumerTowerTypeId = $("mechanics-logistics-recipe-consumer")?.value ?? "";
+  const producerTowerTypeId = $("mechanics-logistics-recipe-producer")?.value ?? "";
+  const storageTowerTypeId = $("mechanics-logistics-recipe-storage")?.value ?? "";
+  const materialized = await apiPost("/api/mechanics/recipe", {
+    recipeId: recipe.id,
+    parameters: recipe.id === "basic_factory_ammunition_supply"
+      ? {
+          producerTowerTypeId,
+          storageTowerTypeId,
+          consumerTowerTypeId,
+          ammoTypeId: $("mechanics-logistics-recipe-ammo-type-id")?.value ?? "",
+          ammoLabel: $("mechanics-logistics-recipe-ammo-label")?.value ?? "",
+          productionRecipeId: $("mechanics-logistics-recipe-production-id")?.value ?? "",
+          productionRecipeLabel: $("mechanics-logistics-recipe-production-label")?.value ?? "",
+          consumerCapacity: Number($("mechanics-logistics-recipe-capacity")?.value),
+          consumerStartingAmount: Number($("mechanics-logistics-recipe-starting-amount")?.value),
+          consumptionPerActivation: Number($("mechanics-logistics-recipe-consumption")?.value),
+          outputAmount: Number($("mechanics-logistics-recipe-output-amount")?.value),
+          productionInterval: Number($("mechanics-logistics-recipe-production-interval")?.value),
+          producerCapacity: Number($("mechanics-logistics-recipe-producer-capacity")?.value),
+          producerStartingAmount: Number($("mechanics-logistics-recipe-producer-starting")?.value),
+          producerTransferRadius: Number($("mechanics-logistics-recipe-producer-radius")?.value),
+          producerTransferAmount: Number($("mechanics-logistics-recipe-producer-amount")?.value),
+          producerTransferInterval: Number($("mechanics-logistics-recipe-producer-interval")?.value),
+          storageCapacity: Number($("mechanics-logistics-recipe-storage-capacity")?.value),
+          storageStartingAmount: Number($("mechanics-logistics-recipe-storage-starting")?.value),
+          storageTransferRadius: Number($("mechanics-logistics-recipe-storage-radius")?.value),
+          storageTransferAmount: Number($("mechanics-logistics-recipe-storage-amount")?.value),
+          storageTransferInterval: Number($("mechanics-logistics-recipe-storage-interval")?.value)
+        }
+      : recipe.id === "basic_local_ammunition"
+      ? {
+          consumerTowerTypeId,
+          ammoTypeId: $("mechanics-logistics-recipe-ammo-type-id")?.value ?? "",
+          ammoLabel: $("mechanics-logistics-recipe-ammo-label")?.value ?? "",
+          capacity: Number($("mechanics-logistics-recipe-capacity")?.value),
+          startingAmount: Number($("mechanics-logistics-recipe-starting-amount")?.value),
+          consumptionPerActivation: Number($("mechanics-logistics-recipe-consumption")?.value)
+        }
+      : { generatorTowerTypeId, relayTowerTypeId, consumerTowerTypeId }
+  });
+  const candidate = materialized?.recipe ?? materialized;
+  if (candidate?.entity?.moduleId !== "logistics"
+    || !LOGISTICS_SUPPORTED_MODULE_SCHEMA_VERSIONS.includes(candidate.entity.moduleSchemaVersion)
+    || !candidate.entity.profile) throw new Error("The shared Logistics recipe returned an invalid candidate.");
+  const targetVersion = Math.max(mechanicsProjectModuleVersion(), candidate.entity.moduleSchemaVersion);
+  let profile = candidate.entity.profile;
+  if (targetVersion === 2 && candidate.entity.moduleSchemaVersion === 1) {
+    profile = { power: deep(candidate.entity.profile.power), ammunition: null };
+  } else if (targetVersion === 3 && candidate.entity.moduleSchemaVersion < 3) {
+    profile = {
+      power: deep(candidate.entity.profile.power),
+      ammunition: candidate.entity.moduleSchemaVersion >= 2 ? deep(candidate.entity.profile.ammunition) : null,
+      supply: null
+    };
+  }
+  MechanicsUI.recipe = candidate;
+  MechanicsUI.recipeId = candidate.id;
+  MechanicsUI.profileId = nextMechanicsProfileId(candidate.entity.profileId || candidate.id);
+  MechanicsUI.loadedProfileId = null;
+  MechanicsUI.draft = normalizeLogisticsMechanicsDraft(profile);
+  MechanicsUI.moduleSchemaVersion = targetVersion;
+  MechanicsUI.preview = null;
+  MechanicsUI.error = null;
+  renderMechanicsHub();
+  $("mechanics-profile-id")?.focus();
 }
 
 async function materializeRogueliteRecipeDraft(recipe) {
@@ -2727,6 +2879,1240 @@ function renderPhysicsMechanicsEditor() {
   }
 }
 
+function mechanicsHeroBlockingNavigationState(movementProfileIds) {
+  const navigationView = MechanicsUI.capabilities?.navigation;
+  const profile = navigationView?.selectedProfile;
+  const authoredIds = Object.keys(profile?.movementProfiles ?? {});
+  const missingIds = movementProfileIds.filter((movementProfileId) => !authoredIds.includes(movementProfileId));
+  return {
+    ready: navigationView?.enabled === true
+      && navigationView?.moduleSchemaVersion === 1
+      && profile?.mode === "dynamic_flow"
+      && missingIds.length === 0,
+    missingIds
+  };
+}
+
+function renderLogisticsMechanicsEditor() {
+  if (MechanicsUI.selectedModuleId !== "logistics" || !MechanicsUI.draft) return;
+  const readOnly = mechanicsProjectModuleVersion() > 3;
+  const futureNotice = $("mechanics-logistics-read-only");
+  futureNotice?.classList.toggle("hidden", !readOnly);
+  if (futureNotice) futureNotice.textContent = readOnly
+    ? "Future Logistics schemaVersion 4+ is preserved losslessly and is read-only in this Studio."
+    : "";
+  const powerEnabled = $("mechanics-logistics-power-enabled");
+  const power = MechanicsUI.draft.power === null ? null : MechanicsUI.draft.power;
+  powerEnabled.checked = power !== null;
+  powerEnabled.disabled = readOnly;
+  powerEnabled.onchange = () => {
+    MechanicsUI.draft.power = powerEnabled.checked
+      ? { generators: {}, relays: {}, consumers: {} }
+      : null;
+    MechanicsUI.preview = null;
+    renderMechanicsHub();
+  };
+
+  const definitionsPerKind = 4096;
+  const amountMaximum = 1000000000000;
+  const radiusMaximum = 64;
+  const priorityMaximum = 1000000;
+  const roleConfig = {
+    generators: {
+      singular: "generator",
+      containerId: "mechanics-logistics-generator-rows",
+      fields: [["output", "Output", amountMaximum], ["linkRadius", "Link radius", radiusMaximum], ["coverageRadius", "Coverage radius", radiusMaximum]]
+    },
+    relays: {
+      singular: "relay",
+      containerId: "mechanics-logistics-relay-rows",
+      fields: [["linkRadius", "Link radius", radiusMaximum], ["coverageRadius", "Coverage radius", radiusMaximum]]
+    },
+    consumers: {
+      singular: "consumer",
+      containerId: "mechanics-logistics-consumer-rows",
+      fields: [["demand", "Demand", amountMaximum], ["priority", "Brownout priority", priorityMaximum]]
+    }
+  };
+  for (const [role, config] of Object.entries(roleConfig)) {
+    const container = $(config.containerId);
+    if (!container) continue;
+    container.replaceChildren();
+    const definitions = power?.[role] ?? {};
+    for (const [towerTypeId, definition] of Object.entries(definitions).slice(0, definitionsPerKind)) {
+      const row = document.createElement("div");
+      row.className = "mechanics-definition-row";
+      row.dataset.logisticsRole = role;
+      row.setAttribute("data-logistics-role", role);
+      const towerLabel = document.createElement("label");
+      towerLabel.textContent = "Tower type ID";
+      const towerInput = document.createElement("input");
+      towerInput.type = "text";
+      towerInput.value = towerTypeId;
+      towerInput.disabled = readOnly;
+      towerInput.setAttribute("data-logistics-tower-type-id", "");
+      towerInput.onchange = (event) => {
+        const nextId = event.target.value.trim();
+        if (!nextId || nextId === towerTypeId || ownDataValue(definitions, nextId)) return;
+        const value = definitions[towerTypeId];
+        delete definitions[towerTypeId];
+        defineOwnDataValue(definitions, nextId, value);
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      };
+      towerLabel.append(towerInput);
+      row.append(towerLabel);
+      for (const [field, label, maximum] of config.fields) {
+        const fieldLabel = document.createElement("label");
+        fieldLabel.textContent = label;
+        const input = document.createElement("input");
+        input.type = "number";
+        input.value = String(definition?.[field] ?? "");
+        input.min = field === "output" || field === "demand" ? "0.000000000001" : "0";
+        input.max = String(maximum);
+        input.step = field === "output" || field === "demand" ? "any" : "1";
+        input.disabled = readOnly;
+        const fieldAttributes = {
+          output: "data-logistics-output",
+          linkRadius: "data-logistics-link-radius",
+          coverageRadius: "data-logistics-coverage-radius",
+          demand: "data-logistics-demand",
+          priority: "data-logistics-priority"
+        };
+        input.setAttribute(fieldAttributes[field], "");
+        input.oninput = (event) => {
+          definition[field] = Number(event.target.value);
+          MechanicsUI.preview = null;
+          renderMechanicsPreviewResult();
+        };
+        fieldLabel.append(input);
+        row.append(fieldLabel);
+      }
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "btn btn-danger";
+      remove.textContent = "Remove";
+      remove.disabled = readOnly;
+      remove.setAttribute("data-remove-logistics-role", config.singular);
+      remove.onclick = () => {
+        delete definitions[towerTypeId];
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      };
+      row.append(remove);
+      container.append(row);
+    }
+  }
+
+  const addRole = (role, defaultDefinition) => {
+    if (readOnly || !MechanicsUI.draft.power) return;
+    const definitions = MechanicsUI.draft.power[role];
+    if (Object.keys(definitions).length >= definitionsPerKind) return;
+    let suffix = Object.keys(definitions).length + 1;
+    let towerTypeId = `${role.slice(0, -1)}_${suffix}`;
+    while (ownDataValue(definitions, towerTypeId)) towerTypeId = `${role.slice(0, -1)}_${++suffix}`;
+    defineOwnDataValue(definitions, towerTypeId, deep(defaultDefinition));
+    MechanicsUI.preview = null;
+    renderMechanicsHub();
+  };
+  $("btn-mechanics-add-logistics-generator").onclick = () => addRole("generators", { output: 20, linkRadius: 4, coverageRadius: 3 });
+  $("btn-mechanics-add-logistics-relay").onclick = () => addRole("relays", { linkRadius: 5, coverageRadius: 4 });
+  $("btn-mechanics-add-logistics-consumer").onclick = () => addRole("consumers", { demand: 8, priority: 10 });
+  for (const id of [
+    "btn-mechanics-add-logistics-generator", "btn-mechanics-add-logistics-relay", "btn-mechanics-add-logistics-consumer"
+  ]) $(id).disabled = readOnly || power === null;
+
+  const ammunitionMaximum = 1000000000;
+  const ammunitionTypeMaximum = 256;
+  const towerInventoryMaximum = 4096;
+  const addAmmunition = $("btn-mechanics-add-ammunition");
+  const ammunitionEnabled = $("mechanics-logistics-ammunition-enabled");
+  const ammunition = Object.hasOwn(MechanicsUI.draft, "ammunition")
+    ? MechanicsUI.draft.ammunition
+    : undefined;
+  const ammunitionDisabled = ammunition === null;
+  if (addAmmunition) {
+    addAmmunition.hidden = MechanicsUI.moduleSchemaVersion >= 2 || ammunition !== undefined;
+    addAmmunition.disabled = readOnly || ammunition !== undefined;
+    addAmmunition.onclick = () => {
+      if (readOnly || ammunition !== undefined) return;
+      // The guarded CLI transaction promotes every authored v1 profile to exact v2; this draft
+      // supplies the selected profile's explicit opt-in ammunition section.
+      MechanicsUI.draft = {
+        power: Object.hasOwn(MechanicsUI.draft, "power") ? deep(MechanicsUI.draft.power) : null,
+        ammunition: { types: {}, towerInventories: {} }
+      };
+      MechanicsUI.moduleSchemaVersion = 2;
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    };
+  }
+  if (ammunitionEnabled) {
+    ammunitionEnabled.checked = ammunition !== undefined && !ammunitionDisabled;
+    ammunitionEnabled.disabled = readOnly || ammunition === undefined;
+    ammunitionEnabled.onchange = () => {
+      if (readOnly || ammunition === undefined) return;
+      if (ammunitionEnabled.checked) {
+        MechanicsUI.draft.ammunition = { types: {}, towerInventories: {} };
+      } else {
+        MechanicsUI.draft.ammunition = null;
+      }
+      MechanicsUI.moduleSchemaVersion = 2;
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    };
+  }
+
+  const ammunitionTypes = ammunition?.types ?? {};
+  const typeRows = $("mechanics-logistics-ammunition-type-rows");
+  typeRows?.replaceChildren();
+  for (const [ammoTypeId, definition] of Object.entries(ammunitionTypes).slice(0, ammunitionTypeMaximum)) {
+    let currentAmmoTypeId = ammoTypeId;
+    const row = document.createElement("div");
+    row.className = "mechanics-definition-row";
+    const idLabel = document.createElement("label");
+    idLabel.textContent = "Ammunition type ID";
+    const idInput = document.createElement("input");
+    idInput.value = ammoTypeId;
+    idInput.disabled = readOnly;
+    idInput.setAttribute("data-logistics-ammo-type-id", "");
+    idInput.oninput = (event) => {
+      const nextId = event.target.value.trim();
+      if (!nextId || nextId === currentAmmoTypeId || ownDataValue(ammunitionTypes, nextId)) return;
+      const value = ammunitionTypes[currentAmmoTypeId];
+      delete ammunitionTypes[currentAmmoTypeId];
+      defineOwnDataValue(ammunitionTypes, nextId, value);
+      for (const inventory of Object.values(ammunition?.towerInventories ?? {})) {
+        if (inventory?.ammoTypeId === currentAmmoTypeId) inventory.ammoTypeId = nextId;
+      }
+      currentAmmoTypeId = nextId;
+      MechanicsUI.preview = null;
+      renderMechanicsPreviewResult();
+    };
+    idLabel.append(idInput);
+    row.append(idLabel);
+    const label = document.createElement("label");
+    label.textContent = "Label";
+    const labelInput = document.createElement("input");
+    labelInput.value = definition?.label ?? "";
+    labelInput.disabled = readOnly;
+    labelInput.setAttribute("data-logistics-ammo-label", "");
+    labelInput.oninput = (event) => {
+      definition.label = event.target.value;
+      MechanicsUI.preview = null;
+      renderMechanicsPreviewResult();
+    };
+    label.append(labelInput);
+    row.append(label);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "btn btn-danger";
+    remove.textContent = "Remove";
+    remove.disabled = readOnly;
+    remove.setAttribute("data-remove-logistics-ammo-type", "");
+    remove.onclick = () => {
+      delete ammunitionTypes[currentAmmoTypeId];
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    };
+    row.append(remove);
+    typeRows?.append(row);
+  }
+
+  const towerInventories = ammunition?.towerInventories ?? {};
+  const inventoryRows = $("mechanics-logistics-tower-inventory-rows");
+  inventoryRows?.replaceChildren();
+  for (const [towerTypeId, definition] of Object.entries(towerInventories).slice(0, towerInventoryMaximum)) {
+    let currentTowerTypeId = towerTypeId;
+    const row = document.createElement("div");
+    row.className = "mechanics-definition-row";
+    const textFields = [
+      ["towerTypeId", "Tower type ID", towerTypeId, "data-logistics-inventory-tower-type-id"],
+      ["ammoTypeId", "Ammunition type ID", definition?.ammoTypeId ?? "", "data-logistics-inventory-ammo-type-id"]
+    ];
+    for (const [field, fieldLabelText, value, attribute] of textFields) {
+      const fieldLabel = document.createElement("label");
+      fieldLabel.textContent = fieldLabelText;
+      const input = document.createElement("input");
+      input.value = value;
+      input.disabled = readOnly;
+      input.setAttribute(attribute, "");
+      input.oninput = (event) => {
+        const nextValue = event.target.value.trim();
+        if (!nextValue) return;
+        if (field === "towerTypeId") {
+          if (nextValue === currentTowerTypeId || ownDataValue(towerInventories, nextValue)) return;
+          const inventory = towerInventories[currentTowerTypeId];
+          delete towerInventories[currentTowerTypeId];
+          defineOwnDataValue(towerInventories, nextValue, inventory);
+          currentTowerTypeId = nextValue;
+          renderMechanicsPreviewResult();
+        } else {
+          definition.ammoTypeId = nextValue;
+          renderMechanicsPreviewResult();
+        }
+        MechanicsUI.preview = null;
+      };
+      fieldLabel.append(input);
+      row.append(fieldLabel);
+    }
+    for (const [field, fieldLabelText, attribute] of [
+      ["capacity", "Capacity", "data-logistics-inventory-capacity"],
+      ["startingAmount", "Starting amount", "data-logistics-inventory-starting-amount"],
+      ["consumptionPerActivation", "Consumption per activation", "data-logistics-inventory-consumption"]
+    ]) {
+      const fieldLabel = document.createElement("label");
+      fieldLabel.textContent = fieldLabelText;
+      const input = document.createElement("input");
+      input.type = "number";
+      input.min = field === "startingAmount" ? "0" : "1";
+      input.max = String(ammunitionMaximum);
+      input.step = "1";
+      input.value = String(definition?.[field] ?? "");
+      input.disabled = readOnly;
+      input.setAttribute(attribute, "");
+      input.oninput = (event) => {
+        definition[field] = Number(event.target.value);
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      };
+      fieldLabel.append(input);
+      row.append(fieldLabel);
+    }
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "btn btn-danger";
+    remove.textContent = "Remove";
+    remove.disabled = readOnly;
+    remove.setAttribute("data-remove-logistics-tower-inventory", "");
+    remove.onclick = () => {
+      delete towerInventories[currentTowerTypeId];
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    };
+    row.append(remove);
+    inventoryRows?.append(row);
+  }
+
+  const addType = $("btn-mechanics-add-ammunition-type");
+  if (addType) {
+    addType.disabled = readOnly || !ammunition || Object.keys(ammunitionTypes).length >= ammunitionTypeMaximum;
+    addType.onclick = () => {
+      if (!ammunition || Object.keys(ammunitionTypes).length >= ammunitionTypeMaximum) return;
+      let suffix = Object.keys(ammunitionTypes).length + 1;
+      let ammoTypeId = `ammo_${suffix}`;
+      while (ownDataValue(ammunitionTypes, ammoTypeId)) ammoTypeId = `ammo_${++suffix}`;
+      defineOwnDataValue(ammunitionTypes, ammoTypeId, { label: `Ammunition ${suffix}` });
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    };
+  }
+  const addInventory = $("btn-mechanics-add-tower-inventory");
+  if (addInventory) {
+    addInventory.disabled = readOnly || !ammunition
+      || Object.keys(towerInventories).length >= towerInventoryMaximum;
+    addInventory.onclick = () => {
+      if (!ammunition || Object.keys(towerInventories).length >= towerInventoryMaximum) return;
+      let suffix = Object.keys(towerInventories).length + 1;
+      let towerTypeId = `tower_${suffix}`;
+      while (ownDataValue(towerInventories, towerTypeId)) towerTypeId = `tower_${++suffix}`;
+      defineOwnDataValue(towerInventories, towerTypeId, {
+        ammoTypeId: Object.keys(ammunitionTypes).sort()[0] ?? "ammo_1",
+        capacity: 30,
+        startingAmount: 12,
+        consumptionPerActivation: 1
+      });
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    };
+  }
+
+  const supplySourceMaximum = 4096;
+  const productionRecipeMaximum = 256;
+  const supplyRadiusMaximum = 64;
+  const supplyMinimumInterval = 0.2;
+  const supplyMaximumInterval = 1000000;
+  const addSupply = $("btn-mechanics-add-supply");
+  const supplyEnabled = $("mechanics-logistics-supply-enabled");
+  const supply = Object.hasOwn(MechanicsUI.draft, "supply") ? MechanicsUI.draft.supply : undefined;
+  const supplyDisabled = supply === null;
+  if (addSupply) {
+    addSupply.hidden = MechanicsUI.moduleSchemaVersion >= 3 || supply !== undefined;
+    addSupply.disabled = readOnly || supply !== undefined || !ammunition;
+    addSupply.onclick = () => {
+      if (readOnly || supply !== undefined || !ammunition) return;
+      // Explicit promotion: the guarded CLI write adds supply:null to all other v2 profiles.
+      MechanicsUI.draft = {
+        power: Object.hasOwn(MechanicsUI.draft, "power") ? deep(MechanicsUI.draft.power) : null,
+        ammunition: deep(ammunition),
+        supply: { productionRecipes: {}, producers: {}, storages: {} }
+      };
+      MechanicsUI.moduleSchemaVersion = 3;
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    };
+  }
+  if (supplyEnabled) {
+    supplyEnabled.checked = supply !== undefined && !supplyDisabled;
+    supplyEnabled.disabled = readOnly || supply === undefined || !ammunition;
+    supplyEnabled.onchange = () => {
+      if (readOnly || supply === undefined || !ammunition) return;
+      MechanicsUI.draft.supply = supplyEnabled.checked
+        ? { productionRecipes: {}, producers: {}, storages: {} }
+        : null;
+      MechanicsUI.moduleSchemaVersion = 3;
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    };
+  }
+
+  const productionRecipes = supply?.productionRecipes ?? {};
+  const productionRows = $("mechanics-logistics-production-recipe-rows");
+  productionRows?.replaceChildren();
+  for (const [recipeId, definition] of Object.entries(productionRecipes).slice(0, productionRecipeMaximum)) {
+    let currentRecipeId = recipeId;
+    const row = document.createElement("div");
+    row.className = "mechanics-definition-row";
+    const fields = [
+      ["id", "Recipe ID", recipeId, "data-logistics-production-recipe-id", "text"],
+      ["label", "Label", definition?.label ?? "", "data-logistics-production-recipe-label", "text"],
+      ["ammoTypeId", "Ammunition type ID", definition?.ammoTypeId ?? "", "data-logistics-production-ammo-type-id", "text"],
+      ["outputAmount", "Output amount", definition?.outputAmount ?? "", "data-logistics-production-output-amount", "number"],
+      ["interval", "Production interval", definition?.interval ?? "", "data-logistics-production-interval", "number"]
+    ];
+    for (const [field, text, value, attribute, type] of fields) {
+      const label = document.createElement("label");
+      label.textContent = text;
+      const input = document.createElement("input");
+      input.type = type;
+      input.value = String(value);
+      input.disabled = readOnly;
+      input.setAttribute(attribute, "");
+      if (type === "number") {
+        input.min = field === "interval" ? String(supplyMinimumInterval) : "1";
+        input.max = field === "interval" ? String(supplyMaximumInterval) : String(ammunitionMaximum);
+        input.step = field === "interval" ? "any" : "1";
+      }
+      input.oninput = (event) => {
+        if (field === "id") {
+          const nextId = event.target.value.trim();
+          if (!nextId || nextId === currentRecipeId || ownDataValue(productionRecipes, nextId)) return;
+          const valueToMove = productionRecipes[currentRecipeId];
+          delete productionRecipes[currentRecipeId];
+          defineOwnDataValue(productionRecipes, nextId, valueToMove);
+          for (const producer of Object.values(supply?.producers ?? {})) {
+            if (producer?.recipeId === currentRecipeId) producer.recipeId = nextId;
+          }
+          currentRecipeId = nextId;
+        } else {
+          definition[field] = type === "number" ? Number(event.target.value) : event.target.value;
+        }
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      };
+      label.append(input);
+      row.append(label);
+    }
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "btn btn-danger";
+    remove.textContent = "Remove";
+    remove.disabled = readOnly;
+    remove.setAttribute("data-remove-logistics-production-recipe", "");
+    remove.onclick = () => {
+      delete productionRecipes[currentRecipeId];
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    };
+    row.append(remove);
+    productionRows?.append(row);
+  }
+
+  const renderSupplySources = (role, definitions) => {
+    const container = $(`mechanics-logistics-${role}-rows`);
+    container?.replaceChildren();
+    const attributes = role === "producer" ? {
+      towerTypeId: "data-logistics-producer-tower-type-id",
+      capacity: "data-logistics-producer-capacity",
+      startingAmount: "data-logistics-producer-starting-amount",
+      transferRadius: "data-logistics-producer-transfer-radius",
+      transferAmount: "data-logistics-producer-transfer-amount",
+      transferInterval: "data-logistics-producer-transfer-interval",
+      remove: "data-remove-logistics-producer"
+    } : {
+      towerTypeId: "data-logistics-storage-tower-type-id",
+      capacity: "data-logistics-storage-capacity",
+      startingAmount: "data-logistics-storage-starting-amount",
+      transferRadius: "data-logistics-storage-transfer-radius",
+      transferAmount: "data-logistics-storage-transfer-amount",
+      transferInterval: "data-logistics-storage-transfer-interval",
+      remove: "data-remove-logistics-storage"
+    };
+    for (const [towerTypeId, definition] of Object.entries(definitions).slice(0, supplySourceMaximum)) {
+      let currentTowerTypeId = towerTypeId;
+      const row = document.createElement("div");
+      row.className = "mechanics-definition-row";
+      const identifierField = role === "producer" ? "recipeId" : "ammoTypeId";
+      const identifierAttribute = role === "producer"
+        ? "data-logistics-producer-recipe-id"
+        : "data-logistics-storage-ammo-type-id";
+      const fields = [
+        ["towerTypeId", "Tower type ID", towerTypeId, attributes.towerTypeId, "text"],
+        [identifierField, role === "producer" ? "Recipe ID" : "Ammunition type ID",
+          definition?.[identifierField] ?? "", identifierAttribute, "text"],
+        ["capacity", "Capacity", definition?.capacity ?? "", attributes.capacity, "number"],
+        ["startingAmount", "Starting amount", definition?.startingAmount ?? "", attributes.startingAmount, "number"],
+        ["transferRadius", "Transfer radius", definition?.transferRadius ?? "", attributes.transferRadius, "number"],
+        ["transferAmount", "Transfer amount", definition?.transferAmount ?? "", attributes.transferAmount, "number"],
+        ["transferInterval", "Transfer interval", definition?.transferInterval ?? "", attributes.transferInterval, "number"]
+      ];
+      for (const [field, text, value, attribute, type] of fields) {
+        const label = document.createElement("label");
+        label.textContent = text;
+        const input = document.createElement("input");
+        input.type = type;
+        input.value = String(value);
+        input.disabled = readOnly;
+        input.setAttribute(attribute, "");
+        if (type === "number") {
+          input.min = field === "startingAmount" || field === "transferRadius" ? "0"
+            : field === "transferInterval" ? String(supplyMinimumInterval) : "1";
+          input.max = field === "transferRadius" ? String(supplyRadiusMaximum)
+            : field === "transferInterval" ? String(supplyMaximumInterval) : String(ammunitionMaximum);
+          input.step = field === "transferInterval" ? "any" : "1";
+        }
+        input.oninput = (event) => {
+          if (field === "towerTypeId") {
+            const nextId = event.target.value.trim();
+            if (!nextId || nextId === currentTowerTypeId || ownDataValue(definitions, nextId)) return;
+            const valueToMove = definitions[currentTowerTypeId];
+            delete definitions[currentTowerTypeId];
+            defineOwnDataValue(definitions, nextId, valueToMove);
+            currentTowerTypeId = nextId;
+          } else {
+            definition[field] = type === "number" ? Number(event.target.value) : event.target.value;
+          }
+          MechanicsUI.preview = null;
+          renderMechanicsPreviewResult();
+        };
+        label.append(input);
+        row.append(label);
+      }
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "btn btn-danger";
+      remove.textContent = "Remove";
+      remove.disabled = readOnly;
+      remove.setAttribute(attributes.remove, "");
+      remove.onclick = () => {
+        delete definitions[currentTowerTypeId];
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      };
+      row.append(remove);
+      container?.append(row);
+    }
+  };
+  renderSupplySources("producer", supply?.producers ?? {});
+  renderSupplySources("storage", supply?.storages ?? {});
+
+  const addProductionRecipe = $("btn-mechanics-add-production-recipe");
+  if (addProductionRecipe) {
+    addProductionRecipe.disabled = readOnly || !supply
+      || Object.keys(productionRecipes).length >= productionRecipeMaximum;
+    addProductionRecipe.onclick = () => {
+      if (!supply || Object.keys(productionRecipes).length >= productionRecipeMaximum) return;
+      let suffix = Object.keys(productionRecipes).length + 1;
+      let recipeId = `recipe_${suffix}`;
+      while (ownDataValue(productionRecipes, recipeId)) recipeId = `recipe_${++suffix}`;
+      defineOwnDataValue(productionRecipes, recipeId, {
+        label: `Production ${suffix}`, ammoTypeId: Object.keys(ammunitionTypes).sort()[0] ?? "ammo_1",
+        outputAmount: 1, interval: 1
+      });
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    };
+  }
+  const addSupplySource = (role) => {
+    if (!supply) return;
+    const definitions = role === "producer" ? supply.producers : supply.storages;
+    if (Object.keys(definitions).length >= supplySourceMaximum) return;
+    let suffix = Object.keys(definitions).length + 1;
+    let towerTypeId = `${role}_${suffix}`;
+    while (ownDataValue(definitions, towerTypeId)) towerTypeId = `${role}_${++suffix}`;
+    defineOwnDataValue(definitions, towerTypeId, role === "producer" ? {
+      recipeId: Object.keys(productionRecipes).sort()[0] ?? "recipe_1", capacity: 30,
+      startingAmount: 0, transferRadius: 4, transferAmount: 4, transferInterval: 0.4
+    } : {
+      ammoTypeId: Object.keys(ammunitionTypes).sort()[0] ?? "ammo_1", capacity: 60,
+      startingAmount: 0, transferRadius: 4, transferAmount: 4, transferInterval: 0.4
+    });
+    MechanicsUI.preview = null;
+    renderMechanicsHub();
+  };
+  for (const [id, role] of [["btn-mechanics-add-producer", "producer"], ["btn-mechanics-add-storage", "storage"]]) {
+    const button = $(id);
+    if (!button) continue;
+    button.disabled = readOnly || !supply
+      || Object.keys(role === "producer" ? supply.producers : supply.storages).length >= supplySourceMaximum;
+    button.onclick = () => addSupplySource(role);
+  }
+
+  const towerIds = Object.keys(S.project?.towers ?? {}).sort();
+  const fireCapable = towerIds.filter((towerId) => [
+    "single", "pulse", "sniper", "antiair", "splash", "pipeline"
+  ].includes(S.project.towers[towerId]?.attack?.kind));
+  for (const [id, choices] of [
+    ["mechanics-logistics-recipe-generator", towerIds],
+    ["mechanics-logistics-recipe-relay", towerIds],
+    ["mechanics-logistics-recipe-producer", towerIds],
+    ["mechanics-logistics-recipe-storage", towerIds],
+    ["mechanics-logistics-recipe-consumer", fireCapable]
+  ]) {
+    const select = $(id);
+    const selected = select.value;
+    select.innerHTML = choices.map((towerId) => `<option value="${esc(towerId)}">${esc(S.project.towers[towerId]?.label ?? towerId)}</option>`).join("");
+    if (choices.includes(selected)) select.value = selected;
+    select.disabled = readOnly || choices.length === 0;
+  }
+  for (const id of [
+    "mechanics-logistics-recipe-ammo-type-id", "mechanics-logistics-recipe-ammo-label",
+    "mechanics-logistics-recipe-capacity", "mechanics-logistics-recipe-starting-amount",
+    "mechanics-logistics-recipe-consumption", "mechanics-logistics-recipe-production-id",
+    "mechanics-logistics-recipe-production-label", "mechanics-logistics-recipe-output-amount",
+    "mechanics-logistics-recipe-production-interval", "mechanics-logistics-recipe-producer-capacity",
+    "mechanics-logistics-recipe-producer-starting", "mechanics-logistics-recipe-producer-radius",
+    "mechanics-logistics-recipe-producer-amount", "mechanics-logistics-recipe-producer-interval",
+    "mechanics-logistics-recipe-storage-capacity", "mechanics-logistics-recipe-storage-starting",
+    "mechanics-logistics-recipe-storage-radius", "mechanics-logistics-recipe-storage-amount",
+    "mechanics-logistics-recipe-storage-interval"
+  ]) if ($(id)) $(id).disabled = readOnly;
+}
+
+function renderHeroesMechanicsEditor() {
+  if (MechanicsUI.selectedModuleId !== "heroes" || !MechanicsUI.draft) return;
+  const limits = mechanicsHeroesAuthoringLimits();
+  const descriptor = MechanicsUI.capabilities?.heroes?.authoring;
+  const projectVersion = mechanicsProjectModuleVersion();
+  const editorVersion = Math.max(projectVersion, Number.isInteger(MechanicsUI.moduleSchemaVersion) ? MechanicsUI.moduleSchemaVersion : 1);
+  const supportedVersion = HEROES_SUPPORTED_MODULE_SCHEMA_VERSIONS.includes(editorVersion)
+    && descriptor?.supportedModuleSchemaVersions?.includes(editorVersion) !== false;
+  const movementEnabled = editorVersion >= 2 && editorVersion <= 7;
+  const durabilityEnabled = editorVersion >= 3 && editorVersion <= 7;
+  const abilityEnabled = editorVersion >= 4 && editorVersion <= 7;
+  const skillTreeVisible = editorVersion >= 4 && editorVersion <= 7;
+  const passiveAuraVisible = editorVersion >= 5 && editorVersion <= 7;
+  const blockingVisible = editorVersion >= 6 && editorVersion <= 7;
+  const durabilityDescriptor = descriptor?.versions?.[3]?.durability;
+  const shieldDescriptor = descriptor?.versions?.[3]?.shield;
+  const manaDescriptor = descriptor?.versions?.[4]?.mana;
+  const abilityDescriptor = descriptor?.versions?.[4]?.activeAbility;
+  const notice = $("mechanics-heroes-read-only");
+  if (notice) {
+    notice.classList.toggle("hidden", supportedVersion);
+    notice.textContent = supportedVersion
+      ? ""
+      : "Future heroes schemaVersion 8+ is preserved losslessly and read-only by this Studio version.";
+  }
+
+  const definitions = MechanicsUI.draft.definitions ?? {};
+  const entries = mechanicsBoundedEntries(definitions, limits.definitions)
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
+  const selectedInput = $("mechanics-heroes-selected-id");
+  if (selectedInput) {
+    selectedInput.innerHTML = entries.map(([heroId, definition]) => (
+      `<option value="${esc(heroId)}">${esc(definition?.label ?? heroId)} (${esc(heroId)})</option>`
+    )).join("");
+    selectedInput.value = MechanicsUI.draft.selectedHeroId;
+    selectedInput.disabled = !supportedVersion;
+    selectedInput.onchange = () => {
+      MechanicsUI.draft.selectedHeroId = selectedInput.value;
+      MechanicsUI.preview = null;
+      renderMechanicsPreviewResult();
+    };
+  }
+
+  const rows = $("mechanics-heroes-definition-rows");
+  if (rows) {
+    const movementProfileIds = Object.keys(MechanicsUI.draft.movementProfiles ?? {}).sort();
+    rows.innerHTML = entries.map(([heroId, definition]) => {
+      const authoredMovementProfileId = definition?.movement?.movementProfileId;
+      const skillTree = definition?.skillTree && typeof definition.skillTree === "object"
+        ? definition.skillTree
+        : null;
+      const skillNodes = Object.entries(skillTree?.nodes ?? {})
+        .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
+      const skillRows = skillNodes.map(([skillId, node]) => {
+        const effects = Array.isArray(node?.effects) ? node.effects : [];
+        const effectRows = effects.map((effect, effectIndex) => {
+          const operation = effect?.modifier?.operation ?? "multiplier";
+          return `<div class="mechanics-definition-row" data-hero-skill-effect-row data-hero-skill-effect-index="${effectIndex}">
+            <label>Operation<select data-hero-skill-operation data-hero-skill-effect-operation ${supportedVersion ? "" : "disabled"}>
+              <option value="flat" ${operation === "flat" ? "selected" : ""}>flat</option>
+              <option value="additive_ratio" ${operation === "additive_ratio" ? "selected" : ""}>additive_ratio</option>
+              <option value="multiplier" ${operation === "multiplier" ? "selected" : ""}>multiplier</option>
+            </select></label>
+            <label>Value<input data-hero-skill-value data-hero-skill-effect-value type="number" step="any" value="${esc(effect?.modifier?.value ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+            <button type="button" class="btn btn-danger" data-remove-hero-skill-effect ${supportedVersion && effects.length > 1 ? "" : "disabled"}>Remove effect</button>
+          </div>`;
+        }).join("");
+        return `<div class="mechanics-definition-row" data-hero-skill-node-id="${esc(skillId)}">
+          <label>Skill ID<input data-hero-skill-id type="text" autocomplete="off" spellcheck="false" value="${esc(skillId)}" ${supportedVersion ? "" : "disabled"}></label>
+          <label>Label<input data-hero-skill-label type="text" value="${esc(node?.label ?? skillId)}" ${supportedVersion ? "" : "disabled"}></label>
+          <label>Description<input data-hero-skill-description type="text" value="${esc(node?.description ?? "Hero ability damage modifier.")}" ${supportedVersion ? "" : "disabled"}></label>
+          <label>Cost<input data-hero-skill-cost type="number" min="1" step="1" value="${esc(node?.cost ?? 1)}" ${supportedVersion ? "" : "disabled"}></label>
+          <label>Requires<input data-hero-skill-requires type="text" value="${esc(Array.isArray(node?.requires) ? node.requires.join(", ") : "")}" ${supportedVersion ? "" : "disabled"}></label>
+          <div class="mechanics-definition-rows">${effectRows}</div>
+          <button type="button" class="btn btn-outline" data-add-hero-skill-effect ${supportedVersion && effects.length < 4 ? "" : "disabled"}>+ Add effect</button>
+          <button type="button" class="btn btn-danger" data-remove-hero-skill ${supportedVersion ? "" : "disabled"}>Remove skill</button>
+        </div>`;
+      }).join("");
+      const passiveAura = definition?.passiveAura && typeof definition.passiveAura === "object"
+        ? definition.passiveAura
+        : null;
+      const blocking = definition?.blocking && typeof definition.blocking === "object"
+        ? definition.blocking
+        : null;
+      const blockingMovementProfileIds = Array.isArray(blocking?.movementProfileIds)
+        ? blocking.movementProfileIds.slice(0, 32)
+        : [];
+      const blockingDependency = mechanicsHeroBlockingNavigationState(blockingMovementProfileIds);
+      const blockingMovementProfileRows = blockingMovementProfileIds.map((movementProfileId, index) => (
+        `<label>Navigation movement profile ID<input data-hero-blocking-movement-profile-id data-hero-blocking-movement-profile-index="${index}" type="text" autocomplete="off" spellcheck="false" value="${esc(movementProfileId)}" ${supportedVersion ? "" : "disabled"}>
+        <button type="button" class="btn btn-danger" data-remove-hero-blocking-movement-profile ${supportedVersion && blockingMovementProfileIds.length > 1 ? "" : "disabled"}>Remove profile</button></label>`
+      )).join("");
+      const effects = Array.isArray(passiveAura?.effects) ? passiveAura.effects : [];
+      const passiveAuraEffectRows = effects.map((effect, effectIndex) => {
+        const operation = effect?.modifier?.operation ?? "additive_ratio";
+        return `<div class="mechanics-definition-row" data-hero-passive-aura-effect-row data-hero-passive-aura-effect-index="${effectIndex}">
+          <span>Scope: tower_damage</span><span>Target: damage</span>
+          <label>Operation<select data-hero-passive-aura-effect-operation ${supportedVersion ? "" : "disabled"}>
+            <option value="flat" ${operation === "flat" ? "selected" : ""}>flat</option>
+            <option value="additive_ratio" ${operation === "additive_ratio" ? "selected" : ""}>additive_ratio</option>
+            <option value="multiplier" ${operation === "multiplier" ? "selected" : ""}>multiplier</option>
+          </select></label>
+          <label>Value<input data-hero-passive-aura-effect-value type="number" step="any" value="${esc(effect?.modifier?.value ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+          <button type="button" class="btn btn-danger" data-remove-hero-passive-aura-effect ${supportedVersion && effects.length > 1 ? "" : "disabled"}>Remove effect</button>
+        </div>`;
+      }).join("");
+      const movementProfileOptions = [
+        ...(typeof authoredMovementProfileId === "string" && !movementProfileIds.includes(authoredMovementProfileId)
+          ? [{ id: authoredMovementProfileId, missing: true }] : []),
+        ...movementProfileIds.map((id) => ({ id, missing: false }))
+      ].map(({ id, missing }) => `<option value="${esc(id)}">${missing ? `Unknown/missing: ${esc(id)}` : esc(id)}</option>`).join("");
+      return `<div class="mechanics-definition-row" data-hero-definition-id="${esc(heroId)}">
+      <label>Hero ID<input data-hero-id type="text" autocomplete="off" spellcheck="false" maxlength="${esc(limits.idUtf8Bytes)}" value="${esc(heroId)}" ${supportedVersion ? "" : "disabled"}></label>
+      <label>Label<input data-hero-label type="text" autocomplete="off" maxlength="${esc(limits.labelUtf8Bytes)}" value="${esc(definition?.label ?? heroId)}" ${supportedVersion ? "" : "disabled"}></label>
+      <label>Spawn<select data-hero-spawn ${supportedVersion ? "" : "disabled"}><option value="core">Core</option></select></label>
+      ${movementEnabled ? `<label>Movement profile<select data-hero-movement-profile-definition-id ${supportedVersion ? "" : "disabled"}>${movementProfileOptions}</select></label>
+      <label>Speed<input data-hero-movement-speed type="number" min="0.000001" max="20" step="0.1" value="${esc(definition?.movement?.speed ?? 1)}" ${supportedVersion ? "" : "disabled"}></label>` : ""}
+      ${durabilityEnabled ? `<label>Max HP<input data-hero-max-hp type="number" min="0.000001"${mechanicsMaximumAttribute("max", durabilityDescriptor?.maxHp?.maximum)} value="${esc(definition?.durability?.maxHp ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+      <label><input data-hero-shield-enabled type="checkbox" ${definition?.durability?.shield === null ? "" : "checked"} ${supportedVersion ? "" : "disabled"}> Shield</label>
+      <label>Shield capacity<input data-hero-shield-capacity type="number" min="0.000001"${mechanicsMaximumAttribute("max", shieldDescriptor?.capacity?.maximum)} value="${esc(definition?.durability?.shield?.capacity ?? "")}" ${supportedVersion && definition?.durability?.shield !== null ? "" : "disabled"}></label>` : ""}
+      ${abilityEnabled ? `<label>Max mana<input data-hero-mana-max type="number" min="0.000001"${mechanicsMaximumAttribute("max", manaDescriptor?.max?.maximum)} value="${esc(definition?.mana?.max ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+      <label>Starting mana<input data-hero-mana-starting type="number" min="0"${mechanicsMaximumAttribute("max", definition?.mana?.max)} value="${esc(definition?.mana?.starting ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+      <label>Mana regeneration<input data-hero-mana-regeneration type="number" min="0"${mechanicsMaximumAttribute("max", manaDescriptor?.regenerationPerUnit?.maximum)} value="${esc(definition?.mana?.regenerationPerUnit ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+      <label>Ability ID<input data-hero-ability-id type="text" autocomplete="off" spellcheck="false" maxlength="${esc(limits.idUtf8Bytes)}" value="${esc(definition?.activeAbility?.id ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+      <label>Ability label<input data-hero-ability-label type="text" autocomplete="off" maxlength="${esc(limits.labelUtf8Bytes)}" value="${esc(definition?.activeAbility?.label ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+      <label>Ability target<select data-hero-ability-target ${supportedVersion ? "" : "disabled"}><option value="enemy">Enemy</option></select></label>
+      <label>Mana cost<input data-hero-ability-mana-cost type="number" min="0.000001"${mechanicsMaximumAttribute("max", definition?.mana?.max)} value="${esc(definition?.activeAbility?.manaCost ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+      <label>Cooldown<input data-hero-ability-cooldown type="number" min="0"${mechanicsMaximumAttribute("max", abilityDescriptor?.cooldown?.maximum)} value="${esc(definition?.activeAbility?.cooldown ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+      <label>Range<input data-hero-ability-range type="number" min="0" step="1"${mechanicsMaximumAttribute("max", abilityDescriptor?.range?.maximum)} value="${esc(definition?.activeAbility?.range ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+      <label>Damage<input data-hero-ability-damage type="number" min="0.000001"${mechanicsMaximumAttribute("max", abilityDescriptor?.damage?.maximum)} value="${esc(definition?.activeAbility?.damage ?? "")}" ${supportedVersion ? "" : "disabled"}></label>` : ""}
+      ${skillTreeVisible ? `<fieldset class="mechanics-heroes-section">
+        <label><input data-hero-skill-tree-enabled type="checkbox" ${skillTree ? "checked" : ""} ${supportedVersion ? "" : "disabled"}> Battle-local skill tree (Heroes v5)</label>
+        ${skillTree ? `<label>Starting points<input data-hero-skill-starting-points type="number" min="0" step="1" value="${esc(skillTree?.points?.starting ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+        <label>Points per interwave<input data-hero-skill-points-per-interwave type="number" min="0" step="1" value="${esc(skillTree?.points?.perInterwave ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+        <div class="mechanics-definition-rows">${skillRows}</div>
+        <button type="button" class="btn btn-outline" data-add-hero-skill ${supportedVersion && skillNodes.length < 32 ? "" : "disabled"}>+ Add skill</button>` : ""}
+      </fieldset>` : ""}
+      ${passiveAuraVisible ? `<fieldset class="mechanics-heroes-section">
+        <label><input data-hero-passive-aura-enabled type="checkbox" ${passiveAura ? "checked" : ""} ${supportedVersion ? "" : "disabled"}> Passive tower damage aura (Heroes v6)</label>
+        ${passiveAura ? `<label>Aura ID<input data-hero-passive-aura-id type="text" value="${esc(passiveAura.id ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+        <label>Aura label<input data-hero-passive-aura-label type="text" value="${esc(passiveAura.label ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+        <label>Radius<input data-hero-passive-aura-radius type="number" min="0" step="1" value="${esc(passiveAura.radius ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+        <div class="mechanics-definition-rows">${passiveAuraEffectRows}</div>
+        <button type="button" class="btn btn-outline" data-add-hero-passive-aura-effect ${supportedVersion && effects.length < 4 ? "" : "disabled"}>+ Add effect</button>` : ""}
+      </fieldset>` : ""}
+      ${blockingVisible ? `<fieldset class="mechanics-heroes-section">
+        <label><input data-hero-blocking-enabled type="checkbox" ${blocking ? "checked" : ""} ${supportedVersion ? "" : "disabled"}> Dynamic Navigation blocking (Heroes v7)</label>
+        ${blocking ? `<label>Block capacity (1–64)<input data-hero-block-capacity type="number" min="1" max="64" step="1" value="${esc(blocking.blockCapacity ?? "")}" ${supportedVersion ? "" : "disabled"}></label>
+        <div class="mechanics-definition-rows">${blockingMovementProfileRows}</div>
+        <button type="button" class="btn btn-outline" data-add-hero-blocking-movement-profile ${supportedVersion && blockingMovementProfileIds.length < 32 ? "" : "disabled"}>+ Add movement profile</button>
+        <div class="mechanics-notice ${blockingDependency.ready ? "" : "warning"}" role="status">${blockingDependency.ready
+          ? "Dynamic Navigation dependency is active and every explicit movement profile ID exists."
+          : `Requires an enabled, selected Dynamic Navigation v1 flow profile${blockingDependency.missingIds.length ? ` containing: ${blockingDependency.missingIds.map(esc).join(", ")}` : ""}. Studio never enables or selects Navigation automatically.`}</div>` : ""}
+      </fieldset>` : ""}
+      <button type="button" class="btn btn-danger" data-remove-hero ${supportedVersion && entries.length > 1 ? "" : "disabled"}>Remove</button>
+    </div>`;
+    }).join("");
+    rows.querySelectorAll("[data-hero-definition-id]").forEach((row) => {
+      const heroId = row.dataset.heroDefinitionId;
+      const definition = ownDataValue(MechanicsUI.draft.definitions, heroId);
+      row.querySelector("[data-hero-blocking-enabled]")?.addEventListener("change", (event) => {
+        for (const candidate of Object.values(MechanicsUI.draft.definitions)) {
+          if (candidate.blocking === undefined) candidate.blocking = null;
+        }
+        definition.blocking = event.target.checked
+          ? (definition.blocking && typeof definition.blocking === "object"
+              ? definition.blocking
+              : { blockCapacity: 2, movementProfileIds: [""] })
+          : null;
+        MechanicsUI.moduleSchemaVersion = 7;
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      });
+      row.querySelector("[data-hero-block-capacity]")?.addEventListener("input", (event) => {
+        definition.blocking.blockCapacity = Number(event.target.value);
+        MechanicsUI.moduleSchemaVersion = 7;
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelectorAll("[data-hero-blocking-movement-profile-id]").forEach((input) => {
+        const index = Number(input.dataset.heroBlockingMovementProfileIndex);
+        input.addEventListener("input", (event) => {
+          definition.blocking.movementProfileIds[index] = String(event.target.value ?? "");
+          MechanicsUI.moduleSchemaVersion = 7;
+          MechanicsUI.preview = null;
+          renderMechanicsPreviewResult();
+        });
+        input.parentElement?.querySelector("[data-remove-hero-blocking-movement-profile]")
+          ?.addEventListener("click", () => {
+            if (!Array.isArray(definition.blocking?.movementProfileIds)
+              || definition.blocking.movementProfileIds.length <= 1) return;
+            definition.blocking.movementProfileIds.splice(index, 1);
+            MechanicsUI.moduleSchemaVersion = 7;
+            MechanicsUI.preview = null;
+            renderMechanicsHub();
+          });
+      });
+      row.querySelector("[data-add-hero-blocking-movement-profile]")?.addEventListener("click", () => {
+        if (!Array.isArray(definition.blocking?.movementProfileIds)
+          || definition.blocking.movementProfileIds.length >= 32) return;
+        definition.blocking.movementProfileIds.push("");
+        MechanicsUI.moduleSchemaVersion = 7;
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      });
+      row.querySelector("[data-hero-passive-aura-enabled]")?.addEventListener("change", (event) => {
+        for (const candidate of Object.values(MechanicsUI.draft.definitions)) {
+          if (candidate.passiveAura === undefined) candidate.passiveAura = null;
+        }
+        definition.passiveAura = event.target.checked
+          ? (definition.passiveAura && typeof definition.passiveAura === "object"
+              ? definition.passiveAura
+              : {
+                  id: "command_link", label: "Command Link", radius: 3,
+                  effects: [{
+                    kind: "modifier", scope: "tower_damage",
+                    modifier: { target: "damage", operation: "additive_ratio", value: 0.2 }
+                  }]
+                })
+          : null;
+        MechanicsUI.moduleSchemaVersion = 6;
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      });
+      row.querySelector("[data-hero-passive-aura-id]")?.addEventListener("input", (event) => {
+        definition.passiveAura.id = String(event.target.value ?? "");
+        MechanicsUI.moduleSchemaVersion = 6;
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-passive-aura-label]")?.addEventListener("input", (event) => {
+        definition.passiveAura.label = String(event.target.value ?? "");
+        MechanicsUI.moduleSchemaVersion = 6;
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-passive-aura-radius]")?.addEventListener("input", (event) => {
+        definition.passiveAura.radius = Number(event.target.value);
+        MechanicsUI.moduleSchemaVersion = 6;
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelectorAll("[data-hero-passive-aura-effect-row]").forEach((effectRow) => {
+        const effectIndex = Number(effectRow.dataset.heroPassiveAuraEffectIndex);
+        const effect = definition.passiveAura?.effects?.[effectIndex];
+        if (!effect) return;
+        effectRow.querySelector("[data-hero-passive-aura-effect-operation]")?.addEventListener("change", (event) => {
+          effect.modifier.operation = event.target.value;
+          MechanicsUI.moduleSchemaVersion = 6;
+          MechanicsUI.preview = null;
+          renderMechanicsPreviewResult();
+        });
+        effectRow.querySelector("[data-hero-passive-aura-effect-value]")?.addEventListener("input", (event) => {
+          effect.modifier.value = Number(event.target.value);
+          MechanicsUI.moduleSchemaVersion = 6;
+          MechanicsUI.preview = null;
+          renderMechanicsPreviewResult();
+        });
+        effectRow.querySelector("[data-remove-hero-passive-aura-effect]")?.addEventListener("click", () => {
+          if (!Array.isArray(definition.passiveAura?.effects) || definition.passiveAura.effects.length <= 1) return;
+          definition.passiveAura.effects.splice(effectIndex, 1);
+          MechanicsUI.moduleSchemaVersion = 6;
+          MechanicsUI.preview = null;
+          renderMechanicsHub();
+        });
+      });
+      row.querySelector("[data-add-hero-passive-aura-effect]")?.addEventListener("click", () => {
+        if (!Array.isArray(definition.passiveAura?.effects) || definition.passiveAura.effects.length >= 4) return;
+        definition.passiveAura.effects.push({
+          kind: "modifier", scope: "tower_damage",
+          modifier: { target: "damage", operation: "flat", value: 1 }
+        });
+        MechanicsUI.moduleSchemaVersion = 6;
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      });
+      const movementProfileSelect = row.querySelector("[data-hero-movement-profile-definition-id]");
+      if (movementProfileSelect) {
+        movementProfileSelect.value = definition?.movement?.movementProfileId ?? "";
+        movementProfileSelect.addEventListener("change", (event) => {
+          definition.movement.movementProfileId = event.target.value;
+          MechanicsUI.preview = null;
+          renderMechanicsPreviewResult();
+        });
+      }
+      row.querySelector("[data-hero-movement-speed]")?.addEventListener("input", (event) => {
+        definition.movement.speed = Number(event.target.value);
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-max-hp]")?.addEventListener("input", (event) => {
+        definition.durability.maxHp = Number(event.target.value);
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-shield-enabled]")?.addEventListener("change", (event) => {
+        definition.durability.shield = event.target.checked ? { capacity: 25 } : null;
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      });
+      row.querySelector("[data-hero-shield-capacity]")?.addEventListener("input", (event) => {
+        if (definition.durability.shield) definition.durability.shield.capacity = Number(event.target.value);
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-mana-max]")?.addEventListener("input", (event) => {
+        definition.mana.max = Number(event.target.value);
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-mana-starting]")?.addEventListener("input", (event) => {
+        definition.mana.starting = Number(event.target.value);
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-mana-regeneration]")?.addEventListener("input", (event) => {
+        definition.mana.regenerationPerUnit = Number(event.target.value);
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-ability-id]")?.addEventListener("input", (event) => {
+        definition.activeAbility.id = String(event.target.value ?? "");
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-ability-label]")?.addEventListener("input", (event) => {
+        definition.activeAbility.label = String(event.target.value ?? "");
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-ability-target]")?.addEventListener("change", () => {
+        definition.activeAbility.target = "enemy";
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-ability-mana-cost]")?.addEventListener("input", (event) => {
+        definition.activeAbility.manaCost = Number(event.target.value);
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-ability-cooldown]")?.addEventListener("input", (event) => {
+        definition.activeAbility.cooldown = Number(event.target.value);
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-ability-range]")?.addEventListener("input", (event) => {
+        definition.activeAbility.range = Number(event.target.value);
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-ability-damage]")?.addEventListener("input", (event) => {
+        definition.activeAbility.damage = Number(event.target.value);
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-skill-tree-enabled]")?.addEventListener("change", (event) => {
+        for (const candidate of Object.values(MechanicsUI.draft.definitions)) {
+          if (candidate.skillTree === undefined) candidate.skillTree = null;
+        }
+        const defaultSkillTree = {
+          points: { starting: 1, perInterwave: 1 },
+          nodes: {
+            focused_cast: {
+              label: "Focused Cast",
+              description: "Increase active ability damage.",
+              cost: 1,
+              requires: [],
+              effects: [{
+                kind: "modifier",
+                scope: "hero_ability_damage",
+                modifier: { target: "damage", operation: "multiplier", value: 1.25 }
+              }]
+            }
+          }
+        };
+        definition.skillTree = event.target.checked
+          ? (definition.skillTree && typeof definition.skillTree === "object"
+              ? definition.skillTree
+              : defaultSkillTree)
+          : null;
+        MechanicsUI.moduleSchemaVersion = 5;
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      });
+      row.querySelector("[data-hero-skill-starting-points]")?.addEventListener("input", (event) => {
+        definition.skillTree.points.starting = Number(event.target.value);
+        MechanicsUI.moduleSchemaVersion = 5;
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-skill-points-per-interwave]")?.addEventListener("input", (event) => {
+        definition.skillTree.points.perInterwave = Number(event.target.value);
+        MechanicsUI.moduleSchemaVersion = 5;
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelectorAll("[data-hero-skill-node-id]").forEach((skillRow) => {
+        const skillId = skillRow.dataset.heroSkillNodeId;
+        const node = ownDataValue(definition.skillTree?.nodes, skillId);
+        if (!node) return;
+        skillRow.querySelector("[data-hero-skill-id]")?.addEventListener("change", (event) => {
+          const nextId = String(event.target.value ?? "").trim();
+          if (!nextId || (nextId !== skillId && ownDataValue(definition.skillTree.nodes, nextId))) {
+            return renderMechanicsHub();
+          }
+          if (nextId !== skillId) {
+            delete definition.skillTree.nodes[skillId];
+            defineOwnDataValue(definition.skillTree.nodes, nextId, node);
+            for (const candidate of Object.values(definition.skillTree.nodes)) {
+              if (Array.isArray(candidate.requires)) {
+                candidate.requires = candidate.requires.map((requiredId) => requiredId === skillId ? nextId : requiredId);
+              }
+            }
+          }
+          MechanicsUI.moduleSchemaVersion = 5;
+          MechanicsUI.preview = null;
+          renderMechanicsHub();
+        });
+        skillRow.querySelector("[data-hero-skill-label]")?.addEventListener("input", (event) => {
+          node.label = String(event.target.value ?? "");
+          MechanicsUI.moduleSchemaVersion = 5;
+          MechanicsUI.preview = null;
+          renderMechanicsPreviewResult();
+        });
+        skillRow.querySelector("[data-hero-skill-description]")?.addEventListener("input", (event) => {
+          node.description = String(event.target.value ?? "");
+          MechanicsUI.moduleSchemaVersion = 5;
+          MechanicsUI.preview = null;
+          renderMechanicsPreviewResult();
+        });
+        skillRow.querySelector("[data-hero-skill-cost]")?.addEventListener("input", (event) => {
+          node.cost = Number(event.target.value);
+          MechanicsUI.moduleSchemaVersion = 5;
+          MechanicsUI.preview = null;
+          renderMechanicsPreviewResult();
+        });
+        skillRow.querySelector("[data-hero-skill-requires]")?.addEventListener("input", (event) => {
+          node.requires = String(event.target.value ?? "").split(",").map((value) => value.trim()).filter(Boolean);
+          MechanicsUI.moduleSchemaVersion = 5;
+          MechanicsUI.preview = null;
+          renderMechanicsPreviewResult();
+        });
+        skillRow.querySelectorAll("[data-hero-skill-effect-row]").forEach((effectRow) => {
+          const effectIndex = Number(effectRow.dataset.heroSkillEffectIndex);
+          const effect = node.effects?.[effectIndex];
+          if (!effect) return;
+          effectRow.querySelector("[data-hero-skill-effect-operation]")?.addEventListener("change", (event) => {
+            effect.modifier.operation = event.target.value;
+            MechanicsUI.moduleSchemaVersion = 5;
+            MechanicsUI.preview = null;
+            renderMechanicsPreviewResult();
+          });
+          effectRow.querySelector("[data-hero-skill-value][data-hero-skill-effect-value]")?.addEventListener("input", (event) => {
+            effect.modifier.value = Number(event.target.value);
+            MechanicsUI.moduleSchemaVersion = 5;
+            MechanicsUI.preview = null;
+            renderMechanicsPreviewResult();
+          });
+          effectRow.querySelector("[data-remove-hero-skill-effect]")?.addEventListener("click", () => {
+            if (!Array.isArray(node.effects) || node.effects.length <= 1) return;
+            node.effects.splice(effectIndex, 1);
+            MechanicsUI.moduleSchemaVersion = 5;
+            MechanicsUI.preview = null;
+            renderMechanicsHub();
+          });
+        });
+        skillRow.querySelector("[data-add-hero-skill-effect]")?.addEventListener("click", () => {
+          if (!Array.isArray(node.effects) || node.effects.length >= 4) return;
+          node.effects.push({
+            kind: "modifier",
+            scope: "hero_ability_damage",
+            modifier: { target: "damage", operation: "flat", value: 1 }
+          });
+          MechanicsUI.moduleSchemaVersion = 5;
+          MechanicsUI.preview = null;
+          renderMechanicsHub();
+        });
+        skillRow.querySelector("[data-remove-hero-skill]")?.addEventListener("click", () => {
+          delete definition.skillTree.nodes[skillId];
+          for (const candidate of Object.values(definition.skillTree.nodes)) {
+            if (Array.isArray(candidate.requires)) {
+              candidate.requires = candidate.requires.filter((requiredId) => requiredId !== skillId);
+            }
+          }
+          MechanicsUI.moduleSchemaVersion = 5;
+          MechanicsUI.preview = null;
+          renderMechanicsHub();
+        });
+      });
+      row.querySelector("[data-add-hero-skill]")?.addEventListener("click", () => {
+        let suffix = Object.keys(definition.skillTree.nodes).length + 1;
+        let skillId = `skill_${suffix}`;
+        while (ownDataValue(definition.skillTree.nodes, skillId)) skillId = `skill_${++suffix}`;
+        defineOwnDataValue(definition.skillTree.nodes, skillId, {
+          label: "New Skill",
+          description: "Modify active ability damage.",
+          cost: 1,
+          requires: [],
+          effects: [{
+            kind: "modifier",
+            scope: "hero_ability_damage",
+            modifier: { target: "damage", operation: "multiplier", value: 1.1 }
+          }]
+        });
+        MechanicsUI.moduleSchemaVersion = 5;
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      });
+      row.querySelector("[data-hero-id]")?.addEventListener("change", (event) => {
+        const nextId = String(event.target.value ?? "").trim();
+        if (!nextId || new TextEncoder().encode(nextId).length > limits.idUtf8Bytes
+          || (nextId !== heroId && ownDataValue(MechanicsUI.draft.definitions, nextId))) {
+          toast("Hero ID must be unique and fit the authoring byte limit.", "err");
+          return renderMechanicsHub();
+        }
+        if (nextId !== heroId) {
+          delete MechanicsUI.draft.definitions[heroId];
+          defineOwnDataValue(MechanicsUI.draft.definitions, nextId, definition);
+          if (MechanicsUI.draft.selectedHeroId === heroId) MechanicsUI.draft.selectedHeroId = nextId;
+        }
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      });
+      row.querySelector("[data-hero-label]")?.addEventListener("input", (event) => {
+        const label = String(event.target.value ?? "");
+        if (!label || new TextEncoder().encode(label).length > limits.labelUtf8Bytes) return;
+        definition.label = label;
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-hero-spawn]")?.addEventListener("change", () => {
+        definition.spawn = "core";
+        MechanicsUI.preview = null;
+        renderMechanicsPreviewResult();
+      });
+      row.querySelector("[data-remove-hero]")?.addEventListener("click", () => {
+        if (Object.keys(MechanicsUI.draft.definitions).length <= 1) return;
+        delete MechanicsUI.draft.definitions[heroId];
+        if (MechanicsUI.draft.selectedHeroId === heroId) {
+          MechanicsUI.draft.selectedHeroId = Object.keys(MechanicsUI.draft.definitions).sort()[0];
+        }
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      });
+    });
+  }
+
+  const add = $("btn-mechanics-add-hero");
+  if (add) {
+    add.disabled = !supportedVersion || entries.length >= limits.definitions;
+    add.onclick = () => {
+      if (!supportedVersion || Object.keys(MechanicsUI.draft.definitions).length >= limits.definitions) return;
+      let suffix = Object.keys(MechanicsUI.draft.definitions).length + 1;
+      let heroId = `hero_${suffix}`;
+      while (ownDataValue(MechanicsUI.draft.definitions, heroId)) heroId = `hero_${++suffix}`;
+      defineOwnDataValue(MechanicsUI.draft.definitions, heroId, {
+        label: "Commander", spawn: "core",
+        ...(movementEnabled ? { movement: { movementProfileId: Object.keys(MechanicsUI.draft.movementProfiles ?? {}).sort()[0] ?? "ground", speed: 1 } } : {}),
+        ...(durabilityEnabled ? { durability: { maxHp: 100, shield: { capacity: 25 } } } : {}),
+        ...(abilityEnabled ? {
+          mana: { max: 100, starting: 60, regenerationPerUnit: 5 },
+          activeAbility: {
+            id: "arc_bolt", label: "Arc Bolt", target: "enemy",
+            manaCost: 20, cooldown: 3, range: 6, damage: 30
+          },
+          ...(editorVersion >= 5 ? { skillTree: null } : {}),
+          ...(editorVersion >= 6 ? { passiveAura: null } : {}),
+          ...(editorVersion >= 7 ? { blocking: null } : {})
+        } : {})
+      });
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    };
+  }
+
+  const movementRows = $("mechanics-heroes-movement-profile-rows");
+  const movementDetails = $("mechanics-heroes-movement");
+  if (movementDetails) movementDetails.classList.toggle("hidden", !movementEnabled);
+  if (movementRows) {
+    const movementEntries = Object.entries(MechanicsUI.draft.movementProfiles ?? {}).sort(([a], [b]) => a.localeCompare(b));
+    movementRows.innerHTML = movementEnabled ? movementEntries.map(([profileId, profile]) => `<div class="mechanics-definition-row" data-hero-movement-profile-id="${esc(profileId)}">
+      <label>Profile ID<input data-hero-movement-profile-id-input value="${esc(profileId)}" ${supportedVersion ? "" : "disabled"}></label>
+      <label>Label<input data-hero-movement-label value="${esc(profile?.label ?? profileId)}" ${supportedVersion ? "" : "disabled"}></label>
+      <label>Terrain<select data-hero-movement-terrain ${supportedVersion ? "" : "disabled"}><option value="respect_walkable">Respect walkable</option><option value="ignore_walkable">Ignore walkable</option></select></label>
+      <label>Towers<select data-hero-movement-occupancy ${supportedVersion ? "" : "disabled"}><option value="blocked">Blocked</option><option value="ignored">Ignored</option></select></label>
+      <label>Default cost<input data-hero-movement-cost type="number" min="0.000001" value="${esc(profile?.defaultTerrainCost ?? 1000)}" ${supportedVersion ? "" : "disabled"}></label>
+    </div>`).join("") : "";
+    movementRows.querySelectorAll("[data-hero-movement-profile-id]").forEach((row) => {
+      const profileId = row.dataset.heroMovementProfileId;
+      const profile = ownDataValue(MechanicsUI.draft.movementProfiles, profileId);
+      row.querySelector("[data-hero-movement-terrain]").value = profile.terrainMode;
+      row.querySelector("[data-hero-movement-occupancy]").value = profile.towerOccupancy;
+      row.querySelector("[data-hero-movement-label]").addEventListener("input", (event) => { profile.label = event.target.value; MechanicsUI.preview = null; });
+      row.querySelector("[data-hero-movement-terrain]").addEventListener("change", (event) => { profile.terrainMode = event.target.value; MechanicsUI.preview = null; });
+      row.querySelector("[data-hero-movement-occupancy]").addEventListener("change", (event) => { profile.towerOccupancy = event.target.value; MechanicsUI.preview = null; });
+      row.querySelector("[data-hero-movement-cost]").addEventListener("input", (event) => { const value = Number(event.target.value); if (Number.isFinite(value) && value > 0) profile.defaultTerrainCost = value; MechanicsUI.preview = null; });
+      row.querySelector("[data-hero-movement-profile-id-input]").addEventListener("change", (event) => {
+        const nextId = String(event.target.value ?? "").trim();
+        if (!nextId || (nextId !== profileId && ownDataValue(MechanicsUI.draft.movementProfiles, nextId))) return renderMechanicsHub();
+        if (nextId !== profileId) {
+          delete MechanicsUI.draft.movementProfiles[profileId];
+          defineOwnDataValue(MechanicsUI.draft.movementProfiles, nextId, profile);
+          for (const definition of Object.values(MechanicsUI.draft.definitions)) if (definition.movement?.movementProfileId === profileId) definition.movement.movementProfileId = nextId;
+        }
+        MechanicsUI.preview = null;
+        renderMechanicsHub();
+      });
+    });
+  }
+  const addMovementProfile = $("btn-mechanics-add-hero-movement-profile");
+  if (addMovementProfile) {
+    addMovementProfile.disabled = !supportedVersion || !movementEnabled || Object.keys(MechanicsUI.draft.movementProfiles ?? {}).length >= 32;
+    addMovementProfile.onclick = () => {
+      if (!movementEnabled) return;
+      let suffix = Object.keys(MechanicsUI.draft.movementProfiles).length + 1;
+      let profileId = `movement_${suffix}`;
+      while (ownDataValue(MechanicsUI.draft.movementProfiles, profileId)) profileId = `movement_${++suffix}`;
+      defineOwnDataValue(MechanicsUI.draft.movementProfiles, profileId, { label: "Movement", terrainMode: "respect_walkable", towerOccupancy: "blocked", defaultTerrainCost: 1_000 });
+      MechanicsUI.preview = null;
+      renderMechanicsHub();
+    };
+  }
+}
+
 function rogueliteTierLines(definition) {
   return (definition?.tiers ?? []).flatMap((tier) => (tier?.modifiers ?? []).map((modifier) => (
     `${tier.requiredCount} ${modifier.operation} ${modifier.value}`
@@ -3756,11 +5142,17 @@ function renderMechanicsPreviewResult() {
 }
 
 function mechanicsRequest(enabled) {
+  if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 7) {
+    throw new Error("Future heroes schemaVersion 8+ modules are read-only in this Studio version.");
+  }
   if (MechanicsUI.selectedModuleId === "roguelite" && mechanicsProjectModuleVersion() > 4) {
     throw new Error("Future roguelite schemaVersion 5+ modules are read-only in this Studio version.");
   }
   if (MechanicsUI.selectedModuleId === "terraforming" && mechanicsProjectModuleVersion() !== 1) {
     throw new Error("Future terraforming module versions are read-only in this Studio version.");
+  }
+  if (MechanicsUI.selectedModuleId === "logistics" && mechanicsProjectModuleVersion() > 3) {
+    throw new Error("Future Logistics schemaVersion 4+ modules are preserved losslessly and read-only.");
   }
   const moduleSchemaVersion = mechanicsEffectiveModuleSchemaVersion();
   const request = {
@@ -3861,6 +5253,10 @@ function renderMechanicsHub() {
           ? "Author a closed physics v1 profile for bounded push/pull immunity and explicit fall hazards."
           : MechanicsUI.selectedModuleId === "terraforming"
             ? "Author detached terrain transitions and optional bounded elevation mutation, then explicitly enable the profile for this mission."
+            : MechanicsUI.selectedModuleId === "heroes"
+              ? "Author a closed static hero roster and core spawn, then explicitly enable the profile for this mission."
+            : MechanicsUI.selectedModuleId === "logistics"
+              ? "Author an optional power grid without adding Logistics fields to ordinary tower or mission forms."
             : MechanicsUI.selectedModuleId === "roguelite"
               ? "Author tower tags, global synergies, optional v2 artifact loot, and independent v3 wave draft choices as one opt-in profile transaction."
               : "Author a reusable combat profile, then explicitly select it for this mission.";
@@ -3941,6 +5337,8 @@ function renderMechanicsHub() {
   $("mechanics-physics-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "physics");
   $("mechanics-terraforming-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "terraforming");
   $("mechanics-roguelite-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "roguelite");
+  $("mechanics-heroes-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "heroes");
+  $("mechanics-logistics-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "logistics");
   const state = $("mechanics-hub-state");
   if (state) state.textContent = MechanicsUI.loading ? "Loading capabilities…"
     : MechanicsUI.error ? "Mechanics unavailable"
@@ -4002,6 +5400,10 @@ function renderMechanicsHub() {
       renderRogueliteMechanicsEditor();
       renderCampaignAuthoring();
       if (!CampaignUI.loaded && !CampaignUI.loading) void loadCampaignAuthoring();
+    } else if (MechanicsUI.selectedModuleId === "heroes") {
+      renderHeroesMechanicsEditor();
+    } else if (MechanicsUI.selectedModuleId === "logistics") {
+      renderLogisticsMechanicsEditor();
     }
     // Recipe prerequisites are shared authoring metadata. Keep them visible for every module,
     // including elevation recipes, instead of hiding them inside the reactions-only editor.
@@ -4013,15 +5415,22 @@ function renderMechanicsHub() {
     mechanicsProjectModuleVersion() <= 4
     && !hasUnsupportedRogueliteCampaignMarker(MechanicsUI.draft)
   );
-  const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion && supportedRogueliteVersion && !busy;
+  const supportedHeroesVersion = MechanicsUI.selectedModuleId !== "heroes" || mechanicsProjectModuleVersion() <= 7;
+  const supportedLogisticsVersion = MechanicsUI.selectedModuleId !== "logistics" || mechanicsProjectModuleVersion() <= 3;
+  const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion
+    && supportedRogueliteVersion && supportedHeroesVersion && supportedLogisticsVersion && !busy;
   const dirtyWriteGuard = Boolean(S.dirty);
   if ($("btn-mechanics-preview")) $("btn-mechanics-preview").disabled = !writable;
+  if (MechanicsUI.selectedModuleId === "logistics" && mechanicsProjectModuleVersion() > 3) {
+    $("btn-mechanics-preview").disabled = true;
+  }
   $("btn-mechanics-enable").disabled = dirtyWriteGuard || !writable || Boolean(capability?.active);
   $("btn-mechanics-save").disabled = dirtyWriteGuard || !writable || !capability?.moduleEnabled;
   $("btn-mechanics-disable").disabled = dirtyWriteGuard || !writable || !capability?.moduleEnabled;
   $("btn-mechanics-load-profile").disabled = busy || mechanicsProfileIds().length === 0;
   $("btn-mechanics-new-profile").disabled = busy || !MechanicsUI.recipe
-    || ((MechanicsUI.selectedModuleId === "terraforming" || MechanicsUI.selectedModuleId === "roguelite") && !writable);
+    || ((MechanicsUI.selectedModuleId === "terraforming" || MechanicsUI.selectedModuleId === "roguelite"
+      || MechanicsUI.selectedModuleId === "heroes" || MechanicsUI.selectedModuleId === "logistics") && !writable);
   if ($("mechanics-recipe-select")) $("mechanics-recipe-select").disabled = busy || MechanicsUI.recipes.length === 0;
   if ($("btn-mechanics-add-damage-type")) $("btn-mechanics-add-damage-type").disabled = !writable;
   if ($("btn-mechanics-add-armor-type")) $("btn-mechanics-add-armor-type").disabled = !writable;
@@ -4035,6 +5444,7 @@ function renderMechanicsHub() {
   if ($("btn-mechanics-add-artifact")) $("btn-mechanics-add-artifact").disabled ||= !writable;
   if ($("btn-mechanics-add-draft-card")) $("btn-mechanics-add-draft-card").disabled ||= !writable;
   if ($("btn-mechanics-add-draft-pool")) $("btn-mechanics-add-draft-pool").disabled ||= !writable;
+  if ($("btn-mechanics-add-hero")) $("btn-mechanics-add-hero").disabled ||= !writable;
   $("btn-mechanics-reload").disabled = dirtyWriteGuard || busy;
   if ($("mechanics-profile-id")) $("mechanics-profile-id").disabled = !writable;
   $("btn-mechanics-load-profile").onclick = loadMechanicsProfile;
@@ -5970,6 +7380,11 @@ function renderTowerDetail(id) {
   $("tower-dup-btn")?.addEventListener("click", () => duplicateStudioEntity("towers", id));
 }
 
+// Stable editor entry points used by isolated extension-surface checks.
+function renderTowerEditor(id) {
+  return renderTowerDetail(id);
+}
+
 function defaultAttackModel(kind) {
   const defaults = {
     single: { kind, fireRate: 1, damagePerStack: 1, startingStacks: 1, maxStacks: 5, upgradeCost: 10 },
@@ -6667,6 +8082,11 @@ function renderMissionDetail(id) {
       showSimResult(result);
     } catch (e) { toast("Sim error: " + e.message, "err"); $("sim-overlay")?.classList.add("hidden"); }
   });
+}
+
+// Stable editor entry points used by isolated extension-surface checks.
+function renderMissionEditor(id) {
+  return renderMissionDetail(id);
 }
 
 function persistMission(oldId) {
@@ -9349,6 +10769,96 @@ function renderPlaytestArtifacts(snapshot = PT.game?.getSnapshot()) {
   }
 }
 
+function renderPlaytestLogistics(snapshot) {
+  const panel = $("pt-logistics-power");
+  if (!panel || !PT.rmod?.projectLogisticsPresentation) return;
+  const presentation = PT.rmod.projectLogisticsPresentation(snapshot);
+  panel.replaceChildren();
+  panel.hidden = !presentation.active;
+  if (!presentation.active) return;
+  const title = document.createElement("div");
+  title.className = "form-section-title pt-debug-title";
+  title.textContent = "Logistics";
+  panel.append(title);
+  if (presentation.power) {
+    for (const component of presentation.power.components) {
+      const row = document.createElement("div");
+      row.textContent = `${component.id}: ${component.allocated}/${component.output} allocated`;
+      panel.append(row);
+    }
+    const brownout = presentation.power.consumers.filter((consumer) => !consumer.powered);
+    panel.dataset.powered = String(presentation.power.consumers.length - brownout.length);
+    if (brownout.length) {
+      const row = document.createElement("div");
+      row.className = "text-muted";
+      row.textContent = `Brownout: ${brownout.map((consumer) => consumer.towerId).join(", ")}`;
+      panel.append(row);
+    }
+    for (const node of presentation.power.nodes) {
+      for (const linkedTowerId of node.linkTowerIds) {
+        if (node.towerId >= linkedTowerId) continue;
+        const row = document.createElement("div");
+        row.className = "pt-logistics-link-cue text-muted";
+        row.textContent = `Grid link: ${node.towerId} ↔ ${linkedTowerId}`;
+        panel.append(row);
+      }
+      for (const consumerTowerId of node.coveredConsumerIds) {
+        const row = document.createElement("div");
+        row.className = "pt-logistics-coverage-cue text-muted";
+        row.textContent = `Power coverage: ${node.towerId} → ${consumerTowerId}`;
+        panel.append(row);
+      }
+    }
+  }
+  if (presentation.ammunition) {
+    for (const inventory of presentation.ammunition.inventories) {
+      const row = document.createElement("div");
+      row.className = "pt-logistics-ammunition-cue";
+      row.textContent = `${inventory.towerId}: ${inventory.amount}/${inventory.capacity} ${inventory.ammoTypeId}`;
+      panel.append(row);
+      if (!inventory.hasRequiredAmmo) {
+        const depleted = document.createElement("div");
+        depleted.className = "pt-logistics-depleted-cue text-muted";
+        depleted.textContent = `Depleted: ${inventory.towerId}`;
+        panel.append(depleted);
+      }
+    }
+  }
+  if (presentation.supply) {
+    const supply = presentation.supply;
+    for (const source of [...supply.producers, ...supply.storages]) {
+      const stock = document.createElement("div");
+      stock.className = "pt-logistics-supply-stock-cue";
+      stock.textContent = `${source.towerId}: ${source.amount}/${source.capacity} ${source.ammoTypeId}`;
+      panel.append(stock);
+      const progress = document.createElement("div");
+      progress.className = "pt-logistics-supply-progress-cue text-muted";
+      progress.textContent = "productionProgress" in source
+        ? `${source.towerId}: production ${source.productionProgress}/${source.productionInterval}, transfer ${source.transferProgress}/${source.transferInterval}`
+        : `${source.towerId}: transfer ${source.transferProgress}/${source.transferInterval}`;
+      panel.append(progress);
+      if (!source.operational) {
+        const paused = document.createElement("div");
+        paused.className = "pt-logistics-supply-paused-cue text-muted";
+        paused.textContent = `Paused/brownout: ${source.towerId}`;
+        panel.append(paused);
+      }
+    }
+    for (const edge of supply.edges) {
+      const link = document.createElement("div");
+      link.className = "pt-logistics-supply-link-cue text-muted";
+      link.textContent = `Supply link: ${edge.sourceTowerId} → ${edge.destinationTowerId}`;
+      panel.append(link);
+      if (edge.destinationKind === "consumer") {
+        const refill = document.createElement("div");
+        refill.className = "pt-logistics-refill-cue text-muted";
+        refill.textContent = `Refill: ${edge.sourceTowerId} → ${edge.destinationTowerId}`;
+        panel.append(refill);
+      }
+    }
+  }
+}
+
 function renderPlaytestDebugger(snapshot = PT.game?.getSnapshot()) {
   const inspector = $("pt-inspector");
   const timeline = $("pt-event-timeline");
@@ -9457,6 +10967,7 @@ function updatePlaytestHud(s = PT.game.getSnapshot()) {
   const stars = s.stars ?? [];
   const starCount = stars.filter((item) => item.achieved).length;
   set("pt-objectives", `${objectiveCount}/${objectives.length}${stars.length ? ` | ${starCount}/${stars.length} stars` : ""}`);
+  renderPlaytestLogistics(s);
   if (PT.artifactUiDirty) {
     renderPlaytestArtifacts(s);
     PT.artifactUiDirty = false;

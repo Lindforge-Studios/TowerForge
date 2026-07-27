@@ -21,7 +21,10 @@ const R0A_MODULE_IDS = [
   "scriptingDx",
   "multiplayer"
 ];
-const IMPLEMENTED_MODULE_IDS = ["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite"];
+const IMPLEMENTED_MODULE_IDS = [
+  "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes",
+  "logistics"
+];
 const UNAVAILABLE_MODULE_IDS = R0A_MODULE_IDS.filter(
   (moduleId) => !IMPLEMENTED_MODULE_IDS.includes(moduleId)
 );
@@ -193,7 +196,91 @@ describe("R1 combat mechanics MCP contract", () => {
         }
       }
     };
-
+    const heroesAuthoringV5 = engine.HEROES_MECHANICS_SCHEMA.versions[5];
+    const heroesSnapshotV5 = engine.HEROES_MECHANICS_SCHEMA.runtimeSnapshot.versions[5];
+    const heroesSurface = {
+      authoring: {
+        ...engine.HEROES_MECHANICS_SCHEMA,
+        versions: {
+          ...engine.HEROES_MECHANICS_SCHEMA.versions,
+          5: {
+            ...heroesAuthoringV5,
+            points: heroesAuthoringV5.skillPoints,
+            node: heroesAuthoringV5.skillNode,
+            effect: heroesAuthoringV5.skillEffect,
+            modifier: heroesAuthoringV5.skillModifier
+          }
+        }
+      },
+      snapshot: {
+        field: "heroes",
+        optional: true,
+        supportedSchemaVersions: [1, 2, 3, 4, 5, 6, 7],
+        versions: {
+          ...engine.HEROES_MECHANICS_SCHEMA.runtimeSnapshot.versions,
+          5: {
+            ...heroesSnapshotV5,
+            skillNodeFields: [
+              "id", "label", "description", "cost", "requiresSkillIds", "missingRequirementIds",
+              "unlocked", "unlockable"
+            ]
+          }
+        }
+      },
+      events: {
+        heroShieldChanged: {
+          requiredFields: ["heroId", "previous", "current", "capacity", "cause", "amount"],
+          optionalFields: ["overflowDamage"],
+          causeValues: ["damage"]
+        },
+        heroAttacked: {
+          requiredFields: ["enemyId", "enemyTypeId", "heroId", "damage", "shieldAbsorbed", "hpDamage"],
+          optionalFields: []
+        },
+        heroDefeated: {
+          requiredFields: ["heroId", "heroDefinitionId", "enemyId"],
+          optionalFields: []
+        },
+        heroAbilityUsed: {
+          requiredFields: [
+            "heroId", "heroDefinitionId", "abilityId", "targetEnemyId", "targetEnemyTypeId",
+            "previousMana", "currentMana", "manaSpent", "cooldownApplied", "requestedDamage",
+            "resolvedDamage", "shieldAbsorbed", "hpDamage"
+          ],
+          optionalFields: []
+        },
+        heroSkillPointsGranted: {
+          requiredFields: [
+            "type", "heroId", "heroDefinitionId", "waveIndex", "previousPoints", "currentPoints", "amount"
+          ],
+          optionalFields: []
+        },
+        heroSkillUnlocked: {
+          requiredFields: [
+            "type", "heroId", "heroDefinitionId", "skillId", "cost", "previousPoints", "currentPoints"
+          ],
+          optionalFields: []
+        }
+      },
+      commands: {
+        schemaVersion: 6,
+        moveHero: {
+          requiredFields: ["heroId", "target"],
+          optionalFields: [],
+          additionalProperties: false
+        },
+        useHeroAbility: {
+          requiredFields: ["heroId", "abilityId", "targetEnemyId"],
+          optionalFields: [],
+          additionalProperties: false
+        },
+        unlockHeroSkill: {
+          requiredFields: ["heroId", "skillId"],
+          optionalFields: [],
+          additionalProperties: false
+        }
+      }
+    };
     expect(engine.COMBAT_MECHANICS_SCHEMA).toMatchObject({
       schemaVersion: 3,
       supportedModuleSchemaVersions: [1, 2, 3],
@@ -211,7 +298,7 @@ describe("R1 combat mechanics MCP contract", () => {
     expect(mechanics.availableDomains).toContain("mechanics");
     expect(mechanics.availableDomains).toContain("reactions");
     expect(mechanics.availableDomains).toContain("navigation");
-    expect(mechanics.mechanics).toEqual({
+    expect(mechanics.mechanics).toMatchObject({
       schemaVersion: 1,
       moduleIds: [...engine.MECHANICS_MODULE_IDS],
       implementedModuleIds: IMPLEMENTED_MODULE_IDS,
@@ -222,8 +309,86 @@ describe("R1 combat mechanics MCP contract", () => {
         elevation: elevationSurface,
         physics: physicsSurface,
         terraforming: terraformingSurface,
-        roguelite: rogueliteSurface
+        roguelite: rogueliteSurface,
+        heroes: heroesSurface
       }
+    });
+    const logisticsSurface = mechanics.mechanics.modules.logistics;
+    expect(logisticsSurface.authoring).toMatchObject({
+      schemaVersion: 3,
+      moduleId: "logistics",
+      supportedModuleSchemaVersions: [1, 2, 3],
+      profile: {
+        requiredFields: ["power", "ammunition", "supply"],
+        optionalFields: [],
+        additionalProperties: false
+      },
+      profileVersions: {
+        1: { requiredFields: ["power"], optionalFields: [], additionalProperties: false },
+        2: {
+          requiredFields: ["power", "ammunition"],
+          optionalFields: [],
+          additionalProperties: false
+        },
+        3: {
+          requiredFields: ["power", "ammunition", "supply"],
+          optionalFields: [],
+          additionalProperties: false
+        }
+      },
+      power: engine.LOGISTICS_MECHANICS_SCHEMA.power,
+      ammunition: engine.LOGISTICS_MECHANICS_SCHEMA.ammunition,
+      supply: engine.LOGISTICS_MECHANICS_SCHEMA.supply,
+      runtimeSnapshot: {
+        schemaVersion: 3,
+        fields: ["schemaVersion", "power", "ammunition", "supply"],
+        powerFields: ["components", "nodes", "consumers"],
+        ammunitionFields: ["inventories"],
+        supplyFields: ["producers", "storages", "edges"]
+      },
+      versions: {
+        1: {
+          requiredFields: ["power"],
+          optionalFields: [],
+          additionalProperties: false,
+          power: engine.LOGISTICS_MECHANICS_SCHEMA.power
+        },
+        2: {
+          requiredFields: ["power", "ammunition"],
+          optionalFields: [],
+          additionalProperties: false,
+          power: engine.LOGISTICS_MECHANICS_SCHEMA.power,
+          ammunition: engine.LOGISTICS_MECHANICS_SCHEMA.ammunition
+        },
+        3: {
+          requiredFields: ["power", "ammunition", "supply"],
+          optionalFields: [],
+          additionalProperties: false,
+          power: engine.LOGISTICS_MECHANICS_SCHEMA.power,
+          ammunition: engine.LOGISTICS_MECHANICS_SCHEMA.ammunition,
+          supply: engine.LOGISTICS_MECHANICS_SCHEMA.supply
+        }
+      }
+    });
+    expect(logisticsSurface.authoring.limits).toMatchObject({
+      power: engine.LOGISTICS_MECHANICS_SCHEMA.limits.power,
+      ammunition: engine.LOGISTICS_MECHANICS_SCHEMA.limits.ammunition,
+      definitionsPerRole: engine.LOGISTICS_MECHANICS_SCHEMA.limits.power.entriesPerRole,
+      definitionsAcrossRoles: engine.LOGISTICS_MECHANICS_SCHEMA.limits.power.entriesTotal,
+      ammunitionTypes: engine.LOGISTICS_MECHANICS_SCHEMA.limits.ammunition.types,
+      authoredTowerInventories: engine.LOGISTICS_MECHANICS_SCHEMA.limits.ammunition.towerInventories,
+      liveAmmunitionInventories: engine.LOGISTICS_MECHANICS_SCHEMA.limits.ammunition.liveInventories,
+      supply: engine.LOGISTICS_MECHANICS_SCHEMA.limits.supply
+    });
+    expect(logisticsSurface).toMatchObject({
+      checkpoint: {
+        field: "state.logistics",
+        optional: true,
+        schemaVersion: 2
+      },
+      snapshot: { field: "logistics", optional: true, supportedSchemaVersions: [1, 2, 3] },
+      commands: [],
+      events: []
     });
     expect(mechanics.mechanics.moduleIds).toHaveLength(12);
     expect(mechanics.towerScript.actions.restoreEnemyShield.required).toEqual({
@@ -333,6 +498,19 @@ describe("R1 combat mechanics MCP contract", () => {
         profileUses: {},
         towerTagsByTowerId: {}
       });
+      expect(result.capabilities.logistics).toMatchObject({
+        available: true,
+        moduleEnabled: false,
+        active: false,
+        reason: "module_missing"
+      });
+      expect(result.logistics).toMatchObject({
+        authoring: engine.LOGISTICS_MECHANICS_SCHEMA,
+        enabled: false,
+        profileIds: [],
+        profileUses: {}
+      });
+      expect(result.logistics).not.toHaveProperty("selectedProfileId");
       expect(UNAVAILABLE_MODULE_IDS.every((moduleId) => (
         result.capabilities[moduleId].available === false
         && result.capabilities[moduleId].active === false
@@ -362,10 +540,10 @@ describe("R1 combat mechanics MCP contract", () => {
     expect(preview.inputSchema.properties.enabled).toEqual({ type: "boolean", default: true });
     expect(apply.inputSchema.properties.enabled).toEqual({ type: "boolean", default: true });
     expect(preview.inputSchema.properties.moduleSchemaVersion).toMatchObject({
-      type: "integer", enum: [1, 2, 3, 4]
+      type: "integer", enum: [1, 2, 3, 4, 5, 6, 7]
     });
     expect(apply.inputSchema.properties.moduleSchemaVersion).toMatchObject({
-      type: "integer", enum: [1, 2, 3, 4]
+      type: "integer", enum: [1, 2, 3, 4, 5, 6, 7]
     });
     expect(apply.inputSchema.required).toContain("ifRevision");
   });

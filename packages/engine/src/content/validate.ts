@@ -10,6 +10,7 @@ import {
   NAVIGATION_LIMITS,
   NavigationProfileValidationError,
   normalizeNavigationProfileV1,
+  resolveActiveNavigationMechanics,
   type DynamicFlowNavigationProfileV1
 } from "./navigation-mechanics.js";
 import {
@@ -42,9 +43,40 @@ import {
   normalizeTowerTagsV1
 } from "./roguelite-mechanics.js";
 import {
+  HeroesProfileValidationError,
+  normalizeHeroesProfileV1,
+  normalizeHeroesProfileV2,
+  normalizeHeroesProfileV3,
+  normalizeHeroesProfileV4,
+  normalizeHeroesProfileV5,
+  normalizeHeroesProfileV6,
+  normalizeHeroesProfileV7,
+  validateHeroSkillTreeSemanticsV5,
+  type HeroesProfileV1,
+  type HeroesProfileV2,
+  type HeroesProfileV3,
+  type HeroesProfileV4,
+  type HeroesProfileV5,
+  type HeroesProfileV6,
+  type HeroesProfileV7
+} from "./heroes-mechanics.js";
+import {
+  LogisticsProfileValidationError,
+  normalizeLogisticsProfileV1,
+  normalizeLogisticsProfileV2,
+  normalizeLogisticsProfileV3,
+  type LogisticsAmmunitionDefinitionV2,
+  type LogisticsSupplyDefinitionV3
+} from "./logistics-mechanics.js";
+import {
   normalizeAuthoredWorldCampaign,
   WorldCampaignValidationError
 } from "../run/campaign-world.js";
+import {
+  campaignBattleRogueliteWorstCaseModifierCount,
+  preflightHeroAuraDamageFinite
+} from "../run/campaign-battle-policy.js";
+import { MAX_MODIFIERS_PER_RESOLUTION } from "../simulation/modifiers.js";
 
 /**
  * `code` is a STABLE, machine-branchable identifier — derived automatically from
@@ -2460,6 +2492,675 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
   };
 
   validatePhysicsMechanics();
+
+  const validateHeroesMechanics = () => {
+    type DescriptorMap = Record<PropertyKey, PropertyDescriptor>;
+    const inspect = (
+      value: unknown,
+      entityId: string,
+      fieldPath: string,
+      label: string
+    ): Record<string, unknown> | undefined => {
+      let prototype: object | null;
+      let descriptors: DescriptorMap;
+      let array = false;
+      try {
+        array = value !== null && typeof value === "object" && Array.isArray(value);
+        if (value !== null && typeof value === "object" && !array) {
+          prototype = Object.getPrototypeOf(value);
+          descriptors = Object.getOwnPropertyDescriptors(value) as DescriptorMap;
+          array = Array.isArray(value);
+        } else {
+          prototype = null;
+          descriptors = {};
+        }
+      } catch {
+        err("mechanics", entityId, fieldPath, `${label} could not be inspected safely.`);
+        return undefined;
+      }
+      if (value === null || typeof value !== "object" || array || prototype !== Object.prototype) {
+        err("mechanics", entityId, fieldPath, `${label} must be a plain own-data object.`);
+        return undefined;
+      }
+      if (Object.getOwnPropertySymbols(descriptors).length > 0) {
+        err("mechanics", entityId, fieldPath, `${label} must not contain symbol fields.`);
+      }
+      const result: Record<string, unknown> = {};
+      for (const key of Object.keys(descriptors)) {
+        const descriptor = descriptors[key];
+        if (!descriptor?.enumerable || !("value" in descriptor)) {
+          err("mechanics", entityId, `${fieldPath}.${key}`, `${label} fields must be enumerable own data.`);
+          continue;
+        }
+        Object.defineProperty(result, key, { value: descriptor.value, enumerable: true });
+      }
+      return result;
+    };
+    const unknownFields = (
+      value: Record<string, unknown>,
+      allowed: readonly string[],
+      entityId: string,
+      fieldPath: string
+    ) => {
+      const allowlist = new Set(allowed);
+      for (const key of Object.keys(value)) {
+        if (!allowlist.has(key)) {
+          err("mechanics", entityId, `${fieldPath}.${key}`, `Unknown heroes mechanics field "${key}".`);
+        }
+      }
+    };
+    const utf8Bytes = (value: string): number => {
+      let bytes = 0;
+      for (const character of value) {
+        const point = character.codePointAt(0)!;
+        bytes += point <= 0x7f ? 1 : point <= 0x7ff ? 2 : point <= 0xffff ? 3 : 4;
+      }
+      return bytes;
+    };
+    const validateActiveHeroTerrainBudgets = (profileId: string): void => {
+      const root = `modules.heroes.profiles.${profileId}.terrainTypes`;
+      const terrainTypes = inspect(
+        content.terrainTypes,
+        profileId,
+        root,
+        "Active hero movement terrain types"
+      );
+      if (!terrainTypes) return;
+      const terrainIds = Object.keys(terrainTypes).sort();
+      if (terrainIds.length > NAVIGATION_LIMITS.terrainDefinitions) {
+        err(
+          "mechanics",
+          profileId,
+          root,
+          `Active hero movement terrain definitions exceed the ${NAVIGATION_LIMITS.terrainDefinitions} definition budget.`
+        );
+      }
+
+      let totalTags = 0;
+      for (const terrainId of terrainIds) {
+        const definitionPath = `${root}.${terrainId}`;
+        if (terrainId.length === 0 || utf8Bytes(terrainId) > NAVIGATION_LIMITS.idUtf8Bytes) {
+          err(
+            "mechanics",
+            profileId,
+            `${definitionPath}.id`,
+            `Active hero movement terrain id must contain 1..${NAVIGATION_LIMITS.idUtf8Bytes} UTF-8 bytes.`
+          );
+        }
+        const definition = inspect(
+          terrainTypes[terrainId],
+          profileId,
+          definitionPath,
+          "Active hero movement terrain definition"
+        );
+        if (!definition) continue;
+        if (typeof definition.label === "string" && definition.label.length > NAVIGATION_LIMITS.labelLength) {
+          err(
+            "mechanics",
+            profileId,
+            `${definitionPath}.label`,
+            `Active hero movement terrain label exceeds the ${NAVIGATION_LIMITS.labelLength} character budget.`
+          );
+        }
+        if (!Array.isArray(definition.tags)) continue;
+        const tags = definition.tags;
+        if (tags.length > NAVIGATION_LIMITS.terrainTagsPerDefinition) {
+          err(
+            "mechanics",
+            profileId,
+            `${definitionPath}.tags`,
+            `Active hero movement terrain tags exceed the ${NAVIGATION_LIMITS.terrainTagsPerDefinition} tag-per-definition budget.`
+          );
+        }
+        totalTags += tags.length;
+        for (let index = 0; index < tags.length; index += 1) {
+          const tag = tags[index];
+          if (typeof tag === "string" && utf8Bytes(tag) > NAVIGATION_LIMITS.terrainTagUtf8Bytes) {
+            err(
+              "mechanics",
+              profileId,
+              `${definitionPath}.tags[${index}]`,
+              `Active hero movement terrain tag exceeds the ${NAVIGATION_LIMITS.terrainTagUtf8Bytes} UTF-8 byte budget.`
+            );
+          }
+        }
+      }
+      if (totalTags > NAVIGATION_LIMITS.terrainTagsAcrossDefinitions) {
+        err(
+          "mechanics",
+          profileId,
+          root,
+          `Active hero movement terrain tags exceed the ${NAVIGATION_LIMITS.terrainTagsAcrossDefinitions} total-tag budget.`
+        );
+      }
+    };
+    const validateActiveHeroMapBudget = (profileId: string, missionId: string): void => {
+      const mission = content.missions[missionId];
+      if (!mission || typeof mission.mapId !== "string") return;
+      const mapId = mission.mapId;
+      const map = content.maps[mapId];
+      if (!map) return;
+      const hasSafePositiveDimensions = Number.isSafeInteger(map.width) && map.width > 0
+        && Number.isSafeInteger(map.height) && map.height > 0;
+      const cellCount = hasSafePositiveDimensions ? map.width * map.height : undefined;
+      if (cellCount !== undefined && !Number.isSafeInteger(cellCount)) {
+        err(
+          "mission",
+          missionId,
+          `maps.${mapId}.heroes.cells`,
+          `Active hero movement map cell product must be a safe integer within the `
+          + `${NAVIGATION_LIMITS.activeMapCells} cell budget for profile "${profileId}".`
+        );
+      } else if (cellCount !== undefined && cellCount > NAVIGATION_LIMITS.activeMapCells) {
+        err(
+          "mission",
+          missionId,
+          `maps.${mapId}.heroes.cells`,
+          `Active hero movement map dimensions contain ${cellCount} cells, exceeding the `
+          + `${NAVIGATION_LIMITS.activeMapCells} cell budget for profile "${profileId}".`
+        );
+      }
+    };
+
+    const catalog = inspect(content.mechanics, "heroes", "mechanics", "Mechanics catalog");
+    if (!catalog) return;
+    const modules = inspect(catalog.modules, "heroes", "mechanics.modules", "Mechanics modules");
+    if (!modules) return;
+    const selections = new Map<string, string>();
+    for (const [missionId, mission] of Object.entries(content.missions)) {
+      const profileId = mission.mechanics?.profiles?.heroes;
+      if (typeof profileId === "string") selections.set(missionId, profileId);
+    }
+    if (modules.heroes === undefined) {
+      for (const [missionId, profileId] of selections) {
+        warn(
+          "mission",
+          missionId,
+          "mechanics.profiles.heroes",
+          `Mission selects heroes profile "${profileId}" from a missing inactive module.`
+        );
+      }
+      return;
+    }
+    const module = inspect(modules.heroes, "heroes", "modules.heroes", "Heroes mechanics module");
+    if (!module) return;
+    unknownFields(module, ["schemaVersion", "enabled", "profiles"], "heroes", "modules.heroes");
+    if (module.schemaVersion !== 1 && module.schemaVersion !== 2 && module.schemaVersion !== 3
+      && module.schemaVersion !== 4 && module.schemaVersion !== 5 && module.schemaVersion !== 6
+      && module.schemaVersion !== 7) {
+      err(
+        "mechanics",
+        "heroes",
+        "modules.heroes.schemaVersion",
+        "Heroes future or unsupported schemaVersion; only versions 1, 2, 3, 4, 5, 6 and 7 are supported."
+      );
+    }
+    if (typeof module.enabled !== "boolean") {
+      err("mechanics", "heroes", "modules.heroes.enabled", "Heroes mechanics enabled must be boolean.");
+    }
+    const profiles = inspect(module.profiles, "heroes", "modules.heroes.profiles", "Heroes mechanics profiles");
+    if (!profiles) return;
+    for (const [missionId, profileId] of selections) {
+      if (Object.prototype.hasOwnProperty.call(profiles, profileId)) continue;
+      const active = module.enabled === true
+        && (module.schemaVersion === 1 || module.schemaVersion === 2 || module.schemaVersion === 3
+          || module.schemaVersion === 4 || module.schemaVersion === 5 || module.schemaVersion === 6
+          || module.schemaVersion === 7);
+      (active ? err : warn)(
+        "mission",
+        missionId,
+        "mechanics.profiles.heroes",
+        `Mission selects missing heroes profile "${profileId}"${active ? "" : " from an inactive module"}.`
+      );
+    }
+    const selectedProfileIds = new Set(selections.values());
+    for (const profileId of Object.keys(profiles).sort()) {
+      const root = `modules.heroes.profiles.${profileId}`;
+      let profile: HeroesProfileV1 | HeroesProfileV2 | HeroesProfileV3 | HeroesProfileV4 | HeroesProfileV5
+        | HeroesProfileV6 | HeroesProfileV7;
+      try {
+        profile = module.schemaVersion === 7
+          ? normalizeHeroesProfileV7(profiles[profileId], root)
+          : module.schemaVersion === 6
+            ? normalizeHeroesProfileV6(profiles[profileId], root)
+          : module.schemaVersion === 5
+            ? normalizeHeroesProfileV5(profiles[profileId], root)
+          : module.schemaVersion === 4
+            ? normalizeHeroesProfileV4(profiles[profileId], root)
+          : module.schemaVersion === 3
+          ? normalizeHeroesProfileV3(profiles[profileId], root)
+          : module.schemaVersion === 2
+            ? normalizeHeroesProfileV2(profiles[profileId], root)
+            : normalizeHeroesProfileV1(profiles[profileId], root);
+      } catch (error) {
+        err(
+          "mechanics",
+          profileId,
+          error instanceof HeroesProfileValidationError ? error.fieldPath : root,
+          error instanceof Error ? error.message : `Heroes profile "${profileId}" is invalid.`
+        );
+        continue;
+      }
+      const selectedExists = Object.prototype.hasOwnProperty.call(profile.definitions, profile.selectedHeroId);
+      const active = module.enabled === true
+        && (module.schemaVersion === 1 || module.schemaVersion === 2 || module.schemaVersion === 3
+          || module.schemaVersion === 4 || module.schemaVersion === 5 || module.schemaVersion === 6
+          || module.schemaVersion === 7)
+        && selectedProfileIds.has(profileId);
+      if (module.schemaVersion === 2 || module.schemaVersion === 3 || module.schemaVersion === 4
+        || module.schemaVersion === 5 || module.schemaVersion === 6 || module.schemaVersion === 7) {
+        const v2 = profile as HeroesProfileV2 | HeroesProfileV3 | HeroesProfileV4 | HeroesProfileV5
+          | HeroesProfileV6 | HeroesProfileV7;
+        const semantic = (fieldPath: string, message: string): void => {
+          (active ? err : warn)("mechanics", profileId, fieldPath, message);
+        };
+        for (const [heroId, definition] of Object.entries(v2.definitions)) {
+          const movementProfileId = definition.movement.movementProfileId;
+          if (Object.prototype.hasOwnProperty.call(v2.movementProfiles, movementProfileId)) continue;
+          semantic(
+            `${root}.definitions.${heroId}.movement.movementProfileId`,
+            `Hero movement profile "${movementProfileId}" is missing${active ? "" : " in this inactive or unselected profile"}.`
+          );
+        }
+        for (const [movementProfileId, movementProfile] of Object.entries(v2.movementProfiles)) {
+          for (const terrainId of Object.keys(movementProfile.terrainCosts ?? {})) {
+            if (Object.prototype.hasOwnProperty.call(content.terrainTypes, terrainId)) continue;
+            semantic(
+              `${root}.movementProfiles.${movementProfileId}.terrainCosts.${terrainId}`,
+              `Hero movement terrain cost references unknown terrain "${terrainId}"`
+              + `${active ? "." : " in this inactive or unselected profile."}`
+            );
+          }
+        }
+        if (active) {
+          validateActiveHeroTerrainBudgets(profileId);
+          for (const [missionId, selectedProfileId] of selections) {
+            if (selectedProfileId === profileId) validateActiveHeroMapBudget(profileId, missionId);
+          }
+        }
+        if (module.schemaVersion === 5 || module.schemaVersion === 6 || module.schemaVersion === 7) {
+          const selectedWaveCounts = [...selections]
+            .filter(([, selectedProfileId]) => selectedProfileId === profileId)
+            .map(([missionId]) => content.missions[missionId]?.waves.length ?? 0);
+          for (const issue of validateHeroSkillTreeSemanticsV5(
+            profile as HeroesProfileV5 | HeroesProfileV6 | HeroesProfileV7,
+            root,
+            selectedWaveCounts
+          )) {
+            semantic(issue.fieldPath, issue.message);
+          }
+        }
+        if ((module.schemaVersion === 6 || module.schemaVersion === 7) && selectedExists) {
+          const auraProfile = profile as HeroesProfileV6 | HeroesProfileV7;
+          const aura = auraProfile.definitions[auraProfile.selectedHeroId]
+            ?.passiveAura;
+          if (aura) {
+            const selectedMissionIds = [...selections]
+              .filter(([, selectedProfileId]) => selectedProfileId === profileId)
+              .map(([missionId]) => missionId);
+            const candidateMissionIds = selectedMissionIds.length > 0
+              ? selectedMissionIds
+              : Object.keys(content.missions).sort();
+            for (const missionId of candidateMissionIds) {
+              const total = campaignBattleRogueliteWorstCaseModifierCount([], content, missionId)
+                + aura.effects.length;
+              if (total > MAX_MODIFIERS_PER_RESOLUTION) {
+                semantic(
+                  `${root}.definitions.${profile.selectedHeroId}.passiveAura.effects`,
+                  `Hero passive aura exceeds the shared ${MAX_MODIFIERS_PER_RESOLUTION}-modifier damage budget `
+                    + `for mission "${missionId}".`
+                );
+              }
+              const numeric = preflightHeroAuraDamageFinite(content, missionId, {
+                heroesProfile: auraProfile
+              });
+              if (!numeric.ok) {
+                semantic(
+                  `${root}.definitions.${profile.selectedHeroId}.passiveAura.effects`,
+                  numeric.message
+                );
+              }
+            }
+          }
+        }
+        if (module.schemaVersion === 7 && selectedExists) {
+          const v7 = profile as HeroesProfileV7;
+          const selectedMissionIds = [...selections]
+            .filter(([, selectedProfileId]) => selectedProfileId === profileId)
+            .map(([missionId]) => missionId)
+            .sort();
+          for (const [heroId, definition] of Object.entries(v7.definitions)) {
+            const blocking = definition.blocking;
+            if (blocking === null) continue;
+            const blockingRoot = `${root}.definitions.${heroId}.blocking.movementProfileIds`;
+            const heroSelected = heroId === v7.selectedHeroId;
+            const dependencyActive = active && heroSelected && selectedMissionIds.length > 0;
+            const report = dependencyActive ? err : warn;
+            const candidateMissionIds = selectedMissionIds.length > 0
+              ? selectedMissionIds
+              : Object.keys(content.missions).sort();
+            let checkedDynamicProfile = false;
+            for (const missionId of candidateMissionIds) {
+              let navigation: ReturnType<typeof resolveActiveNavigationMechanics>;
+              try {
+                navigation = resolveActiveNavigationMechanics(content, missionId);
+              } catch {
+                navigation = undefined;
+              }
+              if (navigation?.mode !== "dynamic_flow") {
+                if (heroSelected) {
+                  report(
+                    "mechanics",
+                    profileId,
+                    blockingRoot,
+                    `Hero blocking requires an active dynamic_flow Navigation dependency for mission "${missionId}".`
+                  );
+                }
+                continue;
+              }
+              checkedDynamicProfile = true;
+              for (const movementProfileId of blocking.movementProfileIds) {
+                if (Object.prototype.hasOwnProperty.call(navigation.movementProfiles, movementProfileId)) continue;
+                report(
+                  "mechanics",
+                  profileId,
+                  blockingRoot,
+                  `Hero blocking movement profile "${movementProfileId}" is missing from mission "${missionId}" Navigation.`
+                );
+              }
+            }
+            if (!heroSelected && !checkedDynamicProfile) {
+              warn(
+                "mechanics",
+                profileId,
+                blockingRoot,
+                "Unselected hero blocking references cannot be resolved without an active dynamic_flow Navigation profile."
+              );
+            }
+          }
+        }
+      }
+      if (!selectedExists) {
+        (active ? err : warn)(
+          "mechanics",
+          profileId,
+          `${root}.selectedHeroId`,
+          `Heroes selectedHeroId "${profile.selectedHeroId}" references a missing definition${active ? "" : " in this inactive or unselected profile"}.`
+        );
+        continue;
+      }
+    }
+  };
+
+  validateHeroesMechanics();
+
+  const validateLogisticsMechanics = () => {
+    const ownRecord = (
+      value: unknown,
+      entityId: string,
+      fieldPath: string,
+      label: string
+    ): Record<string, unknown> | undefined => {
+      let prototype: object | null;
+      let descriptors: Record<PropertyKey, PropertyDescriptor>;
+      try {
+        prototype = value !== null && typeof value === "object" ? Object.getPrototypeOf(value) : null;
+        descriptors = value !== null && typeof value === "object"
+          ? Object.getOwnPropertyDescriptors(value) as Record<PropertyKey, PropertyDescriptor>
+          : {};
+      } catch {
+        err("mechanics", entityId, fieldPath, `${label} could not be inspected safely.`);
+        return undefined;
+      }
+      if (value === null || typeof value !== "object" || Array.isArray(value)
+        || (prototype !== Object.prototype && prototype !== null)) {
+        err("mechanics", entityId, fieldPath, `${label} must be a plain object with own data fields.`);
+        return undefined;
+      }
+      if (Object.getOwnPropertySymbols(descriptors).length > 0) {
+        err("mechanics", entityId, fieldPath, `${label} must not contain symbol fields.`);
+      }
+      const detached = Object.create(null) as Record<string, unknown>;
+      for (const key of Object.keys(descriptors)) {
+        const descriptor = descriptors[key];
+        if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+          err(
+            "mechanics",
+            entityId,
+            `${fieldPath}.${key}`,
+            `${label} field "${key}" must be an enumerable own data field; accessors are not allowed.`
+          );
+          continue;
+        }
+        detached[key] = descriptor.value;
+      }
+      return detached;
+    };
+    const catalog = ownRecord(content.mechanics, "logistics", "mechanics", "Mechanics catalog");
+    const modules = catalog
+      ? ownRecord(catalog.modules, "logistics", "mechanics.modules", "Mechanics modules")
+      : undefined;
+    if (!modules) return;
+    const selectedByProfile = new Map<string, string[]>();
+    for (const [missionId, mission] of Object.entries(content.missions)) {
+      const selected = mission.mechanics?.profiles?.logistics;
+      if (typeof selected !== "string") continue;
+      const missionIds = selectedByProfile.get(selected) ?? [];
+      missionIds.push(missionId);
+      selectedByProfile.set(selected, missionIds);
+    }
+    if (modules.logistics === undefined) {
+      for (const [profileId, missionIds] of selectedByProfile) {
+        for (const missionId of missionIds) {
+          warn(
+            "mission",
+            missionId,
+            "mechanics.profiles.logistics",
+            `Mission selects logistics profile "${profileId}" from a missing inactive module.`
+          );
+        }
+      }
+      return;
+    }
+    const module = ownRecord(
+      modules.logistics,
+      "logistics",
+      "modules.logistics",
+      "Logistics mechanics module"
+    );
+    if (!module) return;
+    for (const key of Object.keys(module)) {
+      if (!["schemaVersion", "enabled", "profiles"].includes(key)) {
+        err("mechanics", "logistics", `modules.logistics.${key}`, `Logistics module is closed; unknown field "${key}".`);
+      }
+    }
+    const supported = module.schemaVersion === 1 || module.schemaVersion === 2 || module.schemaVersion === 3;
+    if (!supported) {
+      err(
+        "mechanics",
+        "logistics",
+        "modules.logistics.schemaVersion",
+        "Logistics future or unsupported schemaVersion; only versions 1, 2, and 3 are supported."
+      );
+    }
+    if (typeof module.enabled !== "boolean") {
+      err("mechanics", "logistics", "modules.logistics.enabled", "Logistics mechanics enabled must be boolean.");
+    }
+    const profiles = ownRecord(
+      module.profiles,
+      "logistics",
+      "modules.logistics.profiles",
+      "Logistics mechanics profiles"
+    );
+    if (!profiles || !supported) return;
+    for (const [profileId, missionIds] of selectedByProfile) {
+      if (Object.prototype.hasOwnProperty.call(profiles, profileId)) continue;
+      for (const missionId of missionIds) {
+        (module.enabled === true ? err : warn)(
+          "mission",
+          missionId,
+          "mechanics.profiles.logistics",
+          `Mission selects missing logistics profile "${profileId}"${module.enabled === true ? "" : " from an inactive module"}.`
+        );
+      }
+    }
+    for (const profileId of Object.keys(profiles).sort()) {
+      const root = `modules.logistics.profiles.${profileId}`;
+      let profile;
+      try {
+        profile = module.schemaVersion === 1
+          ? normalizeLogisticsProfileV1(profiles[profileId])
+          : module.schemaVersion === 2
+            ? normalizeLogisticsProfileV2(profiles[profileId])
+            : normalizeLogisticsProfileV3(profiles[profileId]);
+      } catch (error) {
+        const relative = error instanceof LogisticsProfileValidationError
+          ? error.fieldPath.replace(/^profile(?=\.|$)/, "")
+          : "";
+        err(
+          "mechanics",
+          profileId,
+          `${root}${relative}`,
+          error instanceof Error ? error.message : "Logistics profile could not be inspected safely."
+        );
+        continue;
+      }
+      const active = module.enabled === true && (selectedByProfile.get(profileId)?.length ?? 0) > 0;
+      const semantic = active ? err : warn;
+      if (profile.power !== null) {
+        const roles = [
+          ["generators", profile.power.generators],
+          ["relays", profile.power.relays],
+          ["consumers", profile.power.consumers]
+        ] as const;
+        for (const [role, definitions] of roles) {
+          for (const towerTypeId of Object.keys(definitions)) {
+            const tower = Object.prototype.hasOwnProperty.call(content.towers, towerTypeId)
+              ? content.towers[towerTypeId]
+              : undefined;
+            if (!tower) {
+              semantic(
+                "mechanics",
+                profileId,
+                `${root}.power.${role}.${towerTypeId}`,
+                `Logistics ${role.slice(0, -1)} references unknown tower type "${towerTypeId}"`
+                  + `${active ? "." : " in this inactive or unselected profile."}`
+              );
+              continue;
+            }
+            if (role === "consumers" && ![
+              "single", "pulse", "sniper", "antiair", "splash", "pipeline"
+            ].includes(tower.attack.kind)) {
+              semantic(
+                "mechanics",
+                profileId,
+                `${root}.power.consumers.${towerTypeId}`,
+                `Logistics consumer tower "${towerTypeId}" must use a fire-capable attack; `
+                  + `passive ${tower.attack.kind} is unsupported${active ? "." : " in this inactive profile."}`
+              );
+            }
+          }
+        }
+      }
+      const profileAmmunition = "ammunition" in profile
+        ? profile.ammunition as LogisticsAmmunitionDefinitionV2 | null
+        : undefined;
+      if (profileAmmunition) {
+        for (const [towerTypeId, inventory] of Object.entries(profileAmmunition.towerInventories)) {
+          const path = `${root}.ammunition.towerInventories.${towerTypeId}`;
+          if (!Object.prototype.hasOwnProperty.call(profileAmmunition.types, inventory.ammoTypeId)) {
+            semantic(
+              "mechanics",
+              profileId,
+              `${path}.ammoTypeId`,
+              `Logistics ammunition inventory references unknown ammunition type "${inventory.ammoTypeId}"`
+                + `${active ? "." : " in this inactive or unselected profile."}`
+            );
+          }
+          const tower = Object.prototype.hasOwnProperty.call(content.towers, towerTypeId)
+            ? content.towers[towerTypeId]
+            : undefined;
+          if (!tower) {
+            semantic(
+              "mechanics",
+              profileId,
+              path,
+              `Logistics ammunition inventory references unknown tower type "${towerTypeId}"`
+                + `${active ? "." : " in this inactive or unselected profile."}`
+            );
+          } else if (!["single", "pulse", "sniper", "antiair", "splash", "pipeline"].includes(tower.attack.kind)) {
+            semantic(
+              "mechanics",
+              profileId,
+              path,
+              `Logistics ammunition tower "${towerTypeId}" must use a fire-capable attack; `
+                + `passive ${tower.attack.kind} is unsupported${active ? "." : " in this inactive profile."}`
+            );
+          }
+        }
+      }
+      const profileSupply = "supply" in profile
+        ? profile.supply as LogisticsSupplyDefinitionV3 | null
+        : undefined;
+      if (profileSupply && profileAmmunition) {
+        for (const [recipeId, recipe] of Object.entries(profileSupply.productionRecipes)) {
+          if (!Object.prototype.hasOwnProperty.call(profileAmmunition.types, recipe.ammoTypeId)) {
+            semantic(
+              "mechanics",
+              profileId,
+              `${root}.supply.productionRecipes.${recipeId}.ammoTypeId`,
+              `Logistics production recipe references unknown ammunition type "${recipe.ammoTypeId}"`
+                + `${active ? "." : " in this inactive or unselected profile."}`
+            );
+          }
+        }
+        for (const [towerTypeId, producer] of Object.entries(profileSupply.producers)) {
+          const path = `${root}.supply.producers.${towerTypeId}`;
+          if (!Object.prototype.hasOwnProperty.call(profileSupply.productionRecipes, producer.recipeId)) {
+            semantic(
+              "mechanics",
+              profileId,
+              `${path}.recipeId`,
+              `Logistics producer references unknown production recipe "${producer.recipeId}"`
+                + `${active ? "." : " in this inactive or unselected profile."}`
+            );
+          }
+          if (!Object.prototype.hasOwnProperty.call(content.towers, towerTypeId)) {
+            semantic(
+              "mechanics",
+              profileId,
+              path,
+              `Logistics producer references unknown tower type "${towerTypeId}"`
+                + `${active ? "." : " in this inactive or unselected profile."}`
+            );
+          }
+        }
+        for (const [towerTypeId, storage] of Object.entries(profileSupply.storages)) {
+          const path = `${root}.supply.storages.${towerTypeId}`;
+          if (!Object.prototype.hasOwnProperty.call(profileAmmunition.types, storage.ammoTypeId)) {
+            semantic(
+              "mechanics",
+              profileId,
+              `${path}.ammoTypeId`,
+              `Logistics storage references unknown ammunition type "${storage.ammoTypeId}"`
+                + `${active ? "." : " in this inactive or unselected profile."}`
+            );
+          }
+          if (!Object.prototype.hasOwnProperty.call(content.towers, towerTypeId)) {
+            semantic(
+              "mechanics",
+              profileId,
+              path,
+              `Logistics storage references unknown tower type "${towerTypeId}"`
+                + `${active ? "." : " in this inactive or unselected profile."}`
+            );
+          }
+        }
+      }
+    }
+  };
+
+  validateLogisticsMechanics();
 
   const validateTerraformingMechanics = () => {
     type DescriptorMap = Record<PropertyKey, PropertyDescriptor>;

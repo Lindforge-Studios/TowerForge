@@ -244,7 +244,7 @@ describe("GameCommandV1", () => {
       "startWave",
       [],
       {},
-      { schemaVersion: 4, type: "startWave" },
+      { schemaVersion: 7, type: "startWave" },
       { schemaVersion: 2, type: "placeTower", towerTypeId: "x".repeat(129), coord: { q: 1, r: 0 } },
       { schemaVersion: 1, type: "futureCommand" },
       { schemaVersion: 1, type: "startWave", timestamp: 123 },
