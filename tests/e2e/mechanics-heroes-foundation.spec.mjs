@@ -848,7 +848,7 @@ test.describe("R5.1A Studio static heroes lifecycle", () => {
       await ids.first().fill("ground");
 
       const beforeInvalid = fs.readFileSync(mechanicsPath, "utf8");
-      await page.locator("#btn-mechanics-preview").click();
+      await clickMechanicsPreviewAndWait(page);
       await expect(page.locator("#mechanics-preview-result"))
         .toContainText(/blockCapacity|capacity|64|maximum/i);
       await expect(page.locator("#mechanics-preview-result")).not.toContainText('"ok": true');
@@ -2133,6 +2133,19 @@ async function openHeroesMechanics(page) {
   await expect(card).toBeEnabled();
   if (!await card.evaluate((element) => element.classList.contains("selected"))) await card.click();
   await expect(page.locator("#mechanics-heroes-editor")).toBeVisible();
+}
+
+async function clickMechanicsPreviewAndWait(page) {
+  const responsePromise = page.waitForResponse((response) => (
+    response.request().method() === "POST"
+      && new URL(response.url()).pathname === "/api/mechanics/preview"
+  ), { timeout: 45_000 });
+  await page.locator("#btn-mechanics-preview").click();
+  await responsePromise;
+  await expect(page.locator("#mechanics-preview-result")).not.toHaveText(
+    "Preview changes before applying them.",
+    { timeout: 45_000 }
+  );
 }
 
 function readHeroesState(root) {

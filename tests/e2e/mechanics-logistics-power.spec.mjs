@@ -80,7 +80,7 @@ test.describe.serial("R5.7A Studio Logistics power lifecycle", () => {
     await generatorOutput(page).fill("8");
     const beforePreview = authoringBytes(projectDir);
     expect(beforePreview).toEqual(beforeMaterialize);
-    await page.locator("#btn-mechanics-preview").click();
+    await clickMechanicsPreviewAndWait(page);
     await expect(page.locator("#mechanics-preview-result")).toContainText('"ok": true');
     expect(authoringBytes(projectDir)).toEqual(beforePreview);
 
@@ -389,6 +389,19 @@ async function openLogisticsMechanics(page) {
   await expect(card).toBeEnabled();
   if (!await card.evaluate((element) => element.classList.contains("selected"))) await card.click();
   await expect(page.locator("#mechanics-logistics-editor")).toBeVisible();
+}
+
+async function clickMechanicsPreviewAndWait(page) {
+  const responsePromise = page.waitForResponse((response) => (
+    response.request().method() === "POST"
+      && new URL(response.url()).pathname === "/api/mechanics/preview"
+  ), { timeout: 45_000 });
+  await page.locator("#btn-mechanics-preview").click();
+  await responsePromise;
+  await expect(page.locator("#mechanics-preview-result")).not.toHaveText(
+    "Preview changes before applying them.",
+    { timeout: 45_000 }
+  );
 }
 
 async function placePlayerTower(page, towerTypeId, coord) {
