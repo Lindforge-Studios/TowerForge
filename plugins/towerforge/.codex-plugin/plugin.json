@@ -1,6 +1,6 @@
 {
   "name": "towerforge",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Build, validate, simulate, balance, script, and package TowerForge games from Codex.",
   "author": {
     "name": "Lindforge Studios",

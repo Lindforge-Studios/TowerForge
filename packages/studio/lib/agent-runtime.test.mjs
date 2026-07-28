@@ -15,7 +15,8 @@ const PNG_1PX = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8
 const tempRoots = new Set();
 const originalEnv = {
   data: process.env.TOWERFORGE_USER_DATA_DIR,
-  codex: process.env.TOWERFORGE_CODEX_BIN
+  codex: process.env.TOWERFORGE_CODEX_BIN,
+  claude: process.env.TOWERFORGE_CLAUDE_BIN
 };
 
 afterEach(() => {
@@ -23,6 +24,8 @@ afterEach(() => {
   else process.env.TOWERFORGE_USER_DATA_DIR = originalEnv.data;
   if (originalEnv.codex === undefined) delete process.env.TOWERFORGE_CODEX_BIN;
   else process.env.TOWERFORGE_CODEX_BIN = originalEnv.codex;
+  if (originalEnv.claude === undefined) delete process.env.TOWERFORGE_CLAUDE_BIN;
+  else process.env.TOWERFORGE_CLAUDE_BIN = originalEnv.claude;
   for (const root of tempRoots) fs.rmSync(root, { recursive: true, force: true });
   tempRoots.clear();
 });
@@ -59,15 +62,31 @@ describe("agent runtime security boundaries", () => {
       ANTHROPIC_API_KEY: "sk-ant-secret",
       HTTPS_PROXY: "https://user:password@proxy.example",
       AWS_SECRET_ACCESS_KEY: "secret"
-    });
+    }, "linux");
     expect(env).toMatchObject({ PATH: "/usr/bin", CODEX_HOME: "/private/config" });
-    if (process.platform === "win32") expect(env.USERPROFILE).toBe("/private/config");
-    else expect(env.HOME).toBe("/private/config");
+    expect(env.HOME).toBe("/private/config");
     expect(env.HOME).not.toBe("/home/designer");
     expect(env).not.toHaveProperty("OPENAI_API_KEY");
     expect(env).not.toHaveProperty("ANTHROPIC_API_KEY");
     expect(env).not.toHaveProperty("HTTPS_PROXY");
     expect(env).not.toHaveProperty("AWS_SECRET_ACCESS_KEY");
+  });
+
+  it("preserves the macOS login Keychain home while keeping provider config isolated", () => {
+    const source = {
+      HOME: "/Users/designer",
+      PATH: "/usr/bin",
+      OPENAI_API_KEY: "sk-secret",
+      ANTHROPIC_API_KEY: "sk-ant-secret"
+    };
+    const claude = runtimeChildEnv("claude", "/private/claude", source, "darwin");
+    const codex = runtimeChildEnv("codex", "/private/codex", source, "darwin");
+
+    expect(claude).toMatchObject({ HOME: "/Users/designer", CLAUDE_CONFIG_DIR: "/private/claude" });
+    expect(codex).toMatchObject({ HOME: "/Users/designer", CODEX_HOME: "/private/codex" });
+    expect(claude).not.toHaveProperty("ANTHROPIC_API_KEY");
+    expect(codex).not.toHaveProperty("OPENAI_API_KEY");
+    expect(runtimeChildEnv("claude", "/private/claude", source, "linux").HOME).toBe("/private/claude");
   });
 
   it("redacts credentials and accepts only explicit HTTPS OAuth hosts", () => {
@@ -165,6 +184,39 @@ describe("Codex App Server adapter", () => {
 });
 
 describe("Claude Agent SDK adapter", () => {
+  it.skipIf(process.platform === "win32")("surfaces a bounded failure when browser auth exits without saving credentials", async () => {
+    const root = tempRoot();
+    const fakeClaude = path.join(root, "fake-claude");
+    fs.writeFileSync(fakeClaude, `#!/bin/sh
+if [ "$1" = "auth" ] && [ "$2" = "login" ]; then
+  echo "macOS Keychain is not writable; token-secret-must-not-leak" >&2
+  exit 2
+fi
+if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+  echo '{"loggedIn":false,"authMethod":"none"}'
+  exit 1
+fi
+exit 3
+`, { mode: 0o700 });
+    process.env.TOWERFORGE_USER_DATA_DIR = path.join(root, "user-data");
+    process.env.TOWERFORGE_CLAUDE_BIN = fakeClaude;
+    const bridge = new AgentRuntimeBridge(bridgeOptions(root));
+    try {
+      await expect(bridge.connect("claude-code")).resolves.toMatchObject({ started: true });
+      let status;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        status = await bridge.status("claude-code");
+        if (status.error) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(status).toMatchObject({ available: true, connected: false });
+      expect(status.error).toMatch(/sign-in failed/i);
+      expect(status.error).not.toContain("token-secret-must-not-leak");
+    } finally {
+      await bridge.close();
+    }
+  });
+
   it("disables built-in tools, persistence, settings, and denies out-of-scope calls", async () => {
     const root = tempRoot();
     process.env.TOWERFORGE_USER_DATA_DIR = path.join(root, "user-data");
