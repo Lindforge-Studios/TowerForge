@@ -30,6 +30,8 @@ The current "full constructor" means:
 - Save project files with conflict protection and backups.
 - Validate cross-references and numeric guards with engine validation.
 - Run headless mission smoke simulations and multi-strategy balance sweeps.
+- Preview seeded procedural maps, run cancellable evidence-only balance proposal batches, and stage
+  generated images for explicit validated import.
 - Use AI Chat or external MCP agents to inspect, simulate, validate, patch, build, and package local projects through validation-gated tools.
 - Build a playable static web bundle.
 - Export Capacitor mobile and Tauri desktop scaffolds around the built web bundle.
@@ -48,7 +50,8 @@ Non-goals for this iteration:
 
 ```text
 packages/engine
-  simulation rules, maps, snapshots, actions, TowerScript, content registry, validation
+  simulation rules, maps, snapshots, actions, TowerScript, content registry, validation,
+  and pure seeded generation
 
 packages/cli
   project loading, schema normalization, migrations, map compilation,
@@ -98,9 +101,14 @@ my-game.tdproj/
   build-targets.json
   .towerforge/
     towerscript-layouts/  (local Visual Graph presentation only)
+    cache/auto-balancer/v1/  (completed local evidence cache only)
+    generated-assets/  (private opaque staging; never committed as project source)
 ```
 
-Source data is JSON so projects are portable and git-friendly. `.towerforge/` is local editor state and backup storage. TowerScript graph layouts under `.towerforge/towerscript-layouts/` are independently versioned local presentation documents; they are not gameplay content, are ignored by the engine, and are excluded from builds, players, project packs, and `.tdpack` output.
+Source data is JSON so projects are portable and git-friendly. `.towerforge/` is local editor state,
+cache, staging, and backup storage. TowerScript graph layouts, auto-balancer cache entries, and
+uncommitted generated assets are not gameplay content, are ignored by the engine, and are excluded
+from builds, players, project packs, and `.tdpack` output.
 
 `content/mechanics.json` is an opt-in versioned catalog. A mission selects named module profiles through `mission.mechanics.profiles`; no file or selection means the established constructor behavior. Authored mechanics require project schema v3, while ordinary starter and legacy projects remain schema v2 and MUST NOT receive a synthesized catalog during read/save/build/package.
 
@@ -143,6 +151,7 @@ The engine exposes:
 - immutable `GameSnapshot`
 - TowerScript definitions, validation, expression evaluation, diagnostics, and `emitScriptSignal`
 - bounded `TowerScriptTraceV1`, `TowerScriptDebugSession`, and graph AST projection/materialization helpers for explicit authoring/debug sessions
+- pure `planDirectorWaveV1`, `runAutoBalancerBatch`, and `generateProceduralMap` contracts
 
 Studio and CLI must call those APIs instead of duplicating gameplay behavior. Validation and simulation are engine-backed in the current implementation.
 
@@ -158,13 +167,22 @@ Canvas and Phaser generated-player templates now consume this boundary through o
 
 `packages/mcp/tools.mjs` is the shared constructor tool registry for the stdio MCP server and Studio AI Chat. Current tools cover compact gameplay/visual/audio/narrative/script reads, the filtered project tree, schema and recipe retrieval, validation, simulation/playtest diagnosis, map compilation/authoring, balance reports, granular entity/asset/narrative/script writes, project packs, web/native packaging, and build.
 
-`packages/mcp/agent-instructions.mjs` is the canonical mechanism-selection and safe-workflow policy for Studio direct APIs, Codex, Claude, and external MCP initialization. `describe_schema({domain})` progressively exposes `combat`, `reactions`, `navigation`, `elevation`, `physics`, `terraforming`, `roguelite`, `missions`, `progression`, `scripts`, `maps`, `terrain`, `tiles`, `assets`, and `mechanics` contracts. `get_capabilities` is read-only and never creates the optional catalog or upgrades a project; preview/apply reject unavailable modules, unsupported versions, and unmet dependencies before any write. Executable modules are `combat` v1/v2/v3, independent `reactions`, `navigation`, `physics`, `terraforming`, and `roguelite` v1/v2/v3, plus `elevation` v1/v2/v3. A mission may select reactions only together with active combat v2/v3; elevation mutation additionally requires the active elevation capability and selected terraforming elevation policy. Terraforming recipes return detached profiles and TowerScript v6 snippets; mechanics and script writes use separate guarded revisions. Roguelite profiles and optional tower tags are committed atomically by the common guarded mechanics transaction; v3 may author draft without artifacts, while `describe_schema` publishes the exact choice command rather than adding a dedicated write tool. The stdio server queues frames FIFO, drains stdout before normal exit, and keeps one controlled lifetime error path for late broken pipes.
+`packages/mcp/agent-instructions.mjs` is the canonical mechanism-selection and safe-workflow policy for Studio direct APIs, Codex, Claude, and external MCP initialization. `describe_schema({domain})` progressively exposes implemented domain descriptors, including `director`, while `get_capabilities` is read-only and never creates the optional catalog or upgrades a project. Preview/apply reject unavailable modules, unsupported versions, and unmet dependencies before any write. Executable modules include combat v1–v3, reactions/navigation/physics/terraforming/director v1, elevation v1–v3, roguelite v1–v4, heroes v1–v7, and logistics v1–v3. Dependencies and promotions remain explicit; recipes are detached candidates and the common guarded mechanics transaction owns the catalog/mission write. The stdio server queues frames FIFO, drains stdout before normal exit, and keeps one controlled lifetime error path for late broken pipes.
 
 Agent-facing write tools are local-only and validation-gated:
 
 - `dry_run_balance_patch` and `compile_maps_dry_run` compute without source-file writes.
+- `propose_balance_patches` runs a bounded cancellable Node worker matrix, caches only completed
+  evidence by content/engine identity, and returns proposal-only patches. `preview_procedural_map`
+  returns a seeded `MapGenerationSpecV1` candidate plus canonical compile, terrain, tileset and
+  deterministic headless runtime evidence without writing source or compiled maps; the runtime
+  smoke is not a balance claim. `commit_procedural_map(ifRevision)` is the only generated-map commit
+  path and owns source/compiled backup, validation, and rollback.
 - `apply_validated_patch`, `apply_balance_patch`, `set_enemy_stat`, `upsert_tower`, and `add_wave_group` write `content/balance.json` only after a successful dry-run and keep rollback backups under `.towerforge/mcp-backups`.
 - `import_asset`, `bind_sprite`, and `bind_mission_music` write confined asset/catalog changes only after schema validation, revision checks, backup, and rollback protection.
+- `stage_generated_asset`, `inspect_staged_asset`, `commit_staged_asset`, and
+  `discard_staged_asset` form a provider-neutral opaque-handle lifecycle. Only explicit guarded
+  commit imports bytes; provider credentials and prompts are never project metadata.
 - `list_tile_presets`, `inspect_tileset`, `preview_tileset_import`, and `preview_tile_binding` expose tile discovery and coverage without writes. `render_tileset_preview` additionally returns a bounded PNG contact sheet as an MCP image block so an agent can inspect real atlas frames and missing-mask placeholders. `apply_tileset_import`, `upsert_terrain_type`, and `bind_map_tileset` use strict schemas, revision guards, backups, validation, and rollback.
 - `upsert_story_comic` and `set_battle_background` support dry-run diffs and independently guard their source-file revisions.
 - `list_project_tree` and `get_tower_script` are read-only; `upsert_tower_script` supports dry-run, catalog revision guards, candidate/full validation, atomic write, backup, and rollback. It cannot write outside `scripts/`. R6 graph authoring adds a granular read/preview/apply transaction over the same canonical script source: reads do not create `.towerforge`, preview materializes and validates without writes, and apply requires the exact composite script+layout revision before independently guarded atomic writes and rollback. `preview_tower_script_trace` is compute-only, accepts at most 128 exact commands, and writes no project/editor state.
@@ -184,7 +202,9 @@ Current Studio modules:
 - World Map Editor: regions, mission nodes, difficulty, unlock requirements, canvas preview.
 - Settings: global constants, project manifest, AI account/API connections, and provider/model/reasoning defaults.
 - Build Targets: target metadata plus one-click web build.
-- Mechanics Hub: a separate opt-in workspace for engine-owned module cards and capability state; planned/unavailable mechanics do not add disabled controls to the ordinary tower, enemy, or mission forms.
+- Mechanics Hub: a separate opt-in workspace for engine-owned module cards and capability state,
+  including the Director authored-counter editor; unavailable or unselected mechanics do not add
+  disabled controls to the ordinary tower, enemy, or mission forms.
 - Map Authoring: per-map grid selection, source dimensions, spawn/core, path centerline, named routes, typed terrain overrides, exact square/hex picking, and compile action. During R3.1 it gains a separate elevation draft/layer only for an applicable opt-in elevation capability; ordinary map forms stay unchanged while inactive.
 - Project Home: release-readiness checks, project summary, recent activity, and direct navigation to current problems.
 - Playtest: engine-backed live canvas playtest with difficulty selection, mouse/keyboard placement, selling/targeting/abilities, inspector, objectives, kills/leaks, and event timeline. The explicit R6 debug session adds structured trace, `tick | event | handler | action` cursor stepping, resume, and bounded tick rewind without changing the ordinary playtest path.
@@ -321,7 +341,7 @@ Studio writes action traces for save, sim, build, map compile, and asset import 
 
 ## Roadmap
 
-The staged R0–R8 mechanics program, TDD roles, forbidden increment combinations, compatibility baseline, and status live in [ROADMAP.md](ROADMAP.md). R0A establishes the opt-in capability harness, R0B adds the shared modifier/damage foundation, and completed R0C supplies deterministic session/profile foundations. Completed R1.1 proves resolver equivalence through one private application boundary; R1.2 adds shields; R1.3 adds the independently versioned armor matrix; R1.4 adds bounded marks; R1.5 adds a separate bounded reactions module; completed R2 adds opt-in dynamic-flow navigation, movement profiles, safe placement analysis, and shared Studio/player presentation. Completed R3.1 adds the opt-in authored elevation foundation; completed R3.2 adds deterministic elevation LoS; completed R3.3 adds elevation v3 high-ground through engine-owned pairwise acquisition range and one common-pipeline spatial damage modifier. R3.4a completes the isolated `physics` v1 increment with bounded tile-discrete push/pull, explicit terrain-tag fall hazards, authored-route confinement, cached-field dynamic movement, and engine-event-only presentation. Completed R3.4b separately introduces opt-in `terraforming` v1 and the TowerScript v6 batch/event contract with fail-closed, mission-scoped validation. Runtime C1 adds atomic persistent terrain batches and complete authored-route safety; C2A adds detached dynamic resolver preflight and atomic adoption; C2B1/B2A/B2B add the bounded canonical spawn/obligation graph and full-field proofs before resolver construction. Exact ceilings remain `16 384` sources/causes, `256` shared fields, and `8 388 608` baseline+candidate field/proof cells, with one candidate field at the accepted 8,191-live-enemy boundary and non-counting snapshot peeks. C3–C5 complete runtime compatibility and authoring, while C6 supplies the accepted shared Canvas/Phaser/player projection and package surface. Accepted R6 adds the detached structured trace, checkpoint-backed historical `tick | event | handler | action` inspection, bounded rewind, lossless Visual Graph, descriptor-driven Studio/MCP authoring, and guarded local layout transactions. Exact incremental journal accounting and monotonic replay-checkpoint pruning keep the opt-in debugger bounded without changing ordinary snapshots, checkpoints, digests, renderers, or generated players.
+The staged R0–R8 mechanics program, TDD roles, forbidden increment combinations, compatibility baseline, and status live in [ROADMAP.md](ROADMAP.md). R0A establishes the opt-in capability harness, R0B adds the shared modifier/damage foundation, and completed R0C supplies deterministic session/profile foundations. Completed R1.1 proves resolver equivalence through one private application boundary; R1.2 adds shields; R1.3 adds the independently versioned armor matrix; R1.4 adds bounded marks; R1.5 adds a separate bounded reactions module; completed R2 adds opt-in dynamic-flow navigation, movement profiles, safe placement analysis, and shared Studio/player presentation. Completed R3.1 adds the opt-in authored elevation foundation; completed R3.2 adds deterministic elevation LoS; completed R3.3 adds elevation v3 high-ground through engine-owned pairwise acquisition range and one common-pipeline spatial damage modifier. R3.4a completes the isolated `physics` v1 increment with bounded tile-discrete push/pull, explicit terrain-tag fall hazards, authored-route confinement, cached-field dynamic movement, and engine-event-only presentation. Completed R3.4b separately introduces opt-in `terraforming` v1 and the TowerScript v6 batch/event contract with fail-closed, mission-scoped validation. Runtime C1 adds atomic persistent terrain batches and complete authored-route safety; C2A adds detached dynamic resolver preflight and atomic adoption; C2B1/B2A/B2B add the bounded canonical spawn/obligation graph and full-field proofs before resolver construction. Exact ceilings remain `16 384` sources/causes, `256` shared fields, and `8 388 608` baseline+candidate field/proof cells, with one candidate field at the accepted 8,191-live-enemy boundary and non-counting snapshot peeks. C3–C5 complete runtime compatibility and authoring, while C6 supplies the accepted shared Canvas/Phaser/player projection and package surface. Accepted R6 adds the detached structured trace, checkpoint-backed historical `tick | event | handler | action` inspection, bounded rewind, lossless Visual Graph, descriptor-driven Studio/MCP authoring, and guarded local layout transactions. Exact incremental journal accounting and monotonic replay-checkpoint pruning keep the opt-in debugger bounded without changing ordinary snapshots, checkpoints, digests, renderers, or generated players. Implemented R7 adds the authored deterministic Director, proposal-only cancellable worker auto-balancer, seeded procedural preview, and provider-neutral guarded asset staging.
 
 Accepted C3A adds engine-only persistent elevation. `set_elevation` and `restore_elevation` require both an active elevation v1–v3 profile and the active terraforming profile's elevation policy; authored elevation remains the immutable restore base. Terrain/elevation operations may share a cell and commit atomically in declared event order. Each layer is bounded to 512 runtime overrides and the combined ceiling is 1,024. A pure-elevation batch performs no navigation resolver creation, read, or adoption, while `GridMap.elevationAt`, `snapshot.elevation`, LoS, and high-ground immediately use the effective value; reset discards the runtime layer. A committed change emits the real TowerScript-dispatched `elevationChanged` event, and a no-op emits nothing.
 
@@ -742,6 +762,34 @@ Hub, CLI, and MCP use the inert `basic_factory_ammunition_supply` recipe and the
 transaction. No command, event, TowerScript action, raw material, conveyor, loot, campaign/profile
 carry, or host-side refill API is added. See [ADR 0046](adr/0046-opt-in-ammunition-supply.md) and
 `docs/examples/opt-in-ammunition-supply/`.
+
+### R7 Director and Generative Studio
+
+Director v1 is a closed opt-in profile over authored counters, budget, and fairness. Before an
+unstarted wave, engine-owned analysis exposes bounded damage-share, coverage, movement-layer, and
+Logistics-brownout metrics. Every condition on a candidate must match. The pure policy then applies
+budget/group/enemy/consecutive-use caps and orders remaining counters by descending authored
+priority, descending greatest matched-condition severity, and binary ascending ID. Threat cost is
+an eligibility constraint rather than a tie-break. The selected groups exist only in a detached
+wave plan; source content remains immutable. Snapshot history and `directorDecision` are optional,
+bounded, and authoritative for Canvas/Phaser presentation. No active selection means no Director
+state, event, UI, or RNG work.
+
+The auto-balancer has a pure ranking contract in the engine and a bounded Node worker pool in the
+CLI layer. Workers evaluate the explicit seed × strategy × candidate matrix, support cooperative
+`AbortSignal` cancellation, and cache only completed results under a digest of content, engine, and
+request. A cancelled run exposes no partial proposal ranking. Every result is evidence-only; a
+human or agent must separately preview and revision-guard a balance patch.
+
+`MapGenerationSpecV1` is the closed boundary between a prompt-capable author/agent and the pure
+seeded generator. Square/cardinal and hex/odd-r candidates reuse the shared topology, then return
+source plus reachability, entrance/materialized-loop, buildable-ratio, declared terrain IDs, and balance
+smoke evidence. MCP preview writes neither source nor compiled maps. Generated images use a separate
+provider-neutral lifecycle below `.towerforge/generated-assets`: signature/MIME, size, license,
+provenance, real-file, symlink, path, and revision checks happen before explicit import; successful
+commit discards the handle and failed validation rolls back owned writes. Secrets and prompts are
+not staged or authored. See [ADR 0048](adr/0048-opt-in-director-and-generative-studio.md) and
+`docs/examples/opt-in-adaptive-director/`.
 
 ## Done Criteria For Constructor Changes
 

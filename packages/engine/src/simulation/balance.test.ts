@@ -108,4 +108,25 @@ describe("runBalanceSweep", () => {
     const b = runBalanceSweep(buildContent(), { simSeconds: 120, tickStep: 0.5 });
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
   });
+
+  it("optionally evaluates an explicit strategy subset with a deterministic simulation seed", () => {
+    const report = runBalanceSweep(buildContent(), {
+      missionIds: ["easy"],
+      simSeconds: 5,
+      strategyIds: ["all_flat"],
+      seed: "auto-balance-seed-a"
+    });
+
+    expect(report.missions).toHaveLength(1);
+    expect(report.missions[0]?.results.map((result) => result.strategyId)).toEqual(["all_flat"]);
+    expect(report.missions[0]?.results[0]?.seed).toBe("auto-balance-seed-a");
+    expect(report.generatedWith.seed).toBe("auto-balance-seed-a");
+  });
+
+  it("preserves the legacy report shape when no seed or strategy filter is requested", () => {
+    const report = runBalanceSweep(buildContent(), { missionIds: ["easy"], simSeconds: 5 });
+
+    expect(Object.prototype.hasOwnProperty.call(report.generatedWith, "seed")).toBe(false);
+    expect(report.missions[0]?.results.every((result) => !Object.prototype.hasOwnProperty.call(result, "seed"))).toBe(true);
+  });
 });

@@ -708,7 +708,7 @@ function playerTemplate() {
   validateCampaignRunAgainstContent
 } from "./engine/index.js";
 import { createPlayerProfileStore, derivePlayerProfileStorageKey } from "./player-runtime/index.mjs";
-import { createCanvasRenderer, hitTestHeroesPresentation, projectCampaignPresentation, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectRoguelitePresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
+import { createCanvasRenderer, hitTestHeroesPresentation, projectCampaignPresentation, projectDirectorDecisionCues, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectRoguelitePresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
 import { createAudioPlayer } from "./renderer/audio.mjs";
 import project from "./project-data.js";
 
@@ -1600,6 +1600,8 @@ function resize() {
 function draw(snap, events) {
   snap.lastEvents = events;
   projectPhysicsPresentationCues(snap);
+  const directorCue = projectDirectorDecisionCues(snap).at(-1);
+  if (directorCue) message = directorCue.label;
   renderer.drawSnapshot(snap);
   if ($("snd")?.checked) audio.handleEvents(events);
 }
@@ -1920,6 +1922,7 @@ import { createPlayerProfileStore, derivePlayerProfileStorageKey } from "./playe
 import { createAudioPlayer } from "./renderer/audio.mjs";
 import {
   projectCampaignPresentation,
+  projectDirectorDecisionCues,
   projectElevationCues,
   projectEnemyNavigationPoint,
   projectLegacyPresentationEvents,
@@ -2535,6 +2538,8 @@ class PlayScene extends Phaser.Scene {
       ...(snap.combat === undefined && this.previousCombat !== null ? { combat: this.previousCombat } : {}),
       lastEvents: events
     };
+    const directorCue = projectDirectorDecisionCues(presentationSnapshot).at(-1);
+    if (directorCue) message = directorCue.label;
     const terraformingPresentation = projectTerraformingPresentation(presentationSnapshot);
     this.syncTileImages(snap, g, terraformingPresentation);
     const map = { id: snap.mapId || snap.missionId, grid: snap.grid, tiles: snap.tiles, pathRoutes: snap.pathRoutes || [] };

@@ -57,6 +57,10 @@ describe("mcp tool registry", () => {
     expect(names).toContain("upsert_story_comic");
     expect(names).toContain("set_battle_background");
     expect(TOOLS.find((t) => t.name === "apply_validated_patch")?.riskClass).toBe("write_local");
+    for (const name of ["dry_run_balance_patch", "apply_balance_patch", "apply_validated_patch"]) {
+      expect(TOOLS.find((tool) => tool.name === name)?.inputSchema?.properties?.patch?.properties)
+        .toHaveProperty("terrainTypes");
+    }
   });
 
   it("rejects unknown tools", async () => {

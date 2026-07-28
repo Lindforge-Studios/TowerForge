@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "director": {
+      "schemaVersion": 1,
+      "enabled": true,
+      "profiles": {
+        "basic_adaptive_wave_director": {
+          "counterPool": {
+            "dominant_damage_guard": {
+              "label": "Dominant damage guard",
+              "priority": 100,
+              "conditions": [
+                {
+                  "metric": "damage_share",
+                  "key": "physical",
+                  "operator": "gte",
+                  "threshold": 0.6
+                }
+              ],
+              "groups": [
+                {
+                  "enemyId": "armored_brute",
+                  "count": 2,
+                  "spawnInterval": 0.75,
+                  "startDelay": 0
+                }
+              ],
+              "threatCost": 8
+            }
+          },
+          "threatBudget": {
+            "base": 10,
+            "perWave": 5
+          },
+          "fairness": {
+            "minimumWaveIndex": 1,
+            "maxConsecutiveUses": 1,
+            "maxAddedGroups": 2,
+            "maxAddedEnemies": 8
+          }
+        }
+      }
+    }
+  }
+}

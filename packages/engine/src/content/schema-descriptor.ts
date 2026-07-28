@@ -8,12 +8,35 @@ import {
 import { DAMAGE_TAGS } from "../simulation/damage.js";
 import { TOWER_SCRIPT_EVENT_FIELDS, TOWER_SCRIPT_TARGETS } from "../scripting/schema-descriptor.js";
 import { ARMOR_MATRIX_LIMITS, MARK_LIMITS, REACTION_LIMITS, SHIELD_LIMITS } from "./mechanics.js";
+import { DIRECTOR_LIMITS } from "./director-mechanics.js";
 export { NAVIGATION_MECHANICS_SCHEMA } from "./navigation-mechanics.js";
 export { ELEVATION_MECHANICS_SCHEMA } from "./elevation-mechanics.js";
 export { TERRAFORMING_MECHANICS_SCHEMA } from "./terraforming-mechanics.js";
 export { ROGUELITE_MECHANICS_SCHEMA } from "./roguelite-mechanics.js";
 export { HEROES_MECHANICS_SCHEMA } from "./heroes-mechanics.js";
 export { LOGISTICS_MECHANICS_SCHEMA } from "./logistics-mechanics.js";
+
+export const DIRECTOR_MECHANICS_SCHEMA = Object.freeze({
+  schemaVersion: 1,
+  moduleId: "director",
+  supportedModuleSchemaVersions: [1] as const,
+  profile: {
+    requiredFields: ["counterPool", "threatBudget", "fairness"] as const,
+    optionalFields: [] as const,
+    additionalProperties: false
+  },
+  counter: {
+    requiredFields: ["label", "priority", "conditions", "groups", "threatCost"] as const,
+    optionalFields: [] as const,
+    additionalProperties: false
+  },
+  condition: {
+    metrics: ["damage_share", "coverage_ratio", "movement_layer_share", "logistics_brownout_ratio"] as const,
+    operators: ["gte", "lte"] as const
+  },
+  tieBreak: ["priority_desc", "condition_severity_desc", "counter_id_binary_asc"] as const,
+  limits: DIRECTOR_LIMITS
+});
 
 /**
  * A machine-readable description of the content schema's closed sets and per-shape field

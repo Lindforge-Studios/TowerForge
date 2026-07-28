@@ -60,6 +60,11 @@ import {
   type LogisticsPowerDefinitionV1,
   type LogisticsSupplyDefinitionV3
 } from "../content/logistics-mechanics.js";
+import {
+  DIRECTOR_LIMITS,
+  resolveActiveDirectorMechanics,
+  type ActiveDirectorMechanicsV1
+} from "../content/director-mechanics.js";
 import { CAMPAIGN_RUN_LIMITS } from "../run/campaign-run.js";
 import {
   campaignBattleWorstCaseModifierCount,
@@ -155,6 +160,10 @@ import {
 } from "./checkpoint.js";
 import { SeededRng, type GameSeed, type SeededRngStateV1 } from "./rng.js";
 import {
+  planDirectorWaveV1,
+  type DirectorDefenseAnalysisV1
+} from "./director.js";
+import {
   type ActiveCombatShieldDefinitions,
   type CombatState,
   type DamageApplicationResult,
@@ -235,6 +244,7 @@ import type {
   TowerTargetMode,
   TowerState,
   TowerType,
+  WaveGroup,
   WaveState
 } from "./types.js";
 
@@ -889,6 +899,8 @@ export class TowerDefenseGame {
   private readonly activeLogisticsAmmunition: LogisticsAmmunitionDefinitionV2 | undefined;
   private readonly activeLogisticsSupply: LogisticsSupplyDefinitionV3 | undefined;
   private readonly activeLogisticsSchemaVersion: 1 | 2 | 3 | undefined;
+  private readonly activeDirectorMechanics: ActiveDirectorMechanicsV1 | undefined;
+  private directorDecisions: NonNullable<GameSnapshot["director"]>["decisions"] = Object.freeze([]);
   private readonly activeHeroPassiveAura: Readonly<{
     definitionId: string;
     aura: NonNullable<ActiveHeroesMechanicsV6["definitions"][string]["passiveAura"]>;
@@ -1025,6 +1037,7 @@ export class TowerDefenseGame {
     this.activeTerraformingMechanics = resolveActiveTerraformingMechanics(this.content, missionId);
     this.activeRogueliteMechanics = resolveActiveRogueliteMechanics(this.content, missionId);
     this.activeHeroesMechanics = resolveActiveHeroesMechanics(this.content, missionId);
+    this.activeDirectorMechanics = resolveActiveDirectorMechanics(this.content, missionId);
     const activeLogistics = resolveActiveLogisticsMechanics(this.content, missionId);
     this.activeLogisticsSchemaVersion = activeLogistics?.schemaVersion;
     this.activeLogisticsPower = activeLogistics?.power ?? undefined;
@@ -1319,6 +1332,7 @@ export class TowerDefenseGame {
     this.enemyShields = {};
     this.towerShields = {};
     this.enemyMarks = {};
+    this.directorDecisions = Object.freeze([]);
     this.lastEvents = [];
     if (this.activePhysicsMechanics) this.displacementStepAttemptsThisTick = 0;
     this.enemyCounter = 0;
@@ -3994,6 +4008,17 @@ export class TowerDefenseGame {
       : this.activeLogisticsAmmunition === undefined
         ? undefined
         : { schemaVersion: 1 as const, ammunition: ammunitionCheckpoint! };
+    const director: GameCheckpointStateV1["director"] = this.activeDirectorMechanics
+      ? {
+          schemaVersion: 1,
+          profileId: this.activeDirectorMechanics.profileId,
+          decisions: this.directorDecisions.map((decision) => ({
+            ...decision,
+            reason: { ...decision.reason },
+            addedGroups: decision.addedGroups.map((group) => ({ ...group }))
+          }))
+        }
+      : undefined;
     const state: GameCheckpointStateV1 = {
       coreHp: this.coreHp,
       resources: { ...this.resources },
@@ -4050,6 +4075,7 @@ export class TowerDefenseGame {
       ...(draft === undefined ? {} : { draft }),
       ...(heroes === undefined ? {} : { heroes }),
       ...(logistics === undefined ? {} : { logistics }),
+      ...(director === undefined ? {} : { director }),
       ...(this.campaignBattle === undefined ? {} : {
         campaignBattle: {
           schemaVersion: 1 as const,
@@ -4117,6 +4143,7 @@ export class TowerDefenseGame {
     const checkpointTerraforming = resolveActiveTerraformingMechanics(content, identity.missionId);
     const checkpointRoguelite = resolveActiveRogueliteMechanics(content, identity.missionId);
     const checkpointHeroes = resolveActiveHeroesMechanics(content, identity.missionId);
+    const checkpointDirector = resolveActiveDirectorMechanics(content, identity.missionId);
     const checkpointLogisticsMechanics = resolveActiveLogisticsMechanics(content, identity.missionId);
     const checkpointAmmunition = checkpointLogisticsMechanics?.schemaVersion === 2
       || checkpointLogisticsMechanics?.schemaVersion === 3
@@ -4182,6 +4209,14 @@ export class TowerDefenseGame {
       throw new Error("Game checkpoint Logistics ammunition state is unsupported for an inactive capability.");
     }
     if (hasLogisticsCheckpoint) checkpointDataField(descriptors, "logistics", "Game checkpoint state");
+    const hasDirectorCheckpoint = Object.prototype.hasOwnProperty.call(descriptors, "director");
+    if (checkpointDirector && !hasDirectorCheckpoint) {
+      throw new Error("Game checkpoint Director state is required for an active capability.");
+    }
+    if (!checkpointDirector && hasDirectorCheckpoint) {
+      throw new Error("Game checkpoint Director state is unsupported for an inactive capability.");
+    }
+    if (hasDirectorCheckpoint) checkpointDataField(descriptors, "director", "Game checkpoint state");
     requireExactCheckpointKeys(descriptors, [
       ...required,
       ...(hasTerraformingCheckpoint ? ["terraforming"] : []),
@@ -4191,7 +4226,8 @@ export class TowerDefenseGame {
       ...(hasDraftCheckpoint ? ["draft"] : []),
       ...(hasCampaignBattleCheckpoint ? ["campaignBattle"] : []),
       ...(hasHeroesCheckpoint ? ["heroes"] : []),
-      ...(hasLogisticsCheckpoint ? ["logistics"] : [])
+      ...(hasLogisticsCheckpoint ? ["logistics"] : []),
+      ...(hasDirectorCheckpoint ? ["director"] : [])
     ], "Game checkpoint state");
 
     const finite = (value: unknown, label: string, minimum = 0, maximum = Infinity): number => {
@@ -4250,6 +4286,76 @@ export class TowerDefenseGame {
       }
       return result;
     };
+
+    const validateDirectorReason = (value: unknown, label: string, counterId: string) => {
+      const base = checkpointObjectDescriptors(value, `Game checkpoint state ${label}`);
+      const metric = stringValue(checkpointDataField(base, "metric", label), `${label}.metric`);
+      const keys = metric === "logistics_brownout_ratio"
+        ? ["metric", "operator", "threshold", "observed"]
+        : ["metric", "key", "operator", "threshold", "observed"];
+      requireExactCheckpointKeys(base, keys, `Game checkpoint state ${label}`);
+      if (!["damage_share", "coverage_ratio", "movement_layer_share", "logistics_brownout_ratio"].includes(metric)) {
+        throw new Error("Game checkpoint Director reason metric is invalid.");
+      }
+      const operator = stringValue(checkpointDataField(base, "operator", label), `${label}.operator`);
+      if (operator !== "gte" && operator !== "lte") throw new Error("Game checkpoint Director reason operator is invalid.");
+      const key = metric === "logistics_brownout_ratio"
+        ? undefined
+        : stringValue(checkpointDataField(base, "key", label), `${label}.key`);
+      const threshold = finite(checkpointDataField(base, "threshold", label), `${label}.threshold`, 0, 1);
+      const observed = finite(checkpointDataField(base, "observed", label), `${label}.observed`, 0, 1);
+      const counter = checkpointDirector?.counterPool[counterId];
+      const authored = counter?.conditions.some((condition) => condition.metric === metric
+        && condition.key === key
+        && condition.operator === operator
+        && condition.threshold === threshold);
+      const satisfied = operator === "gte" ? observed >= threshold : observed <= threshold;
+      if (!authored || !satisfied) {
+        throw new Error("Game checkpoint Director reason must match a satisfied authored condition.");
+      }
+    };
+    const validateDirectorGroups = (value: unknown, label: string, counterId: string) => {
+      if (!checkpointDirector) throw new Error("Game checkpoint Director profile is inactive.");
+      const expected = checkpointDirector.counterPool[counterId]?.groups;
+      const groups = array(value, label);
+      if (!expected || groups.length !== expected.length) throw new Error("Game checkpoint Director groups do not match the authored counter.");
+      groups.forEach((groupValue, index) => {
+        const authored = expected[index]!;
+        const group = closed(groupValue, `${label}[${index}]`, ["enemyId", "count", "spawnInterval", "startDelay"], ["routeId"]);
+        const enemyId = stringValue(checkpointDataField(group, "enemyId", label), `${label}.enemyId`);
+        const count = integer(checkpointDataField(group, "count", label), `${label}.count`, 1);
+        const spawnInterval = finite(checkpointDataField(group, "spawnInterval", label), `${label}.spawnInterval`);
+        const startDelay = finite(checkpointDataField(group, "startDelay", label), `${label}.startDelay`);
+        const routeId = own(group, "routeId")
+          ? stringValue(checkpointDataField(group, "routeId", label), `${label}.routeId`)
+          : undefined;
+        if (enemyId !== authored.enemyId || count !== authored.count || spawnInterval !== authored.spawnInterval
+          || startDelay !== authored.startDelay || routeId !== authored.routeId) {
+          throw new Error("Game checkpoint Director groups do not match the authored counter.");
+        }
+      });
+    };
+    if (checkpointDirector && state.director) {
+      const director = closed(state.director, "Director state", ["schemaVersion", "profileId", "decisions"]);
+      if (checkpointDataField(director, "schemaVersion", "Director state") !== 1
+        || checkpointDataField(director, "profileId", "Director state") !== checkpointDirector.profileId) {
+        throw new Error("Game checkpoint Director identity is invalid.");
+      }
+      const decisions = array(checkpointDataField(director, "decisions", "Director state"), "Director decisions");
+      if (decisions.length > DIRECTOR_LIMITS.decisionHistory) throw new Error("Game checkpoint Director history exceeds its bound.");
+      let previousWave = -1;
+      for (const decisionValue of decisions) {
+        const decision = closed(decisionValue, "Director decision", ["waveIndex", "counterId", "threatCost", "reason", "addedGroups"]);
+        const waveIndex = integer(checkpointDataField(decision, "waveIndex", "Director decision"), "Director waveIndex");
+        const counterId = stringValue(checkpointDataField(decision, "counterId", "Director decision"), "Director counterId");
+        const counter = checkpointDirector.counterPool[counterId];
+        if (!counter || waveIndex <= previousWave || waveIndex >= state.startedWaveCount) throw new Error("Game checkpoint Director decision order is invalid.");
+        previousWave = waveIndex;
+        if (checkpointDataField(decision, "threatCost", "Director decision") !== counter.threatCost) throw new Error("Game checkpoint Director threat cost is invalid.");
+        validateDirectorReason(checkpointDataField(decision, "reason", "Director decision"), "Director reason", counterId);
+        validateDirectorGroups(checkpointDataField(decision, "addedGroups", "Director decision"), "Director added groups", counterId);
+      }
+    }
 
     let campaignBattleState: GameCheckpointStateV1["campaignBattle"];
     if (hasCampaignBattleCheckpoint) {
@@ -5557,6 +5663,7 @@ export class TowerDefenseGame {
         ]
       },
       waveStarted: { required: ["type", "waveIndex"] },
+      directorDecision: { required: ["type", "waveIndex", "counterId", "threatCost", "reason", "addedGroups"] },
       waveCleared: { required: ["type", "waveIndex", "income", "interest"] },
       resourcesGranted: { required: ["type", "source", "waveIndex", "resources"] },
       objectiveCompleted: { required: ["type", "objectiveId", "kind"] },
@@ -5607,10 +5714,11 @@ export class TowerDefenseGame {
     const numericEventFields = new Set([
       "level", "stacks", "duration", "damage", "coins", "waveIndex", "rawDamage", "amount", "hpRatio", "pathOrder",
       "previous", "current", "capacity", "overflowDamage", "previousStacks", "currentStacks",
-      "previousRemaining", "remaining"
-      , "depth", "limit", "dropped", "requestedDistance", "movedDistance", "fromElevation", "toElevation",
+      "previousRemaining", "remaining",
+      "depth", "limit", "dropped", "requestedDistance", "movedDistance", "fromElevation", "toElevation",
       "rollIndex", "shieldAbsorbed", "hpDamage", "previousMana", "currentMana", "manaSpent",
-      "cooldownApplied", "requestedDamage", "resolvedDamage", "cost", "previousPoints", "currentPoints"
+      "cooldownApplied", "requestedDamage", "resolvedDamage", "cost", "previousPoints", "currentPoints",
+      "threatCost"
     ]);
     const stringEventFields = new Set([
       "towerId", "towerTypeId", "enemyId", "enemyTypeId", "parentEnemyId", "parentEnemyTypeId", "healerEnemyId",
@@ -5618,7 +5726,8 @@ export class TowerDefenseGame {
       "fromTerrain", "toTerrain", "scriptId", "signal", "routeId", "mode", "cause", "markId",
       "exposureId", "reactionId", "originEnemyId", "originEnemyTypeId", "rootEnemyId", "rootEnemyTypeId",
       "triggerDamageType", "budget", "sourceKind", "sourceId", "stopReason", "terrainTag",
-      "artifactInstanceId", "artifactId", "slotId", "heroId", "heroDefinitionId", "skillId"
+      "artifactInstanceId", "artifactId", "slotId", "heroId", "heroDefinitionId", "skillId",
+      "counterId"
     ]);
     const coordEventFields = new Set(["coord", "from", "to", "center", "originCoord", "sourceCoord"]);
     const bagEventFields = new Set(["refund", "cost", "resources", "income", "interest"]);
@@ -5663,6 +5772,15 @@ export class TowerDefenseGame {
           stringArray(checkpointDataField(terrain, "tags", "terrain metadata"), "terrain tags");
         } else if (key === "diagnostic") validateDiagnostic(field, "event script diagnostic");
         else if (key === "payload") validateScriptJson(field, `last event ${type}.${key}`);
+        else if (key === "reason") validateDirectorReason(
+          field,
+          `last event ${type}.reason`,
+          stringValue(checkpointDataField(event, "counterId", `last event ${type}`), `last event ${type}.counterId`)
+        );
+        else if (key === "addedGroups") validateDirectorGroups(field, `last event ${type}.addedGroups`, stringValue(
+          checkpointDataField(event, "counterId", `last event ${type}`),
+          `last event ${type}.counterId`
+        ));
         else if (key === "effects") {
           for (const effectValue of array(field, `last event ${type}.effects`)) {
             const effectBase = checkpointObjectDescriptors(effectValue, "Game checkpoint ability event effect");
@@ -6910,6 +7028,11 @@ export class TowerDefenseGame {
       this.draftSelections = [];
     }
     this.rebuildRogueliteSynergies();
+    this.directorDecisions = Object.freeze((state.director?.decisions ?? []).map((decision) => Object.freeze({
+      ...decision,
+      reason: Object.freeze({ ...decision.reason }),
+      addedGroups: Object.freeze(decision.addedGroups.map((group) => Object.freeze({ ...group })))
+    })));
     this.lastEvents = [...state.lastEvents] as GameEvent[];
     this.enemyCounter = state.enemyCounter;
     this.towerCounter = state.towerCounter;
@@ -7409,6 +7532,17 @@ export class TowerDefenseGame {
             })])
           })
         : this.heroesSnapshotV1;
+    const director: GameSnapshot["director"] = this.activeDirectorMechanics
+      ? Object.freeze({
+          schemaVersion: 1 as const,
+          profileId: this.activeDirectorMechanics.profileId,
+          decisions: Object.freeze(this.directorDecisions.map((decision) => Object.freeze({
+            ...decision,
+            reason: Object.freeze({ ...decision.reason }),
+            addedGroups: Object.freeze(decision.addedGroups.map((group) => Object.freeze({ ...group })))
+          })))
+        })
+      : undefined;
     return {
       mapId: this.map.id,
       grid: { ...this.map.grid },
@@ -7488,6 +7622,7 @@ export class TowerDefenseGame {
       ...(roguelite === undefined ? {} : { roguelite }),
       ...(heroes === undefined ? {} : { heroes }),
       ...(logistics === undefined ? {} : { logistics }),
+      ...(director === undefined ? {} : { director }),
       scriptState: {
         values: this.cloneScriptValues(),
         diagnostics: this.scriptDiagnostics.map((diagnostic) => ({ ...diagnostic }))
@@ -9682,8 +9817,113 @@ export class TowerDefenseGame {
     }
   }
 
+  private directorTowerTargetClasses(type: TowerType): readonly EnemyTargetClass[] {
+    const attack = type.attack;
+    if (attack.kind === "support" || attack.kind === "support_buff") return Object.freeze([]);
+    if (attack.kind === "antiair") return Object.freeze(["flying"]);
+    if (attack.kind === "pipeline") {
+      const classes: readonly EnemyTargetClass[] = attack.targeting?.classes?.length
+        ? attack.targeting.classes
+        : ["ground"];
+      return Object.freeze([...classes]
+        .filter((value, index, values) => values.indexOf(value) === index)
+        .sort(compareBinary));
+    }
+    if (attack.kind === "splash" && attack.affectsClasses?.length) {
+      return Object.freeze([...attack.affectsClasses]
+        .filter((value, index, values) => values.indexOf(value) === index)
+        .sort(compareBinary));
+    }
+    return Object.freeze(["ground"]);
+  }
+
+  private directorTowerDamageTypes(type: TowerType): readonly string[] {
+    const attack = type.attack;
+    if (attack.kind === "support" || attack.kind === "support_buff") return Object.freeze([]);
+    if (attack.kind === "pipeline") {
+      return Object.freeze(attack.effects
+        .filter((effect) => effect.kind === "damage")
+        .map((effect) => effect.damageType ?? "physical")
+        .filter((value, index, values) => values.indexOf(value) === index)
+        .sort(compareBinary));
+    }
+    return Object.freeze(["damageType" in attack && typeof attack.damageType === "string"
+      ? attack.damageType
+      : "physical"]);
+  }
+
+  private directorDefenseAnalysis(): DirectorDefenseAnalysisV1 {
+    const damageCounts: Record<string, number> = {};
+    const coverageCounts: Record<string, number> = {};
+    let damageTotal = 0;
+    let coverageTotal = 0;
+    const targetClassesByTower = new Map<string, readonly EnemyTargetClass[]>();
+    for (const tower of [...this.towers].sort((left, right) => compareBinary(left.id, right.id))) {
+      const type = this.towerTypes[tower.typeId];
+      if (!type) continue;
+      const damageTypes = this.directorTowerDamageTypes(type);
+      for (const damageType of damageTypes) damageCounts[damageType] = (damageCounts[damageType] ?? 0) + 1;
+      damageTotal += damageTypes.length;
+      const targetClasses = this.directorTowerTargetClasses(type);
+      if (targetClasses.length === 0) continue;
+      targetClassesByTower.set(tower.id, targetClasses);
+      for (const targetClass of targetClasses) coverageCounts[targetClass] = (coverageCounts[targetClass] ?? 0) + 1;
+      coverageTotal += 1;
+    }
+    const share = (record: Readonly<Record<string, number>>, total: number) => Object.freeze(Object.fromEntries(
+      Object.keys(record).sort().map((key) => [key, total > 0 ? record[key]! / total : 0])
+    ));
+    let logisticsBrownoutRatio = 0;
+    if (this.activeLogisticsPower) {
+      const consumers = this.ensureLogisticsPowerSnapshot().power.consumers;
+      logisticsBrownoutRatio = consumers.length === 0
+        ? 0
+        : consumers.filter((consumer) => !consumer.powered).length / consumers.length;
+    }
+    const coverageRatios = share(coverageCounts, coverageTotal);
+    let movementLayerShares = coverageRatios;
+    if (this.activeNavigationProfile) {
+      const classesByProfile = new Map<string, Set<EnemyTargetClass>>();
+      for (const profileId of Object.keys(this.activeNavigationProfile.movementProfiles).sort(compareBinary)) {
+        classesByProfile.set(profileId, new Set());
+      }
+      for (const enemyTypeId of Object.keys(this.enemyTypes).sort(compareBinary)) {
+        const profileId = this.activeNavigationProfile.enemyMovementProfiles?.[enemyTypeId]
+          ?? this.activeNavigationProfile.defaultMovementProfileId;
+        classesByProfile.get(profileId)?.add(this.enemyTargetClassByType(enemyTypeId));
+      }
+      movementLayerShares = Object.freeze(Object.fromEntries(
+        [...classesByProfile.entries()].sort(([left], [right]) => compareBinary(left, right)).map(([profileId, classes]) => {
+          const supported = [...targetClassesByTower.values()].filter((towerClasses) => (
+            [...classes].some((targetClass) => towerClasses.includes(targetClass))
+          )).length;
+          return [profileId, coverageTotal > 0 ? supported / coverageTotal : 0];
+        })
+      ));
+    }
+    return Object.freeze({
+      damageShares: share(damageCounts, damageTotal),
+      coverageRatios,
+      movementLayerShares,
+      logisticsBrownoutRatio
+    });
+  }
+
+  private planDirectorWave(waveIndex: number, authoredWave: GameContentRegistry["missions"][string]["waves"][number]) {
+    const profile = this.activeDirectorMechanics;
+    if (!profile) return undefined;
+    return planDirectorWaveV1(profile, {
+      nextWaveIndex: waveIndex,
+      nextWave: authoredWave,
+      analysis: this.directorDefenseAnalysis(),
+      recentCounterIds: this.directorDecisions.slice(-DIRECTOR_LIMITS.decisionHistory).map((decision) => decision.counterId)
+    });
+  }
+
   private startWave(waveIndex: number, startedAt: number, earlyStartUnits = 0): ActionResult {
-    const wave = this.mission.waves[waveIndex];
+    const authoredWave = this.mission.waves[waveIndex];
+    const plan = authoredWave ? this.planDirectorWave(waveIndex, authoredWave) : undefined;
+    const wave = plan?.wave ?? authoredWave;
     if (!wave) {
       return this.fail("No waves left.", "reason.noWaves");
     }
@@ -9697,6 +9937,20 @@ export class TowerDefenseGame {
       ? null
       : this.startedWaveCount < this.mission.waves.length ? startedAt + this.mission.prepTimeUnits : null;
     this.syncPrepRemaining();
+    if (plan) {
+      const decision = Object.freeze({
+        waveIndex,
+        counterId: plan.decision.counterId,
+        threatCost: plan.decision.threatCost,
+        reason: Object.freeze({ ...plan.decision.reason }),
+        addedGroups: Object.freeze(plan.decision.addedGroups.map((group) => Object.freeze({ ...group })))
+      });
+      this.directorDecisions = Object.freeze([
+        ...this.directorDecisions.slice(-(DIRECTOR_LIMITS.decisionHistory - 1)),
+        decision
+      ]);
+      this.lastEvents.push({ type: "directorDecision", ...decision });
+    }
     const waveStartIncome = this.normalizeCost(this.mission.economy?.perWaveStart ?? {});
     if (this.bagHasValue(waveStartIncome)) {
       this.addResources(waveStartIncome);
@@ -9725,7 +9979,10 @@ export class TowerDefenseGame {
     }
   }
 
-  private buildSpawnQueue(wave = this.mission.waves[this.waveIndex], baseAt = 0): SpawnItem[] {
+  private buildSpawnQueue(
+    wave: Readonly<{ readonly groups: readonly WaveGroup[] }> | undefined = this.mission.waves[this.waveIndex],
+    baseAt = 0
+  ): SpawnItem[] {
     const queue: SpawnItem[] = [];
     if (!wave) {
       return queue;

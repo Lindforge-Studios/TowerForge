@@ -42,7 +42,8 @@
 | R5.8B — ammunition supply | Завершён; code + constructor sign-off; ADR Accepted | Logistics v3 factories, storage, bounded deterministic transfer и same-instance refill |
 | R5 | Завершён | Heroes v1–v7 и Logistics v1–v3 поставлены как независимые opt-in вертикальные срезы |
 | R6 — TowerScript DX 2.0 | Завершён; code + constructor sign-off; ADR Accepted | Structured trace, deterministic step/rewind, lossless Visual Graph, descriptor-driven Studio/MCP и bounded O(1)-append debug retention |
-| R7–R8 | Запланированы | Каждый срез закрывает engine, Studio, AI/MCP, renderers/player, docs и два независимых sign-off |
+| R7 — Director и Generative Studio | Завершён; code + constructor sign-off; ADR Accepted | Opt-in Director v1, proposal-only worker auto-balancer, seeded map preview и guarded generated-asset staging не меняют legacy path |
+| R8 — Multiplayer protocol и local transport | Запланирован | Pure MatchSession, deterministic protocol, local/self-host transport и replay без hosted lobby/auth |
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Поставленные версии `combat`, `reactions`, `navigation` и `elevation` уже прошли полные вертикальные срезы. Остальные модули Mechanics Hub остаются planned, а preview/apply отклоняют их включение без записи.
 
@@ -444,11 +445,40 @@ Journal append и trace-checkpoint pruning имеют bounded incremental hot pa
 
 ### R7 — Director и Generative Studio
 
-Четыре отдельные поставки: deterministic AI Wave Director из authored counter pool; cancellable auto-balancer с evidence-only patch proposals; prompt → `MapGenerationSpec` → локальный seeded generator; provider-neutral asset hooks со staging, preview, MIME/signature/size/license/provenance validation и явным commit. Автоматический commit баланса и сохранение секретов в проект запрещены.
+R7 реализован четырьмя независимыми opt-in/authoring контрактами. `director` v1 — единственный новый
+mission mechanics module: закрытый профиль содержит authored `counterPool`, threat budget и fairness
+caps. Перед ещё не начатой волной pure policy анализирует damage distribution, coverage, movement
+layers и Logistics brownout, но выбирает только подходящий authored counter. Порядок фиксирован как
+`priority desc → greatest condition severity desc → counter id binary asc`; `threatCost` только
+проверяет бюджет. Решение дополняет detached wave plan и публикует объяснение, не меняя исходный
+wave set. Absent/disabled/unselected/future paths не добавляют Director snapshot/event, RNG work или
+player UI.
 
-### R8 — Multiplayer protocol и local transport
+Auto-balancer остаётся Node-side authoring service: bounded worker pool прогоняет seed × strategy
+matrix, поддерживает cooperative cancellation и кэширует завершённое evidence по content hash,
+engine version и request digest. Результат — только binary-stable ranked patch proposals; отмена
+возвращает пустой proposal list, а автоматического commit нет. После review автор отдельно вызывает
+существующие `dry_run_balance_patch` и revision-guarded apply.
 
-Pure `MatchSession` владеет fixed tick, ordered commands, ownership и checksums. Co-op использует одну simulation instance; asymmetric mode связывает две instance атомарным `sendEnemy`. Сначала поставляются offline challenges, in-memory/local transport, versioned WebSocket adapter contract, handshake, reconnect и desync diagnostics. Hosted lobby, auth, accounts и matchmaking — отдельный deployment milestone.
+`preview_procedural_map` принимает закрытый `MapGenerationSpecV1`, использует TowerForge seeded RNG и
+общую square/hex topology, затем compute-only возвращает candidate source и evidence по reachability,
+entrances/materialized loops и buildable ratio. Project-aware слой добавляет canonical map compile,
+terrain validation, реальное tileset coverage и двойной deterministic headless runtime smoke
+через штатный `TowerDefenseGame`; этот smoke не выдаётся за balance proof. Preview не пишет
+source/compiled map. Явный `commit_procedural_map(ifRevision)` повторно генерирует, компилирует и
+валидирует весь проект, делает backup и откатывает source/compiled вместе. Генерация asset также не объединена
+с картами: provider-neutral hook передаёт PNG/JPEG bytes и metadata в private
+`.towerforge/generated-assets`, получает opaque handle, затем повторно проходит
+MIME/signature/size/license/provenance и symlink/path validation. Только явный
+`commit_staged_asset(ifRevision)` импортирует и bind-ит asset с backup/rollback; успешный commit
+удаляет staged payload. Provider keys, account credentials и prompts в проект не попадают.
+
+Mechanics Hub предоставляет отдельный Director editor и inert recipe, MCP/AI — descriptor,
+capabilities, guarded mechanics flow, balance proposals, map preview и полный staged-asset lifecycle.
+Canvas и Phaser используют один fail-closed projector для authoritative `directorDecision`; обычные
+формы и legacy player не получают выключенные controls. Контракт зафиксирован в
+[ADR 0048](adr/0048-opt-in-director-and-generative-studio.md), copyable fixture —
+`docs/examples/opt-in-adaptive-director/`.
 
 ## TDD и роли
 

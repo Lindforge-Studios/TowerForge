@@ -24,6 +24,13 @@ import {
 } from "../cli/lib/project-loader.mjs";
 import { compileMapSource, compileMapSources, readMapSources, writeCompiledMaps, writeMapSource } from "../cli/lib/map-compiler.mjs";
 import { commitProjectAssetImport, planProjectAssetImport } from "../cli/lib/assets.mjs";
+import {
+  discardStagedAsset,
+  inspectStagedAsset,
+  readStagedAssetForCommit,
+  stageGeneratedAsset
+} from "../cli/lib/generated-assets.mjs";
+import { runAutoBalancerWorkerBatch } from "../cli/lib/auto-balancer-worker.mjs";
 import { exportProjectPack, inspectProjectPack } from "../cli/lib/project-pack.mjs";
 import { packageProject } from "../cli/lib/packaging.mjs";
 import { validateProjectSchemas } from "../cli/lib/project-schema.mjs";
@@ -71,7 +78,7 @@ const BALANCE_PATCH_KEYS = [
   "enemies", "towers", "waveSets", "missions", "abilities", "constants", "currencies", "defaultMissionId",
   "defaultDifficultyId", "difficulties", "metaProgression", "terrainTypes"
 ];
-const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
+const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "director", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
 
 // Maps an upsert_entity/delete_entity `collection` to (a) the balance.json key, (b) the shape
 // (a map keyed by id, or an array of {id,...} items — currencies only), and (c) the
@@ -281,6 +288,23 @@ const ROGUELITE_TOWER_TAGS_SCHEMA = Object.freeze({
     items: Object.freeze({ type: "string", minLength: 1, maxLength: 128 })
   }),
   description: "Optional exact tower tag lists keyed by authored tower ID; valid only while enabling roguelite."
+});
+const MAP_GENERATION_SPEC_SCHEMA = Object.freeze({
+  type: "object",
+  properties: {
+    schemaVersion: { type: "integer", enum: [1] },
+    mapId: { type: "string", pattern: "^[A-Za-z0-9_-]{1,128}$" },
+    seed: { type: "string", minLength: 1, maxLength: 1024 },
+    grid: { type: "object" },
+    width: { type: "integer", minimum: 6, maximum: 256 },
+    height: { type: "integer", minimum: 5, maximum: 256 },
+    entrances: { type: "integer", minimum: 1, maximum: 8 },
+    loops: { type: "integer", minimum: 0, maximum: 8 },
+    terrain: { type: "object" },
+    buildableRatio: { type: "object" }
+  },
+  required: ["schemaVersion", "mapId", "seed", "grid", "width", "height", "entrances", "loops", "terrain", "buildableRatio"],
+  additionalProperties: false
 });
 /** Tool definitions advertised over `tools/list`. */
 export const TOOLS = [
@@ -807,6 +831,35 @@ export const TOOLS = [
     }
   },
   {
+    name: "preview_procedural_map",
+    description:
+      "Generate a deterministic map candidate from MapGenerationSpecV1 and verify it against the current project with canonical map compilation, terrain validation, tileset coverage, and a deterministic headless runtime smoke. Writes no project files and makes no balance claim.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory." },
+        spec: MAP_GENERATION_SPEC_SCHEMA
+      },
+      required: ["spec"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "commit_procedural_map",
+    description:
+      "Commit a freshly previewed MapGenerationSpecV1 candidate. Requires the preview revision, recompiles and validates the complete project before and after the atomic source/catalog writes, creates backups, and rolls both files back on failure.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory." },
+        spec: MAP_GENERATION_SPEC_SCHEMA,
+        ifRevision: IF_REVISION_PROPERTY
+      },
+      required: ["spec", "ifRevision"],
+      additionalProperties: false
+    }
+  },
+  {
     name: "build_project",
     description: "Validate the project and build a deployable static web bundle. Returns the output directory and asset copy report.",
     inputSchema: {
@@ -867,6 +920,37 @@ export const TOOLS = [
     }
   },
   {
+    name: "propose_balance_patches",
+    description:
+      "Evaluate bounded candidate balance patches across a deterministic seed/strategy matrix and return ranked evidence-only proposals. This compute-only tool writes no project files and never commits or applies a proposal.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory." },
+        missionId: { type: "string" },
+        candidates: {
+          type: "array",
+          minItems: 1,
+          maxItems: 32,
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              patch: { type: "object", description: "Top-level balance sections, with the same semantics as dry_run_balance_patch." }
+            },
+            required: ["id", "patch"],
+            additionalProperties: false
+          }
+        },
+        seeds: { type: "array", minItems: 1, maxItems: 32, uniqueItems: true, items: { type: "string" } },
+        strategyIds: { type: "array", minItems: 1, maxItems: 16, uniqueItems: true, items: { type: "string" } },
+        maxTicks: { type: "integer", minimum: 1, maximum: 3600, description: "Bounded simulation time per sweep." }
+      },
+      required: ["candidates", "seeds", "strategyIds"],
+      additionalProperties: false
+    }
+  },
+  {
     name: "apply_balance_patch",
     description:
       "Validate and merge top-level balance sections into content/balance.json. Writes only after a successful dry-run; if post-write validation fails, rolls back from the previous file.",
@@ -888,7 +972,8 @@ export const TOOLS = [
             defaultMissionId: { type: "string" },
             defaultDifficultyId: { type: "string" },
             difficulties: { type: "array" },
-            metaProgression: { type: "object" }
+            metaProgression: { type: "object" },
+            terrainTypes: { type: "object" }
           }
         },
         ifRevision: IF_REVISION_PROPERTY
@@ -918,7 +1003,8 @@ export const TOOLS = [
             defaultMissionId: { type: "string" },
             defaultDifficultyId: { type: "string" },
             difficulties: { type: "array" },
-            metaProgression: { type: "object" }
+            metaProgression: { type: "object" },
+            terrainTypes: { type: "object" }
           },
           additionalProperties: false
         }
@@ -948,7 +1034,8 @@ export const TOOLS = [
             defaultMissionId: { type: "string" },
             defaultDifficultyId: { type: "string" },
             difficulties: { type: "array" },
-            metaProgression: { type: "object" }
+            metaProgression: { type: "object" },
+            terrainTypes: { type: "object" }
           },
           additionalProperties: false
         },
@@ -1228,6 +1315,89 @@ export const TOOLS = [
     }
   },
   {
+    name: "stage_generated_asset",
+    description:
+      "Validate a provider-neutral generated image and place it in private TowerForge staging. Checks MIME/signature, bounded size, license, and provenance; returns only an opaque staged handle and preview metadata.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory." },
+        dataBase64: { type: "string", description: "Base64-encoded generated image bytes; data URLs are rejected." },
+        declaredMimeType: { type: "string", enum: ["image/png", "image/jpeg"] },
+        fileName: { type: "string", description: "Safe basename proposed by the provider hook." },
+        license: {
+          type: "object",
+          properties: {
+            id: { type: "string", enum: ["CC0-1.0", "CC-BY-4.0", "proprietary-owned"] },
+            attribution: { type: ["string", "null"] }
+          },
+          required: ["id", "attribution"],
+          additionalProperties: false
+        },
+        provenance: {
+          type: "object",
+          properties: {
+            generator: { type: "string" },
+            provider: { type: "string" },
+            model: { type: "string" },
+            generatedAt: { type: "string" }
+          },
+          required: ["generator", "provider", "model", "generatedAt"],
+          additionalProperties: false
+        }
+      },
+      required: ["dataBase64", "declaredMimeType", "fileName", "license", "provenance"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "inspect_staged_asset",
+    description:
+      "Inspect an opaque staged handle without returning bytes or a filesystem path. Revalidates MIME/signature, size, license, and provenance before preview or commit.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory." },
+        handle: { type: "string", description: "Opaque handle returned by stage_generated_asset." }
+      },
+      required: ["handle"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "commit_staged_asset",
+    description:
+      "Import one validated staged image into the project asset catalog. Uses an opaque handle plus a visuals revision guard, full validation, backup, and rollback; successful commit discards the staged payload.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory." },
+        handle: { type: "string", description: "Opaque handle returned by stage_generated_asset." },
+        assetId: { type: "string" },
+        kind: { type: "string", enum: ["sprite", "atlas"] },
+        targetPath: { type: "string", description: "Optional path relative to assetsRoot; defaults to the staged filename." },
+        columns: { type: "integer", minimum: 1 },
+        rows: { type: "integer", minimum: 1 },
+        ifRevision: { ...IF_REVISION_PROPERTY, description: "Required visuals revision from get_project_summary." }
+      },
+      required: ["handle", "assetId", "kind", "ifRevision"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "discard_staged_asset",
+    description: "Discard one opaque staged generated-asset handle without touching project content or imported assets.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory." },
+        handle: { type: "string", description: "Opaque handle returned by stage_generated_asset." }
+      },
+      required: ["handle"],
+      additionalProperties: false
+    }
+  },
+  {
     name: "upsert_entity",
     description:
       "Create or replace ONE entity by id in a balance collection (towers, enemies, missions, abilities, waveSets, currencies) without resending the whole collection. For waveSets, `value` is the full array of waves for that wave-set id (creates a NEW wave set if the id doesn't exist yet — this is how an agent authors a wave set, alongside the narrower add_wave_group for appending one group). Set merge:true to shallow-merge into an existing entity instead of replacing it. Validates before writing; rolls back on failure.",
@@ -1396,12 +1566,15 @@ const TOOL_RISK = {
   bind_map_tileset: { riskClass: "write_local", sideEffect: "optionally writes one map/grid tileset binding with backup and rollback" },
   render_tileset_preview: { riskClass: "compute_only", sideEffect: "none" },
   compile_maps_dry_run: { riskClass: "compute_only", sideEffect: "none" },
+  preview_procedural_map: { riskClass: "compute_only", sideEffect: "builds engine dist if stale; writes no project files" },
+  commit_procedural_map: { riskClass: "write_local", sideEffect: "writes one generated map source and maps/compiled/maps.json with revision guard, backup, canonical compile, full validation, and automatic rollback" },
   compile_maps: { riskClass: "write_local", sideEffect: "writes maps/compiled/maps.json" },
   build_project: { riskClass: "write_local", sideEffect: "writes build output directory" },
   package_mobile: { riskClass: "write_local", sideEffect: "writes mobile scaffold" },
   package_web: { riskClass: "write_local", sideEffect: "writes a portable web bundle and deterministic zip under the project" },
   package_desktop: { riskClass: "write_local", sideEffect: "writes desktop scaffold" },
   balance_report: { riskClass: "compute_only", sideEffect: "builds engine dist if stale" },
+  propose_balance_patches: { riskClass: "compute_only", sideEffect: "builds engine dist if stale; writes no project files and returns evidence-only proposals" },
   dry_run_balance_patch: { riskClass: "compute_only", sideEffect: "none" },
   apply_balance_patch: { riskClass: "write_local", sideEffect: "writes content/balance.json with backup and rollback" },
   apply_validated_patch: { riskClass: "write_local", sideEffect: "writes content/balance.json with backup and rollback" },
@@ -1413,6 +1586,10 @@ const TOOL_RISK = {
   bind_sprite: { riskClass: "write_local", sideEffect: "writes content/visuals.json with backup and rollback" },
   bind_mission_music: { riskClass: "write_local", sideEffect: "optionally writes one audio.musicByMission binding in content/visuals.json with backup and rollback" },
   import_asset: { riskClass: "write_local", sideEffect: "copies one project-local asset and writes content/visuals.json with backup and rollback" },
+  stage_generated_asset: { riskClass: "write_local", sideEffect: "writes one opaque handle under private .towerforge staging after MIME/signature, size, license, and provenance validation" },
+  inspect_staged_asset: { riskClass: "read_only", sideEffect: "none" },
+  commit_staged_asset: { riskClass: "write_local", sideEffect: "imports one staged asset and writes content/visuals.json with revision guard, validation, backup, and rollback" },
+  discard_staged_asset: { riskClass: "write_local", sideEffect: "removes one opaque handle from private .towerforge staging" },
   upsert_entity: { riskClass: "write_local", sideEffect: "writes content/balance.json with backup and rollback" },
   duplicate_entity: { riskClass: "write_local", sideEffect: "writes content/balance.json with backup and rollback" },
   delete_entity: { riskClass: "write_local", sideEffect: "writes content/balance.json with backup and rollback; refuses if referenced" },
@@ -1697,6 +1874,18 @@ export async function callTool(name, args = {}, ctx = {}) {
       commands: [],
       events: []
     };
+    const director = {
+      authoring: engine.DIRECTOR_MECHANICS_SCHEMA,
+      policy: {
+        deterministic: true,
+        candidateSource: "authored_counter_pool",
+        mutationScope: "not_started_wave",
+        metrics: ["damage_share", "coverage_ratio", "movement_layer_share", "logistics_brownout_ratio"],
+        fairness: ["threat_budget", "minimum_wave_index", "max_consecutive_uses", "max_added_groups", "max_added_enemies"]
+      },
+      snapshot: { field: "director", optional: true, supportedSchemaVersions: [1] },
+      events: ["directorDecision"]
+    };
     return {
       schemaVersion: 4,
       agentGuideVersion: TOWERFORGE_AGENT_GUIDE_VERSION,
@@ -1742,15 +1931,37 @@ export async function callTool(name, args = {}, ctx = {}) {
       ...(includes("roguelite") ? { roguelite } : {}),
       ...(includes("heroes") ? { heroes } : {}),
       ...(includes("logistics") ? { logistics } : {}),
+      ...(includes("director") ? { director } : {}),
       ...(includes("assets") ? {
         assetAuthoring: {
           themePacks: "Call list_theme_packs, preview_theme_pack, then apply_theme_pack with ifRevision.",
           imports: "Use import_asset for one project-local image/audio asset; never write arbitrary paths.",
+          generated: {
+            providerNeutral: true,
+            workflow: ["stage_generated_asset", "inspect_staged_asset", "commit_staged_asset or discard_staged_asset"],
+            validation: ["MIME/signature", "size", "license", "provenance"],
+            stagingReference: "opaque_handle",
+            promptPersistence: "never"
+          },
           bindings: ["bind_sprite", "bind_mission_music", "upsert_story_comic", "set_battle_background"],
           pathRule: "Project-relative paths only; absolute paths, external URLs, traversal, and symlink escapes are rejected."
         }
       } : {}),
-      ...(includes("maps") ? { maps: { gridPerMap: true, grids: { hex: { layout: "odd-r", directions: 6 }, square: { adjacency: "cardinal", metric: "Manhattan", directions: 4 } }, coordinates: "{q,r} for both grids", routeRule: "every pathRoutes segment must be adjacent and walkable" } } : {}),
+      ...(includes("maps") ? { maps: {
+        gridPerMap: true,
+        grids: { hex: { layout: "odd-r", directions: 6 }, square: { adjacency: "cardinal", metric: "Manhattan", directions: 4 } },
+        coordinates: "{q,r} for both grids",
+        routeRule: "every pathRoutes segment must be adjacent and walkable",
+        proceduralPreview: {
+          tool: "preview_procedural_map",
+          schema: "MapGenerationSpecV1",
+          seeded: true,
+          writesProjectFiles: false,
+          evidence: ["reachability", "materialized_loops", "buildable_ratio", "canonical_compile", "terrain_validation", "tileset_coverage", "deterministic_runtime_smoke"],
+          balanceClaim: false,
+          guardedCommit: { tool: "commit_procedural_map", requires: "ifRevision", rollback: ["map_source", "compiled_catalog"] }
+        }
+      } } : {}),
       ...(includes("terrain") ? { terrain: { fields: ["id", "label", "buildable", "walkable", "groundSpeedMultiplier", "tags"], runtimeActions: ["setTileTerrain", "restoreTileTerrain"], limits: engine.TOWER_SCRIPT_LIMITS } } : {}),
       ...(includes("tiles") ? { tiles: { presets: TILE_PRESETS, bindingPriority: ["map", "grid", "legacy tiles", "color fallback"], importFormats: ["PNG spritesheet + TSJ", "PNG spritesheet + TSX"], productionRule: "reachable missing signatures block release readiness" } } : {}),
       ...(includes("mechanics") ? {
@@ -1758,7 +1969,7 @@ export async function callTool(name, args = {}, ctx = {}) {
           schemaVersion: 1,
           moduleIds: [...engine.MECHANICS_MODULE_IDS],
           implementedModuleIds: [...engine.IMPLEMENTED_MECHANICS_MODULE_IDS],
-          modules: { combat: combatShields, reactions, navigation, elevation, physics, terraforming, roguelite, heroes, logistics }
+          modules: { combat: combatShields, reactions, navigation, elevation, physics, terraforming, roguelite, heroes, logistics, director }
         }
       } : {})
     };
@@ -1909,7 +2120,7 @@ export async function callTool(name, args = {}, ctx = {}) {
           engine.ELEVATION_MECHANICS_SCHEMA
         );
       }
-      for (const moduleId of ["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes"]) {
+      for (const moduleId of ["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "director"]) {
         if (!Number.isSafeInteger(result[moduleId]?.moduleSchemaVersion)) continue;
         result.capabilities = {
           ...result.capabilities,
@@ -1984,7 +2195,7 @@ export async function callTool(name, args = {}, ctx = {}) {
           return scrubMechanicsResult(result);
         }
         const unwrapped = unwrapMechanicsAuthoringResult(result);
-        if (args.moduleId !== "logistics" || !result?.backup?.directory) return unwrapped;
+        if (!result?.backup?.directory) return unwrapped;
         return {
           ...unwrapped,
           backup: { directory: `.towerforge/backups/${path.basename(result.backup.directory)}` }
@@ -2217,6 +2428,28 @@ export async function callTool(name, args = {}, ctx = {}) {
     case "import_asset":
       return importAsset(projectDir, args);
 
+    case "stage_generated_asset": {
+      assertProjectDir(projectDir);
+      return stageGeneratedAsset(projectDir, {
+        bytes: decodeGeneratedAssetBase64(args.dataBase64),
+        declaredMimeType: args.declaredMimeType,
+        fileName: args.fileName,
+        license: args.license,
+        provenance: args.provenance
+      });
+    }
+
+    case "inspect_staged_asset":
+      assertProjectDir(projectDir);
+      return inspectStagedAsset(projectDir, args.handle);
+
+    case "commit_staged_asset":
+      return commitStagedProjectAsset(projectDir, args);
+
+    case "discard_staged_asset":
+      assertProjectDir(projectDir);
+      return discardStagedAsset(projectDir, args.handle);
+
     case "compile_maps": {
       assertProjectDir(projectDir);
       const sources = readMapSources(projectDir);
@@ -2248,6 +2481,12 @@ export async function callTool(name, args = {}, ctx = {}) {
       };
     }
 
+    case "preview_procedural_map":
+      return previewProceduralMap(projectDir, args.spec);
+
+    case "commit_procedural_map":
+      return commitProceduralMap(projectDir, args);
+
     case "balance_report": {
       const report = await runBalanceSweepForProject(projectDir, {
         missionIds: typeof args.missionId === "string" ? [args.missionId] : [],
@@ -2255,6 +2494,9 @@ export async function callTool(name, args = {}, ctx = {}) {
       });
       return { projectDir, ...report };
     }
+
+    case "propose_balance_patches":
+      return proposeBalancePatches(projectDir, args);
 
     case "build_project":
       return runBuild(projectDir, typeof args.targetId === "string" ? args.targetId : null);
@@ -2419,6 +2661,407 @@ async function dryRunBalancePatch(projectDir, patch) {
     diff: computeDiff(files.balance, candidateFiles.balance, applied),
     validation: validationSummary(result)
   };
+}
+
+async function proposeBalancePatches(projectDir, args) {
+  assertProjectDir(projectDir);
+  const files = loadProjectFiles(projectDir);
+  const missionId = typeof args.missionId === "string" && args.missionId
+    ? args.missionId
+    : files.balance.defaultMissionId;
+  const result = await runAutoBalancerWorkerBatch(projectDir, {
+    missionId,
+    candidates: args.candidates,
+    seeds: args.seeds,
+    strategyIds: args.strategyIds,
+    maxTicks: args.maxTicks,
+    cache: false
+  });
+  return {
+    ...result,
+    revision: computeRevision(files.balance),
+    missionId,
+    nextValidActions: ["dry_run_balance_patch with one proposal.patch", "apply_validated_patch only after explicit review"]
+  };
+}
+
+async function previewProceduralMap(projectDir, spec) {
+  assertProjectDir(projectDir);
+  const files = loadProjectFiles(projectDir);
+  const engine = await loadEngine();
+  if (typeof engine.generateProceduralMap !== "function") {
+    throw new Error("Engine build does not expose MapGenerationSpecV1 generation.");
+  }
+  const generated = engine.generateProceduralMap(spec);
+  const sourceName = `${generated.spec.mapId}.tmj`;
+  const terrainTypes = files.balance?.terrainTypes ?? {};
+  let generatedCompiledMap;
+  let generatedCompileIssue;
+  try {
+    generatedCompiledMap = compileMapSource(generated.source, sourceName, terrainTypes);
+  } catch (error) {
+    generatedCompileIssue = {
+      severity: "error",
+      entityKind: "mapSource",
+      entityId: sourceName,
+      fieldPath: "root",
+      message: error instanceof Error ? error.message : String(error)
+    };
+  }
+  const collisionSourceName = Object.entries(files.mapSources ?? {}).find(([candidateName, candidateSource]) => {
+    if (candidateName === sourceName) return false;
+    try {
+      return compileMapSource(candidateSource, candidateName, terrainTypes).id === generated.spec.mapId;
+    } catch {
+      return false;
+    }
+  })?.[0];
+  const collisionIssue = collisionSourceName ? {
+    severity: "error",
+    entityKind: "mapSource",
+    entityId: sourceName,
+    fieldPath: "id",
+    message: `Generated map id "${generated.spec.mapId}" is already owned by ${collisionSourceName}.`
+  } : undefined;
+  const candidateSources = { ...files.mapSources, [sourceName]: generated.source };
+  const compilation = compileMapSources(candidateSources, terrainTypes);
+  const compiledMap = compilation.maps?.[generated.spec.mapId];
+  const canonicalIssues = [
+    ...compilation.issues,
+    ...(generatedCompileIssue ? [generatedCompileIssue] : []),
+    ...(collisionIssue ? [collisionIssue] : [])
+  ];
+  const canonicalCompile = {
+    ok: compilation.ok && Boolean(generatedCompiledMap) && Boolean(compiledMap) && !collisionIssue
+      && JSON.stringify(generatedCompiledMap) === JSON.stringify(compiledMap),
+    mapId: generated.spec.mapId,
+    sourceName,
+    issues: canonicalIssues
+  };
+  const candidateFiles = canonicalCompile.ok
+    ? { ...files, mapSources: candidateSources, maps: compilation.maps }
+    : files;
+  const projectValidationResult = canonicalCompile.ok
+    ? await validateCandidateFiles(candidateFiles)
+    : mergeValidationResults({ ok: false, issues: canonicalIssues });
+  const validation = boundedProceduralValidationSummary(projectValidationResult);
+  const generatedMapIssues = projectValidationResult.issues.filter((issue) => (
+    (issue.entityKind === "map" && issue.entityId === generated.spec.mapId)
+    || (issue.entityKind === "mapSource" && issue.entityId === sourceName)
+  ));
+  const allTerrainIssues = generatedMapIssues.filter((issue) => /terrain/i.test(`${issue.fieldPath ?? ""} ${issue.message ?? ""}`));
+  const terrainErrorCount = allTerrainIssues.filter((issue) => issue.severity === "error").length;
+  const terrainValidation = {
+    ok: terrainErrorCount === 0,
+    terrainIds: [...generated.evidence.tilesetTerrainIds],
+    errorCount: terrainErrorCount,
+    warningCount: allTerrainIssues.length - terrainErrorCount,
+    issues: allTerrainIssues.slice(0, 200),
+    truncated: allTerrainIssues.length > 200
+  };
+  const tilesetCoverage = canonicalCompile.ok
+    ? proceduralMapTileCoverage(candidateFiles, generated.spec.mapId)
+    : { ok: false, mode: "not_checked", missingCount: 0, missing: [] };
+  const headlessSmoke = canonicalCompile.ok && validation.ok
+    ? runProceduralMapHeadlessSmoke(engine, candidateFiles, generated.spec.mapId, generated.spec.seed)
+    : {
+        contract: "deterministic_runtime_smoke_v1",
+        ok: false,
+        mapId: generated.spec.mapId,
+        reason: "candidate_validation_failed"
+      };
+  const evidence = {
+    ...generated.evidence,
+    canonicalCompile,
+    terrainValidation,
+    tilesetCoverage,
+    projectValidation: validation,
+    headlessSmoke
+  };
+  const ok = generated.evidence.reachable === true && generated.evidence.structuralSmoke?.ok === true
+    && generated.evidence.buildableRatio >= generated.spec.buildableRatio.min
+    && generated.evidence.buildableRatio <= generated.spec.buildableRatio.max
+    && canonicalCompile.ok && terrainValidation.ok && tilesetCoverage.ok && validation.ok && headlessSmoke.ok;
+  return {
+    schemaVersion: 1,
+    ok,
+    dryRun: true,
+    written: false,
+    revision: computeRevision({ maps: files.maps, mapSources: files.mapSources }),
+    source: generated.source,
+    evidence,
+    nextValidActions: ok
+      ? ["review source and evidence", "commit_procedural_map with this revision as ifRevision"]
+      : ["adjust MapGenerationSpecV1 constraints and preview again"]
+  };
+}
+
+function boundedProceduralValidationSummary(result) {
+  const issues = Array.isArray(result?.issues) ? result.issues : [];
+  const errorCount = issues.filter((issue) => issue.severity === "error").length;
+  return {
+    ok: errorCount === 0,
+    errorCount,
+    warningCount: issues.length - errorCount,
+    issues: issues.slice(0, 200),
+    truncated: issues.length > 200
+  };
+}
+
+function proceduralMapTileCoverage(files, mapId) {
+  const coverage = projectTileCoverage({ ...files, maps: { [mapId]: files.maps[mapId] } });
+  const entry = coverage.maps.find((candidate) => candidate.mapId === mapId);
+  if (!entry) {
+    return {
+      ok: true,
+      mode: "legacy_fallback",
+      tileSetId: null,
+      missingCount: 0,
+      missing: []
+    };
+  }
+  return {
+    ok: entry.ok,
+    mode: "bound_tileset",
+    tileSetId: entry.tileSetId ?? null,
+    missingCount: entry.missing?.length ?? 0,
+    missing: entry.missing ?? []
+  };
+}
+
+function runProceduralMapHeadlessSmoke(engine, files, mapId, seed) {
+  const missionId = files.balance?.defaultMissionId;
+  const mission = missionId ? files.balance?.missions?.[missionId] : undefined;
+  if (!missionId || !mission) {
+    return {
+      contract: "deterministic_runtime_smoke_v1",
+      ok: false,
+      mapId,
+      reason: "default_mission_missing"
+    };
+  }
+  try {
+    const balance = structuredCloneCompat(files.balance);
+    balance.missions[missionId] = { ...balance.missions[missionId], mapId };
+    const content = engine.createGameContentRegistry({
+      balance,
+      maps: files.maps,
+      worldMap: files.worldMap,
+      scripts: files.scripts,
+      mechanics: files.mechanics,
+      visuals: files.visuals,
+      storyComics: files.storyComics,
+      battleBackgrounds: files.battleBackgrounds
+    });
+    const validation = engine.validateGameContentRegistry(content);
+    if (!validation.ok) {
+      return {
+        contract: "deterministic_runtime_smoke_v1",
+        ok: false,
+        missionId,
+        mapId,
+        reason: "runtime_content_validation_failed",
+        issues: validation.issues
+      };
+    }
+    const run = () => {
+      const game = new engine.TowerDefenseGame({ missionId, content, seed: `procedural-map:${seed}` });
+      const startResult = game.startNextWave();
+      for (let tick = 0; tick < 120 && game.getSnapshot().outcome === "playing"; tick += 1) game.tick(0.1);
+      const snapshot = game.getSnapshot();
+      return {
+        startResult,
+        stateDigest: game.getStateDigest(),
+        outcome: snapshot.outcome,
+        activeEnemies: snapshot.enemies.length,
+        startedWaveCount: snapshot.startedWaveCount
+      };
+    };
+    const first = run();
+    const second = run();
+    const deterministic = JSON.stringify(first) === JSON.stringify(second);
+    return {
+      contract: "deterministic_runtime_smoke_v1",
+      ok: deterministic,
+      missionId,
+      mapId,
+      ticks: 120,
+      deterministic,
+      ...first
+    };
+  } catch (error) {
+    return {
+      contract: "deterministic_runtime_smoke_v1",
+      ok: false,
+      missionId,
+      mapId,
+      reason: "runtime_exception",
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+async function commitProceduralMap(projectDir, args) {
+  assertProjectDir(projectDir);
+  if (typeof args.ifRevision !== "string" || args.ifRevision.length === 0) {
+    throw new Error("commit_procedural_map requires ifRevision from preview_procedural_map.");
+  }
+  const preview = await previewProceduralMap(projectDir, args.spec);
+  if (preview.revision !== args.ifRevision) {
+    return {
+      projectDir,
+      schemaVersion: 1,
+      ok: false,
+      conflict: true,
+      written: false,
+      expectedRevision: args.ifRevision,
+      actualRevision: preview.revision
+    };
+  }
+  if (!preview.ok) {
+    return {
+      projectDir,
+      schemaVersion: 1,
+      ok: false,
+      written: false,
+      revision: preview.revision,
+      evidence: preview.evidence,
+      validation: preview.evidence.projectValidation
+    };
+  }
+
+  // Preview performs asynchronous engine work. Re-read the authored catalogs immediately before
+  // taking backups so an edit racing that work cannot pass the optimistic guard.
+  const currentFiles = loadProjectFiles(projectDir);
+  const currentRevision = computeRevision({ maps: currentFiles.maps, mapSources: currentFiles.mapSources });
+  if (currentRevision !== args.ifRevision) {
+    return {
+      projectDir,
+      schemaVersion: 1,
+      ok: false,
+      conflict: true,
+      written: false,
+      expectedRevision: args.ifRevision,
+      actualRevision: currentRevision
+    };
+  }
+
+  const mapId = preview.source.id;
+  const sourceName = `${mapId}.tmj`;
+  const sourcePath = path.join(projectDir, "maps", "src", sourceName);
+  const compiledPath = path.join(projectDir, "maps", "compiled", "maps.json");
+  const sourceExisted = fs.existsSync(sourcePath);
+  const compiledExisted = fs.existsSync(compiledPath);
+  const originalSource = sourceExisted ? fs.readFileSync(sourcePath, "utf8") : null;
+  const originalCompiled = compiledExisted ? fs.readFileSync(compiledPath, "utf8") : null;
+  const candidateSources = { ...currentFiles.mapSources, [sourceName]: preview.source };
+  const compilation = compileMapSources(candidateSources, currentFiles.balance?.terrainTypes ?? {});
+  if (!compilation.ok || !compilation.maps?.[mapId]) {
+    return {
+      projectDir,
+      schemaVersion: 1,
+      ok: false,
+      written: false,
+      revision: currentRevision,
+      issues: compilation.issues
+    };
+  }
+  const candidateFiles = { ...currentFiles, mapSources: candidateSources, maps: compilation.maps };
+  const preValidation = boundedProceduralValidationSummary(await validateCandidateFiles(candidateFiles));
+  if (!preValidation.ok) {
+    return {
+      projectDir,
+      schemaVersion: 1,
+      ok: false,
+      written: false,
+      revision: currentRevision,
+      validation: preValidation
+    };
+  }
+
+  const guardedFiles = loadProjectFiles(projectDir);
+  const guardedRevision = computeRevision({ maps: guardedFiles.maps, mapSources: guardedFiles.mapSources });
+  if (guardedRevision !== currentRevision) {
+    return {
+      projectDir,
+      schemaVersion: 1,
+      ok: false,
+      conflict: true,
+      written: false,
+      expectedRevision: currentRevision,
+      actualRevision: guardedRevision
+    };
+  }
+
+  const sourceBackupPath = backupFile(projectDir, sourcePath);
+  const compiledBackupPath = backupFile(projectDir, compiledPath);
+  const rollbackFailures = [];
+  const rollback = () => {
+    for (const [target, filePath, existed, original] of [
+      ["source", sourcePath, sourceExisted, originalSource],
+      ["compiled", compiledPath, compiledExisted, originalCompiled]
+    ]) {
+      try {
+        if (existed) writeTextAtomic(filePath, original);
+        else fs.rmSync(filePath, { force: true });
+      } catch (error) {
+        rollbackFailures.push({ target, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    return rollbackFailures.length === 0;
+  };
+
+  try {
+    writeTextAtomic(sourcePath, `${JSON.stringify(preview.source, null, 2)}\n`);
+    writeTextAtomic(compiledPath, `${JSON.stringify(compilation.maps, null, 2)}\n`);
+    const post = await validateProjectDir(projectDir);
+    const postValidation = boundedProceduralValidationSummary(post.result);
+    const postCompilation = compileMapSources(readMapSources(projectDir), post.files.balance?.terrainTypes ?? {});
+    if (!postValidation.ok || !postCompilation.ok || !postCompilation.maps?.[mapId]) {
+      const error = new Error("Procedural map failed post-write compilation or project validation.");
+      error.validation = postValidation;
+      error.issues = postCompilation.issues;
+      throw error;
+    }
+    const finalFiles = loadProjectFiles(projectDir);
+    return {
+      projectDir,
+      schemaVersion: 1,
+      ok: true,
+      written: true,
+      rolledBack: false,
+      mapId,
+      sourcePath: path.relative(projectDir, sourcePath).split(path.sep).join("/"),
+      compiledPath: path.relative(projectDir, compiledPath).split(path.sep).join("/"),
+      previousRevision: currentRevision,
+      revision: computeRevision({ maps: finalFiles.maps, mapSources: finalFiles.mapSources }),
+      backup: {
+        source: relativeBackupPath(projectDir, sourceBackupPath),
+        compiled: relativeBackupPath(projectDir, compiledBackupPath)
+      },
+      validation: postValidation,
+      evidence: preview.evidence,
+      nextValidActions: ["upsert_entity (missions) to reference this map via mapId", "validate_project", "simulate_mission"]
+    };
+  } catch (error) {
+    const rolledBack = rollback();
+    return {
+      projectDir,
+      schemaVersion: 1,
+      ok: false,
+      written: false,
+      rolledBack,
+      mapId,
+      error: error instanceof Error ? error.message : String(error),
+      backup: {
+        source: relativeBackupPath(projectDir, sourceBackupPath),
+        compiled: relativeBackupPath(projectDir, compiledBackupPath)
+      },
+      ...(error?.validation ? { validation: error.validation } : {}),
+      ...(error?.issues ? { issues: error.issues } : {}),
+      ...(rollbackFailures.length > 0 ? { rollbackFailures } : {})
+    };
+  }
 }
 
 function towerScriptGraphValidationFailure(message, revision) {
@@ -3448,6 +4091,179 @@ async function importAsset(projectDir, args) {
   }
 }
 
+function decodeGeneratedAssetBase64(value) {
+  if (typeof value !== "string" || value.length === 0 || value.length > 45_000_000
+    || value.startsWith("data:") || /\s/.test(value) || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) {
+    throw new Error("stage_generated_asset requires bounded canonical base64 image data.");
+  }
+  const bytes = Buffer.from(value, "base64");
+  const canonicalInput = value.replace(/=+$/, "");
+  const canonicalOutput = bytes.toString("base64").replace(/=+$/, "");
+  if (canonicalInput !== canonicalOutput) throw new Error("stage_generated_asset received malformed base64 image data.");
+  return bytes;
+}
+
+function relativeBackupPath(projectDir, backupPath) {
+  return typeof backupPath === "string" ? path.relative(projectDir, backupPath).split(path.sep).join("/") : null;
+}
+
+function assertGeneratedAssetDestinationSafe(projectDir, destination) {
+  const root = path.resolve(projectDir);
+  const relative = path.relative(root, destination);
+  if (!relative || relative === "." || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error("Generated asset destination escapes the active project.");
+  }
+  let cursor = root;
+  const segments = relative.split(path.sep);
+  if (segments[0] === ".towerforge") {
+    throw new Error("Generated asset destination must not use private TowerForge state or staging.");
+  }
+  for (let index = 0; index < segments.length; index += 1) {
+    cursor = path.join(cursor, segments[index]);
+    if (!fs.existsSync(cursor)) break;
+    const stat = fs.lstatSync(cursor);
+    if (stat.isSymbolicLink()) throw new Error("Generated asset destination must not traverse symlinks.");
+    const leaf = index === segments.length - 1;
+    if ((!leaf && !stat.isDirectory()) || (leaf && !stat.isFile())) {
+      throw new Error("Generated asset destination contains an invalid filesystem entry.");
+    }
+  }
+}
+
+function ensureGeneratedAssetBackupRootSafe(projectDir) {
+  const towerforge = path.join(projectDir, ".towerforge");
+  const backupRoot = path.join(towerforge, "mcp-backups");
+  for (const [directory, label] of [[towerforge, "TowerForge state"], [backupRoot, "MCP backup"]]) {
+    if (!fs.existsSync(directory)) {
+      fs.mkdirSync(directory, { mode: 0o700 });
+      continue;
+    }
+    const stat = fs.lstatSync(directory);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw new Error(`${label} directory must be a real project directory.`);
+    }
+  }
+}
+
+async function commitStagedProjectAsset(projectDir, args) {
+  assertProjectDir(projectDir);
+  if (typeof args.ifRevision !== "string" || args.ifRevision.length === 0) {
+    throw new Error("commit_staged_asset requires ifRevision from get_project_summary.");
+  }
+  if (typeof args.assetId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(args.assetId)) {
+    throw new Error("commit_staged_asset assetId must use 1..128 letters, digits, underscores, or hyphens.");
+  }
+  if (args.kind !== "sprite" && args.kind !== "atlas") {
+    throw new Error("commit_staged_asset kind must be sprite or atlas for generated image staging.");
+  }
+
+  const staged = readStagedAssetForCommit(projectDir, args.handle);
+  const raw = readRawProjectFiles(projectDir);
+  const files = normalizeProjectFiles(raw);
+  const beforeRevision = computeRevision(files.visuals);
+  if (beforeRevision !== args.ifRevision) {
+    return {
+      projectDir,
+      ok: false,
+      written: false,
+      conflict: true,
+      expectedRevision: args.ifRevision,
+      actualRevision: beforeRevision
+    };
+  }
+
+  const sourcePath = path.posix.join(".towerforge", "generated-assets", args.handle, "payload.bin");
+  const plan = planProjectAssetImport(projectDir, raw.visuals ?? files.visuals, {
+    sourcePath,
+    targetPath: args.targetPath ?? staged.inspected.fileName,
+    id: args.assetId,
+    kind: args.kind,
+    columns: args.columns,
+    rows: args.rows
+  });
+  assertGeneratedAssetDestinationSafe(projectDir, plan.destPath);
+  if (!plan.copyRequired) {
+    throw new Error("Generated asset commit must copy staged bytes into a durable project asset destination.");
+  }
+  const catalog = args.kind === "atlas" ? plan.visuals.atlases : plan.visuals.sprites;
+  catalog[plan.asset.id].generation = {
+    schemaVersion: 1,
+    license: structuredCloneCompat(staged.inspected.license),
+    provenance: structuredCloneCompat(staged.inspected.provenance)
+  };
+  const candidate = normalizeProjectFiles({ ...raw, visuals: plan.visuals });
+  const validation = await validateCandidateFiles(candidate);
+  if (!validation.ok) {
+    return {
+      projectDir,
+      ok: false,
+      written: false,
+      validation: validationSummary(validation),
+      nextValidActions: ["inspect_staged_asset", "explain_validation"]
+    };
+  }
+
+  const currentRevision = computeRevision(loadProjectFiles(projectDir).visuals);
+  if (currentRevision !== beforeRevision) {
+    return {
+      projectDir,
+      ok: false,
+      written: false,
+      conflict: true,
+      expectedRevision: beforeRevision,
+      actualRevision: currentRevision
+    };
+  }
+
+  const visualsPath = path.join(projectDir, "content", "visuals.json");
+  const originalVisuals = fs.existsSync(visualsPath) ? fs.readFileSync(visualsPath, "utf8") : null;
+  ensureGeneratedAssetBackupRootSafe(projectDir);
+  const visualsBackupPath = backupFile(projectDir, visualsPath);
+  const assetExisted = plan.copyRequired && fs.existsSync(plan.destPath);
+  const assetBackupPath = assetExisted ? backupFile(projectDir, plan.destPath) : null;
+  try {
+    commitProjectAssetImport(plan, staged.bytes);
+    writeJsonAtomic(visualsPath, plan.visuals);
+    const postFiles = loadProjectFiles(projectDir);
+    const post = await validateCandidateFiles(postFiles);
+    if (!post.ok) throw new Error("Generated asset made the project invalid after commit.");
+    discardStagedAsset(projectDir, args.handle);
+    return {
+      projectDir,
+      ok: true,
+      written: true,
+      rolledBack: false,
+      stagedHandle: args.handle,
+      stagingDiscarded: true,
+      asset: plan.asset,
+      backup: {
+        visuals: relativeBackupPath(projectDir, visualsBackupPath),
+        asset: relativeBackupPath(projectDir, assetBackupPath)
+      },
+      revision: computeRevision(postFiles.visuals),
+      validation: validationSummary(post)
+    };
+  } catch (error) {
+    if (originalVisuals === null) fs.rmSync(visualsPath, { force: true });
+    else writeTextAtomic(visualsPath, originalVisuals);
+    if (plan.copyRequired) {
+      if (assetExisted && assetBackupPath) fs.copyFileSync(assetBackupPath, plan.destPath);
+      else fs.rmSync(plan.destPath, { force: true });
+    }
+    return {
+      projectDir,
+      ok: false,
+      written: false,
+      rolledBack: true,
+      error: error.message,
+      backup: {
+        visuals: relativeBackupPath(projectDir, visualsBackupPath),
+        asset: relativeBackupPath(projectDir, assetBackupPath)
+      }
+    };
+  }
+}
+
 // Prototype-safe ENTITY_COLLECTIONS lookup: a bare bracket read would resolve inherited
 // Object.prototype members (collection: "constructor" → the inherited Function), skating past the
 // `!spec` check into a confusing downstream error — the same gap the EXPLAIN_CURATED lookup closed.
@@ -4152,6 +4968,17 @@ function writeTextAtomic(filePath, text) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(tmp, text, "utf8");
   fs.renameSync(tmp, filePath);
+}
+
+function writeBufferAtomic(filePath, bytes) {
+  const tmp = `${filePath}.tmp.${process.pid}.${createHash("sha1").update(filePath).digest("hex").slice(0, 6)}`;
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  try {
+    fs.writeFileSync(tmp, bytes, { flag: "wx", mode: 0o600 });
+    fs.renameSync(tmp, filePath);
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
 }
 
 const BACKUPS_KEPT_PER_FILE = 20;

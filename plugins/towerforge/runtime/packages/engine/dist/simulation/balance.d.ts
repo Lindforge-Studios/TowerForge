@@ -1,13 +1,14 @@
 import { type GameContentRegistry } from "../content/registry.js";
 import type { GameSnapshot } from "./types.js";
+import type { GameSeed } from "./rng.js";
 /**
  * Simulation-driven balance analysis.
  *
- * The engine is fully deterministic and has no RNG, so outcome variety comes from varying the
- * *player strategy* (which towers, upgrades) rather than random seeds. We run a spread of
- * representative strategies headlessly per mission and aggregate win-rate, surviving core HP, and
- * tower usage into an actionable balance report — the substrate an AI co-designer (or a human)
- * drives in an author → simulate → diagnose → patch loop.
+ * The engine is deterministic for a given seed. Legacy sweeps keep seed 0 and vary the *player
+ * strategy* (which towers, upgrades); R7 callers may additionally pin another seed and a strategy
+ * subset. We aggregate win-rate, surviving core HP, and tower usage into an actionable balance
+ * report — the substrate an AI co-designer (or a human) drives in an
+ * author → simulate → diagnose → patch loop.
  */
 export interface BalanceStrategy {
     id: string;
@@ -28,6 +29,8 @@ export interface StrategyResult {
     leaks: number;
     elapsed: number;
     towerCounts: Record<string, number>;
+    /** Present only for explicitly seeded sweeps; omitted to preserve the legacy report shape. */
+    seed?: GameSeed;
 }
 export interface BalanceFlag {
     severity: "error" | "warning" | "info";
@@ -62,6 +65,7 @@ export interface BalanceReport {
         strategiesPerMission: number;
         simSeconds: number;
         tickStep: number;
+        seed?: GameSeed;
     };
 }
 export interface BalanceSweepOptions {
@@ -69,5 +73,9 @@ export interface BalanceSweepOptions {
     simSeconds?: number;
     tickStep?: number;
     maxStrategies?: number;
+    /** Optional deterministic simulation seed. Omitted legacy sweeps continue to use seed 0. */
+    seed?: GameSeed;
+    /** Optional allowlist of generated strategy ids, evaluated in canonical strategy order. */
+    strategyIds?: string[];
 }
 export declare function runBalanceSweep(content: GameContentRegistry, options?: BalanceSweepOptions): BalanceReport;
