@@ -533,6 +533,85 @@ test("Russian is default and language switching persists", async ({ page }) => {
   await expect(page.getByRole("tab", { name: "Settings" })).toBeVisible();
 });
 
+test("account sign-in stays pending when the desktop browser opener rejects with a string", async ({ page }) => {
+  let connectRequests = 0;
+  let statusRequests = 0;
+  await page.addInitScript(() => {
+    localStorage.setItem("towerforge:welcomed", "1");
+    localStorage.setItem("towerforge:language", "en");
+    window.__authOpenCalls = [];
+    window.__TAURI__ = {
+      core: {
+        invoke: async (command, args) => {
+          if (command === "desktop_open_external") {
+            window.__authOpenCalls.push(args.url);
+            throw "Command desktop_open_external not allowed by ACL";
+          }
+          return null;
+        }
+      }
+    };
+  });
+  await page.route("**/api/ai/runtime/status?*", async (route) => {
+    statusRequests += 1;
+    const provider = new URL(route.request().url()).searchParams.get("provider") || "codex";
+    await route.fulfill({ json: { provider, available: true, connected: false } });
+  });
+  await page.route("**/api/ai/runtime/connect", async (route) => {
+    connectRequests += 1;
+    await route.fulfill({
+      json: {
+        provider: "codex",
+        started: true,
+        authUrl: "https://auth.openai.com/oauth/authorize?client_id=towerforge-test"
+      }
+    });
+  });
+
+  await page.goto(studioUrl);
+  await page.getByRole("tab", { name: /Settings/ }).click();
+  await page.locator('[data-ai-connect="codex"]').click();
+
+  await expect(page.locator("#toast-container")).toContainText("Command desktop_open_external not allowed by ACL");
+  await expect(page.locator("#toast-container")).not.toContainText("undefined");
+  await expect(page.locator("#ai-connections-list")).toContainText("Waiting for browser sign-in...");
+  await expect(page.locator('[data-ai-connect="codex"]')).toHaveText("Open sign-in again");
+  await expect.poll(() => statusRequests, { timeout: 3_500 }).toBeGreaterThanOrEqual(3);
+
+  await page.locator('[data-ai-connect="codex"]').click();
+  expect(connectRequests).toBe(1);
+  await expect.poll(() => page.evaluate(() => window.__authOpenCalls.length)).toBe(2);
+});
+
+test("Russian account connection states remain fully localized", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("towerforge:welcomed", "1");
+    localStorage.setItem("towerforge:language", "ru");
+  });
+  await page.route("**/api/ai/runtime/status?*", async (route) => {
+    const provider = new URL(route.request().url()).searchParams.get("provider") || "codex";
+    await route.fulfill({
+      json: provider === "codex"
+        ? { provider, available: true, connected: false, authenticating: true }
+        : {
+            provider,
+            available: true,
+            connected: false,
+            error: "Claude Code sign-in failed because the macOS Keychain was unavailable. Restart TowerForge and try again."
+          }
+    });
+  });
+
+  await page.goto(studioUrl);
+  await page.getByRole("tab", { name: "Настройки" }).click();
+  await expect(page.locator("#ai-connections-list")).toContainText("Ожидание входа в браузере…");
+  await expect(page.locator('[data-ai-connect="codex"]')).toHaveText("Повторно открыть вход");
+  await expect(page.locator("#ai-connections-list")).toContainText("Вход в Claude Code не выполнен: связка ключей macOS недоступна.");
+
+  await page.locator("#btn-ai-chat").click();
+  await expect(page.locator("#ai-transcript")).toContainText("Завершите вход в браузере.");
+});
+
 test("Russian locale covers the primary authoring surfaces", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("towerforge:welcomed", "1");

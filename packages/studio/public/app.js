@@ -5912,9 +5912,17 @@ function scheduleAiRuntimePolling(provider) {
       setAiDockOpen(true);
       toast(`${aiProviderInfo(provider).label} connected.`, "ok");
     }
-    if (status?.connected || attempts >= 80) {
+    if (status?.connected || (status?.error && !status?.authenticating) || attempts >= 80) {
       clearInterval(AI.runtimePollTimer);
       AI.runtimePollTimer = null;
+      if (!status?.connected && AI.runtimeStatus[provider]?.authenticating) {
+        AI.runtimeStatus[provider] = {
+          ...AI.runtimeStatus[provider],
+          authenticating: false,
+          error: AI.runtimeStatus[provider].error || "Sign-in timed out. Try connecting again."
+        };
+        updateAiUi();
+      }
     }
   }, 1_500);
 }
@@ -5929,10 +5937,23 @@ async function loadAiRuntimeStatus(provider = aiProvider(), force = false) {
     const response = await fetch(`/api/ai/runtime/status?provider=${encodeURIComponent(provider)}`);
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || `Server returned ${response.status}`);
-    AI.runtimeStatus[provider] = payload;
-    return payload;
+    const previous = AI.runtimeStatus[provider];
+    AI.runtimeStatus[provider] = payload.connected ? payload : {
+      ...payload,
+      ...(previous?.authenticating && !payload.error ? { authenticating: true } : {}),
+      ...(previous?.authUrl ? { authUrl: previous.authUrl } : {})
+    };
+    return AI.runtimeStatus[provider];
   } catch (error) {
-    AI.runtimeStatus[provider] = { provider, available: false, connected: false, error: error.message };
+    const previous = AI.runtimeStatus[provider];
+    AI.runtimeStatus[provider] = {
+      provider,
+      available: false,
+      connected: false,
+      error: readableError(error, "Could not check account status."),
+      ...(previous?.authenticating ? { authenticating: true } : {}),
+      ...(previous?.authUrl ? { authUrl: previous.authUrl } : {})
+    };
     return AI.runtimeStatus[provider];
   } finally {
     if (AI.runtimeStatusLoading === provider) AI.runtimeStatusLoading = null;
@@ -5961,20 +5982,58 @@ async function openAiAuthUrl(url) {
   else window.open(url, "_blank", "noopener,noreferrer");
 }
 
+function readableError(error, fallback = "Unknown error") {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string" && error.trim()) return error.trim();
+  if (error && typeof error === "object" && typeof error.message === "string" && error.message.trim()) return error.message.trim();
+  return fallback;
+}
+
 async function aiRuntimeConnect(provider = aiProvider()) {
   if (!aiIsRuntime(provider)) return;
   const button = document.querySelector(`[data-ai-connect="${CSS.escape(provider)}"]`);
   if (button) button.disabled = true;
   try {
+    const pending = AI.runtimeStatus[provider];
+    if (pending?.authenticating && pending.authUrl) {
+      try {
+        await openAiAuthUrl(pending.authUrl);
+      } catch (error) {
+        const reason = readableError(error, "Desktop browser launch failed.");
+        toast(getLanguage() === "ru"
+          ? `Не удалось открыть страницу входа ${aiProviderInfo(provider).label}: ${reason}`
+          : `Could not open ${aiProviderInfo(provider).label} sign-in page: ${reason}`, "err");
+      }
+      return;
+    }
+
     const payload = await postAiRuntime("/api/ai/runtime/connect", provider);
-    if (payload.authUrl) await openAiAuthUrl(payload.authUrl);
-    AI.runtimeStatus[provider] = { provider, available: true, connected: false, authenticating: true };
+    AI.runtimeStatus[provider] = {
+      provider,
+      available: true,
+      connected: false,
+      authenticating: true,
+      ...(payload.authUrl ? { authUrl: payload.authUrl } : {})
+    };
     AI.activateOnConnect = provider;
     updateAiUi();
     renderAiEmpty();
     scheduleAiRuntimePolling(provider);
+    if (payload.authUrl) {
+      try {
+        await openAiAuthUrl(payload.authUrl);
+      } catch (error) {
+        const reason = readableError(error, "Desktop browser launch failed.");
+        toast(getLanguage() === "ru"
+          ? `Вход запущен, но браузер не открылся: ${reason} Используйте «Повторно открыть вход».`
+          : `Sign-in started, but the browser could not be opened: ${reason} Use Open sign-in again.`, "err");
+      }
+    }
   } catch (error) {
-    toast(`Could not start ${aiProviderInfo(provider).label} sign-in: ${error.message}`, "err");
+    const reason = readableError(error, "Unknown runtime error.");
+    toast(getLanguage() === "ru"
+      ? `Не удалось запустить вход ${aiProviderInfo(provider).label}: ${reason}`
+      : `Could not start ${aiProviderInfo(provider).label} sign-in: ${reason}`, "err");
     await loadAiRuntimeStatus(provider, true);
   } finally {
     if (button) button.disabled = false;
@@ -5985,7 +6044,7 @@ async function aiRuntimeDisconnect(provider = aiProvider()) {
   if (!aiIsRuntime(provider)) return;
   if (!await confirmDialog({
     title: `Disconnect ${aiProviderInfo(provider).label}?`,
-    message: "This removes TowerForge's account session from the official runtime. Other apps and API keys are not touched.",
+    message: "This signs out the official runtime. On macOS, the provider-owned login Keychain entry may also be removed for other apps using the same runtime credential. Direct API keys are not touched.",
     confirmLabel: "Disconnect",
     danger: true
   })) return;
@@ -6084,7 +6143,8 @@ function renderAiEmpty() {
     const status = aiRuntimeStatus();
     if (!status) authPrompt = `<b>Checking ${esc(aiProviderInfo().label)}...</b><br><br>`;
     else if (status.authenticating) authPrompt = `<b>Complete sign-in in your browser.</b><br><br>`;
-    else if (!status.available) authPrompt = `<b>${esc(status.error || "Official runtime is unavailable.")}</b><br><br>`;
+    else if (status.error) authPrompt = `<b>${esc(status.error)}</b><br><br>`;
+    else if (!status.available) authPrompt = `<b>Official runtime is unavailable.</b><br><br>`;
     else if (!status.connected) authPrompt = `<b>Connect your ${esc(aiProviderInfo().label)} account to begin.</b><br><br>`;
     authPrompt += `OAuth credentials stay inside the official runtime. Prompts, selected attachments, and required TowerForge tool results are sent to ${esc(aiProviderInfo().label)}.<br><br>`;
   } else if (!aiHasKey()) {
@@ -6099,6 +6159,7 @@ function runtimeStatusText(provider) {
   if (AI.runtimeStatusLoading === provider) return "Checking account...";
   if (status?.connected) return `${status.method || info.label}${status.subscription ? ` · ${status.subscription}` : ""}`;
   if (status?.authenticating) return "Waiting for browser sign-in...";
+  if (status?.error) return status.error;
   if (status?.available === false) return status.error || "Runtime unavailable";
   return "Not connected";
 }
@@ -6134,7 +6195,7 @@ function renderAiConnectionSettings() {
     ${runtimeCard("codex", "Use your ChatGPT plan through the official Codex App Server OAuth flow.")}
     ${runtimeCard("claude-code", "Use your Claude account through the bundled official Claude Code runtime.")}
   </div>
-  <div class="ai-connection-note">TowerForge never reads OAuth tokens. Account runtimes use private app-data storage, an isolated workspace, and only validated TowerForge tools.</div>
+  <div class="ai-connection-note">TowerForge never reads OAuth tokens. Provider configuration and the runtime workspace are isolated; on macOS, official runtimes keep credentials in the provider-owned login Keychain. Agents receive only validated TowerForge tools.</div>
   <div class="ai-api-keys">${["anthropic", "openai", "openrouter"].map(keyRow).join("")}</div>`;
   for (const [provider, value] of drafts) {
     const input = host.querySelector(`[data-ai-key-input="${CSS.escape(provider)}"]`);

@@ -53,15 +53,20 @@ export function isAllowedRuntimeAuthUrl(value) {
   }
 }
 
-export function runtimeChildEnv(kind, configDir, source = process.env) {
+export function runtimeChildEnv(kind, configDir, source = process.env, platform = process.platform) {
   const env = {};
   for (const key of PASSTHROUGH_ENV) {
     if (typeof source[key] === "string" && source[key]) env[key] = source[key];
   }
-  if (process.platform === "win32") {
+  if (platform === "win32") {
     env.USERPROFILE = configDir;
     env.APPDATA = path.join(configDir, "AppData", "Roaming");
     env.LOCALAPPDATA = path.join(configDir, "AppData", "Local");
+  } else if (platform === "darwin" && typeof source.HOME === "string" && path.isAbsolute(source.HOME)) {
+    // The official Codex and Claude runtimes persist account credentials in the
+    // macOS login Keychain. A synthetic HOME makes the default login Keychain
+    // undiscoverable, even though provider config and the runtime cwd are private.
+    env.HOME = source.HOME;
   } else {
     env.HOME = configDir;
   }
@@ -384,6 +389,7 @@ export class AgentRuntimeBridge {
     this.codex = null;
     this.codexTurns = new Map();
     this.claudeLogin = null;
+    this.claudeAuthOutcome = null;
     this.activeAborts = new Set();
   }
 
@@ -443,7 +449,14 @@ export class AgentRuntimeBridge {
         timeoutMs: 10_000
       });
       const status = parseClaudeStatus(result.stdout);
-      return { provider, available: result.code !== 127, ...status };
+      if (status.connected) this.claudeAuthOutcome = null;
+      return {
+        provider,
+        available: result.code !== 127,
+        ...status,
+        ...(this.claudeLogin?.exitCode === null ? { authenticating: true } : {}),
+        ...(!status.connected && this.claudeAuthOutcome?.error ? { error: this.claudeAuthOutcome.error } : {})
+      };
     } catch (error) {
       return { provider, available: false, connected: false, error: redactRuntimeText(error?.message || error, { projectDir: this.projectDir }) };
     }
@@ -522,15 +535,38 @@ export class AgentRuntimeBridge {
     if (!executable) throw new Error("Claude Code runtime is not installed.");
     this.#prepareRuntime("claude-code");
     if (this.claudeLogin && this.claudeLogin.exitCode === null) return { provider, started: true };
+    this.claudeAuthOutcome = null;
     const child = spawn(executable, ["auth", "login"], {
       cwd: this.workspace,
       env: runtimeChildEnv("claude", this.claudeHome),
       windowsHide: true,
-      stdio: ["ignore", "ignore", "ignore"]
+      stdio: ["ignore", "pipe", "pipe"]
     });
     this.claudeLogin = child;
-    child.once("close", () => { if (this.claudeLogin === child) this.claudeLogin = null; });
-    child.once("error", () => { if (this.claudeLogin === child) this.claudeLogin = null; });
+    let authOutput = "";
+    child.stdout?.on("data", (chunk) => { authOutput = appendBounded(authOutput, chunk); });
+    child.stderr?.on("data", (chunk) => { authOutput = appendBounded(authOutput, chunk); });
+    child.once("close", (code) => {
+      if (this.claudeLogin !== child) return;
+      this.claudeLogin = null;
+      const keychainFailure = /keychain/i.test(authOutput);
+      this.claudeAuthOutcome = code === 0
+        ? { error: "Claude Code sign-in finished, but account credentials were not saved. Try connecting again." }
+        : { error: keychainFailure
+          ? "Claude Code sign-in failed because the macOS Keychain was unavailable. Restart TowerForge and try again."
+          : "Claude Code sign-in failed before account credentials were saved. Try connecting again." };
+    });
+    const spawned = new Promise((resolve, reject) => {
+      child.once("spawn", resolve);
+      child.once("error", (error) => {
+        if (this.claudeLogin === child) {
+          this.claudeLogin = null;
+          this.claudeAuthOutcome = { error: "Claude Code sign-in could not start. Restart TowerForge and try again." };
+        }
+        reject(error);
+      });
+    });
+    await spawned;
     return { provider, started: true };
   }
 
@@ -550,6 +586,7 @@ export class AgentRuntimeBridge {
       timeoutMs: 20_000
     });
     if (result.code !== 0) throw new Error("Claude Code could not sign out.");
+    this.claudeAuthOutcome = null;
     return { provider, connected: false };
   }
 
@@ -812,8 +849,9 @@ export class AgentRuntimeBridge {
   close() {
     const codexClose = this.codex?.close() ?? Promise.resolve();
     this.codex = null;
-    this.claudeLogin?.kill("SIGTERM");
+    const claudeLogin = this.claudeLogin;
     this.claudeLogin = null;
+    claudeLogin?.kill("SIGTERM");
     for (const controller of this.activeAborts) controller.abort();
     this.activeAborts.clear();
     return codexClose;
