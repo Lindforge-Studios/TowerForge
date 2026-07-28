@@ -2501,7 +2501,9 @@ export class TowerDefenseGame {
     this.updateHeroAbility(delta);
     this.moveHeroUnit(delta);
 
-    if (this.startedWaveCount > 0) {
+    // Externally authored deterministic queues (for example asymmetric multiplayer sends)
+    // advance even before the lane's first authored wave starts.
+    if (this.startedWaveCount > 0 || this.spawnQueue.length > 0) {
       this.missionElapsed += delta;
       this.applyPassiveIncome(delta);
       this.startScheduledWaves();

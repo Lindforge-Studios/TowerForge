@@ -44,7 +44,7 @@ The template/grid/renderer conformance gate is part of `npm run test` and `npm r
 
 ## Opt-In Mechanics
 
-Open **Mechanics** in Studio to use the isolated Mechanics Hub. Pick a mission and switch between combat, reactions, navigation, elevation, physics, terraforming, rogue-lite, and Director capabilities. Combat profiles edit shields, the v2 damage/armor matrix, or v3 marks; reactions v1 profiles edit exposures, predicates, and bounded effects; navigation v1 profiles choose `authored_routes` or `dynamic_flow`; physics v1 profiles edit immunity and fall-hazard selectors; terraforming v1 profiles edit transitions and elevation policy; roguelite v1 profiles edit synergies, v2 adds artifacts, v3 adds optional draft, and v4 adds an independent optional campaign marker; Director v1 edits the authored counter pool, threat budget, and fairness caps. Preview before apply. The ordinary mechanics transaction updates `project.json`, `content/mechanics.json`, and mission selections with validation, backup, and rollback; its rogue-lite form also owns tower-tag arrays. Campaign graph authoring uses the narrower four-file transaction described below. Disable preserves authored data and restores the lower-capability runtime path. Ordinary tower, enemy, map, mission, and TowerScript forms remain unchanged.
+Open **Mechanics** in Studio to use the isolated Mechanics Hub. Pick a mission and switch between combat, reactions, navigation, elevation, physics, terraforming, rogue-lite, Director, and multiplayer capabilities. Combat profiles edit shields, the v2 damage/armor matrix, or v3 marks; reactions v1 profiles edit exposures, predicates, and bounded effects; navigation v1 profiles choose `authored_routes` or `dynamic_flow`; physics v1 profiles edit immunity and fall-hazard selectors; terraforming v1 profiles edit transitions and elevation policy; roguelite v1 profiles edit synergies, v2 adds artifacts, v3 adds optional draft, and v4 adds an independent optional campaign marker; Director v1 edits the authored counter pool, threat budget, and fairness caps. Preview before apply. The ordinary mechanics transaction updates `project.json`, `content/mechanics.json`, and mission selections with validation, backup, and rollback; its rogue-lite form also owns tower-tag arrays. Campaign graph authoring uses the narrower four-file transaction described below. Disable preserves authored data and restores the lower-capability runtime path. Ordinary tower, enemy, map, mission, and TowerScript forms remain unchanged.
 
 In Playtest, the dynamic-navigation overlay analyzes all cells when the viewport contains at most 4,096 tiles. On a larger viewport it shows a deterministic focus window around the most recent pointer or keyboard interaction coordinate and reports `analyzed/total` partial coverage; move focus near the area you want to inspect. The overlay is advisory: every click still runs authoritative `canPlaceTower` preflight and `placeTower`, so a cell outside the current window cannot bypass last-path validation.
 
@@ -74,6 +74,16 @@ together on failure. Generated images must follow
 `stage_generated_asset → inspect_staged_asset → commit_staged_asset(ifRevision)` or explicit
 discard. Never put provider keys, account credentials, or prompts in project files or staged
 metadata.
+
+For R8, copy `docs/examples/opt-in-local-multiplayer/` and validate before building. Import match
+APIs only from `@towerforge/engine/multiplayer`; negotiate the capability handshake before accepting
+envelopes. Local co-op v1 uses one fixed-tick session and independently selects shared or
+partitioned resources/routes. Partitioned routes require at least one authored route per player;
+consume engine snapshot wallets/route ownership instead of recomputing them. Asymmetric v2 requires a separate profile
+with exactly two lanes and an authored send pool. Use the in-memory pair for local tests or inject a
+WebSocket-like port into the adapter; TowerForge does not create a socket, lobby, account, or
+matchmaking service. Confirm an inactive build has no `dist/engine/multiplayer`, then enable/select
+the profile and rebuild to confirm both normal and single-file players include the protocol hook.
 
 For R4.1A use `describe_schema({domain:"roguelite"})` → `get_capabilities` →
 `get_recipe({collection:"mechanics",recipeId:"basic_elemental_synergy",parameters:{towerTypeIds:[...]}})`.

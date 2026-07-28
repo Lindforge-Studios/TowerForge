@@ -38,6 +38,7 @@ export * from "./content/roguelite-mechanics.js";
 export * from "./content/heroes-mechanics.js";
 export * from "./content/logistics-mechanics.js";
 export * from "./content/director-mechanics.js";
+export * from "./content/multiplayer-mechanics.js";
 export * from "./content/reaction-mechanics.js";
 export * from "./content/validate.js";
 export * from "./content/schema-descriptor.js";

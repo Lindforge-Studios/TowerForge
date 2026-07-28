@@ -38,6 +38,9 @@ export * from "./content/roguelite-mechanics.js";
 export * from "./content/heroes-mechanics.js";
 export * from "./content/logistics-mechanics.js";
 export * from "./content/director-mechanics.js";
+// Authoring/validation metadata is part of the ordinary content contract. Match sessions,
+// transports, replay and diagnostics remain isolated in @towerforge/engine/multiplayer.
+export * from "./content/multiplayer-mechanics.js";
 export * from "./content/reaction-mechanics.js";
 export * from "./content/validate.js";
 export * from "./content/schema-descriptor.js";

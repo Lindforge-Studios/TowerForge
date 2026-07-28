@@ -86,7 +86,10 @@ try {
   emptyDir(outDir);
 
   const renderer = target.renderer === "phaser" ? "phaser" : "canvas";
-  copyDir(path.join(repoRoot, "packages", "engine", "dist"), path.join(outDir, "engine"));
+  const multiplayerActive = hasActiveMultiplayer(files);
+  copyDir(path.join(repoRoot, "packages", "engine", "dist"), path.join(outDir, "engine"), {
+    excludeRootEntries: multiplayerActive ? undefined : new Set(["multiplayer"])
+  });
   const playerRuntimeSource = path.join(repoRoot, "packages", "player-runtime", "src");
   const playerRuntimeOutput = path.join(outDir, "player-runtime");
   fs.mkdirSync(playerRuntimeOutput, { recursive: true });
@@ -120,7 +123,11 @@ try {
   fs.writeFileSync(path.join(outDir, "index.html"), htmlTemplate(files.manifest, target, renderer, initialGridKind), "utf8");
   fs.writeFileSync(path.join(outDir, "styles.css"), cssTemplate(target), "utf8");
   fs.writeFileSync(path.join(outDir, "boot.js"), bootRecoveryTemplate(files.manifest, target, files.storyComics), "utf8");
-  fs.writeFileSync(path.join(outDir, "player.mjs"), renderer === "phaser" ? phaserPlayerTemplate() : playerTemplate(), "utf8");
+  fs.writeFileSync(
+    path.join(outDir, "player.mjs"),
+    renderer === "phaser" ? phaserPlayerTemplate(multiplayerActive) : playerTemplate(multiplayerActive),
+    "utf8"
+  );
   fs.writeFileSync(path.join(outDir, "manifest.webmanifest"), JSON.stringify(webManifest(files.manifest, target), null, 2) + "\n", "utf8");
 
   // Service worker is written last: precache every emitted asset and version the cache by content
@@ -207,18 +214,30 @@ function emptyDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
-function copyDir(src, dest) {
+function copyDir(src, dest, options = {}, depth = 0) {
   fs.mkdirSync(dest, { recursive: true });
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
     // Skip test/spec files and any TypeScript declaration / source files — the player only needs
     // runtime JS. Also skip dotfiles (e.g. dist/.build-stamp, an internal engine-freshness marker)
     // so build-internal artifacts never ship in the bundle or get precached by the service worker.
     if (entry.name.startsWith(".") || /\.(test|spec)\.(mjs|js|ts)$/.test(entry.name) || /\.d\.ts(\.map)?$/.test(entry.name) || /\.ts$/.test(entry.name)) continue;
+    if (depth === 0 && options.excludeRootEntries?.has(entry.name)) continue;
     const from = path.join(src, entry.name);
     const to = path.join(dest, entry.name);
-    if (entry.isDirectory()) copyDir(from, to);
+    if (entry.isDirectory()) copyDir(from, to, options, depth + 1);
     else fs.copyFileSync(from, to);
   }
+}
+
+function hasActiveMultiplayer(files) {
+  const module = files.mechanics?.modules?.multiplayer;
+  if (module?.enabled !== true || (module.schemaVersion !== 1 && module.schemaVersion !== 2)) return false;
+  const profiles = module.profiles;
+  if (!profiles || typeof profiles !== "object" || Array.isArray(profiles)) return false;
+  return Object.values(files.balance?.missions ?? {}).some((mission) => {
+    const profileId = mission?.mechanics?.profiles?.multiplayer;
+    return typeof profileId === "string" && Object.prototype.hasOwnProperty.call(profiles, profileId);
+  });
 }
 
 /** Walk a built output directory and return `./`-prefixed posix paths for service-worker precaching. */
@@ -683,7 +702,7 @@ function resetPlayerProgress() {
 // TOWERFORGE_PROFILE_RUNTIME_END`;
 }
 
-function playerTemplate() {
+function playerTemplate(includeMultiplayer = false) {
   return `import {
   createCampaignRun,
   createEmptyPlayerProfile,
@@ -707,6 +726,7 @@ function playerTemplate() {
   TowerDefenseGame,
   validateCampaignRunAgainstContent
 } from "./engine/index.js";
+${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multiplayer/index.js";' : ""}
 import { createPlayerProfileStore, derivePlayerProfileStorageKey } from "./player-runtime/index.mjs";
 import { createCanvasRenderer, hitTestHeroesPresentation, projectCampaignPresentation, projectDirectorDecisionCues, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectRoguelitePresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
 import { createAudioPlayer } from "./renderer/audio.mjs";
@@ -722,6 +742,7 @@ const content = createGameContentRegistry({
   storyComics: project.storyComics,
   battleBackgrounds: project.battleBackgrounds
 });
+${includeMultiplayer ? "globalThis.__towerforgeMultiplayer = TowerForgeMultiplayer;" : ""}
 
 ${playerProfileRuntimeTemplate()}
 
@@ -1894,7 +1915,7 @@ function applyProjectTheme() {
 `;
 }
 
-function phaserPlayerTemplate() {
+function phaserPlayerTemplate(includeMultiplayer = false) {
   return `import {
   createCampaignRun,
   createEmptyPlayerProfile,
@@ -1918,6 +1939,7 @@ function phaserPlayerTemplate() {
   TowerDefenseGame,
   validateCampaignRunAgainstContent
 } from "./engine/index.js";
+${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multiplayer/index.js";' : ""}
 import { createPlayerProfileStore, derivePlayerProfileStorageKey } from "./player-runtime/index.mjs";
 import { createAudioPlayer } from "./renderer/audio.mjs";
 import {
@@ -1957,6 +1979,7 @@ const content = createGameContentRegistry({
   storyComics: project.storyComics,
   battleBackgrounds: project.battleBackgrounds
 });
+${includeMultiplayer ? "globalThis.__towerforgeMultiplayer = TowerForgeMultiplayer;" : ""}
 
 function ownDataValue(record, key) {
   if (record === null || typeof record !== "object") return undefined;

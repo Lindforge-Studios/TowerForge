@@ -73,6 +73,11 @@ import {
   normalizeDirectorProfileV1
 } from "./director-mechanics.js";
 import {
+  MultiplayerProfileValidationError,
+  normalizeMultiplayerProfileV1,
+  normalizeMultiplayerProfileV2
+} from "./multiplayer-mechanics.js";
+import {
   normalizeAuthoredWorldCampaign,
   WorldCampaignValidationError
 } from "../run/campaign-world.js";
@@ -3844,6 +3849,164 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
 
   validateDirectorMechanics();
 
+  const validateMultiplayerMechanics = () => {
+    const inspect = (value: unknown, entityId: string, fieldPath: string, label: string) => {
+      if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        err("mechanics", entityId, fieldPath, `${label} must be a plain object.`);
+        return undefined;
+      }
+      let prototype: object | null;
+      let descriptors: Record<PropertyKey, PropertyDescriptor>;
+      try {
+        prototype = Object.getPrototypeOf(value);
+        descriptors = Object.getOwnPropertyDescriptors(value) as Record<PropertyKey, PropertyDescriptor>;
+      } catch {
+        err("mechanics", entityId, fieldPath, `${label} could not be inspected safely.`);
+        return undefined;
+      }
+      if (prototype !== Object.prototype && prototype !== null) {
+        err("mechanics", entityId, fieldPath, `${label} must be a plain object.`);
+        return undefined;
+      }
+      if (Object.getOwnPropertySymbols(descriptors).length > 0) {
+        err("mechanics", entityId, fieldPath, `${label} must not contain symbol fields.`);
+      }
+      const result: Record<string, unknown> = {};
+      for (const key of Object.keys(descriptors)) {
+        const descriptor = descriptors[key];
+        if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+          err("mechanics", entityId, `${fieldPath}.${key}`, `${label} fields must be enumerable own data properties.`);
+          continue;
+        }
+        Object.defineProperty(result, key, {
+          value: descriptor.value,
+          enumerable: true,
+          configurable: true,
+          writable: true
+        });
+      }
+      return result;
+    };
+    const catalog = inspect(content.mechanics, "multiplayer", "mechanics", "Mechanics catalog");
+    const modules = catalog
+      ? inspect(catalog.modules, "multiplayer", "mechanics.modules", "Mechanics modules")
+      : undefined;
+    const moduleValue = modules?.multiplayer;
+    if (moduleValue === undefined) return;
+    const module = inspect(moduleValue, "multiplayer", "modules.multiplayer", "Multiplayer module");
+    if (!module) return;
+    const allowedModuleFields = new Set(["schemaVersion", "enabled", "profiles"]);
+    for (const key of Object.keys(module)) {
+      if (!allowedModuleFields.has(key)) {
+        err(
+          "mechanics",
+          "multiplayer",
+          `modules.multiplayer.${key}`,
+          `Multiplayer module is closed; unsupported field "${key}".`
+        );
+      }
+    }
+    if (module.schemaVersion !== 1 && module.schemaVersion !== 2) {
+      err(
+        "mechanics",
+        "multiplayer",
+        "modules.multiplayer.schemaVersion",
+        "Multiplayer future or unsupported schemaVersion; only versions 1 and 2 are supported."
+      );
+    }
+    if (typeof module.enabled !== "boolean") {
+      err("mechanics", "multiplayer", "modules.multiplayer.enabled", "Multiplayer enabled must be boolean.");
+    }
+    const profiles = inspect(
+      module.profiles,
+      "multiplayer",
+      "modules.multiplayer.profiles",
+      "Multiplayer profiles"
+    );
+    if (!profiles || (module.schemaVersion !== 1 && module.schemaVersion !== 2)) return;
+
+    const selectedByProfile = new Map<string, string[]>();
+    for (const [missionId, mission] of Object.entries(content.missions)) {
+      const profileId = mission.mechanics?.profiles?.multiplayer;
+      if (typeof profileId !== "string") continue;
+      const missions = selectedByProfile.get(profileId) ?? [];
+      missions.push(missionId);
+      selectedByProfile.set(profileId, missions);
+      if (!Object.prototype.hasOwnProperty.call(profiles, profileId)) {
+        (module.enabled === true ? err : warn)(
+          "mission",
+          missionId,
+          "mechanics.profiles.multiplayer",
+          `Mission selects missing multiplayer profile "${profileId}"${module.enabled === true ? "." : " from an inactive module."}`
+        );
+      }
+    }
+
+    for (const profileId of Object.keys(profiles).sort()) {
+      const root = `modules.multiplayer.profiles.${profileId}`;
+      const active = module.enabled === true && (selectedByProfile.get(profileId)?.length ?? 0) > 0;
+      try {
+        const normalized = module.schemaVersion === 1
+          ? normalizeMultiplayerProfileV1(profiles[profileId])
+          : normalizeMultiplayerProfileV2(profiles[profileId]);
+        if (normalized.mode === "local_coop") {
+          if (normalized.ownership.routes === "partitioned") {
+            for (const missionId of selectedByProfile.get(profileId) ?? []) {
+              const mission = content.missions[missionId];
+              const routeCount = mission ? content.maps[mission.mapId]?.pathRoutes?.length ?? 0 : 0;
+              if (routeCount < normalized.maxPlayers) {
+                (active ? err : warn)(
+                  "mechanics",
+                  profileId,
+                  `${root}.ownership.routes`,
+                  `Partitioned co-op requires at least ${normalized.maxPlayers} authored routes for mission "${missionId}".`
+                );
+              }
+            }
+          }
+        }
+        if (normalized.mode === "asymmetric_send_vs_build") for (const [sendId, send] of Object.entries(normalized.sendPool)) {
+            if (!Object.prototype.hasOwnProperty.call(content.enemies, send.enemyTypeId)) {
+              (active ? err : warn)(
+                "mechanics",
+                profileId,
+                `${root}.sendPool.${sendId}.enemyTypeId`,
+                `Multiplayer send references unknown enemy "${send.enemyTypeId}".`
+              );
+            }
+            if (send.routeId !== undefined) {
+              for (const missionId of selectedByProfile.get(profileId) ?? []) {
+                const mission = content.missions[missionId];
+                const routes = mission ? content.maps[mission.mapId]?.pathRoutes ?? [] : [];
+                if (!routes.some((route) => route.id === send.routeId)) {
+                  (active ? err : warn)(
+                    "mechanics",
+                    profileId,
+                    `${root}.sendPool.${sendId}.routeId`,
+                    `Multiplayer send references unknown route "${send.routeId}" for mission "${missionId}".`
+                  );
+                }
+              }
+            }
+        }
+      } catch (error) {
+        const relative = error instanceof MultiplayerProfileValidationError
+          ? error.fieldPath.replace(/^profile(?=\.|$)/, "")
+          : "";
+        const report = error instanceof MultiplayerProfileValidationError && !error.structural && !active
+          ? warn
+          : err;
+        report(
+          "mechanics",
+          profileId,
+          `${root}${relative}`,
+          error instanceof Error ? error.message : "Multiplayer profile could not be inspected safely."
+        );
+      }
+    }
+  };
+
+  validateMultiplayerMechanics();
 
   // Source cardinality limits are relevant only to gameplay surfaces that can actually be
   // reached from a mission with a genuinely active physics capability. Structural inspection

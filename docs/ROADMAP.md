@@ -43,7 +43,7 @@
 | R5 | Завершён | Heroes v1–v7 и Logistics v1–v3 поставлены как независимые opt-in вертикальные срезы |
 | R6 — TowerScript DX 2.0 | Завершён; code + constructor sign-off; ADR Accepted | Structured trace, deterministic step/rewind, lossless Visual Graph, descriptor-driven Studio/MCP и bounded O(1)-append debug retention |
 | R7 — Director и Generative Studio | Завершён; code + constructor sign-off; ADR Accepted | Opt-in Director v1, proposal-only worker auto-balancer, seeded map preview и guarded generated-asset staging не меняют legacy path |
-| R8 — Multiplayer protocol и local transport | Запланирован | Pure MatchSession, deterministic protocol, local/self-host transport и replay без hosted lobby/auth |
+| R8 — Multiplayer protocol и local transport | Завершён; code + constructor sign-off; ADR Accepted | Separate multiplayer entrypoint, local/asymmetric sessions, replay/handshake/transports/reconnect/desync и conditional packaging без hosted runtime |
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Поставленные версии `combat`, `reactions`, `navigation` и `elevation` уже прошли полные вертикальные срезы. Остальные модули Mechanics Hub остаются planned, а preview/apply отклоняют их включение без записи.
 
@@ -479,6 +479,50 @@ Canvas и Phaser используют один fail-closed projector для auth
 формы и legacy player не получают выключенные controls. Контракт зафиксирован в
 [ADR 0048](adr/0048-opt-in-director-and-generative-studio.md), copyable fixture —
 `docs/examples/opt-in-adaptive-director/`.
+
+### R8 — Multiplayer protocol и local transport
+
+R8 реализован в отдельном browser-safe `@towerforge/engine/multiplayer` entrypoint; root engine не
+реэкспортирует protocol runtime. Multiplayer module v1 описывает `local_coop`: один `MatchSession`,
+session-owned fixed tick, 2–64 players, `shared | partitioned` resources/routes и
+`shared | owner_only` tower control. Partitioned mode держит deterministic player wallets,
+начисляет tick resource delta каждому и распределяет sorted authored routes round-robin
+между sorted players; wallets/route ownership входят в snapshot, checksum и replay.
+Exact `MatchCommandEnvelopeV1` добавляет match/player identity, per-player sequence и apply tick вокруг
+существующего `GameCommand`; клиентский tick, duplicate/out-of-order, wrong match/player/tick и
+ownership violations отклоняются до мутации. Stable `tf-match-v1` checksum связывает match snapshot,
+journal и fixed-tick timeline; deterministic replay останавливается на первом divergence.
+
+Multiplayer v2 отдельно включает `asymmetric_send_vs_build` для ровно двух partitioned lanes. Его
+author-defined `sendPool` задаёт enemy, cost, income, spawn delay и optional authored route. `sendEnemy` сначала
+строит и валидирует обе candidate lane state, затем атомарно публикует resource debit/income и spawn;
+неизвестная отправка или недостаток ресурса не меняет ни одну instance. Обычные `GameCommand`
+действия применяются только к собственной lane отправителя, а fixed tick остаётся под единоличным
+контролем сессии. Module v2 — монотонный
+superset: он сохраняет v1 local-coop profiles рядом с asymmetric profiles, не
+переписывая и не включая новый режим неявно.
+
+Offline challenge v1 связывает seed, journal, expected match checksum и собственный
+`tf-challenge-v1` checksum. Reconnect bundle передаёт current engine checkpoint и bounded accepted
+protocol journal; restore replay-ит journal и сверяет checkpoint state digest/checksum. Desync
+diagnostic возвращает первый различающийся tick и доступные local/remote checksums без auto-repair.
+Handshake fail-closed сравнивает protocol, engine, match ID, content digest, mode и exact capability
+list. Reference in-memory transport передаёт detached frames FIFO; WebSocket adapter кодирует
+canonical JSON поверх injected WebSocket-like port и не импортирует/создаёт network runtime.
+
+CLI/build копирует `engine/multiplayer` и добавляет player hook только когда enabled supported
+multiplayer profile реально выбран хотя бы одной mission. Эта граница одинакова для Canvas, Phaser,
+PWA и single-file; legacy single-player bundle не содержит protocol runtime. Hosted lobby, auth,
+accounts, matchmaking, NAT traversal и обязательный public relay не входят в R8. Контракт описан в
+[ADR 0049](adr/0049-opt-in-multiplayer-protocol.md), copyable fixture —
+`docs/examples/opt-in-local-multiplayer/`.
+
+Финальная приёмка R8: focused multiplayer stack — 48/48, полный Vitest — 2997/2997 в
+260 files, полный Playwright — 132/132. Прошли typecheck, engine build, validation, tutorial
+simulation, balance, map compile, web build, mobile/desktop packaging и plugin
+build/validate/smoke. Независимые code и constructor-integration verifier повторно подтвердили
+детерминизм, fail-closed transport/security boundaries, conditional packaging, Studio/MCP parity и
+legacy path без открытых P0–P3.
 
 ## TDD и роли
 

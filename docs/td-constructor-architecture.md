@@ -32,6 +32,7 @@ The current "full constructor" means:
 - Run headless mission smoke simulations and multi-strategy balance sweeps.
 - Preview seeded procedural maps, run cancellable evidence-only balance proposal batches, and stage
   generated images for explicit validated import.
+- Build deterministic local/self-hosted co-op or asymmetric protocol clients when a mission opts in.
 - Use AI Chat or external MCP agents to inspect, simulate, validate, patch, build, and package local projects through validation-gated tools.
 - Build a playable static web bundle.
 - Export Capacitor mobile and Tauri desktop scaffolds around the built web bundle.
@@ -43,7 +44,7 @@ Non-goals for this iteration:
 
 - Full Tiled-style layer authoring UI.
 - Cloud publishing or hosted gallery/remix services.
-- Online services, accounts, cloud saves, or analytics.
+- Hosted multiplayer services, accounts, cloud saves, matchmaking, managed relays, or analytics.
 - Store submission, signing automation, and upload/publish automation.
 
 ## Package Architecture
@@ -51,7 +52,7 @@ Non-goals for this iteration:
 ```text
 packages/engine
   simulation rules, maps, snapshots, actions, TowerScript, content registry, validation,
-  and pure seeded generation
+  pure seeded generation, and a separate browser-safe multiplayer entrypoint
 
 packages/cli
   project loading, schema normalization, migrations, map compilation,
@@ -153,6 +154,11 @@ The engine exposes:
 - bounded `TowerScriptTraceV1`, `TowerScriptDebugSession`, and graph AST projection/materialization helpers for explicit authoring/debug sessions
 - pure `planDirectorWaveV1`, `runAutoBalancerBatch`, and `generateProceduralMap` contracts
 
+The separate `@towerforge/engine/multiplayer` entrypoint exposes `MatchSession`,
+`AsymmetricMatchSession`, match journals/replay, offline challenge/reconnect/desync helpers,
+capability handshake, in-memory transport, and an adapter over an injected WebSocket-like port.
+The root engine intentionally does not re-export this protocol runtime.
+
 Studio and CLI must call those APIs instead of duplicating gameplay behavior. Validation and simulation are engine-backed in the current implementation.
 
 TowerScript DX 2.0 is not a `mission.mechanics` capability. A caller explicitly attaches a bounded trace collector or creates `TowerScriptDebugSession`; an ordinary `TowerDefenseGame` retains no trace and does not add debug state to snapshots, checkpoints, journals, state digests, renderers, or generated players. Trace schema v1 records the actual ordered runtime phases `event -> binding -> handler -> condition -> action -> state_diff/diagnostic`, including stable phase/action ordinals that survive bounded prefix eviction. The debugger advances the live game only through the existing journaled command path, keeps a bounded checkpoint ring and only the replay checkpoints still represented by the bounded trace, and exposes `tick | event | handler | action` inspection. Historical frames come from checkpoint plus deterministic replay-to-cursor, are marked `live:false`, and cannot replace or resume the live game. Rewind validates the retained checkpoint, reconstructs the journal prefix, and abandons the future branch.
@@ -167,7 +173,7 @@ Canvas and Phaser generated-player templates now consume this boundary through o
 
 `packages/mcp/tools.mjs` is the shared constructor tool registry for the stdio MCP server and Studio AI Chat. Current tools cover compact gameplay/visual/audio/narrative/script reads, the filtered project tree, schema and recipe retrieval, validation, simulation/playtest diagnosis, map compilation/authoring, balance reports, granular entity/asset/narrative/script writes, project packs, web/native packaging, and build.
 
-`packages/mcp/agent-instructions.mjs` is the canonical mechanism-selection and safe-workflow policy for Studio direct APIs, Codex, Claude, and external MCP initialization. `describe_schema({domain})` progressively exposes implemented domain descriptors, including `director`, while `get_capabilities` is read-only and never creates the optional catalog or upgrades a project. Preview/apply reject unavailable modules, unsupported versions, and unmet dependencies before any write. Executable modules include combat v1–v3, reactions/navigation/physics/terraforming/director v1, elevation v1–v3, roguelite v1–v4, heroes v1–v7, and logistics v1–v3. Dependencies and promotions remain explicit; recipes are detached candidates and the common guarded mechanics transaction owns the catalog/mission write. The stdio server queues frames FIFO, drains stdout before normal exit, and keeps one controlled lifetime error path for late broken pipes.
+`packages/mcp/agent-instructions.mjs` is the canonical mechanism-selection and safe-workflow policy for Studio direct APIs, Codex, Claude, and external MCP initialization. `describe_schema({domain})` progressively exposes implemented domain descriptors, including `director`, while `get_capabilities` is read-only and never creates the optional catalog or upgrades a project. Preview/apply reject unavailable modules, unsupported versions, and unmet dependencies before any write. Executable modules include combat v1–v3, reactions/navigation/physics/terraforming/director v1, elevation v1–v3, roguelite v1–v4, heroes v1–v7, logistics v1–v3, and multiplayer v1–v2. Dependencies and promotions remain explicit; recipes are detached candidates and the common guarded mechanics transaction owns the catalog/mission write. The stdio server queues frames FIFO, drains stdout before normal exit, and keeps one controlled lifetime error path for late broken pipes.
 
 Agent-facing write tools are local-only and validation-gated:
 
@@ -341,7 +347,7 @@ Studio writes action traces for save, sim, build, map compile, and asset import 
 
 ## Roadmap
 
-The staged R0–R8 mechanics program, TDD roles, forbidden increment combinations, compatibility baseline, and status live in [ROADMAP.md](ROADMAP.md). R0A establishes the opt-in capability harness, R0B adds the shared modifier/damage foundation, and completed R0C supplies deterministic session/profile foundations. Completed R1.1 proves resolver equivalence through one private application boundary; R1.2 adds shields; R1.3 adds the independently versioned armor matrix; R1.4 adds bounded marks; R1.5 adds a separate bounded reactions module; completed R2 adds opt-in dynamic-flow navigation, movement profiles, safe placement analysis, and shared Studio/player presentation. Completed R3.1 adds the opt-in authored elevation foundation; completed R3.2 adds deterministic elevation LoS; completed R3.3 adds elevation v3 high-ground through engine-owned pairwise acquisition range and one common-pipeline spatial damage modifier. R3.4a completes the isolated `physics` v1 increment with bounded tile-discrete push/pull, explicit terrain-tag fall hazards, authored-route confinement, cached-field dynamic movement, and engine-event-only presentation. Completed R3.4b separately introduces opt-in `terraforming` v1 and the TowerScript v6 batch/event contract with fail-closed, mission-scoped validation. Runtime C1 adds atomic persistent terrain batches and complete authored-route safety; C2A adds detached dynamic resolver preflight and atomic adoption; C2B1/B2A/B2B add the bounded canonical spawn/obligation graph and full-field proofs before resolver construction. Exact ceilings remain `16 384` sources/causes, `256` shared fields, and `8 388 608` baseline+candidate field/proof cells, with one candidate field at the accepted 8,191-live-enemy boundary and non-counting snapshot peeks. C3–C5 complete runtime compatibility and authoring, while C6 supplies the accepted shared Canvas/Phaser/player projection and package surface. Accepted R6 adds the detached structured trace, checkpoint-backed historical `tick | event | handler | action` inspection, bounded rewind, lossless Visual Graph, descriptor-driven Studio/MCP authoring, and guarded local layout transactions. Exact incremental journal accounting and monotonic replay-checkpoint pruning keep the opt-in debugger bounded without changing ordinary snapshots, checkpoints, digests, renderers, or generated players. Implemented R7 adds the authored deterministic Director, proposal-only cancellable worker auto-balancer, seeded procedural preview, and provider-neutral guarded asset staging.
+The staged R0–R8 mechanics program, TDD roles, forbidden increment combinations, compatibility baseline, and status live in [ROADMAP.md](ROADMAP.md). R0A establishes the opt-in capability harness, R0B adds the shared modifier/damage foundation, and completed R0C supplies deterministic session/profile foundations. Completed R1.1 proves resolver equivalence through one private application boundary; R1.2 adds shields; R1.3 adds the independently versioned armor matrix; R1.4 adds bounded marks; R1.5 adds a separate bounded reactions module; completed R2 adds opt-in dynamic-flow navigation, movement profiles, safe placement analysis, and shared Studio/player presentation. Completed R3.1 adds the opt-in authored elevation foundation; completed R3.2 adds deterministic elevation LoS; completed R3.3 adds elevation v3 high-ground through engine-owned pairwise acquisition range and one common-pipeline spatial damage modifier. R3.4a completes the isolated `physics` v1 increment with bounded tile-discrete push/pull, explicit terrain-tag fall hazards, authored-route confinement, cached-field dynamic movement, and engine-event-only presentation. Completed R3.4b separately introduces opt-in `terraforming` v1 and the TowerScript v6 batch/event contract with fail-closed, mission-scoped validation. Runtime C1 adds atomic persistent terrain batches and complete authored-route safety; C2A adds detached dynamic resolver preflight and atomic adoption; C2B1/B2A/B2B add the bounded canonical spawn/obligation graph and full-field proofs before resolver construction. Exact ceilings remain `16 384` sources/causes, `256` shared fields, and `8 388 608` baseline+candidate field/proof cells, with one candidate field at the accepted 8,191-live-enemy boundary and non-counting snapshot peeks. C3–C5 complete runtime compatibility and authoring, while C6 supplies the accepted shared Canvas/Phaser/player projection and package surface. Accepted R6 adds the detached structured trace, checkpoint-backed historical `tick | event | handler | action` inspection, bounded rewind, lossless Visual Graph, descriptor-driven Studio/MCP authoring, and guarded local layout transactions. Exact incremental journal accounting and monotonic replay-checkpoint pruning keep the opt-in debugger bounded without changing ordinary snapshots, checkpoints, digests, renderers, or generated players. Implemented R7 adds the authored deterministic Director, proposal-only cancellable worker auto-balancer, seeded procedural preview, and provider-neutral guarded asset staging. Implemented R8 adds the separate multiplayer entrypoint, local co-op and asymmetric sessions, checksummed replay/challenges, handshake/transports/reconnect/desync, and conditional player packaging without hosted services.
 
 Accepted C3A adds engine-only persistent elevation. `set_elevation` and `restore_elevation` require both an active elevation v1–v3 profile and the active terraforming profile's elevation policy; authored elevation remains the immutable restore base. Terrain/elevation operations may share a cell and commit atomically in declared event order. Each layer is bounded to 512 runtime overrides and the combined ceiling is 1,024. A pure-elevation batch performs no navigation resolver creation, read, or adoption, while `GridMap.elevationAt`, `snapshot.elevation`, LoS, and high-ground immediately use the effective value; reset discards the runtime layer. A committed change emits the real TowerScript-dispatched `elevationChanged` event, and a no-op emits nothing.
 
@@ -790,6 +796,42 @@ provenance, real-file, symlink, path, and revision checks happen before explicit
 commit discards the handle and failed validation rolls back owned writes. Secrets and prompts are
 not staged or authored. See [ADR 0048](adr/0048-opt-in-director-and-generative-studio.md) and
 `docs/examples/opt-in-adaptive-director/`.
+
+### R8 Multiplayer protocol and local transport
+
+`@towerforge/engine/multiplayer` is independently imported from the root engine. Local co-op v1
+owns one `TowerDefenseGame`, fixed tick, sorted players, per-player sequence, tower ownership, match
+journal, checksum timeline, and stable `tf-match-v1` checksum. Exact envelopes wrap an existing
+parsed `GameCommand`; player/tick/transport concerns never enter the command schema. `MatchSession`
+rejects malformed, duplicate, out-of-order, foreign, wrong-tick, client-tick, and owner-only
+violations before mutation, and deterministic journal replay checks every recorded checksum.
+Resources and routes are independently authored as shared or partitioned. Partitioned commands use
+the author's wallet, fixed-tick resource deltas update every wallet deterministically, and sorted
+authored routes are assigned round-robin to sorted players. The engine-owned wallets and route
+ownership are part of match snapshots/checksums/replay; Studio and renderers never reconstruct them.
+
+Multiplayer schema v2 independently selects `asymmetric_send_vs_build` for exactly two partitioned
+lanes. The authored `sendPool` specifies cost, income, enemy, spawn delay, and an optional route ID
+validated against every mission using the profile. A send constructs and validates both lane
+checkpoints before publishing either, so cost/income/spawn is
+atomic and a rejected send changes neither lane. It has its own checksummed journal/replay and does
+not broaden local co-op v1. Module schema v2 is nevertheless a storage-compatible superset: saved
+local profiles remain valid beside asymmetric profiles and keep their local semantics unchanged.
+
+Offline challenges bind their seed, journal, expected match checksum, and `tf-challenge-v1`
+checksum. Reconnect replays the bounded accepted journal and verifies its current checkpoint;
+desync diagnostics identify the first unequal or missing fixed-tick checksum without repair.
+Capability handshake compares protocol, engine, match, content digest, mode, and exact capability
+list. The in-memory pair sends detached FIFO frames. The WebSocket adapter accepts an injected
+WebSocket-like port and canonical-JSON encodes frames without importing or constructing a network
+runtime.
+
+Builds copy the multiplayer entrypoint and expose the player hook only when a supported enabled
+profile is selected by a mission. Canvas, Phaser, PWA, and single-file use this same conditional
+boundary; ordinary single-player output omits `engine/multiplayer`. Hosted identity, auth, lobbies,
+matchmaking, NAT traversal, and a managed relay are intentionally absent. See
+[ADR 0049](adr/0049-opt-in-multiplayer-protocol.md) and
+`docs/examples/opt-in-local-multiplayer/`.
 
 ## Done Criteria For Constructor Changes
 
