@@ -104,6 +104,9 @@ const PHYSICS_RECIPE_IDS = new Set(["basic_displacement_physics", "tagged_fall_h
 const TERRAFORMING_RECIPE_IDS = new Set(["tagged_flood", "tagged_moat", "tagged_destructible_bridge"]);
 const ROGUELITE_RECIPE_IDS = new Set(["basic_elemental_synergy", "basic_boss_artifact_loot"]);
 const DIRECTOR_RECIPE_IDS = new Set(["basic_adaptive_wave_director"]);
+const MULTIPLAYER_RECIPE_IDS = new Set([
+  "basic_local_coop", "basic_partitioned_local_coop", "basic_asymmetric_send_vs_build"
+]);
 const MAX_ELEVATION_CANVAS_TILES = 4_096;
 const MAX_ELEVATION_EDITOR_ROWS = 256;
 
@@ -730,6 +733,9 @@ function mechanicsSelectedProfile() {
 }
 
 function normalizeMechanicsDraft(profile) {
+  if (MechanicsUI.selectedModuleId === "multiplayer") {
+    return normalizeMultiplayerMechanicsDraft(profile, mechanicsProjectModuleVersion());
+  }
   if (MechanicsUI.selectedModuleId === "logistics") return normalizeLogisticsMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "director") return normalizeDirectorMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "heroes") return normalizeHeroesMechanicsDraft(profile);
@@ -789,6 +795,26 @@ function normalizeDirectorMechanicsDraft(profile) {
   // The engine owns the closed Director v1 contract. Studio keeps supported and future profiles
   // lossless; future module versions are displayed read-only instead of being repaired locally.
   return deep(profile ?? {});
+}
+
+function normalizeMultiplayerMechanicsDraft(profile, moduleSchemaVersion = mechanicsProjectModuleVersion()) {
+  // The engine owns both closed contracts. Studio clones supported profiles for editing and keeps
+  // future versions byte-for-byte in the detached draft so they can only be inspected.
+  const source = profile ?? (moduleSchemaVersion === 2
+    ? {
+        mode: "asymmetric_send_vs_build",
+        fixedTickUnits: 1,
+        maxPlayers: 2,
+        ownership: { towerControl: "owner_only", resources: "partitioned", routes: "partitioned" },
+        sendPool: {}
+      }
+    : {
+        mode: "local_coop",
+        fixedTickUnits: 1,
+        maxPlayers: 4,
+        ownership: { towerControl: "shared", resources: "shared", routes: "shared" }
+      });
+  return deep(source);
 }
 
 function normalizeLogisticsMechanicsDraft(profile) {
@@ -1080,6 +1106,13 @@ function mechanicsAuthoredMatrixEntryCount() {
 
 function mechanicsEffectiveModuleSchemaVersion() {
   if (MechanicsUI.selectedModuleId === "director") return 1;
+  if (MechanicsUI.selectedModuleId === "multiplayer") {
+    return Math.max(
+      MechanicsUI.draft?.mode === "asymmetric_send_vs_build" ? 2 : 1,
+      mechanicsProjectModuleVersion(),
+      Number.isInteger(MechanicsUI.moduleSchemaVersion) ? MechanicsUI.moduleSchemaVersion : 1
+    );
+  }
   if (MechanicsUI.selectedModuleId === "heroes") {
     const authoredVersion = Math.max(
       mechanicsProjectModuleVersion(),
@@ -1188,6 +1221,8 @@ function initializeMechanicsDraft() {
                 ? "basic_elemental_synergy"
                 : MechanicsUI.selectedModuleId === "director"
                   ? "basic_adaptive_wave_director"
+                : MechanicsUI.selectedModuleId === "multiplayer"
+                  ? "basic_local_coop"
                   : "basic_regenerating_shields");
   MechanicsUI.draft = normalizeMechanicsDraft(selectedProfile ?? mechanicsRecipeProfile());
   if (MechanicsUI.selectedModuleId === "roguelite") initializeRogueliteTowerTags();
@@ -1264,6 +1299,8 @@ function loadMechanicsProfile() {
         ? normalizeLogisticsMechanicsDraft(profile)
       : MechanicsUI.selectedModuleId === "director"
         ? normalizeDirectorMechanicsDraft(profile)
+      : MechanicsUI.selectedModuleId === "multiplayer"
+        ? normalizeMultiplayerMechanicsDraft(profile, authoredVersion)
     : normalizeMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "roguelite") initializeRogueliteTowerTags();
   MechanicsUI.preview = null;
@@ -1284,6 +1321,9 @@ function nextMechanicsProfileId(suggestedId) {
 
 async function newMechanicsProfile() {
   try {
+    if (MechanicsUI.selectedModuleId === "multiplayer" && mechanicsProjectModuleVersion() > 2) {
+      throw new Error("Future Multiplayer schemaVersion 3+ modules are preserved losslessly and read-only.");
+    }
     if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 6) {
       throw new Error("Future heroes schemaVersion 7+ modules are read-only in this Studio version.");
     }
@@ -5264,7 +5304,138 @@ function renderDirectorMechanicsEditor() {
   }
 }
 
+function invalidateMultiplayerMechanicsPreview() {
+  MechanicsUI.preview = null;
+  MechanicsUI.error = null;
+  renderMechanicsPreviewResult();
+}
+
+function renderMultiplayerMechanicsEditor() {
+  const draft = MechanicsUI.draft;
+  if (!draft || MechanicsUI.selectedModuleId !== "multiplayer") return;
+  const moduleSchemaVersion = Math.max(
+    mechanicsProjectModuleVersion(),
+    Number.isInteger(MechanicsUI.moduleSchemaVersion) ? MechanicsUI.moduleSchemaVersion : 1
+  );
+  const supportedVersion = moduleSchemaVersion <= 2;
+  const mode = draft.mode === "asymmetric_send_vs_build" ? "asymmetric_send_vs_build" : "local_coop";
+  const capability = mechanicsSelectedCapability();
+  const capabilityLabel = $("mechanics-multiplayer-capability");
+  if (capabilityLabel) capabilityLabel.textContent = capability?.active
+    ? `Active ${mode} profile for this mission. Runtime protocol stays isolated in @towerforge/engine/multiplayer.`
+    : "Optional deterministic local/self-host multiplayer. No network runtime is loaded by ordinary single-player projects.";
+  const readOnly = $("mechanics-multiplayer-read-only");
+  readOnly?.classList.toggle("hidden", supportedVersion);
+  if (readOnly) readOnly.textContent = supportedVersion
+    ? ""
+    : "Future Multiplayer schemaVersion 3+ profiles are preserved losslessly and are read-only in this Studio version.";
+
+  const modeInput = $("mechanics-multiplayer-mode");
+  if (modeInput) {
+    modeInput.value = mode;
+    modeInput.disabled = !supportedVersion;
+    modeInput.onchange = () => {
+      if (modeInput.value === "asymmetric_send_vs_build") {
+        MechanicsUI.moduleSchemaVersion = 2;
+        MechanicsUI.draft = normalizeMultiplayerMechanicsDraft({
+          mode: "asymmetric_send_vs_build",
+          fixedTickUnits: Number(draft.fixedTickUnits) || 1,
+          maxPlayers: 2,
+          ownership: { towerControl: draft.ownership?.towerControl ?? "owner_only", resources: "partitioned", routes: "partitioned" },
+          sendPool: draft.sendPool && typeof draft.sendPool === "object" ? draft.sendPool : {}
+        }, 2);
+      } else {
+        const retainedVersion = Math.max(
+          1,
+          mechanicsProjectModuleVersion(),
+          Number.isInteger(MechanicsUI.moduleSchemaVersion) ? MechanicsUI.moduleSchemaVersion : 1
+        );
+        MechanicsUI.moduleSchemaVersion = retainedVersion;
+        MechanicsUI.draft = normalizeMultiplayerMechanicsDraft({
+          mode: "local_coop",
+          fixedTickUnits: Number(draft.fixedTickUnits) || 1,
+          maxPlayers: Number(draft.maxPlayers) >= 2 ? Number(draft.maxPlayers) : 4,
+          ownership: { towerControl: draft.ownership?.towerControl ?? "shared", resources: "shared", routes: "shared" }
+        }, retainedVersion);
+      }
+      invalidateMultiplayerMechanicsPreview();
+      renderMechanicsHub();
+    };
+  }
+
+  const fixedTickUnits = $("mechanics-multiplayer-fixed-tick");
+  if (fixedTickUnits) {
+    fixedTickUnits.value = draft.fixedTickUnits ?? 1;
+    fixedTickUnits.disabled = !supportedVersion;
+    fixedTickUnits.oninput = () => {
+      draft.fixedTickUnits = Number(fixedTickUnits.value);
+      invalidateMultiplayerMechanicsPreview();
+    };
+  }
+  const maxPlayers = $("mechanics-multiplayer-max-players");
+  if (maxPlayers) {
+    maxPlayers.value = mode === "asymmetric_send_vs_build" ? 2 : draft.maxPlayers ?? 4;
+    maxPlayers.disabled = !supportedVersion || mode === "asymmetric_send_vs_build";
+    maxPlayers.oninput = () => {
+      draft.maxPlayers = Number(maxPlayers.value);
+      invalidateMultiplayerMechanicsPreview();
+    };
+  }
+  const towerControl = $("mechanics-multiplayer-tower-control");
+  if (towerControl) {
+    towerControl.value = draft.ownership?.towerControl ?? "owner_only";
+    towerControl.disabled = !supportedVersion;
+    towerControl.onchange = () => {
+      draft.ownership ??= {};
+      draft.ownership.towerControl = towerControl.value;
+      draft.ownership.resources = mode === "asymmetric_send_vs_build"
+        ? "partitioned"
+        : draft.ownership.resources ?? "shared";
+      draft.ownership.routes = mode === "asymmetric_send_vs_build"
+        ? "partitioned"
+        : draft.ownership.routes ?? "shared";
+      invalidateMultiplayerMechanicsPreview();
+    };
+  }
+  const ownershipHint = $("mechanics-multiplayer-ownership-hint");
+  const resourceOwnership = $("mechanics-multiplayer-resource-ownership");
+  const routeOwnership = $("mechanics-multiplayer-route-ownership");
+  for (const [input, field] of [[resourceOwnership, "resources"], [routeOwnership, "routes"]]) {
+    if (!input) continue;
+    input.value = mode === "asymmetric_send_vs_build" ? "partitioned" : draft.ownership?.[field] ?? "shared";
+    input.disabled = !supportedVersion || mode === "asymmetric_send_vs_build";
+    input.onchange = () => {
+      draft.ownership ??= {};
+      draft.ownership[field] = input.value;
+      invalidateMultiplayerMechanicsPreview();
+    };
+  }
+  if (ownershipHint) ownershipHint.textContent = mode === "asymmetric_send_vs_build"
+    ? "Resources and routes are partitioned; maxPlayers is fixed at 2."
+    : "Resources and routes can be shared or deterministically partitioned; choose 2–64 players.";
+  const sendPool = $("mechanics-multiplayer-send-pool");
+  if (sendPool) {
+    sendPool.value = JSON.stringify(draft.sendPool ?? {}, null, 2);
+    sendPool.disabled = !supportedVersion || mode !== "asymmetric_send_vs_build";
+    sendPool.onchange = () => {
+      try {
+        const value = JSON.parse(sendPool.value);
+        if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Use one JSON object.");
+        draft.sendPool = value;
+        sendPool.setCustomValidity("");
+        invalidateMultiplayerMechanicsPreview();
+      } catch {
+        sendPool.setCustomValidity("Send pool must be a valid JSON object.");
+        sendPool.reportValidity();
+      }
+    };
+  }
+}
+
 function mechanicsRequest(enabled) {
+  if (MechanicsUI.selectedModuleId === "multiplayer" && mechanicsProjectModuleVersion() > 2) {
+    throw new Error("Future Multiplayer schemaVersion 3+ modules are preserved losslessly and read-only.");
+  }
   if (MechanicsUI.selectedModuleId === "director" && mechanicsProjectModuleVersion() > 1) {
     throw new Error("Future Director schemaVersion 2+ modules are preserved losslessly and read-only.");
   }
@@ -5385,6 +5556,8 @@ function renderMechanicsHub() {
               ? "Author an optional power grid without adding Logistics fields to ordinary tower or mission forms."
             : MechanicsUI.selectedModuleId === "director"
               ? "Author a deterministic counter pool with explicit threat budgets and fairness caps, then opt this mission into the profile."
+            : MechanicsUI.selectedModuleId === "multiplayer"
+              ? "Author a deterministic local co-op v1 or asymmetric Send-vs-Build v2 profile without loading multiplayer into legacy single-player projects."
             : MechanicsUI.selectedModuleId === "roguelite"
               ? "Author tower tags, global synergies, optional v2 artifact loot, and independent v3 wave draft choices as one opt-in profile transaction."
               : "Author a reusable combat profile, then explicitly select it for this mission.";
@@ -5435,7 +5608,8 @@ function renderMechanicsHub() {
         && (selectedModuleId !== "physics" || PHYSICS_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "terraforming" || TERRAFORMING_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "roguelite" || ROGUELITE_RECIPE_IDS.has(recipe.id))
-        && (selectedModuleId !== "director" || DIRECTOR_RECIPE_IDS.has(recipe.id)));
+        && (selectedModuleId !== "director" || DIRECTOR_RECIPE_IDS.has(recipe.id))
+        && (selectedModuleId !== "multiplayer" || MULTIPLAYER_RECIPE_IDS.has(recipe.id)));
       MechanicsUI.recipe = availableRecipes[0] ?? null;
       MechanicsUI.recipeId = MechanicsUI.recipe?.id ?? "";
       MechanicsUI.terraformingSnippet = null;
@@ -5469,6 +5643,7 @@ function renderMechanicsHub() {
   $("mechanics-heroes-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "heroes");
   $("mechanics-logistics-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "logistics");
   $("mechanics-director-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "director");
+  $("mechanics-multiplayer-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "multiplayer");
   const state = $("mechanics-hub-state");
   if (state) state.textContent = MechanicsUI.loading ? "Loading capabilities…"
     : MechanicsUI.error ? "Mechanics unavailable"
@@ -5492,7 +5667,8 @@ function renderMechanicsHub() {
     const recipeSelect = $("mechanics-recipe-select");
     if (recipeSelect) {
       const moduleRecipes = MechanicsUI.recipes.filter((recipe) => mechanicsRecipeModuleId(recipe) === MechanicsUI.selectedModuleId
-        && (MechanicsUI.selectedModuleId !== "director" || DIRECTOR_RECIPE_IDS.has(recipe.id)));
+        && (MechanicsUI.selectedModuleId !== "director" || DIRECTOR_RECIPE_IDS.has(recipe.id))
+        && (MechanicsUI.selectedModuleId !== "multiplayer" || MULTIPLAYER_RECIPE_IDS.has(recipe.id)));
       recipeSelect.innerHTML = moduleRecipes.slice(0, 32).map((recipe) =>
         `<option value="${esc(recipe.id)}">${esc(recipe.label ?? recipe.id)}</option>`).join("");
       if (moduleRecipes.some((recipe) => recipe.id === MechanicsUI.recipeId)) recipeSelect.value = MechanicsUI.recipeId;
@@ -5537,6 +5713,8 @@ function renderMechanicsHub() {
       renderLogisticsMechanicsEditor();
     } else if (MechanicsUI.selectedModuleId === "director") {
       renderDirectorMechanicsEditor();
+    } else if (MechanicsUI.selectedModuleId === "multiplayer") {
+      renderMultiplayerMechanicsEditor();
     }
     // Recipe prerequisites are shared authoring metadata. Keep them visible for every module,
     // including elevation recipes, instead of hiding them inside the reactions-only editor.
@@ -5551,9 +5729,10 @@ function renderMechanicsHub() {
   const supportedHeroesVersion = MechanicsUI.selectedModuleId !== "heroes" || mechanicsProjectModuleVersion() <= 7;
   const supportedLogisticsVersion = MechanicsUI.selectedModuleId !== "logistics" || mechanicsProjectModuleVersion() <= 3;
   const supportedDirectorVersion = MechanicsUI.selectedModuleId !== "director" || mechanicsProjectModuleVersion() === 1;
+  const supportedMultiplayerVersion = MechanicsUI.selectedModuleId !== "multiplayer" || mechanicsProjectModuleVersion() <= 2;
   const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion
     && supportedRogueliteVersion && supportedHeroesVersion && supportedLogisticsVersion
-    && supportedDirectorVersion && !busy;
+    && supportedDirectorVersion && supportedMultiplayerVersion && !busy;
   const dirtyWriteGuard = Boolean(S.dirty);
   if ($("btn-mechanics-preview")) $("btn-mechanics-preview").disabled = !writable;
   if (MechanicsUI.selectedModuleId === "logistics" && mechanicsProjectModuleVersion() > 3) {
@@ -5566,7 +5745,7 @@ function renderMechanicsHub() {
   $("btn-mechanics-new-profile").disabled = busy || !MechanicsUI.recipe
     || ((MechanicsUI.selectedModuleId === "terraforming" || MechanicsUI.selectedModuleId === "roguelite"
       || MechanicsUI.selectedModuleId === "heroes" || MechanicsUI.selectedModuleId === "logistics"
-      || MechanicsUI.selectedModuleId === "director") && !writable);
+      || MechanicsUI.selectedModuleId === "director" || MechanicsUI.selectedModuleId === "multiplayer") && !writable);
   if ($("mechanics-recipe-select")) $("mechanics-recipe-select").disabled = busy || MechanicsUI.recipes.length === 0;
   if ($("btn-mechanics-add-damage-type")) $("btn-mechanics-add-damage-type").disabled = !writable;
   if ($("btn-mechanics-add-armor-type")) $("btn-mechanics-add-armor-type").disabled = !writable;

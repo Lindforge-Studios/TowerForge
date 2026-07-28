@@ -13,7 +13,7 @@ import {
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
-test.describe("R7 Mechanics Hub browser acceptance", () => {
+test.describe("R7/R8 Mechanics Hub browser acceptance", () => {
   let tempRoot;
   let projectDir;
   let studioProcess;
@@ -21,7 +21,7 @@ test.describe("R7 Mechanics Hub browser acceptance", () => {
   let serverOutput;
 
   test.beforeEach(async () => {
-    tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "towerforge-r7-studio-"));
+    tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "towerforge-r7-r8-studio-"));
     projectDir = path.join(tempRoot, "starter.tdproj");
     fs.cpSync(path.join(repoRoot, "examples", "starter.tdproj"), projectDir, { recursive: true });
     const migrated = migrateProjectFiles(readRawProjectFiles(projectDir));
@@ -102,6 +102,79 @@ test.describe("R7 Mechanics Hub browser acceptance", () => {
     expect(browserErrors()).toEqual([]);
   });
 
+  test("R8 Multiplayer preserves local co-op while upgrading the module to an asymmetric v2 profile", async ({ page }) => {
+    test.setTimeout(120_000);
+    const browserErrors = captureBrowserErrors(page);
+    await openStudio(page, studioUrl);
+    await openMechanicsModule(page, "multiplayer", "#mechanics-multiplayer-editor");
+
+    await page.locator("#mechanics-recipe-select").selectOption("basic_local_coop");
+    await page.locator("#btn-mechanics-new-profile").click();
+    await expect(page.locator("#mechanics-profile-id")).toHaveValue("basic_local_coop");
+    await page.locator("#mechanics-multiplayer-max-players").fill("3");
+    await page.locator("#mechanics-multiplayer-resource-ownership").selectOption("partitioned");
+    await page.locator("#btn-mechanics-enable").click();
+    await waitForMechanicsApply(projectDir, studioProcess, () => serverOutput);
+    await expect.poll(() => readMechanicsState(projectDir, "multiplayer")).toMatchObject({
+      projectSchemaVersion: 3,
+      moduleSchemaVersion: 1,
+      enabled: true,
+      selectedProfileId: "basic_local_coop",
+      profile: {
+        mode: "local_coop",
+        maxPlayers: 3,
+        ownership: { resources: "partitioned", routes: "shared" }
+      }
+    });
+
+    await page.reload();
+    await openMechanicsModule(page, "multiplayer", "#mechanics-multiplayer-editor");
+    await expect(page.locator("#mechanics-multiplayer-max-players")).toHaveValue("3");
+    await expect(page.locator("#mechanics-multiplayer-resource-ownership")).toHaveValue("partitioned");
+
+    await page.locator("#mechanics-recipe-select").selectOption("basic_asymmetric_send_vs_build");
+    await page.locator("#btn-mechanics-new-profile").click();
+    await expect(page.locator("#mechanics-profile-id")).toHaveValue("basic_asymmetric_send_vs_build");
+    await expect(page.locator("#mechanics-multiplayer-mode")).toHaveValue("asymmetric_send_vs_build");
+    await expect(page.locator("#mechanics-multiplayer-max-players")).toBeDisabled();
+    await expect(page.locator("#mechanics-multiplayer-resource-ownership")).toHaveValue("partitioned");
+    await expect(page.locator("#mechanics-multiplayer-route-ownership")).toHaveValue("partitioned");
+    await page.locator("#btn-mechanics-save").click();
+
+    await expect.poll(() => readMultiplayerUpgradeState(projectDir)).toMatchObject({
+      moduleSchemaVersion: 2,
+      enabled: true,
+      selectedProfileId: "basic_asymmetric_send_vs_build",
+      local: { mode: "local_coop", maxPlayers: 3, ownership: { resources: "partitioned" } },
+      asymmetric: {
+        mode: "asymmetric_send_vs_build",
+        maxPlayers: 2,
+        ownership: { resources: "partitioned", routes: "partitioned" }
+      }
+    });
+
+    await page.reload();
+    await openMechanicsModule(page, "multiplayer", "#mechanics-multiplayer-editor");
+    await expect(page.locator("#mechanics-multiplayer-mode")).toHaveValue("asymmetric_send_vs_build");
+    await expect(page.locator("#mechanics-multiplayer-send-pool")).toHaveValue(/basic_send/);
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.locator("#btn-mechanics-disable").click();
+    await expect.poll(() => readMultiplayerUpgradeState(projectDir)).toMatchObject({
+      moduleSchemaVersion: 2,
+      enabled: false,
+      local: { mode: "local_coop", maxPlayers: 3 },
+      asymmetric: { mode: "asymmetric_send_vs_build", maxPlayers: 2 }
+    });
+    await page.locator("#btn-mechanics-enable").click();
+    await expect.poll(() => readMultiplayerUpgradeState(projectDir)).toMatchObject({
+      moduleSchemaVersion: 2,
+      enabled: true,
+      selectedProfileId: "basic_asymmetric_send_vs_build",
+      local: { mode: "local_coop", maxPlayers: 3 },
+      asymmetric: { mode: "asymmetric_send_vs_build", maxPlayers: 2 }
+    });
+    expect(browserErrors()).toEqual([]);
+  });
 });
 
 async function openStudio(page, url) {
@@ -144,6 +217,17 @@ function readMechanicsState(root, moduleId) {
     enabled: module.enabled,
     selectedProfileId,
     profile: module.profiles[selectedProfileId]
+  };
+}
+
+function readMultiplayerUpgradeState(root) {
+  const state = readMechanicsState(root, "multiplayer");
+  const mechanics = readJson(path.join(root, "content", "mechanics.json"));
+  const profiles = mechanics.modules.multiplayer.profiles;
+  return {
+    ...state,
+    local: profiles.basic_local_coop,
+    asymmetric: profiles.basic_asymmetric_send_vs_build
   };
 }
 
@@ -200,7 +284,7 @@ async function waitForMechanicsApply(root, child, output) {
     if (child.exitCode !== null || child.signalCode !== null) break;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`Mechanics apply did not finish. Studio output:\n${output()}`);
+  throw new Error(`Multiplayer apply did not finish. Studio output:\n${output()}`);
 }
 
 async function stopProcess(child) {

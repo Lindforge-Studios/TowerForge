@@ -997,6 +997,55 @@
               </div>
             </div>
           </div>
+          <div id="mechanics-multiplayer-editor" class="hidden">
+            <div id="mechanics-multiplayer-capability" class="mechanics-notice" role="status"></div>
+            <div id="mechanics-multiplayer-read-only" class="mechanics-notice warning hidden" role="status"></div>
+            <div class="mechanics-shield-section mechanics-multiplayer-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Deterministic match profile</h4>
+                  <p>Local co-op v1 and asymmetric Send-vs-Build v2 are independent opt-in profiles. Single-player projects do not load the multiplayer runtime.</p>
+                </div>
+              </div>
+              <div class="mechanics-director-fields">
+                <label>Mode
+                  <select id="mechanics-multiplayer-mode">
+                    <option value="local_coop">Local co-op (v1)</option>
+                    <option value="asymmetric_send_vs_build">Asymmetric Send vs Build (v2)</option>
+                  </select>
+                </label>
+                <label>Fixed tick units<input id="mechanics-multiplayer-fixed-tick" type="number" min="0.000001" max="1000000" step="0.01"></label>
+                <label>Maximum players<input id="mechanics-multiplayer-max-players" type="number" min="2" max="64" step="1"></label>
+                <label>Tower control
+                  <select id="mechanics-multiplayer-tower-control">
+                    <option value="owner_only">Owner only</option>
+                    <option value="shared">Shared</option>
+                  </select>
+                </label>
+                <label>Resources
+                  <select id="mechanics-multiplayer-resource-ownership">
+                    <option value="shared">Shared</option>
+                    <option value="partitioned">Partitioned by player</option>
+                  </select>
+                </label>
+                <label>Routes
+                  <select id="mechanics-multiplayer-route-ownership">
+                    <option value="shared">Shared</option>
+                    <option value="partitioned">Partitioned by player</option>
+                  </select>
+                </label>
+              </div>
+              <p id="mechanics-multiplayer-ownership-hint" class="text-muted"></p>
+            </div>
+            <div class="mechanics-shield-section mechanics-multiplayer-section">
+              <div class="mechanics-section-head">
+                <div><h4>Authored send pool (v2)</h4><p>Every send references an existing enemy and declares bounded cost, income, spawn delay, and optional route.</p></div>
+              </div>
+              <label class="mechanics-director-json">Send pool JSON
+                <textarea id="mechanics-multiplayer-send-pool" class="mono" rows="14" spellcheck="false"></textarea>
+              </label>
+            </div>
+          </div>
           <div class="mechanics-actions">
             <button id="btn-mechanics-preview" class="btn btn-outline" type="button">Preview</button>
             <button id="btn-mechanics-enable" class="btn btn-primary" type="button">Enable for mission</button>

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "multiplayer": {
+      "schemaVersion": 1,
+      "enabled": true,
+      "profiles": {
+        "local_coop": {
+          "mode": "local_coop",
+          "fixedTickUnits": 0.2,
+          "maxPlayers": 4,
+          "ownership": {
+            "towerControl": "owner_only",
+            "resources": "shared",
+            "routes": "shared"
+          }
+        }
+      }
+    }
+  }
+}

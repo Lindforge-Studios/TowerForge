@@ -27,7 +27,8 @@ export const IMPLEMENTED_MECHANICS_MODULE_IDS = [
   "roguelite",
   "heroes",
   "logistics",
-  "director"
+  "director",
+  "multiplayer"
 ] as const satisfies readonly MechanicsModuleId[];
 
 export const SHIELD_LIMITS = Object.freeze({
@@ -226,6 +227,8 @@ export function resolveCapabilitySet(
               || schemaVersion === 5 || schemaVersion === 6 || schemaVersion === 7
           : moduleId === "logistics"
             ? schemaVersion === 1 || schemaVersion === 2 || schemaVersion === 3
+          : moduleId === "multiplayer"
+            ? schemaVersion === 1 || schemaVersion === 2
           : schemaVersion === 1;
     const profiles = ownEnumerableDataValue(module, "profiles");
     const profile = profileId === undefined ? undefined : ownEnumerableDataValue(profiles, profileId);

@@ -8,24 +8,27 @@ import { expect, test } from "@playwright/test";
 import { createProject } from "../../packages/cli/lib/create-project.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const directorCombinations = [
+const activeCombinations = [
   { grid: "hex", renderer: "canvas" },
   { grid: "square", renderer: "phaser" }
 ];
+const directorCombinations = activeCombinations;
 let tempRoot;
 let playerServer;
 let playerPort;
 
 test.beforeAll(async () => {
-  tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "towerforge-r7-player-"));
+  tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "towerforge-r8-player-"));
+  for (const combination of activeCombinations) buildFixture(tempRoot, { mode: "active", ...combination });
   for (const combination of directorCombinations) buildFixture(tempRoot, { mode: "director", ...combination });
+  buildFixture(tempRoot, { mode: "legacy", grid: "hex", renderer: "canvas" });
 
   playerServer = http.createServer((request, response) => {
     const relative = decodeURIComponent(
       new URL(request.url, "http://127.0.0.1").pathname
     ).replace(/^\/+/, "");
     const [mode, grid, renderer, ...parts] = relative.split("/");
-    if (mode !== "director"
+    if (!["active", "director", "legacy"].includes(mode)
       || !["hex", "square"].includes(grid)
       || !["canvas", "phaser"].includes(renderer)) return respond404(response);
     const root = path.join(tempRoot, fixtureName(mode, grid, renderer), "dist");
@@ -45,6 +48,38 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   if (playerServer) await new Promise((resolve) => playerServer.close(resolve));
   if (tempRoot) fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test("active R8 projects boot the isolated multiplayer entrypoint in Canvas/hex and Phaser/square players", async ({ page }) => {
+  test.setTimeout(120_000);
+  const browserErrors = captureBrowserErrors(page);
+  for (const { grid, renderer } of activeCombinations) {
+    await page.goto(playerUrl("active", grid, renderer));
+    await page.waitForFunction(() => window.__towerforgeBootOk === true);
+    await expect(page.locator("#boot-error")).toBeHidden();
+    expect(await page.evaluate(() => ({
+      hasRuntime: typeof window.__towerforgeMultiplayer === "object",
+      matchSession: typeof window.__towerforgeMultiplayer?.MatchSession,
+      inMemoryTransport: typeof window.__towerforgeMultiplayer?.createInMemoryMatchTransportPairV1
+    })), `${grid}/${renderer}`).toEqual({
+      hasRuntime: true,
+      matchSession: "function",
+      inMemoryTransport: "function"
+    });
+  }
+  expect(browserErrors()).toEqual([]);
+});
+
+test("legacy projects boot with no multiplayer global and no multiplayer module request", async ({ page }) => {
+  const requestedMultiplayer = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/engine/multiplayer/")) requestedMultiplayer.push(request.url());
+  });
+  await page.goto(playerUrl("legacy", "hex", "canvas"));
+  await page.waitForFunction(() => window.__towerforgeBootOk === true);
+  await expect(page.locator("#boot-error")).toBeHidden();
+  expect(await page.evaluate(() => typeof window.__towerforgeMultiplayer)).toBe("undefined");
+  expect(requestedMultiplayer).toEqual([]);
 });
 
 test("active R7 Director decisions reach the shared Canvas/hex and Phaser/square presentation", async ({ page }) => {
@@ -69,12 +104,13 @@ function buildFixture(root, { mode, grid, renderer }) {
     templateName: "classic",
     gridKind: grid
   });
+  if (mode === "active") enableLocalCoop(projectDir);
   if (mode === "director") enableDirector(projectDir);
   const targetsPath = path.join(projectDir, "build-targets.json");
   const targets = readJson(targetsPath);
-  targets.targets.director_acceptance = {
+  targets.targets.multiplayer_acceptance = {
     ...targets.targets[targets.defaults.web],
-    id: "director_acceptance",
+    id: "multiplayer_acceptance",
     renderer,
     webDir: "dist"
   };
@@ -82,7 +118,7 @@ function buildFixture(root, { mode, grid, renderer }) {
   execFileSync(process.execPath, [
     path.join(repoRoot, "packages", "cli", "build.mjs"),
     "--project", projectDir,
-    "--target", "director_acceptance"
+    "--target", "multiplayer_acceptance"
   ], {
     cwd: repoRoot,
     stdio: "ignore",
@@ -128,8 +164,38 @@ function enableDirector(projectDir) {
   });
 }
 
+function enableLocalCoop(projectDir) {
+  const manifestPath = path.join(projectDir, "project.json");
+  const manifest = readJson(manifestPath);
+  manifest.schemaVersion = 3;
+  writeJson(manifestPath, manifest);
+
+  const balancePath = path.join(projectDir, "content", "balance.json");
+  const balance = readJson(balancePath);
+  const missionId = balance.defaultMissionId ?? Object.keys(balance.missions)[0];
+  balance.missions[missionId].mechanics = { profiles: { multiplayer: "local_coop" } };
+  writeJson(balancePath, balance);
+  writeJson(path.join(projectDir, "content", "mechanics.json"), {
+    schemaVersion: 1,
+    modules: {
+      multiplayer: {
+        schemaVersion: 1,
+        enabled: true,
+        profiles: {
+          local_coop: {
+            mode: "local_coop",
+            fixedTickUnits: 0.1,
+            maxPlayers: 2,
+            ownership: { towerControl: "owner_only", resources: "shared", routes: "shared" }
+          }
+        }
+      }
+    }
+  });
+}
+
 function fixtureName(mode, grid, renderer) {
-  return `r7_${mode}_${grid}_${renderer}.tdproj`;
+  return `r8_${mode}_${grid}_${renderer}.tdproj`;
 }
 
 function playerUrl(mode, grid, renderer) {

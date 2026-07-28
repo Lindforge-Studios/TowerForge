@@ -26,6 +26,9 @@ const BASIC_POWER_GRID_ID = "basic_power_grid";
 const BASIC_LOCAL_AMMUNITION_ID = "basic_local_ammunition";
 const BASIC_FACTORY_AMMUNITION_SUPPLY_ID = "basic_factory_ammunition_supply";
 const BASIC_ADAPTIVE_WAVE_DIRECTOR_ID = "basic_adaptive_wave_director";
+const BASIC_LOCAL_COOP_ID = "basic_local_coop";
+const BASIC_PARTITIONED_LOCAL_COOP_ID = "basic_partitioned_local_coop";
+const BASIC_ASYMMETRIC_SEND_VS_BUILD_ID = "basic_asymmetric_send_vs_build";
 const TERRAFORMING_RECIPE_IDS = Object.freeze([
   TAGGED_FLOOD_ID,
   TAGGED_MOAT_ID,
@@ -362,6 +365,30 @@ const RECIPES = Object.freeze([
     description: "Opt-in deterministic Director v1 profile that selects only from one authored counter pool.",
     suggestedId: BASIC_ADAPTIVE_WAVE_DIRECTOR_ID,
     moduleSchemaVersion: 1
+  }),
+  Object.freeze({
+    id: BASIC_LOCAL_COOP_ID,
+    moduleId: "multiplayer",
+    label: "Basic Local Co-op",
+    description: "Opt-in deterministic local co-op v1 profile with shared resources and routes.",
+    suggestedId: BASIC_LOCAL_COOP_ID,
+    moduleSchemaVersion: 1
+  }),
+  Object.freeze({
+    id: BASIC_PARTITIONED_LOCAL_COOP_ID,
+    moduleId: "multiplayer",
+    label: "Basic Partitioned Local Co-op",
+    description: "Opt-in deterministic local co-op v1 profile with per-player resources and shared authored routes.",
+    suggestedId: BASIC_PARTITIONED_LOCAL_COOP_ID,
+    moduleSchemaVersion: 1
+  }),
+  Object.freeze({
+    id: BASIC_ASYMMETRIC_SEND_VS_BUILD_ID,
+    moduleId: "multiplayer",
+    label: "Basic Asymmetric Send vs Build",
+    description: "Opt-in deterministic asymmetric v2 profile with one project-bound authored enemy send.",
+    suggestedId: BASIC_ASYMMETRIC_SEND_VS_BUILD_ID,
+    moduleSchemaVersion: 2
   })
 ]);
 
@@ -497,6 +524,66 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
             maxConsecutiveUses: 1,
             maxAddedGroups: 2,
             maxAddedEnemies: 8
+          }
+        }
+      }
+    };
+  }
+  if (recipeId === BASIC_LOCAL_COOP_ID) {
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "multiplayer",
+        moduleSchemaVersion: 1,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: {
+          mode: "local_coop",
+          fixedTickUnits: 1,
+          maxPlayers: 4,
+          ownership: { towerControl: "shared", resources: "shared", routes: "shared" }
+        }
+      }
+    };
+  }
+  if (recipeId === BASIC_PARTITIONED_LOCAL_COOP_ID) {
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "multiplayer",
+        moduleSchemaVersion: 1,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: {
+          mode: "local_coop",
+          fixedTickUnits: 1,
+          maxPlayers: 4,
+          ownership: { towerControl: "owner_only", resources: "partitioned", routes: "shared" }
+        }
+      }
+    };
+  }
+  if (recipeId === BASIC_ASYMMETRIC_SEND_VS_BUILD_ID) {
+    const enemyTypeId = chooseId("armored_brute", context.enemyIds) ?? "";
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "multiplayer",
+        moduleSchemaVersion: 2,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: {
+          mode: "asymmetric_send_vs_build",
+          fixedTickUnits: 1,
+          maxPlayers: 2,
+          ownership: { towerControl: "owner_only", resources: "partitioned", routes: "partitioned" },
+          sendPool: {
+            basic_send: {
+              enemyTypeId,
+              cost: { coins: 10 },
+              income: { coins: 1 },
+              spawnDelayUnits: 0
+            }
           }
         }
       }

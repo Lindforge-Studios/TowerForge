@@ -11,6 +11,7 @@ import process from "node:process";
 import { PNG } from "pngjs";
 import {
   loadEngine,
+  loadMultiplayerEngine,
   loadContentRegistry,
   loadProjectFiles,
   normalizeProjectFiles,
@@ -78,7 +79,7 @@ const BALANCE_PATCH_KEYS = [
   "enemies", "towers", "waveSets", "missions", "abilities", "constants", "currencies", "defaultMissionId",
   "defaultDifficultyId", "difficulties", "metaProgression", "terrainTypes"
 ];
-const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "director", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
+const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "director", "multiplayer", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
 
 // Maps an upsert_entity/delete_entity `collection` to (a) the balance.json key, (b) the shape
 // (a map keyed by id, or an array of {id,...} items — currencies only), and (c) the
@@ -516,6 +517,69 @@ export const TOOLS = [
     }
   },
   {
+    name: "analyze_multiplayer_handshake",
+    description:
+      "Compute a deterministic capability handshake through @towerforge/engine/multiplayer. This performs no network access and writes no project files.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory. Used only for workspace confinement." },
+        local: {
+          type: "object",
+          properties: {
+            matchId: { type: "string", minLength: 1, maxLength: 128 },
+            contentDigest: { type: "string", pattern: "^tf-content-v1:[0-9a-f]{16}$" },
+            mode: { type: "string", enum: ["local_coop", "asymmetric_send_vs_build"] }
+          },
+          required: ["matchId", "contentDigest", "mode"],
+          additionalProperties: false
+        },
+        remote: {
+          type: "object",
+          properties: {
+            matchId: { type: "string", minLength: 1, maxLength: 128 },
+            contentDigest: { type: "string", pattern: "^tf-content-v1:[0-9a-f]{16}$" },
+            mode: { type: "string", enum: ["local_coop", "asymmetric_send_vs_build"] }
+          },
+          required: ["matchId", "contentDigest", "mode"],
+          additionalProperties: false
+        }
+      },
+      required: ["local", "remote"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "verify_multiplayer_replay",
+    description:
+      "Verify one bounded deterministic local-coop or asymmetric journal through @towerforge/engine/multiplayer and return only replay evidence. Writes no project files.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory whose content registry the journal references." },
+        journal: { type: "object", description: "Detached MatchCommandJournalV1 or AsymmetricMatchJournalV1." },
+        expectedChecksum: { type: "string", minLength: 1, maxLength: 256 }
+      },
+      required: ["journal"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "diagnose_multiplayer_desync",
+    description:
+      "Compare two fixed-tick checksum timelines through @towerforge/engine/multiplayer and return the earliest divergence. Writes no project files.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory. Used only for workspace confinement." },
+        local: { type: "object", description: "MatchChecksumTimelineV1." },
+        remote: { type: "object", description: "MatchChecksumTimelineV1." }
+      },
+      required: ["local", "remote"],
+      additionalProperties: false
+    }
+  },
+  {
     name: "preview_map_elevations",
     description:
       "Preview a canonical sparse elevation layer for one authored map. This is read-only and never enables the elevation mechanics module.",
@@ -581,7 +645,7 @@ export const TOOLS = [
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
         moduleId: { type: "string", description: "Engine-owned mechanics module id." },
-        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3, 4, 5, 6, 7], description: "Module contract version: navigation, physics, and terraforming support v1; roguelite supports v1 for synergies, v2 for artifact loot, v3 for optional wave draft, and v4 for an optional campaign marker; heroes supports v1 for a static roster, v2 for movement, v3 for durability, v4 for mana plus one targeted ability, v5 for an optional battle-local skill tree, v6 for an optional passive tower-damage aura, and v7 for explicit dynamic-navigation blocking; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Omitted edits preserve an existing version and new modules default to v1." },
+        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3, 4, 5, 6, 7], description: "Module contract version: navigation, physics, and terraforming support v1; multiplayer supports local co-op v1 and asymmetric Send-vs-Build v2; roguelite supports v1 for synergies, v2 for artifact loot, v3 for optional wave draft, and v4 for an optional campaign marker; heroes supports v1 for a static roster, v2 for movement, v3 for durability, v4 for mana plus one targeted ability, v5 for an optional battle-local skill tree, v6 for an optional passive tower-damage aura, and v7 for explicit dynamic-navigation blocking; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Omitted edits preserve an existing version and new modules default to v1." },
         missionId: { type: "string", description: "Mission that would select the profile; defaults to the project's default mission." },
         profileId: { type: "string", description: "Profile id to preview." },
         profile: { type: "object", description: "Versioned module profile payload." },
@@ -603,7 +667,7 @@ export const TOOLS = [
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
         moduleId: { type: "string", description: "Engine-owned mechanics module id." },
-        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3, 4, 5, 6, 7], description: "Module contract version: navigation, physics, and terraforming support v1; roguelite supports v1 for synergies, v2 for artifact loot, v3 for optional wave draft, and v4 for an optional campaign marker; heroes supports v1 for a static roster, v2 for movement, v3 for durability, v4 for mana plus one targeted ability, v5 for an optional battle-local skill tree, v6 for an optional passive tower-damage aura, and v7 for explicit dynamic-navigation blocking; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Upgrades are guarded and version downgrades are rejected." },
+        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3, 4, 5, 6, 7], description: "Module contract version: navigation, physics, and terraforming support v1; multiplayer supports local co-op v1 and asymmetric Send-vs-Build v2; roguelite supports v1 for synergies, v2 for artifact loot, v3 for optional wave draft, and v4 for an optional campaign marker; heroes supports v1 for a static roster, v2 for movement, v3 for durability, v4 for mana plus one targeted ability, v5 for an optional battle-local skill tree, v6 for an optional passive tower-damage aura, and v7 for explicit dynamic-navigation blocking; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Upgrades are guarded and version downgrades are rejected." },
         missionId: { type: "string", description: "Mission that would select the profile; defaults to the project's default mission." },
         profileId: { type: "string", description: "Profile id to enable." },
         profile: { type: "object", description: "Versioned module profile payload." },
@@ -1533,6 +1597,9 @@ const TOOL_RISK = {
   apply_campaign: { riskClass: "write_local", sideEffect: "writes project.json, content/world-map.json, content/balance.json, and content/mechanics.json with revision guard, validation, backup, and rollback" },
   analyze_navigation: { riskClass: "compute_only", sideEffect: "builds engine dist if stale; writes no project files" },
   analyze_line_of_sight: { riskClass: "compute_only", sideEffect: "builds engine dist if stale; writes no project files" },
+  analyze_multiplayer_handshake: { riskClass: "compute_only", sideEffect: "loads @towerforge/engine/multiplayer; performs no network access and writes no project files" },
+  verify_multiplayer_replay: { riskClass: "compute_only", sideEffect: "loads @towerforge/engine/multiplayer and builds engine dist if stale; writes no project files" },
+  diagnose_multiplayer_desync: { riskClass: "compute_only", sideEffect: "loads @towerforge/engine/multiplayer; writes no project files" },
   preview_map_elevations: { riskClass: "read_only", sideEffect: "none" },
   apply_map_elevations: { riskClass: "write_local", sideEffect: "may upgrade project.json to schema v3; writes the target map source and compiled maps with revision guard, validation, backup, and rollback" },
   preview_mechanics_module: { riskClass: "read_only", sideEffect: "none" },
@@ -1886,6 +1953,47 @@ export async function callTool(name, args = {}, ctx = {}) {
       snapshot: { field: "director", optional: true, supportedSchemaVersions: [1] },
       events: ["directorDecision"]
     };
+    const multiplayer = {
+      entrypoint: "@towerforge/engine/multiplayer",
+      authoring: engine.MULTIPLAYER_MECHANICS_SCHEMA,
+      versions: {
+        1: {
+          mode: "local_coop",
+          requiredFields: ["mode", "fixedTickUnits", "maxPlayers", "ownership"],
+          ownership: {
+            resources: ["shared", "partitioned"],
+            routes: ["shared", "partitioned"],
+            towerControl: ["owner_only", "shared"]
+          }
+        },
+        2: {
+          mode: "asymmetric_send_vs_build",
+          compatibleProfileModes: ["local_coop", "asymmetric_send_vs_build"],
+          monotonicSupersetOf: 1,
+          requiredFields: ["mode", "fixedTickUnits", "maxPlayers", "ownership", "sendPool"],
+          maxPlayers: 2,
+          ownership: { resources: "partitioned", routes: "partitioned", towerControl: ["owner_only", "shared"] },
+          sendDefinitionFields: ["enemyTypeId", "cost", "income", "spawnDelayUnits", "routeId?"]
+        }
+      },
+      protocol: {
+        version: 1,
+        deterministic: true,
+        engineImportsNetwork: false,
+        envelopeOrdering: ["playerId", "sequence", "matchSequence", "applyTick"],
+        transport: ["in_memory", "injected_websocket_adapter"]
+      },
+      analysis: {
+        handshake: "analyze_multiplayer_handshake",
+        replay: "verify_multiplayer_replay",
+        desync: "diagnose_multiplayer_desync"
+      },
+      snapshot: {
+        envelope: ["MatchSnapshotV1", "AsymmetricMatchSnapshotV1"],
+        gameSnapshotField: null,
+        note: "Match metadata wraps ordinary game snapshots; it never adds a multiplayer field to GameSnapshot."
+      }
+    };
     return {
       schemaVersion: 4,
       agentGuideVersion: TOWERFORGE_AGENT_GUIDE_VERSION,
@@ -1932,6 +2040,7 @@ export async function callTool(name, args = {}, ctx = {}) {
       ...(includes("heroes") ? { heroes } : {}),
       ...(includes("logistics") ? { logistics } : {}),
       ...(includes("director") ? { director } : {}),
+      ...(includes("multiplayer") ? { multiplayer } : {}),
       ...(includes("assets") ? {
         assetAuthoring: {
           themePacks: "Call list_theme_packs, preview_theme_pack, then apply_theme_pack with ifRevision.",
@@ -1969,7 +2078,7 @@ export async function callTool(name, args = {}, ctx = {}) {
           schemaVersion: 1,
           moduleIds: [...engine.MECHANICS_MODULE_IDS],
           implementedModuleIds: [...engine.IMPLEMENTED_MECHANICS_MODULE_IDS],
-          modules: { combat: combatShields, reactions, navigation, elevation, physics, terraforming, roguelite, heroes, logistics, director }
+          modules: { combat: combatShields, reactions, navigation, elevation, physics, terraforming, roguelite, heroes, logistics, director, multiplayer }
         }
       } : {})
     };
@@ -2120,7 +2229,7 @@ export async function callTool(name, args = {}, ctx = {}) {
           engine.ELEVATION_MECHANICS_SCHEMA
         );
       }
-      for (const moduleId of ["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "director"]) {
+      for (const moduleId of ["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "director", "multiplayer"]) {
         if (!Number.isSafeInteger(result[moduleId]?.moduleSchemaVersion)) continue;
         result.capabilities = {
           ...result.capabilities,
@@ -2150,6 +2259,15 @@ export async function callTool(name, args = {}, ctx = {}) {
 
     case "analyze_line_of_sight":
       return analyzeLineOfSight(projectDir, args);
+
+    case "analyze_multiplayer_handshake":
+      return analyzeMultiplayerHandshake(args);
+
+    case "verify_multiplayer_replay":
+      return verifyMultiplayerReplay(projectDir, args);
+
+    case "diagnose_multiplayer_desync":
+      return diagnoseMultiplayerDesync(args);
 
     case "preview_map_elevations":
       return previewMapElevations(projectDir, {
@@ -4492,6 +4610,48 @@ function projectRecipeForMcp(recipe) {
     };
   }
   return recipe;
+}
+
+async function analyzeMultiplayerHandshake(args) {
+  const multiplayer = await loadMultiplayerEngine();
+  const local = multiplayer.createMatchCapabilityHandshakeV1(args.local);
+  const remote = multiplayer.createMatchCapabilityHandshakeV1(args.remote);
+  const negotiation = multiplayer.negotiateMatchCapabilityHandshakeV1(local, remote);
+  return {
+    schemaVersion: 1,
+    compatible: negotiation.ok === true,
+    entrypoint: "@towerforge/engine/multiplayer",
+    local,
+    remote,
+    negotiation
+  };
+}
+
+async function verifyMultiplayerReplay(projectDir, args) {
+  const { content } = await loadContentRegistry(projectDir);
+  const multiplayer = await loadMultiplayerEngine();
+  const mode = args.journal?.mode;
+  const replay = mode === "local_coop"
+    ? multiplayer.replayMatchCommandJournal({ content, journal: args.journal })
+    : mode === "asymmetric_send_vs_build"
+      ? multiplayer.replayAsymmetricMatchJournal({ content, journal: args.journal })
+      : (() => { throw new Error("verify_multiplayer_replay: unsupported journal mode."); })();
+  if (args.expectedChecksum !== undefined && replay.checksum !== args.expectedChecksum) {
+    throw new Error("verify_multiplayer_replay: expected checksum does not match deterministic replay.");
+  }
+  return {
+    schemaVersion: 1,
+    verified: true,
+    entrypoint: "@towerforge/engine/multiplayer",
+    mode,
+    entriesReplayed: replay.entriesReplayed,
+    checksum: replay.checksum
+  };
+}
+
+async function diagnoseMultiplayerDesync(args) {
+  const multiplayer = await loadMultiplayerEngine();
+  return multiplayer.diagnoseMatchDesyncV1(args.local, args.remote);
 }
 
 const NAVIGATION_ANALYSIS_ARGUMENTS = new Set([

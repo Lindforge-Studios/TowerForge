@@ -163,6 +163,17 @@ export async function loadEngine() {
   return import(pathToFileURL(engineIndex).href);
 }
 
+/** Load the isolated deterministic multiplayer protocol runtime. Keeping this separate prevents
+ * ordinary single-player CLI/Studio paths from importing transport/session code. */
+export async function loadMultiplayerEngine() {
+  const engineIndex = ensureEngineBuilt();
+  const multiplayerIndex = path.join(path.dirname(engineIndex), "multiplayer", "index.js");
+  if (!fs.existsSync(multiplayerIndex)) {
+    throw new Error(`Bundled @towerforge/engine/multiplayer runtime is missing at ${multiplayerIndex}. Rebuild the engine runtime.`);
+  }
+  return import(pathToFileURL(multiplayerIndex).href);
+}
+
 export async function loadContentRegistry(projectDir) {
   const files = loadProjectFiles(projectDir);
   const engine = await loadEngine();
