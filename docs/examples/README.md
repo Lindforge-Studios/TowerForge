@@ -36,6 +36,7 @@ Reference examples show expected project and code patterns.
 | Opt-in Logistics power grid | `docs/examples/opt-in-logistics-power/` | R5.7A Logistics v1 reference with explicit generators, relays, fire-capable consumers, deterministic priority brownout, authoritative presentation links/coverage, and no ammo or factory coupling. |
 | Opt-in local ammunition | `docs/examples/opt-in-local-ammunition/` | R5.8A Logistics v2 reference with one finite fire-capable tower magazine, exact per-activation consumption, nested checkpoint state, authoritative depleted presentation, and no refill/supply coupling. |
 | Opt-in ammunition supply | `docs/examples/opt-in-ammunition-supply/` | R5.8B Logistics v3 reference with producer/storage compartments, bounded deterministic transfers, same-instance refill, authoritative progress/links, and no manual routing or raw-material layer. |
+| Opt-in adaptive Wave Director | `docs/examples/opt-in-adaptive-director/` | R7 Director v1 reference with an authored counter pool, deterministic priority/severity/binary-ID selection, threat budget, fairness caps, and no generated or implicit enemies. |
 | Headless smoke sim | `packages/cli/sim.mjs` | CLI wrapper for engine-backed mission smoke runs. |
 | Static web build | `packages/cli/build.mjs` | Generates the playable web bundle from project data, compiled engine modules, renderer, and safe assets. |
 | Native packaging | `packages/cli/lib/packaging.mjs` | Canonical Capacitor/Tauri scaffold generation around a built web bundle. |

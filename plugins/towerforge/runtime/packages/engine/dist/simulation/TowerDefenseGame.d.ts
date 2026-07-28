@@ -87,6 +87,8 @@ export declare class TowerDefenseGame {
     private readonly activeLogisticsAmmunition;
     private readonly activeLogisticsSupply;
     private readonly activeLogisticsSchemaVersion;
+    private readonly activeDirectorMechanics;
+    private directorDecisions;
     private readonly activeHeroPassiveAura;
     private readonly activeHeroBlocking;
     private readonly heroesSnapshotV1;
@@ -333,6 +335,10 @@ export declare class TowerDefenseGame {
     private createEnemyNavigationState;
     private createDynamicChildEnemyState;
     private stabilizeDynamicEnemyNavigation;
+    private directorTowerTargetClasses;
+    private directorTowerDamageTypes;
+    private directorDefenseAnalysis;
+    private planDirectorWave;
     private startWave;
     private startScheduledWaves;
     private buildSpawnQueue;

@@ -69,6 +69,10 @@ import {
   type LogisticsSupplyDefinitionV3
 } from "./logistics-mechanics.js";
 import {
+  DirectorProfileValidationError,
+  normalizeDirectorProfileV1
+} from "./director-mechanics.js";
+import {
   normalizeAuthoredWorldCampaign,
   WorldCampaignValidationError
 } from "../run/campaign-world.js";
@@ -3710,6 +3714,136 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
   };
 
   validateRogueliteMechanics();
+
+  const validateDirectorMechanics = () => {
+    const inspect = (value: unknown, entityId: string, fieldPath: string, label: string) => {
+      if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        err("mechanics", entityId, fieldPath, `${label} must be a plain object.`);
+        return undefined;
+      }
+      let prototype: object | null;
+      let descriptors: Record<PropertyKey, PropertyDescriptor>;
+      try {
+        prototype = Object.getPrototypeOf(value);
+        descriptors = Object.getOwnPropertyDescriptors(value) as Record<PropertyKey, PropertyDescriptor>;
+      } catch {
+        err("mechanics", entityId, fieldPath, `${label} could not be inspected safely.`);
+        return undefined;
+      }
+      if (prototype !== Object.prototype && prototype !== null) {
+        err("mechanics", entityId, fieldPath, `${label} must be a plain object.`);
+        return undefined;
+      }
+      if (Object.getOwnPropertySymbols(descriptors).length > 0) {
+        err("mechanics", entityId, fieldPath, `${label} must not contain symbol fields.`);
+      }
+      const result: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+      for (const key of Object.keys(descriptors)) {
+        const descriptor = descriptors[key];
+        if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+          err("mechanics", entityId, `${fieldPath}.${key}`, `${label} fields must be enumerable own data properties.`);
+          continue;
+        }
+        Object.defineProperty(result, key, { value: descriptor.value, enumerable: true });
+      }
+      return result;
+    };
+    const modules = inspect(content.mechanics.modules, "director", "mechanics.modules", "Mechanics modules");
+    const moduleValue = modules?.director;
+    if (moduleValue === undefined) return;
+    const module = inspect(moduleValue, "director", "modules.director", "Director module");
+    if (!module) return;
+    const allowedModuleFields = new Set(["schemaVersion", "enabled", "profiles"]);
+    for (const key of Object.keys(module)) {
+      if (!allowedModuleFields.has(key)) {
+        err("mechanics", "director", `modules.director.${key}`, `Director module is closed; unsupported field "${key}".`);
+      }
+    }
+    for (const key of allowedModuleFields) {
+      if (!Object.prototype.hasOwnProperty.call(module, key)) {
+        err("mechanics", "director", `modules.director.${key}`, `Director module field "${key}" is required.`);
+      }
+    }
+    if (typeof module.enabled !== "boolean") {
+      err("mechanics", "director", "modules.director.enabled", "Director enabled must be boolean.");
+    }
+    const profiles = inspect(module.profiles, "director", "modules.director.profiles", "Director profiles");
+    if (module.schemaVersion !== 1) {
+      err(
+        "mechanics",
+        "director",
+        "modules.director.schemaVersion",
+        `Director mechanics schemaVersion ${String(module.schemaVersion)} is unsupported; supported schemaVersion is 1.`
+      );
+      return;
+    }
+    if (!profiles) return;
+    const selectedByProfile = new Map<string, string[]>();
+    for (const [missionId, mission] of Object.entries(content.missions)) {
+      const selected = mission.mechanics?.profiles?.director;
+      if (typeof selected !== "string") continue;
+      const ids = selectedByProfile.get(selected) ?? [];
+      ids.push(missionId);
+      selectedByProfile.set(selected, ids);
+      if (!Object.prototype.hasOwnProperty.call(profiles, selected)) {
+        (module.enabled === true ? err : warn)(
+          "mission",
+          missionId,
+          `missions.${missionId}.mechanics.profiles.director`,
+          `Mission "${missionId}" selects unknown Director profile "${selected}".`
+        );
+      }
+    }
+    for (const profileId of Object.keys(profiles).sort()) {
+      const root = `modules.director.profiles.${profileId}`;
+      let profile;
+      try {
+        profile = normalizeDirectorProfileV1(profiles[profileId]);
+      } catch (error) {
+        err(
+          "mechanics",
+          profileId,
+          root,
+          error instanceof DirectorProfileValidationError || error instanceof Error
+            ? error.message
+            : "Director profile is invalid."
+        );
+        continue;
+      }
+      const active = module.enabled === true && (selectedByProfile.get(profileId)?.length ?? 0) > 0;
+      const semantic = active ? err : warn;
+      for (const counterId of Object.keys(profile.counterPool).sort()) {
+        const counter = profile.counterPool[counterId]!;
+        for (let index = 0; index < counter.groups.length; index += 1) {
+          const group = counter.groups[index]!;
+          if (!enemyIds.has(group.enemyId)) {
+            semantic(
+              "mechanics",
+              profileId,
+              `${root}.counterPool.${counterId}.groups[${index}].enemyId`,
+              `Director counter "${counterId}" references unknown enemy "${group.enemyId}".`
+            );
+          }
+          if (group.routeId !== undefined) {
+            for (const missionId of selectedByProfile.get(profileId) ?? []) {
+              const routes = content.maps[content.missions[missionId]?.mapId ?? ""]?.pathRoutes ?? [];
+              if (!routes.some((route) => route.id === group.routeId)) {
+                semantic(
+                  "mechanics",
+                  profileId,
+                  `${root}.counterPool.${counterId}.groups[${index}].routeId`,
+                  `Director counter "${counterId}" references unknown route "${group.routeId}" for mission "${missionId}".`
+                );
+              }
+            }
+          }
+        }
+      }
+    }
+  };
+
+  validateDirectorMechanics();
+
 
   // Source cardinality limits are relevant only to gameplay surfaces that can actually be
   // reached from a mission with a genuinely active physics capability. Structural inspection

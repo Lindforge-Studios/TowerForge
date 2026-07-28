@@ -35,7 +35,8 @@ const MECHANICS_MODULE_SCHEMA_VERSIONS = Object.freeze({
   terraforming: Object.freeze([1]),
   roguelite: Object.freeze([1, 2, 3, 4]),
   heroes: Object.freeze([1, 2, 3, 4, 5, 6, 7]),
-  logistics: Object.freeze([1, 2, 3])
+  logistics: Object.freeze([1, 2, 3]),
+  director: Object.freeze([1])
 });
 const SOURCE_BYTE_LIMITS = Object.freeze({
   project: 256 * 1024,
@@ -100,6 +101,7 @@ export async function inspectMechanicsAuthoring(projectDir, options = {}) {
   };
   const heroes = moduleAuthoringView(files, mission, "heroes", engine.HEROES_MECHANICS_SCHEMA);
   const logistics = moduleAuthoringView(files, mission, "logistics", engine.LOGISTICS_MECHANICS_SCHEMA);
+  const director = moduleAuthoringView(files, mission, "director", engine.DIRECTOR_MECHANICS_SCHEMA);
 
   const rawProjectSchemaVersion = snapshot.rawFiles.manifest?.schemaVersion;
   const authoring = authoringAvailability(rawProjectSchemaVersion);
@@ -123,7 +125,8 @@ export async function inspectMechanicsAuthoring(projectDir, options = {}) {
     terraforming,
     roguelite,
     heroes,
-    logistics
+    logistics,
+    director
   };
 }
 

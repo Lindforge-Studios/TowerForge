@@ -25,6 +25,7 @@ const BASIC_DYNAMIC_HERO_BLOCKING_ID = "basic_dynamic_hero_blocking";
 const BASIC_POWER_GRID_ID = "basic_power_grid";
 const BASIC_LOCAL_AMMUNITION_ID = "basic_local_ammunition";
 const BASIC_FACTORY_AMMUNITION_SUPPLY_ID = "basic_factory_ammunition_supply";
+const BASIC_ADAPTIVE_WAVE_DIRECTOR_ID = "basic_adaptive_wave_director";
 const TERRAFORMING_RECIPE_IDS = Object.freeze([
   TAGGED_FLOOD_ID,
   TAGGED_MOAT_ID,
@@ -353,6 +354,14 @@ const RECIPES = Object.freeze([
     suggestedId: BASIC_FACTORY_AMMUNITION_SUPPLY_ID,
     moduleSchemaVersion: 3,
     parameterSchema: LOGISTICS_SUPPLY_PARAMETER_SCHEMA
+  }),
+  Object.freeze({
+    id: BASIC_ADAPTIVE_WAVE_DIRECTOR_ID,
+    moduleId: "director",
+    label: "Basic Adaptive Wave Director",
+    description: "Opt-in deterministic Director v1 profile that selects only from one authored counter pool.",
+    suggestedId: BASIC_ADAPTIVE_WAVE_DIRECTOR_ID,
+    moduleSchemaVersion: 1
   })
 ]);
 
@@ -452,6 +461,46 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
   }
   if (recipeId === BASIC_DYNAMIC_NAVIGATION_ID) {
     return materializeDynamicNavigationRecipe(recipe, missionId);
+  }
+  if (recipeId === BASIC_ADAPTIVE_WAVE_DIRECTOR_ID) {
+    const counterEnemyId = chooseId("armored_brute", context.enemyIds) ?? "";
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "director",
+        moduleSchemaVersion: 1,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: {
+          counterPool: {
+            dominant_damage_guard: {
+              label: "Dominant damage guard",
+              priority: 100,
+              conditions: [{
+                metric: "damage_share",
+                key: "physical",
+                operator: "gte",
+                threshold: 0.6
+              }],
+              groups: [{
+                enemyId: counterEnemyId,
+                count: 2,
+                spawnInterval: 0.75,
+                startDelay: 0
+              }],
+              threatCost: 8
+            }
+          },
+          threatBudget: { base: 10, perWave: 5 },
+          fairness: {
+            minimumWaveIndex: 1,
+            maxConsecutiveUses: 1,
+            maxAddedGroups: 2,
+            maxAddedEnemies: 8
+          }
+        }
+      }
+    };
   }
   if (recipeId === BASIC_COMMANDER_HERO_ID) {
     return {

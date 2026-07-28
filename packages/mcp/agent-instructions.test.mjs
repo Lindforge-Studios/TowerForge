@@ -4,7 +4,7 @@ import { TOOLS } from "./tools.mjs";
 
 describe("TowerForge shared agent instructions", () => {
   it("routes every shipped authoring layer through the safe workflow", () => {
-    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(32);
+    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(34);
     for (const phrase of ["universal pipeline", "TowerScript", "metaProgression", "list_theme_packs", "preview_tile_binding", "revision tokens", "validate_project", "list_workspace_projects", "get_capabilities", "content/mechanics.json", "basic_regenerating_shields", "basic_vulnerability_marks", "marks", "elemental_shatter", "wet_chain_shock", "poison_combustion", "prerequisites", "reactions", "basic_elemental_synergy", "towerTypeIds", "towerTags", "socketArtifact", "unsocketArtifact", "between-wave boundary", "get_campaign", "preview_campaign", "apply_campaign", "CampaignRun"]) {
       expect(TOWERFORGE_AGENT_INSTRUCTIONS).toContain(phrase);
     }

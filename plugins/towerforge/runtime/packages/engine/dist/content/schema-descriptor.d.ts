@@ -5,6 +5,38 @@ export { TERRAFORMING_MECHANICS_SCHEMA } from "./terraforming-mechanics.js";
 export { ROGUELITE_MECHANICS_SCHEMA } from "./roguelite-mechanics.js";
 export { HEROES_MECHANICS_SCHEMA } from "./heroes-mechanics.js";
 export { LOGISTICS_MECHANICS_SCHEMA } from "./logistics-mechanics.js";
+export declare const DIRECTOR_MECHANICS_SCHEMA: Readonly<{
+    schemaVersion: 1;
+    moduleId: "director";
+    supportedModuleSchemaVersions: readonly [1];
+    profile: {
+        requiredFields: readonly ["counterPool", "threatBudget", "fairness"];
+        optionalFields: readonly [];
+        additionalProperties: boolean;
+    };
+    counter: {
+        requiredFields: readonly ["label", "priority", "conditions", "groups", "threatCost"];
+        optionalFields: readonly [];
+        additionalProperties: boolean;
+    };
+    condition: {
+        metrics: readonly ["damage_share", "coverage_ratio", "movement_layer_share", "logistics_brownout_ratio"];
+        operators: readonly ["gte", "lte"];
+    };
+    tieBreak: readonly ["priority_desc", "condition_severity_desc", "counter_id_binary_asc"];
+    limits: Readonly<{
+        counterDefinitions: 256;
+        conditionsPerCounter: 8;
+        groupsPerCounter: 8;
+        totalCounterGroups: 2048;
+        idUtf8Bytes: 128;
+        labelUtf8Bytes: 256;
+        addedGroupsPerDecision: 8;
+        addedEnemiesPerDecision: 1024;
+        threatCost: 1000000000;
+        decisionHistory: 1024;
+    }>;
+}>;
 /**
  * A machine-readable description of the content schema's closed sets and per-shape field
  * constraints — the single source of truth for what `validateGameContentRegistry` (validate.ts)

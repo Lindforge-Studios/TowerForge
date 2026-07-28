@@ -1,0 +1,7 @@
+{
+  "mechanics": {
+    "profiles": {
+      "director": "basic_adaptive_wave_director"
+    }
+  }
+}

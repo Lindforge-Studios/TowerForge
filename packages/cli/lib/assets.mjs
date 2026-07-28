@@ -95,12 +95,17 @@ export function planProjectAssetImport(projectDir, visuals, request) {
 }
 
 /** Execute a previously validated plan with an atomic destination replace. */
-export function commitProjectAssetImport(plan) {
+export function commitProjectAssetImport(plan, verifiedSourceBytes) {
   if (!plan?.copyRequired) return;
   fs.mkdirSync(path.dirname(plan.destPath), { recursive: true });
   const tmp = `${plan.destPath}.tmp.${process.pid}`;
   try {
-    fs.copyFileSync(plan.sourcePath, tmp);
+    if (verifiedSourceBytes !== undefined) {
+      if (!Buffer.isBuffer(verifiedSourceBytes)) throw new Error("Verified asset source bytes must be a Buffer.");
+      fs.writeFileSync(tmp, verifiedSourceBytes, { flag: "wx" });
+    } else {
+      fs.copyFileSync(plan.sourcePath, tmp);
+    }
     fs.renameSync(tmp, plan.destPath);
   } finally {
     fs.rmSync(tmp, { force: true });

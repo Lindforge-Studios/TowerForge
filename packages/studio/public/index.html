@@ -965,6 +965,38 @@
               </div>
             </div>
           </div>
+          <div id="mechanics-director-editor" class="hidden">
+            <div id="mechanics-director-capability" class="mechanics-notice" role="status"></div>
+            <div id="mechanics-director-read-only" class="mechanics-notice warning hidden" role="status"></div>
+            <div class="mechanics-shield-section mechanics-director-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Authored counter pool</h4>
+                  <p>The deterministic policy may only add these authored groups. Conditions can inspect damage distribution, coverage, movement layers, and Logistics brownout.</p>
+                </div>
+              </div>
+              <label class="mechanics-director-json">Counter pool JSON
+                <textarea id="mechanics-director-counter-pool" class="mono" rows="16" spellcheck="false" aria-describedby="mechanics-director-counter-help"></textarea>
+              </label>
+              <p id="mechanics-director-counter-help" class="text-muted">Each counter declares label, integer priority, conditions, wave groups, and threatCost. The shared engine validator checks references and limits before save.</p>
+            </div>
+            <div class="mechanics-shield-section mechanics-director-section">
+              <div class="mechanics-section-head"><div><h4>Threat budget</h4><p>Caps adaptation without rewriting an authored wave.</p></div></div>
+              <div class="mechanics-director-fields">
+                <label>Base budget<input id="mechanics-director-threat-base" type="number" min="0" max="1000000000" step="0.1"></label>
+                <label>Budget per wave<input id="mechanics-director-threat-per-wave" type="number" min="0" max="1000000000" step="0.1"></label>
+              </div>
+            </div>
+            <div class="mechanics-shield-section mechanics-director-section">
+              <div class="mechanics-section-head"><div><h4>Fairness caps</h4><p>Limits when and how often the Director can select a counter.</p></div></div>
+              <div class="mechanics-director-fields">
+                <label>Minimum wave index<input id="mechanics-director-minimum-wave" type="number" min="0" max="1024" step="1"></label>
+                <label>Maximum consecutive uses<input id="mechanics-director-max-consecutive" type="number" min="0" max="1024" step="1"></label>
+                <label>Maximum added groups<input id="mechanics-director-max-added-groups" type="number" min="0" max="8" step="1"></label>
+                <label>Maximum added enemies<input id="mechanics-director-max-added-enemies" type="number" min="0" max="1024" step="1"></label>
+              </div>
+            </div>
+          </div>
           <div class="mechanics-actions">
             <button id="btn-mechanics-preview" class="btn btn-outline" type="button">Preview</button>
             <button id="btn-mechanics-enable" class="btn btn-primary" type="button">Enable for mission</button>

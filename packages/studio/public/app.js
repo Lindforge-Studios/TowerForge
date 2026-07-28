@@ -88,7 +88,7 @@ const MECHANICS_MODULES = [
   { id: "roguelite", title: "Rogue-lite", description: "Synergies, artifacts, draft choices, and campaign runs." },
   { id: "heroes", title: "Heroes", description: "Optional opt-in hero roster spawning at the core; later versions add movement, durability, an ability, skill tree, aura, and explicit dynamic-navigation blocking." },
   { id: "logistics", title: "Logistics", description: "Power grids, inventories, ammunition, and production." },
-  { id: "director", title: "AI Director", description: "Deterministic adaptation and generative Studio hooks." },
+  { id: "director", title: "AI Wave Director", description: "Optional opt-in deterministic adaptation from an authored counter pool with explicit threat budgets and fairness caps." },
   { id: "scriptingDx", title: "TowerScript DX", description: "Visual graphs, structured traces, and step debugging." },
   { id: "multiplayer", title: "Multiplayer", description: "Deterministic matches, replay, and local transport." }
 ];
@@ -103,6 +103,7 @@ const ELEVATION_RECIPE_IDS = new Set([
 const PHYSICS_RECIPE_IDS = new Set(["basic_displacement_physics", "tagged_fall_hazards"]);
 const TERRAFORMING_RECIPE_IDS = new Set(["tagged_flood", "tagged_moat", "tagged_destructible_bridge"]);
 const ROGUELITE_RECIPE_IDS = new Set(["basic_elemental_synergy", "basic_boss_artifact_loot"]);
+const DIRECTOR_RECIPE_IDS = new Set(["basic_adaptive_wave_director"]);
 const MAX_ELEVATION_CANVAS_TILES = 4_096;
 const MAX_ELEVATION_EDITOR_ROWS = 256;
 
@@ -730,6 +731,7 @@ function mechanicsSelectedProfile() {
 
 function normalizeMechanicsDraft(profile) {
   if (MechanicsUI.selectedModuleId === "logistics") return normalizeLogisticsMechanicsDraft(profile);
+  if (MechanicsUI.selectedModuleId === "director") return normalizeDirectorMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "heroes") return normalizeHeroesMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "roguelite") return normalizeRogueliteMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "terraforming") {
@@ -781,6 +783,12 @@ function normalizeMechanicsDraft(profile) {
       : {};
   }
   return draft;
+}
+
+function normalizeDirectorMechanicsDraft(profile) {
+  // The engine owns the closed Director v1 contract. Studio keeps supported and future profiles
+  // lossless; future module versions are displayed read-only instead of being repaired locally.
+  return deep(profile ?? {});
 }
 
 function normalizeLogisticsMechanicsDraft(profile) {
@@ -1071,6 +1079,7 @@ function mechanicsAuthoredMatrixEntryCount() {
 }
 
 function mechanicsEffectiveModuleSchemaVersion() {
+  if (MechanicsUI.selectedModuleId === "director") return 1;
   if (MechanicsUI.selectedModuleId === "heroes") {
     const authoredVersion = Math.max(
       mechanicsProjectModuleVersion(),
@@ -1175,7 +1184,11 @@ function initializeMechanicsDraft() {
                 ? "basic_commander_hero"
               : MechanicsUI.selectedModuleId === "logistics"
                 ? "basic_power_grid"
-              : MechanicsUI.selectedModuleId === "roguelite" ? "basic_elemental_synergy" : "basic_regenerating_shields");
+              : MechanicsUI.selectedModuleId === "roguelite"
+                ? "basic_elemental_synergy"
+                : MechanicsUI.selectedModuleId === "director"
+                  ? "basic_adaptive_wave_director"
+                  : "basic_regenerating_shields");
   MechanicsUI.draft = normalizeMechanicsDraft(selectedProfile ?? mechanicsRecipeProfile());
   if (MechanicsUI.selectedModuleId === "roguelite") initializeRogueliteTowerTags();
   MechanicsUI.preview = null;
@@ -1249,6 +1262,8 @@ function loadMechanicsProfile() {
       ? normalizeHeroesMechanicsDraft(profile)
       : MechanicsUI.selectedModuleId === "logistics"
         ? normalizeLogisticsMechanicsDraft(profile)
+      : MechanicsUI.selectedModuleId === "director"
+        ? normalizeDirectorMechanicsDraft(profile)
     : normalizeMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "roguelite") initializeRogueliteTowerTags();
   MechanicsUI.preview = null;
@@ -5179,7 +5194,80 @@ function renderMechanicsPreviewResult() {
     : "Preview changes before applying them.";
 }
 
+function invalidateDirectorMechanicsPreview() {
+  MechanicsUI.preview = null;
+  MechanicsUI.error = null;
+  MechanicsUI.moduleSchemaVersion = 1;
+  renderMechanicsPreviewResult();
+}
+
+function renderDirectorMechanicsEditor() {
+  const draft = MechanicsUI.draft;
+  if (!draft || MechanicsUI.selectedModuleId !== "director") return;
+  const capabilityView = MechanicsUI.capabilities?.director;
+  const capability = mechanicsSelectedCapability();
+  const supportedVersion = mechanicsProjectModuleVersion() === 1;
+  const capabilityLabel = $("mechanics-director-capability");
+  if (capabilityLabel) {
+    const state = capability?.active
+      ? "Active for this mission"
+      : capabilityView?.enabled || capability?.moduleEnabled
+        ? "Authored, not selected for this mission"
+        : "Available as an opt-in module";
+    const metrics = capabilityView?.authoring?.condition?.metrics ?? [
+      "damage_share", "coverage_ratio", "movement_layer_share", "logistics_brownout_ratio"
+    ];
+    capabilityLabel.textContent = `${state}. Deterministic policy metrics: ${metrics.join(", ")}.`;
+  }
+  const readOnly = $("mechanics-director-read-only");
+  readOnly?.classList.toggle("hidden", supportedVersion);
+  if (readOnly) readOnly.textContent = supportedVersion
+    ? ""
+    : "Future Director schemaVersion 2+ is preserved losslessly and is read-only in this Studio version.";
+
+  const counterPool = $("mechanics-director-counter-pool");
+  if (counterPool) {
+    counterPool.value = JSON.stringify(draft.counterPool ?? {}, null, 2);
+    counterPool.disabled = !supportedVersion;
+    counterPool.onchange = () => {
+      try {
+        const value = JSON.parse(counterPool.value);
+        if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Use one JSON object.");
+        draft.counterPool = value;
+        counterPool.setCustomValidity("");
+        invalidateDirectorMechanicsPreview();
+      } catch {
+        counterPool.setCustomValidity("Counter pool must be a valid JSON object.");
+        counterPool.reportValidity();
+      }
+    };
+  }
+
+  const fields = [
+    ["mechanics-director-threat-base", "threatBudget", "base"],
+    ["mechanics-director-threat-per-wave", "threatBudget", "perWave"],
+    ["mechanics-director-minimum-wave", "fairness", "minimumWaveIndex"],
+    ["mechanics-director-max-consecutive", "fairness", "maxConsecutiveUses"],
+    ["mechanics-director-max-added-groups", "fairness", "maxAddedGroups"],
+    ["mechanics-director-max-added-enemies", "fairness", "maxAddedEnemies"]
+  ];
+  for (const [inputId, section, field] of fields) {
+    const input = $(inputId);
+    if (!input) continue;
+    input.value = draft[section]?.[field] ?? "";
+    input.disabled = !supportedVersion;
+    input.oninput = (event) => {
+      draft[section] ??= {};
+      draft[section][field] = Number(event.currentTarget.value);
+      invalidateDirectorMechanicsPreview();
+    };
+  }
+}
+
 function mechanicsRequest(enabled) {
+  if (MechanicsUI.selectedModuleId === "director" && mechanicsProjectModuleVersion() > 1) {
+    throw new Error("Future Director schemaVersion 2+ modules are preserved losslessly and read-only.");
+  }
   if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 7) {
     throw new Error("Future heroes schemaVersion 8+ modules are read-only in this Studio version.");
   }
@@ -5295,6 +5383,8 @@ function renderMechanicsHub() {
               ? "Author a closed static hero roster and core spawn, then explicitly enable the profile for this mission."
             : MechanicsUI.selectedModuleId === "logistics"
               ? "Author an optional power grid without adding Logistics fields to ordinary tower or mission forms."
+            : MechanicsUI.selectedModuleId === "director"
+              ? "Author a deterministic counter pool with explicit threat budgets and fairness caps, then opt this mission into the profile."
             : MechanicsUI.selectedModuleId === "roguelite"
               ? "Author tower tags, global synergies, optional v2 artifact loot, and independent v3 wave draft choices as one opt-in profile transaction."
               : "Author a reusable combat profile, then explicitly select it for this mission.";
@@ -5344,7 +5434,8 @@ function renderMechanicsHub() {
         && (selectedModuleId !== "elevation" || ELEVATION_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "physics" || PHYSICS_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "terraforming" || TERRAFORMING_RECIPE_IDS.has(recipe.id))
-        && (selectedModuleId !== "roguelite" || ROGUELITE_RECIPE_IDS.has(recipe.id)));
+        && (selectedModuleId !== "roguelite" || ROGUELITE_RECIPE_IDS.has(recipe.id))
+        && (selectedModuleId !== "director" || DIRECTOR_RECIPE_IDS.has(recipe.id)));
       MechanicsUI.recipe = availableRecipes[0] ?? null;
       MechanicsUI.recipeId = MechanicsUI.recipe?.id ?? "";
       MechanicsUI.terraformingSnippet = null;
@@ -5377,6 +5468,7 @@ function renderMechanicsHub() {
   $("mechanics-roguelite-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "roguelite");
   $("mechanics-heroes-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "heroes");
   $("mechanics-logistics-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "logistics");
+  $("mechanics-director-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "director");
   const state = $("mechanics-hub-state");
   if (state) state.textContent = MechanicsUI.loading ? "Loading capabilities…"
     : MechanicsUI.error ? "Mechanics unavailable"
@@ -5399,7 +5491,8 @@ function renderMechanicsHub() {
     }
     const recipeSelect = $("mechanics-recipe-select");
     if (recipeSelect) {
-      const moduleRecipes = MechanicsUI.recipes.filter((recipe) => mechanicsRecipeModuleId(recipe) === MechanicsUI.selectedModuleId);
+      const moduleRecipes = MechanicsUI.recipes.filter((recipe) => mechanicsRecipeModuleId(recipe) === MechanicsUI.selectedModuleId
+        && (MechanicsUI.selectedModuleId !== "director" || DIRECTOR_RECIPE_IDS.has(recipe.id)));
       recipeSelect.innerHTML = moduleRecipes.slice(0, 32).map((recipe) =>
         `<option value="${esc(recipe.id)}">${esc(recipe.label ?? recipe.id)}</option>`).join("");
       if (moduleRecipes.some((recipe) => recipe.id === MechanicsUI.recipeId)) recipeSelect.value = MechanicsUI.recipeId;
@@ -5442,6 +5535,8 @@ function renderMechanicsHub() {
       renderHeroesMechanicsEditor();
     } else if (MechanicsUI.selectedModuleId === "logistics") {
       renderLogisticsMechanicsEditor();
+    } else if (MechanicsUI.selectedModuleId === "director") {
+      renderDirectorMechanicsEditor();
     }
     // Recipe prerequisites are shared authoring metadata. Keep them visible for every module,
     // including elevation recipes, instead of hiding them inside the reactions-only editor.
@@ -5455,8 +5550,10 @@ function renderMechanicsHub() {
   );
   const supportedHeroesVersion = MechanicsUI.selectedModuleId !== "heroes" || mechanicsProjectModuleVersion() <= 7;
   const supportedLogisticsVersion = MechanicsUI.selectedModuleId !== "logistics" || mechanicsProjectModuleVersion() <= 3;
+  const supportedDirectorVersion = MechanicsUI.selectedModuleId !== "director" || mechanicsProjectModuleVersion() === 1;
   const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion
-    && supportedRogueliteVersion && supportedHeroesVersion && supportedLogisticsVersion && !busy;
+    && supportedRogueliteVersion && supportedHeroesVersion && supportedLogisticsVersion
+    && supportedDirectorVersion && !busy;
   const dirtyWriteGuard = Boolean(S.dirty);
   if ($("btn-mechanics-preview")) $("btn-mechanics-preview").disabled = !writable;
   if (MechanicsUI.selectedModuleId === "logistics" && mechanicsProjectModuleVersion() > 3) {
@@ -5468,7 +5565,8 @@ function renderMechanicsHub() {
   $("btn-mechanics-load-profile").disabled = busy || mechanicsProfileIds().length === 0;
   $("btn-mechanics-new-profile").disabled = busy || !MechanicsUI.recipe
     || ((MechanicsUI.selectedModuleId === "terraforming" || MechanicsUI.selectedModuleId === "roguelite"
-      || MechanicsUI.selectedModuleId === "heroes" || MechanicsUI.selectedModuleId === "logistics") && !writable);
+      || MechanicsUI.selectedModuleId === "heroes" || MechanicsUI.selectedModuleId === "logistics"
+      || MechanicsUI.selectedModuleId === "director") && !writable);
   if ($("mechanics-recipe-select")) $("mechanics-recipe-select").disabled = busy || MechanicsUI.recipes.length === 0;
   if ($("btn-mechanics-add-damage-type")) $("btn-mechanics-add-damage-type").disabled = !writable;
   if ($("btn-mechanics-add-armor-type")) $("btn-mechanics-add-armor-type").disabled = !writable;

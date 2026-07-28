@@ -23,7 +23,7 @@ const R0A_MODULE_IDS = [
 ];
 const IMPLEMENTED_MODULE_IDS = [
   "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes",
-  "logistics"
+  "logistics", "director"
 ];
 const UNAVAILABLE_MODULE_IDS = R0A_MODULE_IDS.filter(
   (moduleId) => !IMPLEMENTED_MODULE_IDS.includes(moduleId)

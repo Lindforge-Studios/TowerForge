@@ -3,12 +3,34 @@ import { MAX_MODIFIERS_PER_RESOLUTION, MODIFIER_OPERATION_ORDER, MODIFIER_STAGE_
 import { DAMAGE_TAGS } from "../simulation/damage.js";
 import { TOWER_SCRIPT_EVENT_FIELDS, TOWER_SCRIPT_TARGETS } from "../scripting/schema-descriptor.js";
 import { ARMOR_MATRIX_LIMITS, MARK_LIMITS, REACTION_LIMITS, SHIELD_LIMITS } from "./mechanics.js";
+import { DIRECTOR_LIMITS } from "./director-mechanics.js";
 export { NAVIGATION_MECHANICS_SCHEMA } from "./navigation-mechanics.js";
 export { ELEVATION_MECHANICS_SCHEMA } from "./elevation-mechanics.js";
 export { TERRAFORMING_MECHANICS_SCHEMA } from "./terraforming-mechanics.js";
 export { ROGUELITE_MECHANICS_SCHEMA } from "./roguelite-mechanics.js";
 export { HEROES_MECHANICS_SCHEMA } from "./heroes-mechanics.js";
 export { LOGISTICS_MECHANICS_SCHEMA } from "./logistics-mechanics.js";
+export const DIRECTOR_MECHANICS_SCHEMA = Object.freeze({
+    schemaVersion: 1,
+    moduleId: "director",
+    supportedModuleSchemaVersions: [1],
+    profile: {
+        requiredFields: ["counterPool", "threatBudget", "fairness"],
+        optionalFields: [],
+        additionalProperties: false
+    },
+    counter: {
+        requiredFields: ["label", "priority", "conditions", "groups", "threatCost"],
+        optionalFields: [],
+        additionalProperties: false
+    },
+    condition: {
+        metrics: ["damage_share", "coverage_ratio", "movement_layer_share", "logistics_brownout_ratio"],
+        operators: ["gte", "lte"]
+    },
+    tieBreak: ["priority_desc", "condition_severity_desc", "counter_id_binary_asc"],
+    limits: DIRECTOR_LIMITS
+});
 export const TARGET_MODE_SCHEMA = Object.freeze({
     selectable: TOWER_TARGET_MODES.filter((mode) => mode !== "fastest_ahead" && mode !== "largest_hp"),
     legacyAliases: { fastest_ahead: "first (armored first)", largest_hp: "strongest" },

@@ -148,7 +148,7 @@ describe("R2.1 navigation v1 MCP authoring surface", () => {
     });
     expect(navigation.navigation.authoring.limits).toEqual(engine.NAVIGATION_LIMITS);
     expect(mechanics.availableDomains).toContain("navigation");
-    expect(mechanics.mechanics.implementedModuleIds).toEqual(["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics"]);
+    expect(mechanics.mechanics.implementedModuleIds).toEqual(["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "director"]);
     expect(mechanics.mechanics.modules.navigation).toEqual(navigation.navigation);
 
     const projectDir = copyStarter();
@@ -383,7 +383,7 @@ describe("R2.1 navigation v1 MCP authoring surface", () => {
       written: true,
       previousRevision: authoredPreview.revision
     });
-    expect(authoredApplied).not.toHaveProperty("backup");
+    expect(authoredApplied).toMatchObject({ backup: { directory: expect.any(String) } });
     expect(JSON.parse(fs.readFileSync(path.join(projectDir, "project.json"), "utf8")).schemaVersion).toBe(3);
 
     const dynamicProfile = dynamicFlowProfile();

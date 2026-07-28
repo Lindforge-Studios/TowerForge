@@ -1,6 +1,7 @@
 import type { TowerScriptDiagnostic, TowerScriptJson } from "../scripting/types.js";
 import type {
   EnemyState,
+  DirectorSnapshotV1,
   GameEvent,
   GameSnapshot,
   ResourceBag,
@@ -278,6 +279,7 @@ export interface GameCheckpointStateV1 {
     | HeroesCheckpointStateV3
     | HeroesCheckpointStateV4;
   readonly logistics?: LogisticsCheckpointStateV1 | LogisticsCheckpointStateV2;
+  readonly director?: DirectorSnapshotV1;
 }
 
 export interface GameCheckpointV1 {

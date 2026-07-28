@@ -782,6 +782,13 @@ export type GameEvent = {
     type: "waveStarted";
     waveIndex: number;
 } | {
+    type: "directorDecision";
+    waveIndex: number;
+    counterId: string;
+    threatCost: number;
+    reason: DirectorDecisionReasonV1;
+    addedGroups: readonly WaveGroup[];
+} | {
     type: "waveCleared";
     waveIndex: number;
     income: ResourceBag;
@@ -1231,6 +1238,25 @@ export interface LogisticsSnapshotV3 {
     } | null;
 }
 export type LogisticsSnapshot = LogisticsSnapshotV1 | LogisticsSnapshotV2 | LogisticsSnapshotV3;
+export interface DirectorDecisionReasonV1 {
+    readonly metric: "damage_share" | "coverage_ratio" | "movement_layer_share" | "logistics_brownout_ratio";
+    readonly key?: string;
+    readonly operator: "gte" | "lte";
+    readonly threshold: number;
+    readonly observed: number;
+}
+export interface DirectorDecisionSnapshotV1 {
+    readonly waveIndex: number;
+    readonly counterId: string;
+    readonly threatCost: number;
+    readonly reason: DirectorDecisionReasonV1;
+    readonly addedGroups: readonly WaveGroup[];
+}
+export interface DirectorSnapshotV1 {
+    readonly schemaVersion: 1;
+    readonly profileId: string;
+    readonly decisions: readonly DirectorDecisionSnapshotV1[];
+}
 export interface GameSnapshot {
     /** Canonical authored map identity for presentation and renderer adapters. */
     mapId: string;
@@ -1278,6 +1304,7 @@ export interface GameSnapshot {
     roguelite?: RogueliteSnapshot;
     heroes?: HeroesSnapshot;
     logistics?: LogisticsSnapshot;
+    director?: DirectorSnapshotV1;
     scriptState: import("../scripting/types.js").TowerScriptStateSnapshot;
     lastEvents: GameEvent[];
 }

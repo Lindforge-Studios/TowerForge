@@ -16,8 +16,8 @@ export function runBalanceSweep(content, options = {}) {
         if (!mission)
             continue;
         const available = (mission.buildTowerIds?.length ? mission.buildTowerIds : Object.keys(content.towers)).filter((id) => content.towers[id]);
-        const strategies = buildStrategies(available, options.maxStrategies);
-        const results = strategies.map((strategy) => runStrategy(content, missionId, strategy, simSeconds, tickStep));
+        const strategies = buildStrategies(available, options.maxStrategies, options.strategyIds);
+        const results = strategies.map((strategy) => runStrategy(content, missionId, strategy, simSeconds, tickStep, options.seed));
         missions.push(aggregateMission(missionId, mission.label, results));
     }
     const winnable = missions.filter((m) => m.winRate > 0).length;
@@ -25,10 +25,15 @@ export function runBalanceSweep(content, options = {}) {
     return {
         missions,
         summary: { missions: missions.length, winnable, flagged },
-        generatedWith: { strategiesPerMission: missions[0]?.strategyCount ?? 0, simSeconds, tickStep }
+        generatedWith: {
+            strategiesPerMission: missions[0]?.strategyCount ?? 0,
+            simSeconds,
+            tickStep,
+            ...(options.seed !== undefined ? { seed: options.seed } : {})
+        }
     };
 }
-function buildStrategies(available, max) {
+function buildStrategies(available, max, requestedIds) {
     const strategies = [];
     for (const id of available) {
         strategies.push({
@@ -72,10 +77,20 @@ function buildStrategies(available, max) {
         placement: "near_core",
         rebuildInterval: 3
     });
-    return typeof max === "number" ? strategies.slice(0, Math.max(1, max)) : strategies;
+    let selected = strategies;
+    if (requestedIds?.length) {
+        const requested = new Set(requestedIds);
+        const known = new Set(strategies.map((strategy) => strategy.id));
+        const unknown = [...requested].filter((strategyId) => !known.has(strategyId)).sort();
+        if (unknown.length) {
+            throw new Error(`Unknown balance strategy id(s): ${unknown.join(", ")}.`);
+        }
+        selected = strategies.filter((strategy) => requested.has(strategy.id));
+    }
+    return typeof max === "number" ? selected.slice(0, Math.max(1, max)) : selected;
 }
-function runStrategy(content, missionId, strategy, simSeconds, tickStep) {
-    const game = new TowerDefenseGame({ missionId, content });
+function runStrategy(content, missionId, strategy, simSeconds, tickStep, seed) {
+    const game = new TowerDefenseGame({ missionId, content, ...(seed !== undefined ? { seed } : {}) });
     const towerCounts = {};
     placeTowers(game, strategy, towerCounts);
     if (strategy.upgrade)
@@ -108,7 +123,8 @@ function runStrategy(content, missionId, strategy, simSeconds, tickStep) {
         towersBuilt: snap.towers.length,
         leaks,
         elapsed: Math.round(elapsed * 10) / 10,
-        towerCounts
+        towerCounts,
+        ...(seed !== undefined ? { seed } : {})
     };
 }
 function placeTowers(game, strategy, counts) {
