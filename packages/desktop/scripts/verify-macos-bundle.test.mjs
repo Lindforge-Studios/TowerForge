@@ -8,7 +8,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../
 
 describe("macOS release signing", () => {
   it("prefers the explicit ARM64 target directory used by desktop:build:mac", () => {
-    const cwd = "/repo/packages/desktop";
+    const cwd = path.resolve("/repo/packages/desktop");
     const armRoot = path.join(cwd, "src-tauri/target/aarch64-apple-darwin/release/bundle");
     expect(defaultMacosBundleRoot({ cwd, exists: (candidate) => candidate === armRoot })).toBe(armRoot);
   });
@@ -36,7 +36,7 @@ describe("macOS release signing", () => {
           status: 0,
           stdout: command === "lipo"
             ? "arm64"
-            : command.endsWith("/Contents/MacOS/node") ? "towerforge-node-ready" : "",
+            : command === path.join("/tmp/TowerForge.app", "Contents", "MacOS", "node") ? "towerforge-node-ready" : "",
           stderr: ""
         };
       }
@@ -66,7 +66,7 @@ describe("macOS release signing", () => {
           status: 0,
           stdout: command === "lipo"
             ? "arm64"
-            : command.endsWith("/Contents/MacOS/node") ? "towerforge-node-ready" : "",
+            : command === path.join("/tmp/towerforge-mount", "TowerForge.app", "Contents", "MacOS", "node") ? "towerforge-node-ready" : "",
           stderr: ""
         };
       }
@@ -103,7 +103,7 @@ describe("macOS release signing", () => {
           status: 0,
           stdout: command === "lipo"
             ? "arm64"
-            : command.endsWith("/Contents/MacOS/node") ? "towerforge-node-ready" : "",
+            : command === path.join("/tmp/towerforge-mount", "TowerForge.app", "Contents", "MacOS", "node") ? "towerforge-node-ready" : "",
           stderr: ""
         };
       }
@@ -136,11 +136,11 @@ describe("macOS release signing", () => {
       exists: () => true,
       run(command) {
         if (command === "lipo") return { status: 0, stdout: "arm64", stderr: "" };
-        return command.endsWith("/Contents/MacOS/node")
+        return command === path.join("/tmp/TowerForge.app", "Contents", "MacOS", "node")
           ? { status: 1, stdout: "", stderr: "Fatal error: SetPermissions" }
           : { status: 0, stdout: "", stderr: "" };
       }
-    })).toThrow(/Node sidecar|SetPermissions/i);
+    })).toThrow(/SetPermissions/i);
   });
 
   it("rejects a macOS bundle that does not contain the promised arm64 executable", () => {
