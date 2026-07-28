@@ -51,6 +51,7 @@ import {
   createScriptDirectory,
   deleteScriptEntry,
   listProjectTree,
+  readProjectMediaFile,
   readProjectTextFile,
   renameScriptEntry
 } from "../cli/lib/project-tree.mjs";
@@ -357,6 +358,8 @@ function serveStatic(res, filePath, extraHeaders = {}) {
     ".webmanifest": "application/manifest+json; charset=utf-8",
     ".ico":  "image/x-icon",
     ".png":  "image/png",
+    ".jpg":  "image/jpeg",
+    ".jpeg": "image/jpeg",
     ".svg":  "image/svg+xml",
     ".webp": "image/webp",
     ".gif":  "image/gif",
@@ -2018,13 +2021,20 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (pathname.startsWith("/project-file/")) {
-      // Read-only access to project asset files (e.g. sprite thumbnails), confined to PROJECT_DIR.
-      const rel = decodeURIComponent(pathname.slice("/project-file/".length));
-      const filePath = path.join(PROJECT_DIR, path.normalize(rel).replace(/^(\.\.[/\\])+/, ""));
-      const relCheck = path.relative(PROJECT_DIR, filePath);
-      if (!relCheck.startsWith("..") && !path.isAbsolute(relCheck) && fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-        return serveStatic(res, filePath);
-      }
+      // Read-only access to signature-checked raster/audio assets, confined to PROJECT_DIR.
+      try {
+        const rel = decodeURIComponent(pathname.slice("/project-file/".length));
+        const media = readProjectMediaFile(PROJECT_DIR, rel);
+        res.writeHead(200, {
+          "Content-Type": media.contentType,
+          "Content-Length": media.size,
+          "Cache-Control": "no-store",
+          "Content-Security-Policy": "default-src 'none'; sandbox",
+          "X-Content-Type-Options": "nosniff"
+        });
+        res.end(media.bytes);
+        return;
+      } catch { /* the shared resolver rejects traversal, sensitive paths, and symlink escapes */ }
       res.writeHead(404, { "Content-Type": "text/plain" });
       res.end("Not found");
       return;

@@ -41,6 +41,7 @@ const S = {
   balanceReportRevision: null,
   projectTree:          null,
   selectedProjectPath:  null,
+  selectedProjectPreview: null,
   scriptSource:         "",
   scriptFileRevision:   null,
   scriptOriginalId:     null,
@@ -515,6 +516,7 @@ async function load() {
     S.scriptGraphDirty = false;
     S.projectTree = null;
     S.selectedProjectPath = null;
+    S.selectedProjectPreview = null;
     S.scriptSource = "";
     S.scriptFileRevision = null;
     S.scriptOriginalId = null;
@@ -8910,7 +8912,7 @@ function renderProjectTree() {
   tree.querySelectorAll("[data-tree-path]").forEach((row) => row.addEventListener("click", async () => {
     const path = row.dataset.treePath;
     const kind = row.dataset.treeKind;
-    SCRIPT_UI.selectedNode = { path, kind, manageable: row.dataset.manageable === "true", editable: row.dataset.editable === "true" };
+    SCRIPT_UI.selectedNode = { path, kind, preview: row.dataset.preview || null, manageable: row.dataset.manageable === "true", editable: row.dataset.editable === "true" };
     if (kind === "directory") {
       if (SCRIPT_UI.collapsed.has(path)) SCRIPT_UI.collapsed.delete(path); else SCRIPT_UI.collapsed.add(path);
       renderProjectTree();
@@ -8940,14 +8942,47 @@ function renderProjectTreeNodes(nodes, depth) {
       : node.name.endsWith(".tower.json")
         ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`
         : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16h16V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
-    return `<div class="tree-node"><button class="tree-row${selected ? " active" : ""}${collapsed ? " collapsed" : ""}" type="button" role="treeitem" style="--tree-depth:${depth}" data-tree-path="${esc(node.path)}" data-tree-kind="${esc(node.kind)}" data-manageable="${String(Boolean(node.manageable))}" data-editable="${String(Boolean(node.editable))}">${chevron}${icon}<span class="tree-label">${esc(node.name)}</span></button>${node.kind === "directory" ? `<div class="tree-children${collapsed ? " hidden" : ""}" role="group">${renderProjectTreeNodes(node.children ?? [], depth + 1)}</div>` : ""}</div>`;
+    return `<div class="tree-node"><button class="tree-row${selected ? " active" : ""}${collapsed ? " collapsed" : ""}" type="button" role="treeitem" style="--tree-depth:${depth}" data-tree-path="${esc(node.path)}" data-tree-kind="${esc(node.kind)}" data-preview="${esc(node.preview ?? "")}" data-manageable="${String(Boolean(node.manageable))}" data-editable="${String(Boolean(node.editable))}">${chevron}${icon}<span class="tree-label">${esc(node.name)}</span></button>${node.kind === "directory" ? `<div class="tree-children${collapsed ? " hidden" : ""}" role="group">${renderProjectTreeNodes(node.children ?? [], depth + 1)}</div>` : ""}</div>`;
   }).join("");
+}
+
+function isProjectImagePath(path) {
+  return /^assets\/.+\.(?:png|jpe?g|webp|gif)$/i.test(String(path ?? ""));
+}
+
+function projectFileUrl(path) {
+  return "/project-file/" + String(path).split("/").map(encodeURIComponent).join("/");
 }
 
 async function openProjectTreeFile(path) {
   try {
+    if (isProjectImagePath(path)) {
+      S.selectedProjectPath = path;
+      S.selectedProjectPreview = "image";
+      S.scriptSource = "";
+      S.scriptFileRevision = null;
+      S.scriptOriginalId = null;
+      TowerScriptGraphUI.view = "json";
+      TowerScriptGraphUI.graph = null;
+      TowerScriptGraphUI.revision = null;
+      TowerScriptGraphUI.selectedNodeId = null;
+      markTowerScriptGraphDirty(false);
+      markScriptDirty(false);
+      const image = $("script-preview-image");
+      const meta = $("script-preview-meta");
+      if (image) {
+        image.alt = `Preview of ${path}`;
+        image.onload = () => { if (meta) meta.textContent = `${path} — ${image.naturalWidth} × ${image.naturalHeight}px`; };
+        image.onerror = () => { if (meta) meta.textContent = `${path} — preview could not be decoded`; };
+        image.src = projectFileUrl(path);
+      }
+      if (meta) meta.textContent = `${path} — loading preview…`;
+      syncScriptEditorUi();
+      return;
+    }
     const file = await apiGet(`/api/project/file?path=${encodeURIComponent(path)}`);
     S.selectedProjectPath = file.path;
+    S.selectedProjectPreview = null;
     S.scriptSource = file.source;
     S.scriptFileRevision = file.revision;
     S.scriptOriginalId = file.editable ? safeScriptDefinition(file.source)?.id ?? null : null;
@@ -8959,7 +8994,7 @@ async function openProjectTreeFile(path) {
     const editor = $("script-editor");
     if (editor) {
       editor.value = file.source;
-      editor.disabled = !file.editable;
+      editor.disabled = false;
       editor.readOnly = !file.editable;
     }
     syncScriptEditorUi();
@@ -9780,11 +9815,13 @@ function validateScriptEditorSource() {
 function syncScriptEditorUi() {
   const editor = $("script-editor");
   const isScript = Boolean(S.selectedProjectPath?.endsWith(".tower.json"));
-  const graphView = TowerScriptGraphUI.view === "graph";
+  const imageView = S.selectedProjectPreview === "image";
+  const graphView = !imageView && isScript && TowerScriptGraphUI.view === "graph";
   if ($("script-editor-path")) $("script-editor-path").textContent = S.selectedProjectPath ?? "Select a file";
   if (editor && document.activeElement !== editor && editor.value !== S.scriptSource) editor.value = S.scriptSource;
   if (editor && !S.selectedProjectPath) editor.disabled = true;
-  if (editor) editor.hidden = graphView;
+  if (editor) editor.hidden = graphView || imageView;
+  if ($("script-image-preview")) $("script-image-preview").hidden = !imageView;
   if ($("script-graph-pane")) $("script-graph-pane").hidden = !graphView;
   for (const [id, active] of [["script-view-json", !graphView], ["script-view-graph", graphView]]) {
     const button = $(id);
@@ -9866,14 +9903,15 @@ function newTowerScriptSource(id) {
   }, null, 2) + "\n";
 }
 
-$("script-editor")?.addEventListener("input", () => {
-  S.scriptSource = $("script-editor").value;
+$("script-editor")?.addEventListener("input", (event) => {
+  if (event.currentTarget.readOnly || event.currentTarget.disabled) return;
+  S.scriptSource = event.currentTarget.value;
   markScriptDirty(true);
   validateScriptEditorSource();
   if ($("btn-script-save")) $("btn-script-save").disabled = !validateScriptEditorSource();
 });
 $("script-editor")?.addEventListener("keydown", (event) => {
-  if (event.key !== "Tab") return;
+  if (event.key !== "Tab" || event.currentTarget.readOnly || event.currentTarget.disabled) return;
   event.preventDefault();
   const editor = event.currentTarget;
   const start = editor.selectionStart;
@@ -9891,6 +9929,7 @@ $("btn-script-new")?.addEventListener("click", async () => {
   const path = requested.replaceAll("\\", "/");
   const id = path.split("/").pop()?.replace(/\.tower\.json$/, "").replace(/[^A-Za-z0-9_.-]+/g, "_") || "new_rule";
   S.selectedProjectPath = path;
+  S.selectedProjectPreview = null;
   S.scriptFileRevision = "missing";
   S.scriptOriginalId = null;
   S.scriptSource = newTowerScriptSource(id);
@@ -9941,6 +9980,7 @@ $("btn-script-delete")?.addEventListener("click", async () => {
     S.contentHash = result.newHash;
     if (S.selectedProjectPath === selected.path || S.selectedProjectPath?.startsWith(`${selected.path}/`)) {
       S.selectedProjectPath = null;
+      S.selectedProjectPreview = null;
       S.scriptSource = "";
       S.scriptFileRevision = null;
       $("script-editor").value = "";

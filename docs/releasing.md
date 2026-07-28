@@ -57,7 +57,7 @@ Build and verify the Apple Silicon DMG:
 ```bash
 npm run desktop:build:mac
 npm --workspace @towerforge/desktop run verify:macos-bundle
-shasum -a 256 packages/desktop/src-tauri/target/release/bundle/dmg/TowerForge_<version>_aarch64.dmg
+shasum -a 256 packages/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/TowerForge_<version>_aarch64.dmg
 ```
 
 Write `SHA256SUMS` using the installer basename, not an absolute path:

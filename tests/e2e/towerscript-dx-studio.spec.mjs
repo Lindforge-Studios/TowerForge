@@ -114,6 +114,50 @@ test("pauses on a historical debugger frame and resumes only through Resume", as
   await expect(page.locator("#script-debug-state")).toContainText("Live");
 });
 
+test("scrolls the project workbench, keeps read-only text legible, and previews raster assets", async ({ page }) => {
+  await page.setViewportSize({ width: 960, height: 640 });
+  await initializeStudio(page);
+  await page.getByRole("tab", { name: /Scripts/ }).click();
+  const tree = page.locator("#project-tree");
+  await expect(tree).toContainText("frontier-before-battle.png");
+  expect(await tree.evaluate((element) => element.scrollHeight)).toBeGreaterThan(await tree.evaluate((element) => element.clientHeight));
+  await tree.hover();
+  await page.mouse.wheel(0, 420);
+  await expect.poll(() => tree.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+
+  await page.locator('[data-tree-path="maps/src/tutorial_map.tmj"]').click();
+  const editor = page.locator("#script-editor");
+  await expect(editor).toBeVisible();
+  await expect(editor).toBeEnabled();
+  await expect(editor).toHaveJSProperty("readOnly", true);
+  const readOnlySource = await editor.inputValue();
+  await editor.focus();
+  await page.keyboard.press("Tab");
+  await expect(editor).toHaveValue(readOnlySource);
+  await expect(page.locator("#script-editor-state")).not.toHaveText("Unsaved");
+  expect(await editor.evaluate((element) => element.scrollHeight)).toBeGreaterThan(await editor.evaluate((element) => element.clientHeight));
+  const colors = await editor.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { foreground: style.color, background: style.backgroundColor };
+  });
+  expect(contrastRatio(colors.foreground, colors.background)).toBeGreaterThanOrEqual(4.5);
+  await editor.hover();
+  await page.mouse.wheel(0, 520);
+  await expect.poll(() => editor.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+
+  await page.locator('[data-tree-path="assets/backgrounds/frontier-before-battle.png"]').click();
+  const preview = page.locator("#script-image-preview");
+  const image = page.locator("#script-preview-image");
+  await expect(preview).toBeVisible();
+  await expect.poll(() => image.evaluate((element) => element.naturalWidth)).toBeGreaterThan(0);
+  await expect(page.locator(".toast", { hasText: "Binary files cannot be opened" })).toHaveCount(0);
+
+  await page.locator('[data-tree-path="maps/src/tutorial_map.tmj"]').click();
+  await expect(preview).toBeHidden();
+  await expect(editor).toBeVisible();
+  await expect(editor).toHaveJSProperty("readOnly", true);
+});
+
 async function initializeStudio(page) {
   await page.addInitScript(() => {
     localStorage.setItem("towerforge:welcomed", "1");
@@ -121,6 +165,17 @@ async function initializeStudio(page) {
   });
   await page.goto(studioUrl);
   await expect(page).toHaveTitle(/TowerForge Editor/);
+}
+
+function contrastRatio(foreground, background) {
+  const luminance = (color) => {
+    const channels = color.match(/[\d.]+/g).slice(0, 3).map((value) => Number(value) / 255)
+      .map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+  };
+  const light = Math.max(luminance(foreground), luminance(background));
+  const dark = Math.min(luminance(foreground), luminance(background));
+  return (light + 0.05) / (dark + 0.05);
 }
 
 async function openStarterGraph(page) {

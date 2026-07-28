@@ -7,5 +7,14 @@
   "remote": {
     "urls": ["http://127.0.0.1:*/*"]
   },
-  "permissions": ["core:event:allow-listen"]
+  "permissions": [
+    "core:event:allow-listen",
+    "allow-desktop-sync-ui-state",
+    "allow-desktop-choose-project-parent",
+    "allow-desktop-create-project",
+    "allow-desktop-open-project",
+    "allow-desktop-open-recent",
+    "allow-desktop-open-external",
+    "allow-desktop-finish-lifecycle"
+  ]
 }

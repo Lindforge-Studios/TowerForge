@@ -296,6 +296,53 @@ describe("studio server origin/host guard", () => {
     expect(res.headers.get("access-control-allow-origin")).not.toBe("*");
   });
 
+  it("serves project assets with nosniff while rejecting non-assets, sensitive files, and symlink escapes", async () => {
+    const assetPath = "assets/backgrounds/frontier-before-battle.png";
+    const image = await fetch(`${BASE}/project-file/${assetPath}`);
+    expect(image.status).toBe(200);
+    expect(image.headers.get("content-type")).toBe("image/png");
+    expect(image.headers.get("x-content-type-options")).toBe("nosniff");
+
+    fs.writeFileSync(path.join(projectDir, "assets", ".env"), "TOKEN=secret\n");
+    fs.writeFileSync(path.join(projectDir, "assets", ".env.staging"), "TOKEN=secret\n");
+    fs.mkdirSync(path.join(projectDir, "assets", ".ssh"));
+    fs.writeFileSync(path.join(projectDir, "assets", ".ssh", "id_rsa.mp3"), "ID3secret");
+    fs.writeFileSync(path.join(projectDir, "assets", "evil.html"), "<script>alert(1)</script>");
+    fs.writeFileSync(path.join(projectDir, "assets", "evil.js"), "alert(1)");
+    fs.writeFileSync(path.join(projectDir, "assets", "unsafe.svg"), "<svg><script>alert(1)</script></svg>");
+    fs.writeFileSync(path.join(projectDir, "assets", "disguised.png"), "<script>alert(1)</script>");
+    const outside = path.join(path.dirname(projectDir), `${path.basename(projectDir)}-outside.png`);
+    const link = path.join(projectDir, "assets", "linked.png");
+    fs.writeFileSync(outside, "outside");
+    fs.symlinkSync(outside, link);
+    try {
+      expect((await fetch(`${BASE}/project-file/content/balance.json`)).status).toBe(404);
+      expect((await fetch(`${BASE}/project-file/assets/.env`)).status).toBe(404);
+      expect((await fetch(`${BASE}/project-file/assets/.env.staging`)).status).toBe(404);
+      expect((await fetch(`${BASE}/project-file/assets/.ssh/id_rsa.mp3`)).status).toBe(404);
+      expect((await fetch(`${BASE}/project-file/assets/evil.html`)).status).toBe(404);
+      expect((await fetch(`${BASE}/project-file/assets/evil.js`)).status).toBe(404);
+      const svg = await fetch(`${BASE}/project-file/assets/unsafe.svg`);
+      expect(svg.status).toBe(200);
+      expect(svg.headers.get("content-type")).toBe("image/svg+xml");
+      expect(svg.headers.get("content-security-policy")).toContain("sandbox");
+      expect(svg.headers.get("content-security-policy")).toContain("default-src 'none'");
+      expect((await fetch(`${BASE}/project-file/assets/disguised.png`)).status).toBe(404);
+      expect((await fetch(`${BASE}/project-file/assets/linked.png`)).status).toBe(404);
+      expect((await fetch(`${BASE}/project-file/%2e%2e/project.json`)).status).toBe(404);
+    } finally {
+      fs.rmSync(link, { force: true });
+      fs.rmSync(outside, { force: true });
+      fs.rmSync(path.join(projectDir, "assets", ".env"), { force: true });
+      fs.rmSync(path.join(projectDir, "assets", ".env.staging"), { force: true });
+      fs.rmSync(path.join(projectDir, "assets", ".ssh"), { recursive: true, force: true });
+      fs.rmSync(path.join(projectDir, "assets", "evil.html"), { force: true });
+      fs.rmSync(path.join(projectDir, "assets", "evil.js"), { force: true });
+      fs.rmSync(path.join(projectDir, "assets", "unsafe.svg"), { force: true });
+      fs.rmSync(path.join(projectDir, "assets", "disguised.png"), { force: true });
+    }
+  });
+
   it("previews unsaved map sources without replacing compiled maps on disk", async () => {
     const project = await (await fetch(`${BASE}/api/project`)).json();
     const sources = structuredClone(project.mapSources);

@@ -76,7 +76,7 @@ jobs:
           path: |
             packages/desktop/src-tauri/target/release/bundle/nsis/*.exe
             packages/desktop/src-tauri/target/release/bundle/msi/*.msi
-            packages/desktop/src-tauri/target/release/bundle/dmg/*.dmg
+            packages/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
             packages/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
             packages/desktop/src-tauri/target/release/bundle/deb/*.deb
             packages/desktop/src-tauri/target/release/bundle/rpm/*.rpm
