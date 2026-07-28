@@ -137,12 +137,18 @@ function parseArgs(argv) {
   return values;
 }
 
+export function defaultMacosBundleRoot({ cwd = process.cwd(), exists = fs.existsSync } = {}) {
+  const arm64Root = path.resolve(cwd, "src-tauri/target/aarch64-apple-darwin/release/bundle");
+  if (exists(arm64Root)) return arm64Root;
+  return path.resolve(cwd, "src-tauri/target/release/bundle");
+}
+
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   try {
     if (process.platform !== "darwin") throw new Error("macOS bundle verification must run on macOS.");
     const args = parseArgs(process.argv.slice(2));
-    const bundleRoot = path.resolve(args["bundle-root"] || "src-tauri/target/release/bundle");
+    const bundleRoot = path.resolve(args["bundle-root"] || defaultMacosBundleRoot());
     const discoveredApp = args.app || findOptionalOne(path.join(bundleRoot, "macos"), (entry) => entry.isDirectory() && entry.name.endsWith(".app"), "app bundle");
     const appPath = discoveredApp ? path.resolve(discoveredApp) : undefined;
     const dmgPath = path.resolve(args.dmg || findExactlyOne(path.join(bundleRoot, "dmg"), (entry) => entry.isFile() && entry.name.endsWith(".dmg"), "DMG"));

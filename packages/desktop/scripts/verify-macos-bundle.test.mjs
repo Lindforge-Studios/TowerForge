@@ -2,11 +2,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { verifyMacosBundle } from "./verify-macos-bundle.mjs";
+import { defaultMacosBundleRoot, verifyMacosBundle } from "./verify-macos-bundle.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
 describe("macOS release signing", () => {
+  it("prefers the explicit ARM64 target directory used by desktop:build:mac", () => {
+    const cwd = "/repo/packages/desktop";
+    const armRoot = path.join(cwd, "src-tauri/target/aarch64-apple-darwin/release/bundle");
+    expect(defaultMacosBundleRoot({ cwd, exists: (candidate) => candidate === armRoot })).toBe(armRoot);
+  });
   it("configures Tauri to sign the complete app bundle ad hoc", () => {
     const config = JSON.parse(fs.readFileSync(path.join(repoRoot, "packages/desktop/src-tauri/tauri.conf.json"), "utf8"));
     expect(config.bundle.macOS.signingIdentity).toBe("-");

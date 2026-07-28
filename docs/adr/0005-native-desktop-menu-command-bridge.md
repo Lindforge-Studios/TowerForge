@@ -12,7 +12,7 @@ TowerForge Studio already exposes toolbar actions, sidebar navigation, keyboard 
 
 Tauri owns the native application menu, window controls, project pickers, recent-project persistence, sidecar switching, and close/quit lifecycle. Studio owns a single `runStudioCommand` registry used by native menu events, shortcuts, toolbar controls, sidebar navigation, and the command palette.
 
-Native-to-web commands use the `towerforge:desktop-command` event. Web-to-native calls are limited to UI-state synchronization, native project selection/creation, project switching, and confirmed lifecycle actions. The capability applies only to the main loopback WebView and grants event listening; it does not grant browser code direct filesystem or shell APIs.
+Native-to-web commands use the `towerforge:desktop-command` event. Web-to-native calls are limited to UI-state synchronization, native project selection/creation, project switching, allowlisted external links, and confirmed lifecycle actions. `build.rs` registers that exact seven-command application manifest and `capabilities/main.json` grants the generated per-command permissions only to the main `http://127.0.0.1:*` WebView. The capability also grants event listening, but never exposes general filesystem or shell APIs.
 
 About-dialog links use one additional `desktop_open_external` command. Rust accepts HTTPS URLs only for the explicitly allowed GitHub, Lindforge, and Telegram hosts, then opens them through the system browser. The WebView still has no general shell capability.
 

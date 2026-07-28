@@ -5,9 +5,23 @@ import { backupProjectEntry } from "./project-scripts.mjs";
 
 const IGNORED_DIRS = new Set([".git", ".towerforge", "node_modules", "dist", "target", "build"]);
 const TEXT_EXTENSIONS = new Set([".json", ".tmj", ".tower", ".md", ".txt", ".css", ".js", ".mjs", ".ts", ".html", ".svg", ".gitignore"]);
+const SAFE_RASTER_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
+const PROJECT_MEDIA_FORMATS = new Map([
+  [".png", { contentType: "image/png", matches: (bytes) => bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) }],
+  [".jpg", { contentType: "image/jpeg", matches: isJpeg }],
+  [".jpeg", { contentType: "image/jpeg", matches: isJpeg }],
+  [".webp", { contentType: "image/webp", matches: (bytes) => bytes.length >= 12 && bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP" }],
+  [".gif", { contentType: "image/gif", matches: (bytes) => bytes.length >= 6 && ["GIF87a", "GIF89a"].includes(bytes.toString("ascii", 0, 6)) }],
+  [".svg", { contentType: "image/svg+xml", matches: isSvg }],
+  [".wav", { contentType: "audio/wav", matches: (bytes) => bytes.length >= 12 && bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WAVE" }],
+  [".mp3", { contentType: "audio/mpeg", matches: isMp3 }],
+  [".ogg", { contentType: "audio/ogg", matches: (bytes) => bytes.length >= 4 && bytes.toString("ascii", 0, 4) === "OggS" }],
+  [".m4a", { contentType: "audio/mp4", matches: (bytes) => bytes.length >= 12 && bytes.toString("ascii", 4, 8) === "ftyp" }]
+]);
 const MAX_TREE_ENTRIES = 2500;
 const MAX_TREE_DEPTH = 32;
 const MAX_READ_BYTES = 1024 * 1024;
+const MAX_PROJECT_MEDIA_BYTES = 128 * 1024 * 1024;
 const SENSITIVE_NAMES = new Set([".env", ".env.local", ".env.development", ".env.production", "credentials.json"]);
 const SENSITIVE_EXTENSIONS = new Set([".pem", ".key", ".p12", ".pfx"]);
 
@@ -36,7 +50,16 @@ export function listProjectTree(projectDir) {
         nodes.push({ name: entry.name, path: relativePath, kind: "directory", manageable: relativePath === "scripts" || relativePath.startsWith("scripts/"), children: walk(absolute, relativePath, depth + 1) });
       } else if (entry.isFile()) {
         const stat = fs.statSync(absolute);
-        nodes.push({ name: entry.name, path: relativePath, kind: "file", size: stat.size, text: isTextFile(entry.name), editable: relativePath.startsWith("scripts/") && entry.name.endsWith(".tower.json"), manageable: relativePath.startsWith("scripts/") });
+        nodes.push({
+          name: entry.name,
+          path: relativePath,
+          kind: "file",
+          size: stat.size,
+          text: isTextFile(entry.name),
+          ...(isSafeRasterFile(entry.name) ? { preview: "image" } : {}),
+          editable: relativePath.startsWith("scripts/") && entry.name.endsWith(".tower.json"),
+          manageable: relativePath.startsWith("scripts/")
+        });
       }
     }
     return nodes;
@@ -91,6 +114,27 @@ export function resolveProjectEntry(projectDir, relativePath, { mustExist = fals
   return absolute;
 }
 
+export function resolveProjectAssetFile(projectDir, relativePath, { mustExist = false } = {}) {
+  const normalized = normalizeRelative(relativePath);
+  if (!normalized.startsWith("assets/")) throw new Error("Project asset reads are confined to assets/.");
+  if (normalized.split("/").some((segment) => segment.startsWith(".") || isSensitiveName(segment) || IGNORED_DIRS.has(segment))) {
+    throw new Error("This project asset path is not exposed by the editor.");
+  }
+  return resolveProjectEntry(projectDir, normalized, { mustExist });
+}
+
+export function readProjectMediaFile(projectDir, relativePath) {
+  const filePath = resolveProjectAssetFile(projectDir, relativePath, { mustExist: true });
+  const format = PROJECT_MEDIA_FORMATS.get(path.extname(filePath).toLowerCase());
+  if (!format) throw new Error("Project media format is not allowed for direct serving.");
+  const stat = fs.statSync(filePath);
+  if (!stat.isFile()) throw new Error("Project media entry is not a file.");
+  if (stat.size < 1 || stat.size > MAX_PROJECT_MEDIA_BYTES) throw new Error(`Project media must be between 1 byte and ${MAX_PROJECT_MEDIA_BYTES} bytes.`);
+  const bytes = fs.readFileSync(filePath);
+  if (!format.matches(bytes)) throw new Error("Project media signature does not match its file extension.");
+  return { path: normalizeRelative(relativePath), bytes, size: stat.size, contentType: format.contentType };
+}
+
 function resolveManageableScriptEntry(projectDir, relativePath, options) {
   const normalized = normalizeRelative(relativePath);
   if (normalized === "scripts" || !normalized.startsWith("scripts/")) throw new Error("Project tree writes are confined to entries below scripts/.");
@@ -114,6 +158,24 @@ function assertNoSymlinks(root, absolute, includeLeaf) {
 
 function isTextFile(name) {
   return name === ".gitignore" || TEXT_EXTENSIONS.has(path.extname(name).toLowerCase()) || name.endsWith(".tower.json");
+}
+
+function isSafeRasterFile(name) {
+  return SAFE_RASTER_EXTENSIONS.has(path.extname(name).toLowerCase());
+}
+
+function isJpeg(bytes) {
+  return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+}
+
+function isMp3(bytes) {
+  return (bytes.length >= 3 && bytes.toString("ascii", 0, 3) === "ID3")
+    || (bytes.length >= 2 && bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0);
+}
+
+function isSvg(bytes) {
+  const prefix = bytes.subarray(0, Math.min(bytes.length, 4096)).toString("utf8").replace(/^\uFEFF/, "");
+  return /^(?:\s|<\?xml[^>]*>|<!--[\s\S]*?-->|<!DOCTYPE[^>]*>)*<svg(?:\s|>)/i.test(prefix);
 }
 
 function isSensitiveName(name) {

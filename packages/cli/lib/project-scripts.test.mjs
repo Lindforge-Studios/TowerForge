@@ -9,7 +9,7 @@ import {
   scriptFileRevision,
   writeTowerScriptAtomic
 } from "./project-scripts.mjs";
-import { createScriptDirectory, deleteScriptEntry, listProjectTree, readProjectTextFile, renameScriptEntry } from "./project-tree.mjs";
+import { createScriptDirectory, deleteScriptEntry, listProjectTree, readProjectMediaFile, readProjectTextFile, renameScriptEntry, resolveProjectAssetFile } from "./project-tree.mjs";
 
 let projectDir;
 
@@ -88,6 +88,56 @@ describe("TowerScript project files", () => {
     expect(() => deleteScriptEntry(projectDir, "content/balance.json")).toThrow(/confined/);
     expect(renameScriptEntry(projectDir, "scripts/rules.tower.json", "scripts/game-rules.tower.json")).toMatchObject({ ok: true });
     expect(deleteScriptEntry(projectDir, "scripts/game-rules.tower.json")).toMatchObject({ ok: true });
+  });
+
+  it("marks only safe raster formats as image previews", () => {
+    fs.mkdirSync(path.join(projectDir, "assets"));
+    fs.writeFileSync(path.join(projectDir, "assets", "tower.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    fs.writeFileSync(path.join(projectDir, "assets", "unsafe.svg"), "<svg><script>alert(1)</script></svg>");
+    fs.writeFileSync(path.join(projectDir, "assets", "sound.mp3"), Buffer.from([0x49, 0x44, 0x33]));
+
+    const assets = listProjectTree(projectDir).nodes.find((node) => node.name === "assets");
+    expect(assets?.children.find((node) => node.name === "tower.png")?.preview).toBe("image");
+    expect(assets?.children.find((node) => node.name === "unsafe.svg")?.preview).toBeUndefined();
+    expect(assets?.children.find((node) => node.name === "sound.mp3")?.preview).toBeUndefined();
+  });
+
+  it("confines served project assets and rejects sensitive or symlinked paths", () => {
+    fs.mkdirSync(path.join(projectDir, "assets"));
+    fs.writeFileSync(path.join(projectDir, "assets", "tower.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    fs.writeFileSync(path.join(projectDir, "assets", ".env"), "TOKEN=secret\n");
+    fs.mkdirSync(path.join(projectDir, "assets", ".ssh"));
+    fs.writeFileSync(path.join(projectDir, "assets", ".ssh", "id_rsa.mp3"), "ID3secret");
+    const outside = path.join(path.dirname(projectDir), `${path.basename(projectDir)}-outside.png`);
+    fs.writeFileSync(outside, "outside");
+    fs.symlinkSync(outside, path.join(projectDir, "assets", "linked.png"));
+    try {
+      expect(resolveProjectAssetFile(projectDir, "assets/tower.png", { mustExist: true })).toBe(path.join(projectDir, "assets", "tower.png"));
+      expect(() => resolveProjectAssetFile(projectDir, "content/balance.json", { mustExist: true })).toThrow(/confined/);
+      expect(() => resolveProjectAssetFile(projectDir, "assets/.env", { mustExist: true })).toThrow(/not exposed/);
+      expect(() => resolveProjectAssetFile(projectDir, "assets/.ssh/id_rsa.mp3", { mustExist: true })).toThrow(/not exposed/);
+      expect(() => resolveProjectAssetFile(projectDir, "../outside.png", { mustExist: true })).toThrow(/Invalid project path/);
+      expect(() => resolveProjectAssetFile(projectDir, "assets/linked.png", { mustExist: true })).toThrow(/symbolic links/);
+    } finally {
+      fs.rmSync(outside, { force: true });
+    }
+  });
+
+  it("serves only passive media whose signature matches its extension", () => {
+    fs.mkdirSync(path.join(projectDir, "assets"));
+    fs.writeFileSync(path.join(projectDir, "assets", "tower.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    fs.writeFileSync(path.join(projectDir, "assets", "music.mp3"), Buffer.from("ID3demo"));
+    fs.writeFileSync(path.join(projectDir, "assets", "evil.html"), "<script>alert(1)</script>");
+    fs.writeFileSync(path.join(projectDir, "assets", "disguised.png"), "<script>alert(1)</script>");
+    fs.writeFileSync(path.join(projectDir, "assets", "unsafe.svg"), "<svg><script>alert(1)</script></svg>");
+    fs.writeFileSync(path.join(projectDir, "assets", "music.m4a"), Buffer.concat([Buffer.alloc(4), Buffer.from("ftypM4A ")]));
+
+    expect(readProjectMediaFile(projectDir, "assets/tower.png")).toMatchObject({ contentType: "image/png", size: 8 });
+    expect(readProjectMediaFile(projectDir, "assets/music.mp3")).toMatchObject({ contentType: "audio/mpeg", size: 7 });
+    expect(() => readProjectMediaFile(projectDir, "assets/evil.html")).toThrow(/not allowed/);
+    expect(() => readProjectMediaFile(projectDir, "assets/disguised.png")).toThrow(/signature/);
+    expect(readProjectMediaFile(projectDir, "assets/unsafe.svg")).toMatchObject({ contentType: "image/svg+xml" });
+    expect(readProjectMediaFile(projectDir, "assets/music.m4a")).toMatchObject({ contentType: "audio/mp4", size: 12 });
   });
 
   it("stops scanning an excessively deep script tree", () => {
