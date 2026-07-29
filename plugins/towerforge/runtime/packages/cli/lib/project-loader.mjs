@@ -752,7 +752,7 @@ function diagnoseMissionSmoke(report) {
 
 function summarizeEvent(event, elapsed) {
   const entry = { at: elapsed, type: event.type };
-  for (const key of ["enemyId", "enemyTypeId", "towerId", "towerTypeId", "waveIndex", "damage", "coins", "resources"]) {
+  for (const key of ["enemyId", "enemyTypeId", "towerId", "towerTypeId", "questId", "waveIndex", "damage", "coins", "resources"]) {
     if (event[key] !== undefined) entry[key] = event[key];
   }
   return entry;

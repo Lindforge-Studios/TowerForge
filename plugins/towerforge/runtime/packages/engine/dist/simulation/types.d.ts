@@ -807,6 +807,14 @@ export type GameEvent = {
     objectiveId: string;
     kind: MissionFailureObjective["kind"];
 } | {
+    type: "questCompleted";
+    questId: string;
+    kind: QuestProgressSnapshotV1["kind"];
+} | {
+    type: "questFailed";
+    questId: string;
+    kind: QuestProgressSnapshotV1["kind"];
+} | {
     type: "starEarned";
     starId: string;
 } | {
@@ -1257,6 +1265,20 @@ export interface DirectorSnapshotV1 {
     readonly profileId: string;
     readonly decisions: readonly DirectorDecisionSnapshotV1[];
 }
+export type QuestStatusV1 = "active" | "completed" | "failed";
+export interface QuestProgressSnapshotV1 {
+    readonly questId: string;
+    readonly label: string;
+    readonly kind: "kill_with_source" | "preserve_shield";
+    readonly current: number;
+    readonly target: number;
+    readonly status: QuestStatusV1;
+}
+export interface QuestSnapshotV1 {
+    readonly schemaVersion: 1;
+    readonly profileId: string;
+    readonly entries: readonly QuestProgressSnapshotV1[];
+}
 export interface GameSnapshot {
     /** Canonical authored map identity for presentation and renderer adapters. */
     mapId: string;
@@ -1305,6 +1327,7 @@ export interface GameSnapshot {
     heroes?: HeroesSnapshot;
     logistics?: LogisticsSnapshot;
     director?: DirectorSnapshotV1;
+    quests?: QuestSnapshotV1;
     scriptState: import("../scripting/types.js").TowerScriptStateSnapshot;
     lastEvents: GameEvent[];
 }

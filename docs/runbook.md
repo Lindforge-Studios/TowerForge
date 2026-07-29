@@ -85,6 +85,37 @@ WebSocket-like port into the adapter; TowerForge does not create a socket, lobby
 matchmaking service. Confirm an inactive build has no `dist/engine/multiplayer`, then enable/select
 the profile and rebuild to confirm both normal and single-file players include the protocol hook.
 
+R10 exposes the pure engine contracts through the public `persona-qa` CLI command, the read-only
+Studio Persona QA Lab, and compute-only MCP `run_persona_qa`. For focused verification run:
+
+```bash
+npm run test -- --run \
+  packages/engine/src/simulation/r10-persona-qa.contract.test.ts \
+  packages/engine/src/content/r10-quests.contract.test.ts \
+  packages/engine/src/simulation/r10-quest-selector.contract.test.ts \
+  packages/engine/src/simulation/r10-quests-runtime.contract.test.ts
+npm run test -- --run packages/cli/lib/persona-qa-worker.contract.test.mjs
+npm run persona-qa -- --project examples/starter.tdproj --mission tutorial_01 --seed smoke --seconds 20
+```
+
+The worker library writes only completed cache envelopes under
+`<project>/.towerforge/cache/persona-qa/v1`; `cache:false` and cancelled work leave no cache entry.
+Do not copy this directory into builds or `.tdpack` files, and do not treat its findings as authored
+balance patches. A corrupt/future cache file is disposable derived state and is recomputed on the
+next run.
+
+For quest fixtures, start from `docs/examples/opt-in-procedural-quests/`, or use Mechanics Hub / the
+AI sequence `describe_schema(quests) → get_capabilities → get_recipe(basic_procedural_quests) →
+preview_mechanics_module → revision-guarded apply_mechanics_module → validate_project`. The recipe
+chooses only mission-available damaging tower/ability sources, remains inert until explicit apply,
+and fails closed when no valid source exists.
+Only the active mission may expose `snapshot.quests` and `state.quests` in a checkpoint. A
+`preserve_shield` objective tolerates partial shield loss and fails only when an eligible tower or
+hero shield is depleted from positive to zero; enemy shields do not count. Removing the selection
+or disabling the module must remove all quest snapshot/checkpoint/events and preserve the legacy
+digest. The accepted architectural source is
+[ADR 0050](adr/0050-r10-persona-qa-and-procedural-quests.md).
+
 For R4.1A use `describe_schema({domain:"roguelite"})` → `get_capabilities` →
 `get_recipe({collection:"mechanics",recipeId:"basic_elemental_synergy",parameters:{towerTypeIds:[...]}})`.
 Preview and apply the returned `profile` and `towerTags` together with the same mechanics revision,
@@ -493,6 +524,8 @@ AI Chat accepts up to eight JPEG/PNG/GIF/WebP images per turn, at most 4 MB each
 - TowerScript runtime issues: inspect Studio Playtest events or `snapshot.scriptState.diagnostics`. Budget errors usually indicate recursive signals, broad `allEnemies/allTowers` work, or an unbounded tick handler; add `when`/`every`, narrow the binding, or split the rule.
 - TowerScript Graph conflicts: reload `GET /api/project/script/graph` and repeat preview/apply with the new composite revision. Do not copy layout into the script or bypass a stale guard. A missing layout is normal and a graph read must not create one.
 - TowerScript debugger issues: confirm the debug session was explicitly enabled and inspect the structured `event -> binding -> handler -> condition -> action -> state_diff/diagnostic` trace. Rewind is limited to the retained checkpoint ring; an out-of-range request or content/engine mismatch must start a fresh session. Partial action frames are never resumable gameplay state.
+- Persona QA worker issues: call the library with `cache:false` to separate execution from cache validation, then inspect the closed request limits (32 missions, 64 seeds, three fixed personas, 1,024 runs, 2,000,000 total ticks, and tick step 0.05–0.2). A cancelled result intentionally has no partial findings. Treat malformed/future cache envelopes below `.towerforge/cache/persona-qa/v1` as disposable generated state; do not edit them into project content.
+- Quest runtime issues: confirm project schema v3, an enabled supported `quests` v1 profile, and the mission's exact profile selection. Inactive profiles intentionally produce no `snapshot.quests`, `state.quests`, or quest events. Checkpoint rejection usually indicates a mismatch between the restored active profile/initial RNG identity and the canonical selected IDs, labels, kinds, targets, progress, or status; never repair it in a renderer.
 - MCP tool discovery: run `npm run mcp -- --project <project>` and issue `tools/list`; tools include `riskClass` and `sideEffect` metadata for permission decisions.
 - AI Chat direct-provider issues: verify the selected provider has a saved browser-local key and a tool-capable model, check `/api/ai/chat`, then reproduce the same action through `validate_project`, `simulate_mission`, or `balance_report`. OpenRouter model discovery uses `/api/ai/models?provider=openrouter`; Codex and Claude use the same endpoint with `provider=codex|claude-code`. Custom model IDs remain available when a live catalog is offline.
 - Codex/Claude account issues: use Disconnect, restart Studio, and Connect again. The safe status endpoint is `/api/ai/runtime/status?provider=codex` or `provider=claude-code`; it never returns tokens. A packaged build must contain compatible packages under `runtime/node_modules/@openai` and `runtime/node_modules/@anthropic-ai`. `TOWERFORGE_CODEX_BIN` and `TOWERFORGE_CLAUDE_BIN` are internal test/diagnostic overrides only and must point to an absolute trusted executable path.

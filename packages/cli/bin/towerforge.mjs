@@ -20,7 +20,7 @@ const cliDir = path.resolve(__dirname, "..");
 const studioScript = path.resolve(cliDir, "../studio/server.mjs");
 const mcpScript = path.resolve(cliDir, "../mcp/server.mjs");
 
-const COMMANDS = ["validate", "sim", "balance", "build", "package", "maps:compile", "migrate", "studio", "create", "export", "import", "inspect-pack", "themes:list", "themes:apply", "mcp", "mcp:connect"];
+const COMMANDS = ["validate", "sim", "balance", "persona-qa", "build", "package", "maps:compile", "migrate", "studio", "create", "export", "import", "inspect-pack", "themes:list", "themes:apply", "mcp", "mcp:connect"];
 
 const [, , cmd, ...rest] = process.argv;
 
@@ -35,6 +35,7 @@ Commands:
   validate              Validate project content files.
   sim <missionId>       Run a headless mission smoke simulation.
   balance               Simulation-driven balance report (win-rate, advisor flags).
+  persona-qa            Evidence-only deterministic fixed-persona mission QA.
   build                 Build a playable static web bundle.
   package               Create a portable web archive or native wrapper (--kind web|mobile|desktop).
   maps:compile          Compile maps/src/*.tmj into maps/compiled/maps.json.
@@ -125,6 +126,10 @@ if (cmd === "sim") {
 
 if (cmd === "balance") {
   runScript(path.join(cliDir, "balance.mjs"), rest);
+}
+
+if (cmd === "persona-qa") {
+  runScript(path.join(cliDir, "persona-qa.mjs"), rest);
 }
 
 if (cmd === "build") {

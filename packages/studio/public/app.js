@@ -39,6 +39,8 @@ const S = {
   activity:              [],
   workbenchTab:          "problems",
   balanceReportRevision: null,
+  personaQaReport:       null,
+  personaQaReportRevision: null,
   projectTree:          null,
   selectedProjectPath:  null,
   selectedProjectPreview: null,
@@ -89,6 +91,7 @@ const MECHANICS_MODULES = [
   { id: "heroes", title: "Heroes", description: "Optional opt-in hero roster spawning at the core; later versions add movement, durability, an ability, skill tree, aura, and explicit dynamic-navigation blocking." },
   { id: "logistics", title: "Logistics", description: "Power grids, inventories, ammunition, and production." },
   { id: "director", title: "AI Wave Director", description: "Optional opt-in deterministic adaptation from an authored counter pool with explicit threat budgets and fairness caps." },
+  { id: "quests", title: "Challenges / Procedural Quests", description: "Opt-in deterministic battle-local objectives selected from an authored weighted pool." },
   { id: "scriptingDx", title: "TowerScript DX", description: "Visual graphs, structured traces, and step debugging." },
   { id: "multiplayer", title: "Multiplayer", description: "Deterministic matches, replay, and local transport." }
 ];
@@ -104,6 +107,7 @@ const PHYSICS_RECIPE_IDS = new Set(["basic_displacement_physics", "tagged_fall_h
 const TERRAFORMING_RECIPE_IDS = new Set(["tagged_flood", "tagged_moat", "tagged_destructible_bridge"]);
 const ROGUELITE_RECIPE_IDS = new Set(["basic_elemental_synergy", "basic_boss_artifact_loot"]);
 const DIRECTOR_RECIPE_IDS = new Set(["basic_adaptive_wave_director"]);
+const QUEST_RECIPE_IDS = new Set(["basic_procedural_quests"]);
 const MULTIPLAYER_RECIPE_IDS = new Set([
   "basic_local_coop", "basic_partitioned_local_coop", "basic_asymmetric_send_vs_build"
 ]);
@@ -130,7 +134,10 @@ const MechanicsUI = {
   error: null,
   towerTags: {},
   terraformingSnippet: null,
-  terraformingRecipeLoading: false
+  terraformingRecipeLoading: false,
+  questGeneration: null,
+  questGenerationRevision: null,
+  questGenerationLoading: false
 };
 
 // Campaign graph writes use their own four-file revision and never join the generic mechanics
@@ -386,6 +393,7 @@ function markDirty(isDirty, skipHistory) {
   syncDirtyUi();
   if (isDirty) {
     invalidateBalanceReport();
+    invalidatePersonaQaReport();
     invalidateElevationLineOfSightAnalysis();
     if (!skipHistory) scheduleHistoryCommit();
     scheduleValidation();
@@ -400,6 +408,7 @@ function markScriptDirty(isDirty) {
   syncDirtyUi();
   if (isDirty) {
     invalidateBalanceReport();
+    invalidatePersonaQaReport();
     invalidateElevationLineOfSightAnalysis();
     scheduleAutosave();
     PT.dirty = true;
@@ -412,6 +421,7 @@ function markTowerScriptGraphDirty(isDirty) {
   syncDirtyUi();
   if (isDirty) {
     invalidateBalanceReport();
+    invalidatePersonaQaReport();
     invalidateElevationLineOfSightAnalysis();
     PT.dirty = true;
   }
@@ -443,6 +453,12 @@ function invalidateBalanceReport() {
   S.balanceReport = null;
   S.balanceReportRevision = null;
   updateBalanceWarningUi();
+}
+
+function invalidatePersonaQaReport() {
+  S.personaQaReport = null;
+  S.personaQaReportRevision = null;
+  if (S.activeTab === "balance") renderPersonaQaLab();
 }
 
 function schedulePassiveBalance(delay = 1200) {
@@ -515,6 +531,8 @@ async function load() {
     S.serverSnapshot = deep(data); // baseline for change review
     S.balanceReport = null; // stale once the project reloads
     S.balanceReportRevision = null;
+    S.personaQaReport = null;
+    S.personaQaReportRevision = null;
     S.releaseDoctor = null; // readiness describes the saved revision only
     S.scriptDirty = false;
     S.scriptGraphDirty = false;
@@ -533,6 +551,8 @@ async function load() {
     CampaignUI.preview = null;
     CampaignUI.error = null;
     CampaignUI.markerSchemaVersion = null;
+    MechanicsUI.questGeneration = null;
+    MechanicsUI.questGenerationRevision = null;
     markDirty(false);
     historyInit();
     PT.dirty = true; // force playtest to rebuild from the freshly loaded project
@@ -733,6 +753,7 @@ function mechanicsSelectedProfile() {
 }
 
 function normalizeMechanicsDraft(profile) {
+  if (MechanicsUI.selectedModuleId === "quests") return normalizeQuestMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "multiplayer") {
     return normalizeMultiplayerMechanicsDraft(profile, mechanicsProjectModuleVersion());
   }
@@ -789,6 +810,12 @@ function normalizeMechanicsDraft(profile) {
       : {};
   }
   return draft;
+}
+
+function normalizeQuestMechanicsDraft(profile) {
+  // The engine owns the closed quests v1 semantics. Studio only keeps a detached editable copy;
+  // Preview performs authoritative validation and future module versions never pass this editor.
+  return deep(profile ?? { selectionCount: 1, definitions: {} });
 }
 
 function normalizeDirectorMechanicsDraft(profile) {
@@ -1105,6 +1132,7 @@ function mechanicsAuthoredMatrixEntryCount() {
 }
 
 function mechanicsEffectiveModuleSchemaVersion() {
+  if (MechanicsUI.selectedModuleId === "quests") return 1;
   if (MechanicsUI.selectedModuleId === "director") return 1;
   if (MechanicsUI.selectedModuleId === "multiplayer") {
     return Math.max(
@@ -1221,6 +1249,8 @@ function initializeMechanicsDraft() {
                 ? "basic_elemental_synergy"
                 : MechanicsUI.selectedModuleId === "director"
                   ? "basic_adaptive_wave_director"
+                : MechanicsUI.selectedModuleId === "quests"
+                  ? "basic_procedural_quests"
                 : MechanicsUI.selectedModuleId === "multiplayer"
                   ? "basic_local_coop"
                   : "basic_regenerating_shields");
@@ -1228,6 +1258,7 @@ function initializeMechanicsDraft() {
   if (MechanicsUI.selectedModuleId === "roguelite") initializeRogueliteTowerTags();
   MechanicsUI.preview = null;
   MechanicsUI.terraformingSnippet = null;
+  invalidateQuestGeneration();
   invalidateElevationLineOfSightAnalysis();
 }
 
@@ -1293,6 +1324,8 @@ function loadMechanicsProfile() {
     : mechanicsProjectModuleVersion();
   MechanicsUI.draft = MechanicsUI.selectedModuleId === "navigation"
     ? normalizeNavigationMechanicsDraft(profile)
+    : MechanicsUI.selectedModuleId === "quests"
+      ? normalizeQuestMechanicsDraft(profile)
     : MechanicsUI.selectedModuleId === "heroes"
       ? normalizeHeroesMechanicsDraft(profile)
       : MechanicsUI.selectedModuleId === "logistics"
@@ -1306,6 +1339,7 @@ function loadMechanicsProfile() {
   MechanicsUI.preview = null;
   MechanicsUI.terraformingSnippet = null;
   MechanicsUI.error = null;
+  invalidateQuestGeneration();
   invalidateElevationLineOfSightAnalysis();
   if (MechanicsUI.selectedModuleId === "elevation") loadElevationMap();
   renderMechanicsHub();
@@ -1321,6 +1355,9 @@ function nextMechanicsProfileId(suggestedId) {
 
 async function newMechanicsProfile() {
   try {
+    if (MechanicsUI.selectedModuleId === "quests" && mechanicsProjectModuleVersion() > 1) {
+      throw new Error("Future quests schemaVersion 2+ modules are preserved losslessly and read-only.");
+    }
     if (MechanicsUI.selectedModuleId === "multiplayer" && mechanicsProjectModuleVersion() > 2) {
       throw new Error("Future Multiplayer schemaVersion 3+ modules are preserved losslessly and read-only.");
     }
@@ -5234,6 +5271,116 @@ function renderMechanicsPreviewResult() {
     : "Preview changes before applying them.";
 }
 
+function invalidateQuestGeneration() {
+  MechanicsUI.questGeneration = null;
+  MechanicsUI.questGenerationRevision = null;
+  const output = $("mechanics-quests-generation-result");
+  if (output) output.textContent = "Enable and save this profile before previewing its seeded selection.";
+}
+
+async function previewQuestGeneration() {
+  if (MechanicsUI.questGenerationLoading || S.dirty) {
+    if (S.dirty) toast("Save or discard ordinary project edits before previewing quest generation.", "warn");
+    return;
+  }
+  const capability = mechanicsSelectedCapability();
+  if (!capability?.active || mechanicsProjectModuleVersion() !== 1) {
+    toast("Enable and save a supported quests v1 profile for this mission first.", "warn");
+    return;
+  }
+  const seed = $("mechanics-quests-preview-seed")?.value.trim() ?? "";
+  if (!seed) {
+    toast("A preview seed is required.", "warn");
+    return;
+  }
+  const revision = S.contentHash;
+  MechanicsUI.questGenerationLoading = true;
+  MechanicsUI.questGeneration = null;
+  MechanicsUI.questGenerationRevision = null;
+  renderQuestMechanicsEditor();
+  try {
+    const result = await apiPost("/api/quests/preview-generation", {
+      contentHash: revision,
+      missionId: mechanicsMissionId(),
+      seed
+    });
+    if (S.contentHash !== revision || result.contentHash !== revision) return;
+    MechanicsUI.questGeneration = result;
+    MechanicsUI.questGenerationRevision = revision;
+    recordActivity("Quest generation preview", "ok", `${mechanicsMissionId()} · ${seed}`);
+  } catch (error) {
+    MechanicsUI.questGeneration = { error: error.message, code: error.code };
+    MechanicsUI.questGenerationRevision = revision;
+    recordActivity("Quest generation preview", "error", error.code ?? error.message);
+  } finally {
+    MechanicsUI.questGenerationLoading = false;
+    renderQuestMechanicsEditor();
+  }
+}
+
+function renderQuestMechanicsEditor() {
+  const draft = MechanicsUI.draft;
+  if (!draft || MechanicsUI.selectedModuleId !== "quests") return;
+  const capability = mechanicsSelectedCapability();
+  const capabilityView = MechanicsUI.capabilities?.quests;
+  const supportedVersion = mechanicsProjectModuleVersion() === 1;
+  const capabilityLabel = $("mechanics-quests-capability");
+  if (capabilityLabel) capabilityLabel.textContent = capability?.active
+    ? "Active for this mission. Selection and progress are owned by the deterministic engine runtime."
+    : capabilityView?.enabled || capability?.moduleEnabled
+      ? "Authored, but not selected for this mission."
+      : "Available as an independent opt-in module.";
+  const readOnly = $("mechanics-quests-read-only");
+  readOnly?.classList.toggle("hidden", supportedVersion);
+  if (readOnly) readOnly.textContent = supportedVersion
+    ? ""
+    : "Future quests schemaVersion 2+ is preserved losslessly and is read-only in this Studio version.";
+
+  const selectionCount = $("mechanics-quests-selection-count");
+  if (selectionCount) {
+    selectionCount.value = draft.selectionCount ?? 1;
+    selectionCount.disabled = !supportedVersion;
+    selectionCount.oninput = () => {
+      draft.selectionCount = Number(selectionCount.value);
+      MechanicsUI.preview = null;
+      MechanicsUI.error = null;
+      invalidateQuestGeneration();
+      renderMechanicsPreviewResult();
+    };
+  }
+  const definitions = $("mechanics-quests-definitions");
+  if (definitions) {
+    definitions.value = JSON.stringify(draft.definitions ?? {}, null, 2);
+    definitions.disabled = !supportedVersion;
+    definitions.onchange = () => {
+      try {
+        const value = JSON.parse(definitions.value);
+        if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Use one JSON object.");
+        draft.definitions = value;
+        definitions.setCustomValidity("");
+        MechanicsUI.preview = null;
+        MechanicsUI.error = null;
+        invalidateQuestGeneration();
+        renderMechanicsPreviewResult();
+      } catch {
+        definitions.setCustomValidity("Quest definitions must be a valid JSON object.");
+        definitions.reportValidity();
+      }
+    };
+  }
+  const output = $("mechanics-quests-generation-result");
+  if (output) output.textContent = MechanicsUI.questGenerationLoading
+    ? "Computing deterministic selection…"
+    : MechanicsUI.questGenerationRevision === S.contentHash && MechanicsUI.questGeneration
+      ? JSON.stringify(MechanicsUI.questGeneration, null, 2)
+      : "Enable and save this profile before previewing its seeded selection.";
+  const previewButton = $("btn-mechanics-quests-preview-generation");
+  if (previewButton) {
+    previewButton.disabled = !supportedVersion || !capability?.active || S.dirty || MechanicsUI.questGenerationLoading;
+    previewButton.onclick = () => void previewQuestGeneration();
+  }
+}
+
 function invalidateDirectorMechanicsPreview() {
   MechanicsUI.preview = null;
   MechanicsUI.error = null;
@@ -5433,6 +5580,9 @@ function renderMultiplayerMechanicsEditor() {
 }
 
 function mechanicsRequest(enabled) {
+  if (MechanicsUI.selectedModuleId === "quests" && mechanicsProjectModuleVersion() > 1) {
+    throw new Error("Future quests schemaVersion 2+ modules are preserved losslessly and read-only.");
+  }
   if (MechanicsUI.selectedModuleId === "multiplayer" && mechanicsProjectModuleVersion() > 2) {
     throw new Error("Future Multiplayer schemaVersion 3+ modules are preserved losslessly and read-only.");
   }
@@ -5521,6 +5671,7 @@ async function applyMechanics(enabled) {
     MechanicsUI.preview = null;
     MechanicsUI.error = null;
     MechanicsUI.terraformingSnippet = null;
+    invalidateQuestGeneration();
     await load();
     await refreshNavigationOverlay();
   } catch (error) {
@@ -5556,6 +5707,8 @@ function renderMechanicsHub() {
               ? "Author an optional power grid without adding Logistics fields to ordinary tower or mission forms."
             : MechanicsUI.selectedModuleId === "director"
               ? "Author a deterministic counter pool with explicit threat budgets and fairness caps, then opt this mission into the profile."
+            : MechanicsUI.selectedModuleId === "quests"
+              ? "Author a weighted quest pool, then explicitly opt this mission into deterministic battle-local challenges."
             : MechanicsUI.selectedModuleId === "multiplayer"
               ? "Author a deterministic local co-op v1 or asymmetric Send-vs-Build v2 profile without loading multiplayer into legacy single-player projects."
             : MechanicsUI.selectedModuleId === "roguelite"
@@ -5571,6 +5724,7 @@ function renderMechanicsHub() {
     MechanicsUI.preview = null;
     MechanicsUI.error = null;
     MechanicsUI.terraformingSnippet = null;
+    invalidateQuestGeneration();
     ElevationUI.mapId = null;
     ElevationUI.preview = null;
     ElevationUI.error = null;
@@ -5609,10 +5763,12 @@ function renderMechanicsHub() {
         && (selectedModuleId !== "terraforming" || TERRAFORMING_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "roguelite" || ROGUELITE_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "director" || DIRECTOR_RECIPE_IDS.has(recipe.id))
+        && (selectedModuleId !== "quests" || QUEST_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "multiplayer" || MULTIPLAYER_RECIPE_IDS.has(recipe.id)));
       MechanicsUI.recipe = availableRecipes[0] ?? null;
       MechanicsUI.recipeId = MechanicsUI.recipe?.id ?? "";
       MechanicsUI.terraformingSnippet = null;
+      invalidateQuestGeneration();
       MechanicsUI.loadedProfileId = null;
       if (selectedModuleId === "elevation") loadElevationMap(null);
       ElevationLineOfSightUI.contextKey = null;
@@ -5643,6 +5799,7 @@ function renderMechanicsHub() {
   $("mechanics-heroes-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "heroes");
   $("mechanics-logistics-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "logistics");
   $("mechanics-director-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "director");
+  $("mechanics-quests-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "quests");
   $("mechanics-multiplayer-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "multiplayer");
   const state = $("mechanics-hub-state");
   if (state) state.textContent = MechanicsUI.loading ? "Loading capabilities…"
@@ -5668,6 +5825,7 @@ function renderMechanicsHub() {
     if (recipeSelect) {
       const moduleRecipes = MechanicsUI.recipes.filter((recipe) => mechanicsRecipeModuleId(recipe) === MechanicsUI.selectedModuleId
         && (MechanicsUI.selectedModuleId !== "director" || DIRECTOR_RECIPE_IDS.has(recipe.id))
+        && (MechanicsUI.selectedModuleId !== "quests" || QUEST_RECIPE_IDS.has(recipe.id))
         && (MechanicsUI.selectedModuleId !== "multiplayer" || MULTIPLAYER_RECIPE_IDS.has(recipe.id)));
       recipeSelect.innerHTML = moduleRecipes.slice(0, 32).map((recipe) =>
         `<option value="${esc(recipe.id)}">${esc(recipe.label ?? recipe.id)}</option>`).join("");
@@ -5676,6 +5834,7 @@ function renderMechanicsHub() {
         MechanicsUI.recipeId = recipeSelect.value;
         MechanicsUI.recipe = moduleRecipes.find((recipe) => recipe.id === MechanicsUI.recipeId) ?? MechanicsUI.recipe;
         MechanicsUI.terraformingSnippet = null;
+        invalidateQuestGeneration();
         renderMechanicsReactionPrerequisites();
       };
     }
@@ -5713,6 +5872,8 @@ function renderMechanicsHub() {
       renderLogisticsMechanicsEditor();
     } else if (MechanicsUI.selectedModuleId === "director") {
       renderDirectorMechanicsEditor();
+    } else if (MechanicsUI.selectedModuleId === "quests") {
+      renderQuestMechanicsEditor();
     } else if (MechanicsUI.selectedModuleId === "multiplayer") {
       renderMultiplayerMechanicsEditor();
     }
@@ -5729,10 +5890,11 @@ function renderMechanicsHub() {
   const supportedHeroesVersion = MechanicsUI.selectedModuleId !== "heroes" || mechanicsProjectModuleVersion() <= 7;
   const supportedLogisticsVersion = MechanicsUI.selectedModuleId !== "logistics" || mechanicsProjectModuleVersion() <= 3;
   const supportedDirectorVersion = MechanicsUI.selectedModuleId !== "director" || mechanicsProjectModuleVersion() === 1;
+  const supportedQuestVersion = MechanicsUI.selectedModuleId !== "quests" || mechanicsProjectModuleVersion() === 1;
   const supportedMultiplayerVersion = MechanicsUI.selectedModuleId !== "multiplayer" || mechanicsProjectModuleVersion() <= 2;
   const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion
     && supportedRogueliteVersion && supportedHeroesVersion && supportedLogisticsVersion
-    && supportedDirectorVersion && supportedMultiplayerVersion && !busy;
+    && supportedDirectorVersion && supportedQuestVersion && supportedMultiplayerVersion && !busy;
   const dirtyWriteGuard = Boolean(S.dirty);
   if ($("btn-mechanics-preview")) $("btn-mechanics-preview").disabled = !writable;
   if (MechanicsUI.selectedModuleId === "logistics" && mechanicsProjectModuleVersion() > 3) {
@@ -5745,7 +5907,8 @@ function renderMechanicsHub() {
   $("btn-mechanics-new-profile").disabled = busy || !MechanicsUI.recipe
     || ((MechanicsUI.selectedModuleId === "terraforming" || MechanicsUI.selectedModuleId === "roguelite"
       || MechanicsUI.selectedModuleId === "heroes" || MechanicsUI.selectedModuleId === "logistics"
-      || MechanicsUI.selectedModuleId === "director" || MechanicsUI.selectedModuleId === "multiplayer") && !writable);
+      || MechanicsUI.selectedModuleId === "director" || MechanicsUI.selectedModuleId === "quests"
+      || MechanicsUI.selectedModuleId === "multiplayer") && !writable);
   if ($("mechanics-recipe-select")) $("mechanics-recipe-select").disabled = busy || MechanicsUI.recipes.length === 0;
   if ($("btn-mechanics-add-damage-type")) $("btn-mechanics-add-damage-type").disabled = !writable;
   if ($("btn-mechanics-add-armor-type")) $("btn-mechanics-add-armor-type").disabled = !writable;
@@ -11632,7 +11795,8 @@ const PT = {
   towerId: null, missionId: null, difficultyId: null, keyboardCoord: null, dirty: true, lastFrame: 0, error: null,
   events: [], selectedDebug: null, resumeSpeed: 1, lastDebugRender: 0,
   navigationOverlayKey: null, navigationOverlayRequest: 0, artifactUiDirty: true,
-  debugSession: null, debugCursor: null, debugPendingEvents: []
+  debugSession: null, debugCursor: null, debugPendingEvents: [],
+  questCues: [], questCueKeys: new Set()
 };
 const PT_KIND_COLOR = { single: "#e8a44a", pulse: "#a07ec8", sniper: "#7eb87e", antiair: "#e8c84a", splash: "#6ea8d8", support: "#7ec8b8", support_buff: "#c87e9c", pipeline: "#79c8d3" };
 const PT_TARGET_MODES = [["first", "First"], ["last", "Last"], ["closest", "Closest"], ["furthest", "Furthest"], ["strongest", "Strongest"], ["weakest", "Weakest"]];
@@ -11814,6 +11978,8 @@ function newPlaytestGame() {
   PT.events = [];
   PT.selectedDebug = null;
   PT.artifactUiDirty = true;
+  PT.questCues = [];
+  PT.questCueKeys.clear();
   PT.keyboardCoord = null;
   syncPlaytestKeyboardCoord(ensurePlaytestKeyboardCoord());
   renderPlaytestDebugger(PT.game.getSnapshot());
@@ -12255,6 +12421,61 @@ function renderPlaytestLogistics(snapshot) {
   }
 }
 
+function renderPlaytestQuests(snapshot) {
+  const panel = $("pt-quests");
+  if (!panel) return;
+  if (!PT.rmod?.projectQuestPresentation) {
+    panel.replaceChildren();
+    panel.hidden = true;
+    return;
+  }
+  const presentation = PT.rmod.projectQuestPresentation(snapshot);
+  panel.replaceChildren();
+  panel.hidden = presentation === null;
+  if (!presentation) {
+    PT.questCues = [];
+    PT.questCueKeys.clear();
+    return;
+  }
+  const title = document.createElement("div");
+  title.className = "form-section-title pt-debug-title";
+  title.textContent = "Challenges";
+  panel.append(title);
+  for (const quest of presentation.entries) {
+    const row = document.createElement("div");
+    row.className = `pt-quest-row ${quest.status}`;
+    row.setAttribute("data-pt-quest-id", quest.questId);
+    const label = document.createElement("span");
+    label.textContent = quest.label;
+    const value = document.createElement("span");
+    value.textContent = `${quest.current}/${quest.target}`;
+    const progress = document.createElement("span");
+    progress.className = "pt-quest-progress";
+    const fill = document.createElement("span");
+    fill.style.width = `${Math.max(0, Math.min(100, quest.progress * 100))}%`;
+    progress.append(fill);
+    row.append(label, value, progress);
+    panel.append(row);
+  }
+  const now = performance.now();
+  for (const cue of presentation.cues) {
+    const key = `${snapshot.missionElapsed}:${cue.type}:${cue.questId}`;
+    if (PT.questCueKeys.has(key)) continue;
+    PT.questCueKeys.add(key);
+    PT.questCues.push({ ...cue, key, expiresAt: now + 2200 });
+  }
+  PT.questCues = PT.questCues.filter((cue) => cue.expiresAt > now).slice(-6);
+  const liveKeys = new Set(PT.questCues.map((cue) => cue.key));
+  for (const key of PT.questCueKeys) if (!liveKeys.has(key)) PT.questCueKeys.delete(key);
+  const labels = new Map(presentation.entries.map((entry) => [entry.questId, entry.label]));
+  for (const cue of PT.questCues) {
+    const item = document.createElement("div");
+    item.className = `pt-quest-cue ${cue.type}`;
+    item.textContent = `${cue.type === "completed" ? "Completed" : "Failed"}: ${labels.get(cue.questId) ?? cue.questId}`;
+    panel.append(item);
+  }
+}
+
 function renderPlaytestDebugger(snapshot = PT.game?.getSnapshot()) {
   const inspector = $("pt-inspector");
   const timeline = $("pt-event-timeline");
@@ -12382,6 +12603,7 @@ function updatePlaytestHud(s = PT.game.getSnapshot()) {
   const starCount = stars.filter((item) => item.achieved).length;
   set("pt-objectives", `${objectiveCount}/${objectives.length}${stars.length ? ` | ${starCount}/${stars.length} stars` : ""}`);
   renderPlaytestLogistics(s);
+  renderPlaytestQuests(s);
   if (PT.artifactUiDirty) {
     renderPlaytestArtifacts(s);
     PT.artifactUiDirty = false;
@@ -12826,6 +13048,94 @@ function renderBalanceTab() {
     <p>Run a simulation sweep to grade every mission's difficulty and spot dominant or dead towers.</p>
     <button class="btn btn-outline empty-cta" onclick="document.getElementById('btn-run-balance').click()">Run analysis</button>
   </div>`;
+  renderPersonaQaLab();
+}
+
+function renderPersonaQaLab() {
+  const missions = $("persona-qa-missions");
+  const button = $("btn-run-persona-qa");
+  const output = $("persona-qa-results");
+  if (!missions || !button || !output) return;
+  const previous = new Set([...missions.selectedOptions].map((option) => option.value));
+  const missionEntries = Object.entries(S.project?.missions ?? {}).slice(0, 32);
+  missions.innerHTML = missionEntries.map(([id, mission]) =>
+    `<option value="${esc(id)}">${esc(mission.label ?? id)}</option>`).join("");
+  const selected = previous.size ? previous : new Set(missionEntries.map(([id]) => id));
+  for (const option of missions.options) option.selected = selected.has(option.value);
+  button.disabled = S.dirty;
+  if (!button.dataset.wired) {
+    button.dataset.wired = "1";
+    button.addEventListener("click", () => void runPersonaQa());
+  }
+
+  const report = S.personaQaReportRevision === S.contentHash ? S.personaQaReport : null;
+  if (!report) {
+    output.textContent = S.dirty
+      ? "Save or discard project edits before running revision-bound persona evidence."
+      : "Select missions and run the read-only suite. Reports are tied to the current saved project revision.";
+    return;
+  }
+  if (report.error) {
+    output.innerHTML = `<div class="val-item error">${ICO.err}<span>${esc(report.error)}</span></div>`;
+    return;
+  }
+  const runs = Array.isArray(report.runs) ? report.runs : [];
+  const victories = runs.filter((run) => run.outcome === "victory").length;
+  const findings = Array.isArray(report.findings) ? report.findings : [];
+  const rows = runs.slice(0, 256).map((run) => `<tr>
+    <td>${esc(run.missionId)}</td><td>${esc(run.seed)}</td><td>${esc(run.personaId)}</td>
+    <td class="${run.outcome === "victory" ? "victory" : "defeat"}">${esc(run.outcome)}</td>
+    <td>${Math.round(Number(run.coreHpRemaining ?? 0) * 100)}%</td><td>${run.leaks ?? 0}</td>
+  </tr>`).join("");
+  output.innerHTML = `<div class="persona-qa-summary">
+    <span><b>${runs.length}</b> runs</span><span><b>${victories}</b> victories</span>
+    <span><b>${findings.length}</b> findings</span><span>${report.cached ? "cache hit" : "fresh evidence"}</span>
+  </div>
+  ${findings.map((finding) => `<div class="persona-qa-finding"><b>${esc(finding.missionId ?? "Suite")}</b> · ${esc(finding.message ?? finding.code)}</div>`).join("")}
+  <table class="persona-qa-matrix"><thead><tr><th>Mission</th><th>Seed</th><th>Persona</th><th>Outcome</th><th>Core</th><th>Leaks</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+async function runPersonaQa() {
+  const button = $("btn-run-persona-qa");
+  if (S.dirty) {
+    toast("Save or discard project edits before running Persona QA.", "warn");
+    return;
+  }
+  const missionIds = [...($("persona-qa-missions")?.selectedOptions ?? [])].map((option) => option.value);
+  const seeds = [...new Set(String($("persona-qa-seeds")?.value ?? "")
+    .split(/[\s,]+/).map((seed) => seed.trim()).filter(Boolean))];
+  const personaIds = [...($("persona-qa-personas")?.selectedOptions ?? [])].map((option) => option.value);
+  if (!missionIds.length || !seeds.length || !personaIds.length) {
+    toast("Choose at least one mission, seed, and persona.", "warn");
+    return;
+  }
+  const revision = S.contentHash;
+  S.personaQaReport = null;
+  S.personaQaReportRevision = null;
+  const output = $("persona-qa-results");
+  if (output) output.innerHTML = `<span class="spinner"></span> Running deterministic persona matrix…`;
+  await withButtonSpinner(button, async () => {
+    try {
+      const report = await apiPost("/api/persona-qa/run", {
+        contentHash: S.contentHash,
+        schemaVersion: 1,
+        missionIds,
+        seeds,
+        personaIds,
+        simSeconds: Number($("persona-qa-seconds")?.value),
+        tickStep: Number($("persona-qa-tick-step")?.value)
+      });
+      if (S.contentHash !== revision || report.contentHash !== revision) return;
+      S.personaQaReport = report;
+      S.personaQaReportRevision = revision;
+      recordActivity("Persona QA", "ok", `${report.completedRuns ?? report.runs?.length ?? 0} deterministic runs`);
+    } catch (error) {
+      S.personaQaReport = { error: error.message, code: error.code };
+      S.personaQaReportRevision = revision;
+      recordActivity("Persona QA", "error", error.code ?? error.message);
+    }
+    renderPersonaQaLab();
+  });
 }
 
 async function runBalance() {

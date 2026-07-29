@@ -37,6 +37,33 @@ export declare const DIRECTOR_MECHANICS_SCHEMA: Readonly<{
         decisionHistory: 1024;
     }>;
 }>;
+export declare const QUEST_MECHANICS_SCHEMA: Readonly<{
+    schemaVersion: 1;
+    moduleId: "quests";
+    supportedModuleSchemaVersions: readonly [1];
+    profile: {
+        requiredFields: readonly ["selectionCount", "definitions"];
+        optionalFields: readonly [];
+        additionalProperties: boolean;
+    };
+    definition: {
+        requiredFields: readonly ["label", "weight", "objective"];
+        optionalFields: readonly [];
+        additionalProperties: boolean;
+    };
+    objectiveKinds: readonly ["kill_with_source", "preserve_shield"];
+    sourceKinds: readonly ["tower", "ability", "tower_script", "status", "reaction"];
+    shieldScopes: readonly ["tower", "hero", "any"];
+    limits: Readonly<{
+        selectionCount: 3;
+        definitions: 256;
+        weight: 1000000;
+        count: 1000000;
+        waves: 10000;
+        idUtf8Bytes: 128;
+        labelUtf8Bytes: 256;
+    }>;
+}>;
 /**
  * A machine-readable description of the content schema's closed sets and per-shape field
  * constraints — the single source of truth for what `validateGameContentRegistry` (validate.ts)

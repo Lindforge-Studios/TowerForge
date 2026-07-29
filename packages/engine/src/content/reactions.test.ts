@@ -291,7 +291,7 @@ describe("R1.5 reactions module capability and public schema", () => {
   it("implements reactions v1 alongside navigation while leaving combat pinned to v3", () => {
     expect(IMPLEMENTED_MECHANICS_MODULE_IDS).toEqual([
       "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes",
-      "logistics", "director", "multiplayer"
+      "logistics", "director", "quests", "multiplayer"
     ]);
 
     const capabilities = resolveCapabilitySet(reactionsCatalog(), {

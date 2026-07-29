@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "combat": {
+      "schemaVersion": 1,
+      "enabled": true,
+      "profiles": {
+        "quest_tower_shield": {
+          "shields": {
+            "towers": {
+              "arrow_tower": {
+                "capacity": 20
+              }
+            }
+          }
+        }
+      }
+    },
+    "quests": {
+      "schemaVersion": 1,
+      "enabled": true,
+      "profiles": {
+        "starter_quest_pair": {
+          "selectionCount": 2,
+          "definitions": {
+            "arrow_finish": {
+              "label": "Arrow finishers",
+              "weight": 3,
+              "objective": {
+                "kind": "kill_with_source",
+                "count": 3,
+                "source": {
+                  "kind": "tower",
+                  "id": "arrow_tower"
+                }
+              }
+            },
+            "shield_watch": {
+              "label": "Hold the shield line",
+              "weight": 1,
+              "objective": {
+                "kind": "preserve_shield",
+                "waves": 1,
+                "scope": "tower"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

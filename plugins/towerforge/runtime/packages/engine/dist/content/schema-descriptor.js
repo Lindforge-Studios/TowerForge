@@ -4,6 +4,7 @@ import { DAMAGE_TAGS } from "../simulation/damage.js";
 import { TOWER_SCRIPT_EVENT_FIELDS, TOWER_SCRIPT_TARGETS } from "../scripting/schema-descriptor.js";
 import { ARMOR_MATRIX_LIMITS, MARK_LIMITS, REACTION_LIMITS, SHIELD_LIMITS } from "./mechanics.js";
 import { DIRECTOR_LIMITS } from "./director-mechanics.js";
+import { QUEST_LIMITS } from "./quest-mechanics.js";
 export { NAVIGATION_MECHANICS_SCHEMA } from "./navigation-mechanics.js";
 export { ELEVATION_MECHANICS_SCHEMA } from "./elevation-mechanics.js";
 export { TERRAFORMING_MECHANICS_SCHEMA } from "./terraforming-mechanics.js";
@@ -30,6 +31,25 @@ export const DIRECTOR_MECHANICS_SCHEMA = Object.freeze({
     },
     tieBreak: ["priority_desc", "condition_severity_desc", "counter_id_binary_asc"],
     limits: DIRECTOR_LIMITS
+});
+export const QUEST_MECHANICS_SCHEMA = Object.freeze({
+    schemaVersion: 1,
+    moduleId: "quests",
+    supportedModuleSchemaVersions: [1],
+    profile: {
+        requiredFields: ["selectionCount", "definitions"],
+        optionalFields: [],
+        additionalProperties: false
+    },
+    definition: {
+        requiredFields: ["label", "weight", "objective"],
+        optionalFields: [],
+        additionalProperties: false
+    },
+    objectiveKinds: ["kill_with_source", "preserve_shield"],
+    sourceKinds: ["tower", "ability", "tower_script", "status", "reaction"],
+    shieldScopes: ["tower", "hero", "any"],
+    limits: QUEST_LIMITS
 });
 export const TARGET_MODE_SCHEMA = Object.freeze({
     selectable: TOWER_TARGET_MODES.filter((mode) => mode !== "fastest_ahead" && mode !== "largest_hp"),

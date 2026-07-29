@@ -88,6 +88,8 @@ export declare class TowerDefenseGame {
     private readonly activeLogisticsSupply;
     private readonly activeLogisticsSchemaVersion;
     private readonly activeDirectorMechanics;
+    private readonly activeQuestMechanics;
+    private questEntries;
     private directorDecisions;
     private readonly activeHeroPassiveAura;
     private readonly activeHeroBlocking;
@@ -179,6 +181,17 @@ export declare class TowerDefenseGame {
     get enemyTypes(): Record<string, import("./types.js").EnemyType>;
     get waves(): import("./types.js").WaveDefinition[];
     reset(): void;
+    private questRuntimeSeed;
+    private initializeQuestEntries;
+    private replaceQuestEntry;
+    private completeQuest;
+    private failQuest;
+    private questDamageSourceMatches;
+    private creditQuestLethalDamage;
+    private questShieldScopeMatches;
+    private failPreserveShieldQuests;
+    private advancePreserveShieldQuests;
+    private buildQuestSnapshot;
     startNextWave(): ActionResult;
     canPlaceTower(typeId: string, coord: HexCoord): ActionResult;
     canPlaceTowerAnywhere(typeId: string): ActionResult;

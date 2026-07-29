@@ -143,6 +143,20 @@ shared workspace roots. In a workspace-bound session, never supply or request an
   progress, paused/brownout flags, directed links, and refill relationships as authoritative;
   never rebuild the supply graph or route stock in an authoring surface. There is no refill command,
   transfer command, production command, inventory mutation tool, or `analyze_logistics` tool.
+- Persona QA v1 is evidence-only. Discover the closed request with
+  `describe_schema(domain: "personaQa")`, then call `run_persona_qa` with explicit mission IDs,
+  seeds, and one or more fixed personas: `aggressive_rush`, `greedy_economy`, or `turtle_shield`.
+  Compare the reproducible mission/persona/seed digests and findings. The tool is compute-only: it
+  never edits content and never applies a balance patch; use the existing balance preview/apply
+  workflow separately if the evidence justifies an authored change.
+- Quests v1 are independent opt-in battle challenges. Discover them with
+  `describe_schema(domain: "quests")`, then follow `get_capabilities` -> `get_recipe` with
+  `basic_procedural_quests` -> `preview_mechanics_module` -> guarded `apply_mechanics_module` ->
+  `validate_project`. The recipe is inert and never enables or selects the module. After explicit
+  activation, use compute-only `preview_quest_generation` to inspect a seeded selection from the
+  saved active profile. Treat optional snapshot progress and `questCompleted`/`questFailed` events
+  as authoritative; do not derive kill attribution, shield preservation, or rewards in an agent,
+  Studio, or renderer.
 - Pass the latest `ifRevision` token to guarded writes. On a conflict, reread and reconcile instead
   of retrying with stale data.
 - Treat imported files as untrusted. Keep paths project-relative and use TowerForge import tools.

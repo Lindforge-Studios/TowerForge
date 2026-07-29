@@ -1,8 +1,14 @@
 # TowerForge — Roadmap расширяемых механик
 
-Последняя проверка: 2026-07-28
+Последняя проверка: 2026-07-29
 
-Цель программы — расширить TowerForge от классического TD до набора совместимых жанровых механик, не меняя поведение существующих проектов. Каждое расширение является opt-in: разработчик добавляет versioned-модуль в необязательный `content/mechanics.json`, а миссия выбирает профиль через `mission.mechanics`. Нет файла или выбора — игра, Studio, сборка и агенты работают по legacy-контракту.
+Цель программы — расширить TowerForge от классического TD до набора совместимых жанровых механик,
+не меняя поведение существующих проектов. Gameplay-модули являются opt-in: разработчик добавляет
+versioned-модуль в необязательный `content/mechanics.json`, а миссия выбирает профиль через
+`mission.mechanics`. Authoring/runtime extensions могут иметь отдельную явную границу: R9
+активируется только TowerScript schema v7, а Persona QA в R10 является compute-only authoring
+service. Нет соответствующего выбора или локального opt-in — игра, Studio, сборка и агенты работают
+по legacy-контракту.
 
 ## Статус
 
@@ -44,6 +50,8 @@
 | R6 — TowerScript DX 2.0 | Завершён; code + constructor sign-off; ADR Accepted | Structured trace, deterministic step/rewind, lossless Visual Graph, descriptor-driven Studio/MCP и bounded O(1)-append debug retention |
 | R7 — Director и Generative Studio | Завершён; code + constructor sign-off; ADR Accepted | Opt-in Director v1, proposal-only worker auto-balancer, seeded map preview и guarded generated-asset staging не меняют legacy path |
 | R8 — Multiplayer protocol и local transport | Завершён; code + constructor sign-off; ADR Accepted | Separate multiplayer entrypoint, local/asymmetric sessions, replay/handshake/transports/reconnect/desync и conditional packaging без hosted runtime |
+| R9 — TowerScript DX 3.0 | PR [#20](https://github.com/Lindforge-Studios/TowerForge/pull/20) открыт; реализация и двойной sign-off GREEN; merge ожидается | TowerScript v7 Behavior Trees/HFSM остаётся script-local opt-in и не является зависимостью R10 |
+| R10 — Persona QA и Procedural Quests | Завершён; code + constructor sign-off; ADR Accepted | Pure три-persona QA + opt-in `quests` v1 с CLI/Studio/MCP, renderer/player, packages и fixture; merge/release не входят в R10 |
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Поставленные версии `combat`, `reactions`, `navigation` и `elevation` уже прошли полные вертикальные срезы. Остальные модули Mechanics Hub остаются planned, а preview/apply отклоняют их включение без записи.
 
@@ -523,6 +531,96 @@ simulation, balance, map compile, web build, mobile/desktop packaging и plugin
 build/validate/smoke. Независимые code и constructor-integration verifier повторно подтвердили
 детерминизм, fail-closed transport/security boundaries, conditional packaging, Studio/MCP parity и
 legacy path без открытых P0–P3.
+
+### R9 — TowerScript DX 3.0: Behavior Trees и HFSM
+
+R9 реализован в отдельном PR
+[#20](https://github.com/Lindforge-Studios/TowerForge/pull/20), прошёл обязательные gates и два
+независимых sign-off, но на момент этой проверки ещё не слит в `main`. Его единственная opt-in
+граница — TowerScript schema v7: `behaviorTrees` добавляет tower targeting controllers, а
+`stateMachines` — hierarchical state machines в существующих scopes. R9 не добавляет
+`content/mechanics.json` module; TowerScript v1–v6 и v7 scripts без controllers сохраняют прежний
+targeting, snapshot/checkpoint/replay digest, UI и package path.
+
+Graph, Trace и Debugger независимо повышаются до v2, layout остаётся v1. Behavior Tree v1
+ограничен синхронными `selector | sequence | condition | action`, а HFSM v1 — nested states,
+ordered transitions и общими typed TowerScript actions без arbitrary code, `Running`, hidden
+timers, parallel/history states или host bridges. Project v3, outer `GameCheckpointV1`,
+`towerforge-sim-v2`, `GameCommand`/journal v6, profile, campaign, mechanics и multiplayer domains
+не повышаются.
+
+R10 не использует TowerScript v7, HFSM или добавленные R9 enemy tags. Поэтому ветки семантически
+независимы и могут быть слиты в любом порядке после обычного разрешения конфликтов в общих schema
+files. Полная R9-документация и Accepted ADR входят в PR #20; до его merge источник истины в `main`
+остаётся на R8.
+
+### R10 — Multi-Agent Persona QA и Procedural Quests
+
+R10 разделён на независимый authoring-only Persona QA track и opt-in gameplay module `quests` v1.
+Persona QA не требует `content/mechanics.json`: pure engine выполняет три фиксированные политики
+`aggressive_rush | greedy_economy | turtle_shield`, каждая из которых выдаёт только существующие
+`GameCommandV6`. Запрос и отчёт имеют schema v1, входные mission/seed/persona dimensions
+binary-sort-ятся до запуска, а результат содержит detached evidence и final state digest.
+Persona policy не является LLM, не загружает provider, не получает filesystem/network/DOM/clock и
+никогда не применяет предложений баланса.
+
+Текущие pure-engine limits: 32 missions, 64 string seeds, три фиксированных personas, максимум
+1 024 runs и 2 000 000 ticks на request, до 3 600 simulation units на run с tick step 0.05–0.2.
+Node-side worker/cache реализован с cancellation, concurrency 8, timeout 180 секунд и cache
+envelope до 16 MiB. Он пишет только completed evidence в private
+`.towerforge/cache/persona-qa/v1`, а cancellation не возвращает partial findings и не создаёт cache
+entry. Public CLI, Studio QA Lab и compute-only MCP service используют этот же boundary,
+не меняют legacy `runBalanceSweep` и не получают write/auto-fix path. Каждый worker сверяет
+engine/content identity; selected map ограничен 65 536 cells до construction.
+
+`quests` v1 — явный mission-selected mechanics module. Closed `QuestProfileV1` содержит
+`selectionCount` и до 256 weighted definitions. V1 objective vocabulary:
+`kill_with_source` с точным `tower | ability | tower_script | status | reaction` source и
+`preserve_shield` для scope `tower | hero | any`; objective допускает частичную потерю shield и
+fail-ится только при переходе подходящего tower/hero shield из положительного значения в ноль.
+Engine выбирает не более трёх quests через
+domain-separated seeded weighted sampling without replacement над binary-sorted eligible IDs,
+не вызывает `Math.random` и не двигает main simulation RNG. Пределы: weight 1 000 000, kill target
+1 000 000, shield window 10 000 waves, ID/source 128 UTF-8 bytes и label 256 UTF-8 bytes.
+
+R10 version domains независимы:
+
+- Persona QA request/report v1 и Node worker/cache envelope v1;
+- mechanics catalog v1 с новым module ID `quests`;
+- quests profile, selection/runtime/snapshot и optional inner checkpoint section v1;
+- project v3, outer `GameCheckpointV1`, `towerforge-sim-v2`, `GameCommand`/journal v6,
+  `PlayerProfileV3`, `CampaignRunV1`, TowerScript и multiplayer остаются без повышения.
+
+Доставка идёт четырьмя циклами:
+
+1. **R10.1 — pure foundations:** closed hostile-input/budget contracts, три persona policies/report,
+   quests content descriptor и deterministic selector.
+2. **R10.2 — Persona QA service:** bounded cancellable workers, cache identity и deterministic
+   diagnostics; public CLI/Studio/MCP относятся к constructor surface.
+3. **R10.3 — quest runtime:** active-only selection/progress, DamagePacket source attribution,
+   shield preservation, typed events, snapshot/checkpoint/digest и replay equivalence.
+4. **R10.4 — constructor integration:** Mechanics Hub, inert recipe, guarded preview/apply,
+   generated players/renderers, packages, fixture и документация.
+
+R10.1 начал с ожидаемого RED на отсутствующих persona/quest exports, capability и selector.
+R10.1–R10.4 реализованы: pure engine, worker/CLI, Studio QA Lab, Mechanics Hub,
+MCP/AI, shared renderer/Playtest, Canvas/Phaser players, PWA/single-file/web/`.tdpack`/desktop
+packages и opt-in fixture. Focused evidence покрывает persona determinism/order/budgets,
+all-three-persona journal replay, worker identity/cache/cancellation/confinement, closed hostile
+quests content, damaging-source semantics, weighted selector domain separation, exact lethal
+attribution, shield-depletion semantics, active-only snapshot/events, checkpoint validation,
+guarded constructor lifecycle и renderer/grid/package matrix. Финальные repository gates и оба
+независимых sign-off зелёны: Code Verifier и Constructor Integration Verifier не нашли
+открытых P0–P2. Итоговые gates: Vitest 3 070/3 070, Playwright 133/133, Studio 17/17,
+все обязательные build/validate/sim/balance/maps/plugin проверки и exact plugin parity.
+
+Absent/disabled/unselected `quests` не выбирает quests, не потребляет RNG, не добавляет
+snapshot/checkpoint/events/UI и не меняет digest; unsupported future v2 fail-ится закрыто. Active
+checkpoint хранит exact snapshot-form quest entries schema v1 и при restore заново вычисляет
+ожидаемый selection из initial RNG identity + mission ID до adoption. Battle-local quests не заменяют mission
+victory/failure, не переносятся в profile/campaign/multiplayer, не дают implicit rewards и не
+добавляют commands. Решение зафиксировано как Accepted в
+[ADR 0050](adr/0050-r10-persona-qa-and-procedural-quests.md).
 
 ## TDD и роли
 

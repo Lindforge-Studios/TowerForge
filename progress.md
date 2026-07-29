@@ -31,3 +31,61 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - R4.2A/B/C are accepted: `roguelite` v2 adds deterministic boss artifact loot and between-wave socketing through `GameCommandV2`, nested checkpoint state, Studio/player controls, and separate verifier-approved active/legacy paths.
 - R4.3 is accepted: `roguelite` v3 adds deterministic three-card wave draft, `GameCommandV3`, pause-until-choice, checkpoint/journal replay equivalence, and Canvas/Phaser plus Studio controls. Final evidence was 1,902/1,902 Vitest and 41/41 Playwright.
 - R4.4A is accepted: `roguelite` v4 and optional `worldMap.campaign` v1 provide a bounded typed DAG above battle simulations. `CampaignRunV1` stays a separate explicit-import/export document; persistent profile, battle snapshot/checkpoint, command and replay versions do not change. Studio and MCP share an exact closed schema and a revision-guarded four-file transaction hardened against Proxy/TOCTOU and parent-symlink swaps. Active/absent Canvas/Phaser × hex/square scenarios cover mouse, keyboard, touch, battle victory, structural-node guard, and portable run round-trip. Final evidence is 1,938/1,938 Vitest, 44/44 Playwright, all required build/plugin gates, exact source/plugin parity, and independent code plus constructor PASS without P0–P2 findings.
+
+## 2026-07-29 — R10 completed
+
+- R10 is split into two independent tracks: compute-only Persona QA and the mission-selected
+  `quests` v1 gameplay module. It intentionally has no dependency on the open R9 PR #20.
+- Accepted architecture, version domains, delivery slices, limits and acceptance criteria are
+  recorded in `docs/adr/0050-r10-persona-qa-and-procedural-quests.md`; the canonical architecture
+  and runbook document the completed implementation.
+- R10.1 began RED on the missing fixed-persona runner/report, `quests` capability/closed descriptor
+  and deterministic weighted selector exports.
+- R10.1–R10.4 are implemented across the pure engine, bounded Node worker/cache, public CLI,
+  read-only Studio QA Lab, compute-only MCP, Mechanics Hub, shared renderer/Playtest, generated
+  players/packages and the opt-in reference fixture. The worker rechecks engine/content identity,
+  rejects selected maps above 65,536 cells before simulation construction, validates cached
+  evidence against the exact request matrix and emits no partial findings on cancellation.
+- Active quest runtime owns exact lethal-source attribution, mission-applicable typed script/status
+  producers, positive-to-zero eligible shield depletion, active-only events/snapshot/checkpoint,
+  strict restore validation, and continuous/checkpoint/journal digest equivalence. Persona QA has
+  a separate all-three-persona command-journal replay proof without enlarging ordinary reports.
+- R10 Studio surfaces are implemented as two isolated paths: an evidence-only Persona QA Lab in
+  Balance and a `quests` v1 editor in Mechanics Hub. Both compute previews are revision-bound;
+  quest writes reuse the existing preview -> guarded apply transaction, and future quests v2+
+  modules remain lossless/read-only.
+- Studio Playtest consumes only the shared renderer `projectQuestPresentation(snapshot)` output.
+  The optional panel disappears on absent/invalid quest state and shows authoritative progress plus
+  bounded transient completed/failed cues when active; Studio contains no selection or progress
+  rules.
+- Studio R10 evidence: RED 4/4 before implementation; public surface contracts 133/133 GREEN;
+  Studio server integration 17/17 GREEN including real Persona QA, stale content-hash rejection and
+  inactive quest preview. Browser smoke used the required web-game Playwright client, produced no
+  console errors, and visually checked Persona QA plus the Quest editor at
+  `/private/tmp/towerforge-r10-balance-ok/shot-0.png` and
+  `/private/tmp/towerforge-r10-quest-editor-detail/shot-0.png`.
+- Independent constructor verification added an exact quests Studio lifecycle contract and an
+  active/legacy package matrix. The Studio suite is now 17/17 and proves preview -> enable -> edit
+  -> reload -> disable -> inactive preview -> re-enable; the package contract is 2/2 across
+  Canvas/Phaser x hex/square, PWA, single-file, web archive, `.tdpack`, and untouched starter.
+  A real Chromium pass also exercised Persona QA, seeded quest preview, guarded save/disable/
+  re-enable, and the active-only Playtest HUD; desktop packaging retained the exact module and
+  shared projector. Verification found and repaired a compile-on-demand blocker, stale plugin
+  mirror, help-text localization collision, hidden quest event IDs and fail-open renderer states.
+- The independent generated-player browser acceptance is 1/1 across eight active/absent
+  combinations (`Canvas | Phaser` x `hex | square`). Active snapshots render the authoritative
+  `Verifier finisher 0/1` HUD and absent snapshots expose neither quest state nor visible panel;
+  every player boots without page errors.
+- R10 constructor-integration verification is complete and PASS. The previously escalated
+  compile-on-demand, event `questId`, localization, renderer state/cue consistency, Proxy, and
+  accessor-backed source-scan findings are fixed and independently green. Final evidence includes
+  Studio surface 6/6, Studio server lifecycle 17/17, active/legacy package matrix 2/2, focused R10
+  player 1/1, full Playwright 133/133, full Vitest 3,070/3,070, all non-browser gates, and exact
+  source-to-plugin parity for CLI, MCP, engine dist, renderer, vendor, and player runtime trees.
+- R10 code verification is complete and PASS with no open P0–P2 findings. Focused contracts are
+  53/53, the consolidated R10 suite is 68/68, and the verifier reconfirmed exact damage attribution,
+  shield semantics, checkpoint restore, selectors, all-three-persona replay, worker/cache safety,
+  renderer fail-closed behavior and version boundaries. The residual P3 note is limited to
+  same-user derived-cache authenticity; strict audits can use `--no-cache`.
+- R10 is accepted. Full evidence is Vitest 3,070/3,070 across 271 files, Playwright 133/133,
+  Studio 17/17, surface contracts 6/6, all required repository gates and exact plugin parity.

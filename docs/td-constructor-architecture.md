@@ -833,6 +833,50 @@ matchmaking, NAT traversal, and a managed relay are intentionally absent. See
 [ADR 0049](adr/0049-opt-in-multiplayer-protocol.md) and
 `docs/examples/opt-in-local-multiplayer/`.
 
+### R10 Persona QA and Procedural Quests foundation
+
+R10 has two independent contracts. Persona QA is authoring analysis and does not require a
+mechanics profile. The pure engine owns the fixed `aggressive_rush`, `greedy_economy`, and
+`turtle_shield` policies; they issue only existing `GameCommandV6` commands and return detached
+mission × seed × persona evidence with a stable final digest. Request dimensions and relevant
+content records are binary-canonicalized before work. The existing balance sweep is unchanged.
+
+`packages/cli/lib/persona-qa-worker.mjs` lifts that pure runner into bounded Node workers. The pool
+accepts at most eight workers, enforces a 180-second task timeout, supports cooperative
+cancellation, and returns byte-equivalent completed reports across concurrency settings. Completed
+evidence may be cached privately at `.towerforge/cache/persona-qa/v1/<requestDigest>.json`; the key
+includes the content digest, engine version, and canonical request. The cache is bounded to 16 MiB,
+uses private directory/file modes, rejects confinement or symlink escapes, and ignores malformed or
+future envelopes. Cancellation returns no partial findings and writes no cache entry. Every worker
+rechecks engine/content identity before accepting work, and the pure runner rejects selected maps
+above 65,536 cells before constructing a simulation. The public `persona-qa` CLI command,
+read-only Studio QA Lab and compute-only MCP tool reuse this boundary without a write/auto-fix path.
+
+Procedural quests are gameplay and therefore use the separate mission-selected `quests` v1 module.
+Its closed profile chooses up to three weighted definitions from at most 256 through seeded sampling
+without replacement. Selection uses a quest-domain-separated RNG and sorted IDs, so it neither
+advances the main simulation RNG nor depends on source-record order. V1 supports exact
+`kill_with_source` attribution for `tower | ability | tower_script | status | reaction`, and
+`preserve_shield` over `tower | hero | any`.
+
+Only an active supported profile adds the exact optional `quests` snapshot/checkpoint section and
+typed `questCompleted`/`questFailed` events. Kill progress is credited only when an exact
+`DamagePacket.source` produces the positive-HP-to-zero transition. Shield preservation fails once
+only when an eligible tower or hero shield crosses from positive to zero; partial loss and enemy
+shields are irrelevant. Wave clears advance surviving shield objectives. Checkpoint restore
+recomputes the expected selection from the checkpoint's original RNG identity plus mission ID and
+rejects mismatched profile, order, labels, kinds, targets, duplicates, impossible progress, and
+future forms before adopting state.
+
+The quest section is an inner schema v1 while outer `GameCheckpointV1`, `towerforge-sim-v2`,
+`GameCommand`/journal v6, project v3, profile, campaign, TowerScript, renderer/player, and
+multiplayer versions remain unchanged. Absent, disabled, or unselected quests add no snapshot,
+checkpoint, event, UI, RNG movement, or digest change. Quests are secondary battle-local evidence:
+they do not change primary victory/defeat, grant rewards, or persist into profile, campaign, or
+multiplayer state. Mechanics Hub, MCP/AI, Studio Playtest, Canvas/Phaser players and generated
+packages use the common guarded authoring and active-only projection contracts; see Accepted
+[ADR 0050](adr/0050-r10-persona-qa-and-procedural-quests.md).
+
 ## Done Criteria For Constructor Changes
 
 - Engine changes pass `npm run typecheck`.

@@ -1166,6 +1166,102 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // Persona QA is evidence-only. The Studio wrapper accepts one closed request, binds the
+  // computation to the saved project hash before and after execution, and delegates the actual
+  // deterministic worker batch to the same compute-only MCP tool available to agents.
+  if (req.method === "POST" && pathname === "/api/persona-qa/run") {
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { code: "malformed_request", error: "Invalid JSON body" }); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return jsonResp(res, 400, { code: "invalid_request", error: "Persona QA request must be a JSON object." });
+    }
+    const allowedKeys = new Set([
+      "contentHash", "schemaVersion", "missionIds", "seeds", "personaIds", "simSeconds", "tickStep"
+    ]);
+    if (Object.keys(body).some((key) => !allowedKeys.has(key))) {
+      return jsonResp(res, 400, { code: "invalid_request", error: "Persona QA request contains unsupported fields." });
+    }
+    const beforeHash = projectHash();
+    if (typeof body.contentHash !== "string" || body.contentHash !== beforeHash) {
+      return jsonResp(res, 409, {
+        code: "revision_conflict",
+        error: "Project changed on disk. Reload before running Persona QA.",
+        serverHash: beforeHash
+      });
+    }
+    try {
+      const result = await callTool("run_persona_qa", {
+        projectDir: PROJECT_DIR,
+        schemaVersion: body.schemaVersion,
+        missionIds: body.missionIds,
+        seeds: body.seeds,
+        personaIds: body.personaIds,
+        simSeconds: body.simSeconds,
+        tickStep: body.tickStep
+      }, { defaultProjectDir: PROJECT_DIR });
+      const afterHash = projectHash();
+      if (afterHash !== beforeHash) {
+        return jsonResp(res, 409, {
+          code: "revision_conflict",
+          error: "Project changed while Persona QA was running. Discarding stale evidence.",
+          serverHash: afterHash
+        });
+      }
+      writeRunTrace(PROJECT_DIR, {
+        source: "studio", action: "persona-qa", status: "ok", completedRuns: result.completedRuns
+      });
+      return jsonResp(res, 200, { ...sanitizeMechanicsResponse(result), contentHash: afterHash });
+    } catch (error) {
+      writeRunTrace(PROJECT_DIR, { source: "studio", action: "persona-qa", status: "error", error: error.message });
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
+    }
+  }
+
+  // Seed preview is also compute-only and describes the currently saved, active quests profile.
+  // Drafts continue through mechanics preview/apply; this endpoint never accepts or writes a profile.
+  if (req.method === "POST" && pathname === "/api/quests/preview-generation") {
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { code: "malformed_request", error: "Invalid JSON body" }); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return jsonResp(res, 400, { code: "invalid_request", error: "Quest generation request must be a JSON object." });
+    }
+    const allowedKeys = new Set(["contentHash", "missionId", "seed", "eligibleDefinitionIds"]);
+    if (Object.keys(body).some((key) => !allowedKeys.has(key))) {
+      return jsonResp(res, 400, { code: "invalid_request", error: "Quest generation request contains unsupported fields." });
+    }
+    const beforeHash = projectHash();
+    if (typeof body.contentHash !== "string" || body.contentHash !== beforeHash) {
+      return jsonResp(res, 409, {
+        code: "revision_conflict",
+        error: "Project changed on disk. Reload before previewing quests.",
+        serverHash: beforeHash
+      });
+    }
+    try {
+      const result = await callTool("preview_quest_generation", {
+        projectDir: PROJECT_DIR,
+        missionId: body.missionId,
+        seed: body.seed,
+        ...(body.eligibleDefinitionIds === undefined ? {} : { eligibleDefinitionIds: body.eligibleDefinitionIds })
+      }, { defaultProjectDir: PROJECT_DIR });
+      const afterHash = projectHash();
+      if (afterHash !== beforeHash) {
+        return jsonResp(res, 409, {
+          code: "revision_conflict",
+          error: "Project changed while quest generation was running. Discarding stale preview.",
+          serverHash: afterHash
+        });
+      }
+      return jsonResp(res, 200, { ...sanitizeMechanicsResponse(result), contentHash: afterHash });
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
+    }
+  }
+
   // The campaign editor has its own guarded four-file authoring boundary. It intentionally does
   // not pass through the generic mechanics or project-save routes.
   if (req.method === "GET" && pathname === "/api/campaign") {

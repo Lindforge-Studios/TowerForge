@@ -1,0 +1,8 @@
+{
+  "mechanics": {
+    "profiles": {
+      "combat": "quest_tower_shield",
+      "quests": "starter_quest_pair"
+    }
+  }
+}
