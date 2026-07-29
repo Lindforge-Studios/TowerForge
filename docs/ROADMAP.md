@@ -1,8 +1,8 @@
 # TowerForge — Roadmap расширяемых механик
 
-Последняя проверка: 2026-07-28
+Последняя проверка: 2026-07-29
 
-Цель программы — расширить TowerForge от классического TD до набора совместимых жанровых механик, не меняя поведение существующих проектов. Каждое расширение является opt-in: разработчик добавляет versioned-модуль в необязательный `content/mechanics.json`, а миссия выбирает профиль через `mission.mechanics`. Нет файла или выбора — игра, Studio, сборка и агенты работают по legacy-контракту.
+Цель программы — расширить TowerForge от классического TD до набора совместимых жанровых механик, не меняя поведение существующих проектов. Gameplay-модули являются opt-in: разработчик добавляет versioned-модуль в необязательный `content/mechanics.json`, а миссия выбирает профиль через `mission.mechanics`. Authoring/runtime extensions могут иметь отдельную явную границу: R9 активируется только полями TowerScript schema v7 и не требует mechanics catalog. Нет соответствующего выбора или script-local opt-in — игра, Studio, сборка и агенты работают по legacy-контракту.
 
 ## Статус
 
@@ -44,6 +44,7 @@
 | R6 — TowerScript DX 2.0 | Завершён; code + constructor sign-off; ADR Accepted | Structured trace, deterministic step/rewind, lossless Visual Graph, descriptor-driven Studio/MCP и bounded O(1)-append debug retention |
 | R7 — Director и Generative Studio | Завершён; code + constructor sign-off; ADR Accepted | Opt-in Director v1, proposal-only worker auto-balancer, seeded map preview и guarded generated-asset staging не меняют legacy path |
 | R8 — Multiplayer protocol и local transport | Завершён; code + constructor sign-off; ADR Accepted | Separate multiplayer entrypoint, local/asymmetric sessions, replay/handshake/transports/reconnect/desync и conditional packaging без hosted runtime |
+| R9 — TowerScript DX 3.0 | Завершён; code + constructor sign-off; ADR Accepted | TowerScript v7 Behavior Tree/HFSM, Graph/Trace/Debugger v2, guarded Studio/MCP surfaces и неизменный v1-v6 legacy path прошли все обязательные gates и двойную независимую проверку |
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Поставленные версии `combat`, `reactions`, `navigation` и `elevation` уже прошли полные вертикальные срезы. Остальные модули Mechanics Hub остаются planned, а preview/apply отклоняют их включение без записи.
 
@@ -523,6 +524,68 @@ simulation, balance, map compile, web build, mobile/desktop packaging и plugin
 build/validate/smoke. Независимые code и constructor-integration verifier повторно подтвердили
 детерминизм, fail-closed transport/security boundaries, conditional packaging, Studio/MCP parity и
 legacy path без открытых P0–P3.
+
+### R9 — TowerScript DX 3.0: Behavior Trees и HFSM
+
+R9 завершён и не является `mission.mechanics` module. Единственная opt-in граница —
+TowerScript schema v7: `behaviorTrees` добавляет tower-only target controllers, а `stateMachines`
+добавляет HFSM в любом существующем scope. Отсутствие контроллеров, выключенный script и все
+TowerScript v1-v6 сохраняют штатный target mode, прежние snapshots/checkpoints/replay digest, UI,
+hot path и package composition. `content/mechanics.json` для R9 не создаётся и не выбирается.
+
+R9.1 вводит closed own-data contracts и pure deterministic Behavior Tree v1. Узлы со стабильными
+уникальными ID ограничены `selector | sequence | condition | action`; результат синхронный
+`success | failure`, без `Running`, ожиданий или скрытых таймеров. Condition использует bounded
+TowerScript expression в режиме `context | any_candidate`; v1 action только `select_targets` с
+фильтром и существующим target mode. Detached roots — `tower`, `game`, `state`, `candidates` и
+текущий `candidate` с HP ratio, tags, shield/status/mark/exposure, distance и route progress.
+
+R9.2 подключает дерево к единственной engine-точке target acquisition. До evaluation применяются
+alive/class/range/LoS ограничения, затем candidates binary-stable сортируются и ограничиваются
+budget. Failure, invalid input и budget exhaustion используют сохранённый target mode как fallback.
+Активная башня отображает `Scripted`; ручной `setTowerTargetMode` отклоняется стабильной причиной.
+Пересекающиеся targeting bindings и support-tower bindings невалидны. Studio, Canvas/Phaser и
+generated players показывают только active snapshot metadata и не повторяют правила engine.
+
+R9.3 добавляет HFSM v1: nested states, `initial`, entry/exit actions и ordered transitions с
+абсолютными target paths. Поиск идёт от active leaf к предкам и в authored order; разрешён максимум
+один переход на machine/context/event, self-transition выполняет обычные exit/entry. Target leaf
+фиксируется до common typed actions: runtime error оставляет новый state активным, прекращает
+оставшиеся transition actions и пишет diagnostic. Nested signals используют прежний recursion limit
+и отдельный transition budget. `stateMachineTransitioned` и trace несут provenance. Только активный
+HFSM добавляет optional checkpoint `scriptMachines` inner v1 с active path, entered time и count;
+entity-scoped state удаляется после окончательной обработки смерти/разрушения/продажи.
+
+R9.4 независимо повышает Graph, Trace и Debugger до v2, сохраняя layout v1. Graph v2 добавляет
+behavior/controller composites, nested machine/state/transition nodes, containment и
+transition-target edges, но остаётся lossless-проекцией canonical AST. Legacy Graph v1 принимается,
+unknown future nodes остаются raw без downgrade. Trace/Debugger v2 добавляет `behavior` и
+`transition` records/step modes поверх прежнего checkpoint + replay-to-cursor runtime. Studio
+получает controller picker, deterministic containment-tree/nested layout без пересечений
+для новых узлов, stable-ID сохранение ручных layout-v1 позиций, transition edges и
+descriptor-driven inspector.
+MCP/AI использует существующий guarded процесс
+`describe -> read -> preview/dry-run -> exact-revision apply -> validate -> compute-only trace`; новых
+широких write-tools нет. Copyable fixture: `docs/examples/opt-in-towerscript-dx3/`; решение:
+[accepted ADR 0050](adr/0050-towerscript-dx-3-behavior-hfsm.md).
+
+Version domains меняются независимо: TowerScript v7; Behavior Tree/HFSM v1; Graph/Trace/Debugger v2;
+layout v1; optional checkpoint `scriptMachines` inner v1. Project v3, `GameCheckpointV1`,
+`towerforge-sim-v2`, GameCommand/Journal v6, profile, campaign, mechanics, renderer/player и
+multiplayer не повышаются.
+
+Приёмка R9 завершена. Доказанные RED закрыты GREEN для engine, targeting,
+HFSM, Studio primitives, collision-free layout и verifier-led repair: failed BT branch больше не
+переносит selection, over-budget own-data arrays отсекаются до обхода хвоста, а
+revoked Proxy возвращает diagnostic без exception. Прошли `npm run typecheck`,
+`npm run build:engine`, `npm run test` (3 028/3 028 в 263 files с ограниченным worker
+scheduling), `npm run validate`, `npm run sim tutorial_01 60`, `npm run build`, последовательный
+`npm run test:e2e -- --workers=1` (133/133), `npm run plugin:build`, `npm run plugin:validate` и
+`npm run plugin:smoke`, а также balance/maps, legacy goldens, checkpoint/journal digest parity,
+Canvas/Phaser × hex/square, Studio/MCP guarded workflows, PWA/single-file/web package/`.tdpack`,
+Rust/Tauri 7/7 и локальные macOS app/DMG build + bundle verifier. Независимые Code Verifier
+и Constructor Integration Verifier выдали PASS без открытых P0-P2; автор реализации не
+выполнял ни одну из этих ролей.
 
 ## TDD и роли
 

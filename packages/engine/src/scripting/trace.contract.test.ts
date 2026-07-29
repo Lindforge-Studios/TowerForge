@@ -130,7 +130,7 @@ describe("R6A structured TowerScript trace contract", () => {
     const snapshot = collector.getSnapshot();
 
     expect(snapshot).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       maxEntries: 128,
       droppedEntries: 0,
       entries: expect.any(Array)
@@ -153,7 +153,7 @@ describe("R6A structured TowerScript trace contract", () => {
 
     const event = snapshot.entries[0]!;
     expect(event).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       phase: "event",
       eventName: "signal",
       event: { type: "signal", signal: "run", payload: { amount: 3 }, sourceScriptId: "external" }
@@ -333,6 +333,6 @@ describe("R6A structured TowerScript trace contract", () => {
     expect(second.entries[0]).toMatchObject({ event: { payload: { nested: { value: 1 } } } });
     expect(second.entries).not.toBe(first.entries);
     const publicEntry: TowerScriptTraceEntryV1 = second.entries[0]!;
-    expect(publicEntry.schemaVersion).toBe(1);
+    expect(publicEntry.schemaVersion).toBe(2);
   });
 });

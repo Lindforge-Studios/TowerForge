@@ -49,6 +49,8 @@ export * from "./run/campaign-battle.js";
 export * from "./scripting/types.js";
 export * from "./scripting/schema-descriptor.js";
 export * from "./scripting/expression.js";
+export * from "./scripting/behavior-tree.js";
+export * from "./scripting/state-machine.js";
 export * from "./scripting/validate.js";
 export * from "./scripting/trace.js";
 export * from "./scripting/graph.js";

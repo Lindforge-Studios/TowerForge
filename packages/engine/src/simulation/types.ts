@@ -118,6 +118,8 @@ export interface EnemyHealAuraDefinition {
 export interface EnemyType {
   id: string;
   label: string;
+  /** Optional author-defined decision/quest tags; inert unless a feature explicitly reads them. */
+  tags?: readonly string[];
   maxHp: number;
   speed: number;
   reward: ResourceCost;
@@ -612,6 +614,18 @@ export interface TowerState {
   hp?: number;
 }
 
+export interface TowerScriptedTargetingSnapshotV1 {
+  readonly schemaVersion: 1;
+  readonly scriptId: string;
+  readonly behaviorTreeId: string;
+  readonly fallbackMode: TowerTargetMode;
+}
+
+export interface TowerSnapshot extends TowerState {
+  /** Derived from active TowerScript v7 content; never stored in authoritative tower state. */
+  readonly scriptedTargeting?: TowerScriptedTargetingSnapshotV1;
+}
+
 export type EnemyMarkChangeCause = "application" | "consume" | "expiration" | "script";
 
 export interface EnemyMarkChangedEvent {
@@ -795,6 +809,15 @@ export type GameEvent =
   | { type: "enemyEnteredTile"; enemyId: string; enemyTypeId: string; coord: GridCoord; terrain: Terrain; terrainMetadata: TerrainTypeDefinition; routeId?: string; pathOrder: number }
   | { type: "terrainChanged"; coord: GridCoord; fromTerrain: Terrain; toTerrain: Terrain; terrainMetadata: TerrainTypeDefinition; source: "script" | "ability" | "restore" }
   | { type: "elevationChanged"; coord: GridCoord; fromElevation: number; toElevation: number; source: "script" | "restore" }
+  | {
+      type: "stateMachineTransitioned";
+      scriptId: string;
+      machineId: string;
+      contextId: string;
+      transitionId: string;
+      fromStatePath: string;
+      toStatePath: string;
+    }
   | { type: "scriptSignal"; scriptId: string; signal: string; payload: import("../scripting/types.js").TowerScriptJson }
   | { type: "scriptDiagnostic"; diagnostic: import("../scripting/types.js").TowerScriptDiagnostic }
   | { type: "victory" }
@@ -1245,7 +1268,7 @@ export interface GameSnapshot {
   nextWaveRemaining: number;
   nextWaveDelayUnits: number;
   enemies: EnemyState[];
-  towers: TowerState[];
+  towers: TowerSnapshot[];
   tiles: HexTile[];
   abilities: Partial<Record<MissionAbilityId, AbilitySnapshot>>;
   temporaryWaterTiles: TemporaryWaterTile[];

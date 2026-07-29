@@ -67,6 +67,7 @@ test("authors, connects, deletes, positions, saves, and reloads a canonical Towe
   await knownActionKey.fill("wavesSeen");
 
   const dragHandle = addedHandler.locator(".script-graph-node-drag");
+  await addedHandler.scrollIntoViewIfNeeded();
   const before = await addedHandler.boundingBox();
   const handleBox = await dragHandle.boundingBox();
   expect(before).not.toBeNull();
@@ -89,6 +90,87 @@ test("authors, connects, deletes, positions, saves, and reloads a canonical Towe
   await expect(page.locator('[data-graph-node="10:/handlers/towerPlaced/0"]')).toBeVisible();
   await expect(page.locator('[data-graph-node="10:/handlers/towerPlaced/0/actions/0"]')).toContainText("action");
   await expect(page.locator('[data-graph-node="10:/handlers/waveStarted/0/actions/0"] [data-graph-field="key"]')).toHaveValue("wavesSeen");
+});
+
+test("authors, removes, and re-enables TowerScript v7 behavior and HFSM controllers", async ({ page }) => {
+  test.setTimeout(90_000);
+  await initializeStudio(page);
+  await openStarterGraph(page);
+
+  const palette = (group, name) => page.locator(
+    `[data-node-catalog-group="${group}"][data-node-catalog-name="${name}"]`
+  );
+  await palette("controllers", "behavior_tree").click();
+  await expect(page.locator(".script-graph-node.behavior-tree")).toHaveCount(1);
+  await palette("behavior", "behavior_sequence").click();
+  const sequence = page.locator(".script-graph-node.behavior-sequence");
+  await expect(sequence).toHaveCount(1);
+  await sequence.locator(".script-graph-node-drag").click();
+  await palette("behavior", "behavior_condition").click();
+  await expect(page.locator(".script-graph-node.behavior-condition")).toHaveCount(1);
+  await page.locator(".script-graph-node.behavior-sequence .script-graph-node-drag").click();
+  await palette("behavior", "behavior_action").click();
+  await expect(page.locator(".script-graph-node.behavior-action")).toHaveCount(2);
+
+  await palette("controllers", "state_machine").click();
+  await expect(page.locator(".script-graph-node.state-machine")).toHaveCount(1);
+  await palette("stateMachines", "state").click();
+  await expect(page.locator(".script-graph-node.state")).toHaveCount(2);
+  await page.locator(".script-graph-node.state.selected .script-graph-node-drag").click();
+  await palette("stateMachines", "state").click();
+  await expect(page.locator(".script-graph-node.state")).toHaveCount(3);
+  await palette("stateMachines", "transition").click();
+  await expect(page.locator(".script-graph-node.transition")).toHaveCount(1);
+  await expect(page.locator(".script-graph-edge.transition-target")).toHaveCount(1);
+  const controllerBoxes = await page.locator([
+    ".script-graph-node.behavior-tree",
+    ".script-graph-node.behavior-selector",
+    ".script-graph-node.behavior-sequence",
+    ".script-graph-node.behavior-condition",
+    ".script-graph-node.behavior-action",
+    ".script-graph-node.state-machine",
+    ".script-graph-node.state",
+    ".script-graph-node.transition"
+  ].join(",")).evaluateAll((nodes) => nodes.map((node) => {
+    const box = node.getBoundingClientRect();
+    return { id: node.dataset.graphNode, left: box.left, top: box.top, right: box.right, bottom: box.bottom };
+  }));
+  for (let left = 0; left < controllerBoxes.length; left += 1) {
+    for (let right = left + 1; right < controllerBoxes.length; right += 1) {
+      const a = controllerBoxes[left];
+      const b = controllerBoxes[right];
+      expect(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top,
+        `${a.id} overlaps ${b.id}`).toBe(true);
+    }
+  }
+
+  const scriptPath = path.join(projectDir, "scripts", "gameplay", "starter-gameplay.tower.json");
+  await page.locator("#btn-script-save").click();
+  await expect.poll(() => JSON.parse(fs.readFileSync(scriptPath, "utf8"))).toMatchObject({
+    schemaVersion: 7,
+    behaviorTrees: [{ schemaVersion: 1 }],
+    stateMachines: [{ schemaVersion: 1 }]
+  });
+
+  await page.reload();
+  await openStarterGraph(page);
+  await expect(page.locator(".script-graph-node.behavior-tree")).toHaveCount(1);
+  await expect(page.locator(".script-graph-node.state-machine")).toHaveCount(1);
+  await page.locator(".script-graph-node.behavior-tree [data-graph-delete]").click();
+  await page.locator(".script-graph-node.state-machine [data-graph-delete]").click();
+  await page.locator("#btn-script-save").click();
+  await expect.poll(() => {
+    const definition = JSON.parse(fs.readFileSync(scriptPath, "utf8"));
+    return { behaviorTrees: definition.behaviorTrees, stateMachines: definition.stateMachines };
+  }).toEqual({ behaviorTrees: undefined, stateMachines: undefined });
+
+  await palette("controllers", "behavior_tree").click();
+  await palette("controllers", "state_machine").click();
+  await page.locator("#btn-script-save").click();
+  await page.reload();
+  await openStarterGraph(page);
+  await expect(page.locator(".script-graph-node.behavior-tree")).toHaveCount(1);
+  await expect(page.locator(".script-graph-node.state-machine")).toHaveCount(1);
 });
 
 test("pauses on a historical debugger frame and resumes only through Resume", async ({ page }) => {
