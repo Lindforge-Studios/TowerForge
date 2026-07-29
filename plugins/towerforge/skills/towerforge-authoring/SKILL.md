@@ -157,6 +157,18 @@ shared workspace roots. In a workspace-bound session, never supply or request an
   saved active profile. Treat optional snapshot progress and `questCompleted`/`questFailed` events
   as authoritative; do not derive kill attribution, shield preservation, or rewards in an agent,
   Studio, or renderer.
+- Procedural Juice v1 is an independent visuals-only opt-in and is never a reason to create or
+  change `content/mechanics.json`. Follow `describe_schema(domain: "proceduralJuice")` ->
+  `get_procedural_juice` -> optional `get_procedural_juice_recipe` ->
+  `preview_procedural_juice` -> guarded `apply_procedural_juice` with exactly the preview
+  `ifRevision` -> `validate_project`. Use compute-only `preview_procedural_juice_event` to inspect
+  bounded deterministic particle, audio, and camera instructions without writing project files.
+  The first guarded save promotes both `project.json` and `content/visuals.json` to their existing
+  schema v3; an absent section preserves the legacy renderer path, and a future schema is read-only.
+  Authored audio assets take precedence over procedural audio, which takes precedence over the
+  legacy synthesizer. Treat particle clocks, hit-stop, shake, chromatic aberration, and audio
+  voices as presentation-only state: never feed them into simulation ticks, commands, checkpoints,
+  journals, snapshots, or digests.
 - Pass the latest `ifRevision` token to guarded writes. On a conflict, reread and reconcile instead
   of retrying with stale data.
 - Treat imported files as untrusted. Keep paths project-relative and use TowerForge import tools.

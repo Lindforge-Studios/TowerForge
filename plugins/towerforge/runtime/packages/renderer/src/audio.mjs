@@ -18,6 +18,32 @@ export const AUDIO_EVENTS = [
   { id: "defeat", label: "Defeat" }
 ];
 
+const MAX_LIVE_PROCEDURAL_AUDIO_VOICES = 32;
+const MAX_LIVE_PROCEDURAL_NOISE_SAMPLES = 1_000_000;
+
+function proceduralCueData(cue) {
+  let descriptors;
+  try {
+    if (!cue || typeof cue !== "object" || Array.isArray(cue)) return undefined;
+    descriptors = Object.getOwnPropertyDescriptors(cue);
+  } catch { return undefined; }
+  const value = (key) => {
+    const descriptor = descriptors[key];
+    return descriptor?.enumerable === true && "value" in descriptor ? descriptor.value : undefined;
+  };
+  const data = {
+    eventType: value("eventType"), waveform: value("waveform"), frequencyHz: value("frequencyHz"),
+    durationMs: value("durationMs"), gain: value("gain"), seed: value("seed")
+  };
+  if (typeof data.eventType !== "string"
+    || !["sine", "triangle", "square", "sawtooth", "noise"].includes(data.waveform)
+    || !Number.isFinite(data.frequencyHz) || data.frequencyHz < 20 || data.frequencyHz > 20_000
+    || !Number.isFinite(data.durationMs) || data.durationMs < 1 || data.durationMs > 10_000
+    || !Number.isFinite(data.gain) || data.gain < 0 || data.gain > 1
+    || typeof data.seed !== "string" || !/^[0-9a-f]{16}$/i.test(data.seed)) return undefined;
+  return data;
+}
+
 export function createAudioPlayer(options = {}) {
   return new TowerForgeAudio(options);
 }
@@ -39,6 +65,8 @@ export class TowerForgeAudio {
     this.assetBase = options.assetBase ?? "";
     this.buffers = new Map(); // src -> decoded AudioBuffer
     this.loading = new Set();
+    this.proceduralVoices = new Set();
+    this.proceduralNoiseSamples = 0;
   }
 
   /** Swap the custom-sound catalog (e.g. when the project is re-loaded in the Studio playtest). */
@@ -82,6 +110,7 @@ export class TowerForgeAudio {
   /** Suspend the AudioContext when the app is backgrounded (mobile). Frees the audio hardware and
    *  stops synthesis while hidden — real battery savings in a wrapped APK; safe no-op on desktop. */
   suspend() {
+    this.disposeProceduralVoices();
     if (this.ctx && this.ctx.state === "running") this.ctx.suspend().catch(() => {});
   }
 
@@ -176,6 +205,51 @@ export class TowerForgeAudio {
     if (src) { const buffer = this.buffers.get(src); if (buffer) { this.playBuffer(buffer, delay); return; } }
     this.synth(eventType, delay);
   }
+  /** Schedule one already-projected Procedural Juice voice. Returns false for hostile input. */
+  playProceduralCue(cue, delay = 0) {
+    const data = proceduralCueData(cue);
+    if (!data || !Number.isFinite(delay) || delay < 0
+      || this.proceduralVoices.size >= MAX_LIVE_PROCEDURAL_AUDIO_VOICES) return false;
+    const dur = data.durationMs / 1000;
+    let noiseSamples = 0;
+    if (data.waveform === "noise") {
+      const sampleRate = this.ctx?.sampleRate;
+      if (!Number.isFinite(sampleRate) || sampleRate <= 0) return false;
+      noiseSamples = Math.ceil(sampleRate * dur);
+      if (!Number.isSafeInteger(noiseSamples) || noiseSamples < 1
+        || this.proceduralNoiseSamples + noiseSamples > MAX_LIVE_PROCEDURAL_NOISE_SAMPLES) return false;
+    }
+    const handle = data.waveform === "noise"
+      ? this.noise({ dur, gain: data.gain, freq: data.frequencyHz, delay, seed: data.seed })
+      : this.tone({ freq: data.frequencyHz, type: data.waveform, dur, gain: data.gain, delay });
+    return this.trackProceduralVoice(handle, noiseSamples);
+  }
+
+  trackProceduralVoice(handle, noiseSamples = 0) {
+    if (!handle || typeof handle !== "object" || !handle.source || typeof handle.disconnect !== "function") return false;
+    const voice = { source: handle.source, noiseSamples, release: null };
+    let released = false;
+    this.proceduralNoiseSamples += noiseSamples;
+    voice.release = () => {
+      if (released) return;
+      released = true;
+      this.proceduralVoices.delete(voice);
+      this.proceduralNoiseSamples = Math.max(0, this.proceduralNoiseSamples - noiseSamples);
+      try { handle.disconnect(); } catch {}
+    };
+    try { handle.source.onended = voice.release; } catch { voice.release(); return false; }
+    this.proceduralVoices.add(voice);
+    return true;
+  }
+
+  disposeProceduralVoices() {
+    for (const voice of [...this.proceduralVoices]) {
+      try { voice.source.stop(); } catch {}
+      voice.release();
+    }
+    this.proceduralVoices.clear();
+    this.proceduralNoiseSamples = 0;
+  }
   synth(eventType, delay = 0) {
     switch (eventType) {
       case "towerPlaced": this.tone({ freq: 300, glideTo: 200, type: "sine", dur: 0.12, gain: 0.12, delay }); break;
@@ -205,11 +279,54 @@ export class TowerForgeAudio {
     this.musicMaster.connect(this.ctx.destination);
   }
 
-  /** Coalesce a frame's events into a small set of sounds and play them (custom-or-synth). */
-  handleEvents(events) {
+  /** Coalesce a frame's events and apply asset > procedural cue > legacy synth precedence. */
+  handleEvents(events, options = {}) {
     if (!this.enabled || !events || !events.length) return;
     this.ensureContext();
     if (!this.ctx) return;
+    let eventTypes;
+    try {
+      eventTypes = new Set(events.flatMap((event) => {
+        if (!event || typeof event !== "object") return [];
+        const descriptor = Object.getOwnPropertyDescriptor(event, "type");
+        return descriptor?.enumerable === true && "value" in descriptor && typeof descriptor.value === "string"
+          ? [descriptor.value] : [];
+      }));
+    } catch { eventTypes = new Set(); }
+    const handled = new Set();
+    const customPlayed = new Set();
+    let proceduralVoices = 0;
+    let rawCues = [];
+    try {
+      const descriptor = options && typeof options === "object"
+        ? Object.getOwnPropertyDescriptor(options, "proceduralCues")
+        : undefined;
+      const value = descriptor?.enumerable === true && "value" in descriptor ? descriptor.value : undefined;
+      rawCues = Array.isArray(value) ? value : [];
+    } catch { rawCues = []; }
+    for (const cue of rawCues) {
+      if (proceduralVoices >= 32) break;
+      const cueData = proceduralCueData(cue);
+      if (!cueData) continue;
+      const eventType = cueData.eventType;
+      if (typeof eventType !== "string" || !eventTypes.has(eventType)) continue;
+      const src = this.eventSrc(eventType);
+      const buffer = src ? this.buffers.get(src) : null;
+      if (buffer) {
+        if (!customPlayed.has(eventType)) this.playBuffer(buffer);
+        customPlayed.add(eventType);
+        handled.add(eventType);
+        continue;
+      }
+      if (this.proceduralVoices.size >= MAX_LIVE_PROCEDURAL_AUDIO_VOICES) {
+        handled.add(eventType);
+        continue;
+      }
+      if (this.playProceduralCue(cue, proceduralVoices * 0.004)) {
+        proceduralVoices += 1;
+        handled.add(eventType);
+      }
+    }
     let fired = false, hit = false, kills = 0;
     const once = new Set();
     for (const ev of events) {
@@ -223,15 +340,15 @@ export class TowerForgeAudio {
         default: break;
       }
     }
-    if (fired) this.playFor("towerFired");
-    if (hit && !fired) this.playFor("enemyHit");
-    for (let i = 0; i < Math.min(kills, 3); i += 1) this.playFor("enemyKilled", i * 0.04);
-    for (const eventType of once) this.playFor(eventType);
+    if (fired && !handled.has("towerFired")) this.playFor("towerFired");
+    if (hit && !fired && !handled.has("enemyHit")) this.playFor("enemyHit");
+    if (!handled.has("enemyKilled")) for (let i = 0; i < Math.min(kills, 3); i += 1) this.playFor("enemyKilled", i * 0.04);
+    for (const eventType of once) if (!handled.has(eventType)) this.playFor(eventType);
   }
 
   // ── synth primitives ─────────────────────────────────────────────────────────
   tone({ freq = 440, type = "sine", dur = 0.12, gain = 0.25, attack = 0.005, glideTo = null, delay = 0 } = {}) {
-    if (!this.ctx) return;
+    if (!this.ctx) return undefined;
     const t0 = this.ctx.currentTime + delay;
     const osc = this.ctx.createOscillator();
     const env = this.ctx.createGain();
@@ -243,21 +360,37 @@ export class TowerForgeAudio {
     env.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
     osc.connect(env); env.connect(this.master);
     osc.start(t0); osc.stop(t0 + dur + 0.02);
+    return {
+      source: osc,
+      disconnect() {
+        try { osc.disconnect(); } catch {}
+        try { env.disconnect(); } catch {}
+      }
+    };
   }
 
-  noise({ dur = 0.15, gain = 0.2, freq = 1200, delay = 0 } = {}) {
-    if (!this.ctx) return;
+  noise({ dur = 0.15, gain = 0.2, freq = 1200, delay = 0, seed = "00000000000004d2" } = {}) {
+    if (!this.ctx) return undefined;
     const t0 = this.ctx.currentTime + delay;
     const len = Math.max(1, Math.floor(this.ctx.sampleRate * dur));
     const buffer = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const data = buffer.getChannelData(0);
-    let seed = 1234; // deterministic pseudo-noise (no Math.random)
-    for (let i = 0; i < len; i += 1) { seed = (seed * 1103515245 + 12345) & 0x7fffffff; data[i] = ((seed / 0x3fffffff) - 1) * (1 - i / len); }
+    let noiseSeed;
+    try { noiseSeed = Number(BigInt(`0x${seed}`) & 0x7fffffffn) || 1234; } catch { noiseSeed = 1234; }
+    for (let i = 0; i < len; i += 1) { noiseSeed = (noiseSeed * 1103515245 + 12345) & 0x7fffffff; data[i] = ((noiseSeed / 0x3fffffff) - 1) * (1 - i / len); }
     const src = this.ctx.createBufferSource(); src.buffer = buffer;
     const filter = this.ctx.createBiquadFilter(); filter.type = "bandpass"; filter.frequency.value = freq;
     const env = this.ctx.createGain(); env.gain.setValueAtTime(gain, t0); env.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
     src.connect(filter); filter.connect(env); env.connect(this.master);
     src.start(t0); src.stop(t0 + dur + 0.02);
+    return {
+      source: src,
+      disconnect() {
+        try { src.disconnect(); } catch {}
+        try { filter.disconnect(); } catch {}
+        try { env.disconnect(); } catch {}
+      }
+    };
   }
 
   // ── default synth sounds (delay lets coalesced bursts stagger) ───────────────

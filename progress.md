@@ -1,5 +1,29 @@
 Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R8 roadmap with subagents and independent verification.
 
+## R11 architecture handoff (2026-07-29)
+
+- R11 is an independent opt-in presentation milestone semantically built on the accepted R8 surface;
+  it must not import or require R9/R10 contracts. The delivery branch is stacked on R10 only because
+  both milestones touch shared Studio/player/plugin files. ADR 0051 remains Proposed until
+  implementation, gates, and both independent sign-offs finish.
+- Public storage is visuals schema v3 with optional `proceduralJuice` schema v1 and exactly
+  `particleEmitters`, `audioCues`, `cameraCues`, and `eventBindings`. It is not a mechanics module.
+  First guarded authoring promotes the project manifest and visuals document to the existing v3;
+  absence keeps current renderer/audio behavior and snapshot bytes.
+- Exact v1 records and production budgets are documented in ADR 0051. Current agreed catalog caps
+  are 64/64/64 cues and 128 bindings, with 16 references of each cue kind per binding, 256 particles
+  per emitter, at most 64 source events, 2,048 live renderer particles, and 32 scheduled audio voices
+  per frame and simultaneously live in Web Audio.
+- `packages/renderer` owns the pure deterministic plan and thin Canvas/Phaser/Web Audio/compositor
+  adapters. Engine events/snapshots remain authoritative; no engine RNG, state, event, snapshot,
+  checkpoint, command/journal, digest, TowerScript, mechanics, profile, campaign, or multiplayer
+  version changes are allowed.
+- Delivery order is R11.1 catalog/pure planner → R11.2 particles → R11.3 audio → R11.4 camera plus
+  Studio/MCP/packages. Every slice starts RED. Final work needs active/absent and adversarial schema
+  tests, continuous/checkpoint/replay projection equivalence, Canvas/Phaser × square/hex,
+  accessibility/audio fallbacks, guarded authoring, packaging/plugin parity, and independent Code
+  Verifier plus Constructor Integration Verifier PASS.
+
 ## Current milestone
 
 - R0–R2 and R3.1–R3.4a are complete with independent code and constructor-integration sign-off.
@@ -89,3 +113,26 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   same-user derived-cache authenticity; strict audits can use `--no-cache`.
 - R10 is accepted. Full evidence is Vitest 3,070/3,070 across 271 files, Playwright 133/133,
   Studio 17/17, surface contracts 6/6, all required repository gates and exact plugin parity.
+
+## 2026-07-29 — R11 accepted
+
+- RED contracts independently fixed the visuals-v3 closed schema, catalog/reference/budget limits,
+  hostile-own-data handling, deterministic projector semantics, legacy engine invariants, shared
+  renderer consumption, runtime bounds, Web Audio precedence, Studio lifecycle, packages, and MCP.
+- GREEN implementation adds the opt-in `proceduralJuice` v1 catalogs, `tf-juice-rng-v1` pure
+  projector, bounded local particle/audio/camera runtime, Canvas/Phaser adapters, presentation-only
+  hit stop, reduced/off motion, isolated Studio Juice workspace, guarded CLI/MCP authoring, recipes,
+  synthetic-event preview, AI descriptors/instructions, reference fixture, and package surfaces.
+- First authoring explicitly promotes both the project manifest and visuals document to the existing
+  schema v3. Absent data allocates no Juice runtime and preserves gameplay snapshots, checkpoints,
+  journals, state/content digests, ordinary Studio forms, and legacy renderer/audio behavior.
+- Focused R11 contracts are GREEN at 53/53 across nine files. The final complete unit run is
+  3,123/3,123 across 280 files and the complete browser run is 134/134. Typecheck, engine/build,
+  validate, tutorial sim, balance, map compile, production build, mobile/desktop packages, and
+  plugin build/validate/smoke have passed.
+- Real browser acceptance verifies guarded Studio authoring and both generated players. Canvas and
+  Phaser render the same placed tower and deterministic spark burst with matching structured state
+  and no application errors (only the expected missing favicon request). Independent Code Verifier
+  and Constructor Integration Verifier sign-offs are PASS with no open P0–P2 findings; the final
+  frozen-tree rerun, both package targets, and exact source-to-plugin parity are green. ADR 0051 is
+  Accepted.

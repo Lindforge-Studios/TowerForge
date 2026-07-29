@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 3,
+  "proceduralJuice": {
+    "schemaVersion": 1,
+    "particleEmitters": {
+      "impact_sparks": {
+        "maxParticles": 12,
+        "lifetimeMs": { "min": 80, "max": 180 },
+        "speedPxPerSecond": { "min": 40, "max": 100 },
+        "angleDegrees": { "min": 0, "max": 360 },
+        "sizePx": { "min": 1, "max": 3 },
+        "color": "#ffd166",
+        "gravityPxPerSecondSquared": 80,
+        "blendMode": "additive"
+      }
+    },
+    "audioCues": {
+      "impact_tone": {
+        "waveform": "triangle",
+        "baseFrequencyHz": 220,
+        "durationMs": 120,
+        "gain": 0.3,
+        "pitchSemitones": {
+          "damage": 0.05,
+          "attackSpeed": 1,
+          "targetSize": -0.5,
+          "variation": { "min": -0.2, "max": 0.2 }
+        }
+      }
+    },
+    "cameraCues": {
+      "heavy_finish": {
+        "shake": { "durationMs": 160, "intensity": 0.4 },
+        "hitStop": { "durationMs": 200, "timeScale": 0.2 },
+        "chromaticAberration": { "durationMs": 120, "intensity": 0.3 }
+      }
+    },
+    "eventBindings": {
+      "impact": {
+        "event": "enemyHit",
+        "missionIds": ["tutorial_01"],
+        "particleEmitterIds": ["impact_sparks"],
+        "audioCueIds": ["impact_tone"]
+      },
+      "heavy_death": {
+        "event": "enemyKilled",
+        "missionIds": ["tutorial_01"],
+        "enemyTypeIds": ["armored_brute"],
+        "cameraCueIds": ["heavy_finish"]
+      }
+    }
+  }
+}

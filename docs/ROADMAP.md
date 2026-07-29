@@ -52,6 +52,7 @@ service. Нет соответствующего выбора или локал�
 | R8 — Multiplayer protocol и local transport | Завершён; code + constructor sign-off; ADR Accepted | Separate multiplayer entrypoint, local/asymmetric sessions, replay/handshake/transports/reconnect/desync и conditional packaging без hosted runtime |
 | R9 — TowerScript DX 3.0 | PR [#20](https://github.com/Lindforge-Studios/TowerForge/pull/20) открыт; реализация и двойной sign-off GREEN; merge ожидается | TowerScript v7 Behavior Trees/HFSM остаётся script-local opt-in и не является зависимостью R10 |
 | R10 — Persona QA и Procedural Quests | Завершён; code + constructor sign-off; ADR Accepted | Pure три-persona QA + opt-in `quests` v1 с CLI/Studio/MCP, renderer/player, packages и fixture; merge/release не входят в R10 |
+| R11 — Procedural Juice Engine | Завершён; ADR Accepted | Opt-in visuals v3: deterministic particle/audio/camera plans, shared Canvas/Phaser surfaces, Studio/MCP authoring и неизменный gameplay/legacy path |
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Поставленные версии `combat`, `reactions`, `navigation` и `elevation` уже прошли полные вертикальные срезы. Остальные модули Mechanics Hub остаются planned, а preview/apply отклоняют их включение без записи.
 
@@ -621,6 +622,55 @@ checkpoint хранит exact snapshot-form quest entries schema v1 и при re
 victory/failure, не переносятся в profile/campaign/multiplayer, не дают implicit rewards и не
 добавляют commands. Решение зафиксировано как Accepted в
 [ADR 0050](adr/0050-r10-persona-qa-and-procedural-quests.md).
+
+### R11 — Procedural Juice Engine
+
+R11 — независимый presentation milestone, семантически не зависящий от R9/R10. Ветка поставки
+stacked поверх принятого R10 tip только для сохранения уже принятых docs/plugin surfaces; R11 не
+использует TowerScript v7, enemy tags, Persona QA, quests или их события. Он не создаёт mechanics
+module и не меняет gameplay. Явный
+opt-in — `content/visuals.json` schema v3 с optional `proceduralJuice` schema v1. Блок содержит
+ровно четыре versioned-каталога: `particleEmitters`, `audioCues`, `cameraCues` и `eventBindings`.
+Отсутствующий блок оставляет нынешние renderer/audio bytes и UI неизменными; пустой блок inert.
+
+1. **R11.1 — catalog и pure planning.** Сначала RED-контракты фиксируют closed own-data validation,
+   explicit visuals v2→v3 authoring promotion, cross-references, supported R8 event set, binary
+   ordering, `tf-juice-rng-v1`, fail-closed future version и budgets. Общий pure projector получает
+   previous/current snapshots, content и presentation time, возвращает detached particle/audio/
+   camera instructions и не вызывает `Math.random`, DOM, Web Audio или engine mutations.
+2. **R11.2 — particles.** Exact JSON emitter задаёт bounded count, lifetime, speed, angle, size,
+   color, gravity и blend mode. Стабильный event/cue/particle seed и closed-form motion дают один
+   план при любом renderer cadence. Canvas и Phaser используют общие anchor resolution, overflow,
+   reduced-motion и lifecycle rules; частицы не сталкиваются и не наносят урон.
+3. **R11.3 — procedural audio.** Exact audio cue задаёт waveform, base frequency, duration, gain и
+   pitch variation от нормализованных damage/attack-speed/target-size facts плюс seeded jitter.
+   Pure plan одинаков для replay, а bounded Web Audio adapter остаётся lazy/user-gesture gated,
+   держит не более 32 одновременно живых procedural sources и disconnect-ит их при завершении/
+   suspend.
+   Для совпавшего события приоритет фиксирован как explicit asset SFX → procedural cue → hardcoded
+   synth; при отсутствии binding существующий asset/synth path работает буквально как раньше.
+4. **R11.4 — camera и constructor surfaces.** Shake, presentation-only hit stop/time scale и
+   chromatic separation объединяются общим compositor contract; они никогда не меняют engine tick,
+   cooldown, replay или multiplayer checksum. Studio получает отдельный Juice workspace в visual/
+   audio authoring, MCP/AI — descriptor-driven read/recipe/event-preview и узкий visuals-revision
+   preview/apply с validation, backup и rollback. Canvas/Phaser, Studio Playtest, PWA, single-file,
+   web package, `.tdpack` и desktop используют один planner.
+
+Первое guarded-сохранение R11 явно переводит project manifest и `visuals` в уже существующую schema
+v3, чтобы старый CLI не проигнорировал presentation-контракт. R11 не вводит новую project-версию и
+не повышает mechanics, engine, snapshot, `GameCheckpointV1`, GameCommand/Journal, TowerScript,
+profile, campaign или multiplayer версии. `visuals` остаётся вне simulation content/state
+digest; procedural runtime state является только bounded local presentation state и не сериализуется.
+Новые engine events, gameplay time dilation, collision particles, authored shaders/code/audio graphs,
+asset generation, music generation и R9/R10 event bindings исключены. Принятый контракт:
+[ADR 0051](adr/0051-opt-in-procedural-juice-presentation.md).
+
+Критерий выхода: valid/invalid/future/accessor/proxy/sparse/cyclic/over-budget contracts; одинаковый
+pure plan при перестановке record input и continuous/checkpoint/journal replay; Studio
+add/edit/save/reload/remove/re-add; AI `describe → read → preview → guarded apply → validate → event
+preview`; Canvas/Phaser × hex/square; full/reduced/off motion; audio unavailable/suspended; PWA,
+single-file, web package, `.tdpack`, desktop и plugin parity. Starter/goldens и legacy audio/render
+path не меняются. Финал требует всех затронутых gates и двух независимых sign-off.
 
 ## TDD и роли
 

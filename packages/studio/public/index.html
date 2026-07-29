@@ -473,6 +473,26 @@
             <p class="text-muted" style="font-size:11.5px;margin:0 0 10px">Import a music file, then assign one looping track per mission. Players control music and SFX separately.</p>
             <div id="music-bindings"></div>
           </section>
+          <section id="procedural-juice-lab" class="tool-card">
+            <div class="form-section-title">Procedural Juice Lab <span id="procedural-juice-state" class="text-muted">Opt-in</span></div>
+            <p class="text-muted" style="font-size:11.5px;margin:0 0 10px">Author deterministic particles, procedural impact audio and presentation-only camera feedback. Removing the block restores the unchanged legacy renderer.</p>
+            <div class="form-row">
+              <div class="field"><label>Recipe</label><select id="procedural-juice-recipe"></select></div>
+              <button id="btn-procedural-juice-recipe" class="btn btn-outline" type="button" style="align-self:flex-end">Load recipe</button>
+              <button id="btn-procedural-juice-disable" class="btn btn-outline" type="button" style="align-self:flex-end">Disable</button>
+            </div>
+            <div class="field"><label>Procedural Juice JSON</label><textarea id="procedural-juice-editor" class="mono json-editor" spellcheck="false"></textarea></div>
+            <div class="form-row">
+              <div class="field"><label>Synthetic event</label><select id="procedural-juice-event"><option value="enemyHit">enemyHit</option><option value="enemyKilled">enemyKilled</option><option value="towerFired">towerFired</option><option value="enemyLeaked">enemyLeaked</option><option value="victory">victory</option></select></div>
+              <button id="btn-procedural-juice-event-preview" class="btn btn-outline" type="button" style="align-self:flex-end">Preview event</button>
+            </div>
+            <div class="field"><label>Event payload JSON</label><textarea id="procedural-juice-event-json" class="mono" spellcheck="false">{"enemyId":"enemy_preview","enemyTypeId":"grunt","damage":24}</textarea></div>
+            <div class="form-row">
+              <button id="btn-procedural-juice-preview" class="btn btn-outline" type="button">Validate preview</button>
+              <button id="btn-procedural-juice-apply" class="btn btn-primary" type="button" disabled>Apply guarded</button>
+            </div>
+            <pre id="procedural-juice-result" class="mono text-muted" aria-live="polite"></pre>
+          </section>
           <section class="tool-card">
             <div class="form-section-title">Sprite Frames (from atlas)</div>
             <p class="text-muted" style="font-size:11.5px;margin:0 0 10px">Slice one atlas image into named sprites. Import an atlas above (Kind = atlas), pick a frame rectangle, then bind the sprite to a tower/enemy in the Visual Catalog JSON.</p>

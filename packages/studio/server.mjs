@@ -1166,6 +1166,93 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // Procedural Juice is a visuals-only opt-in catalog. Studio deliberately delegates to the same
+  // narrow revision-guarded tools as MCP agents instead of using the broad project save route.
+  if (req.method === "GET" && pathname === "/api/procedural-juice/read") {
+    try {
+      const result = await callTool("get_procedural_juice", { projectDir: PROJECT_DIR }, { defaultProjectDir: PROJECT_DIR });
+      return jsonResp(res, 200, sanitizeMechanicsResponse(result));
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status, failure.response);
+    }
+  }
+
+  if (req.method === "GET" && pathname === "/api/procedural-juice/recipes") {
+    try {
+      const recipeIds = ["impact_feedback", "boss_finisher"];
+      const recipes = [];
+      for (const recipeId of recipeIds) {
+        recipes.push(await callTool("get_procedural_juice_recipe", { projectDir: PROJECT_DIR, recipeId }, { defaultProjectDir: PROJECT_DIR }));
+      }
+      return jsonResp(res, 200, { recipes: sanitizeMechanicsResponse(recipes) });
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status, failure.response);
+    }
+  }
+
+  if (req.method === "POST" && [
+    "/api/procedural-juice/event-preview",
+    "/api/procedural-juice/preview",
+    "/api/procedural-juice/apply"
+  ].includes(pathname)) {
+    const isWrite = pathname.endsWith("/apply");
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { code: "malformed_request", error: "Invalid JSON body" }); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return jsonResp(res, 400, { code: "invalid_request", error: "Procedural Juice request must be a JSON object." });
+    }
+    try {
+      let toolName;
+      let result;
+      if (pathname.endsWith("/event-preview")) {
+        toolName = "preview_procedural_juice_event";
+        result = await callTool("preview_procedural_juice_event", {
+          projectDir: PROJECT_DIR,
+          missionId: body.missionId,
+          missionElapsed: body.missionElapsed,
+          originCoord: body.originCoord,
+          event: body.event
+        }, { defaultProjectDir: PROJECT_DIR });
+      } else if (pathname.endsWith("/preview")) {
+        toolName = "preview_procedural_juice";
+        result = await callTool("preview_procedural_juice", {
+          projectDir: PROJECT_DIR,
+          proceduralJuice: body.proceduralJuice
+        }, { defaultProjectDir: PROJECT_DIR });
+      } else {
+        toolName = "apply_procedural_juice";
+        result = await callTool("apply_procedural_juice", {
+          projectDir: PROJECT_DIR,
+          proceduralJuice: body.proceduralJuice,
+          ifRevision: body.ifRevision
+        }, { defaultProjectDir: PROJECT_DIR });
+      }
+      const wire = sanitizeMechanicsResponse(result);
+      const status = result?.conflict ? 409 : result?.ok === false ? 422 : 200;
+      if (toolName === "apply_procedural_juice" && result?.written !== false) {
+        writeRunTrace(PROJECT_DIR, { source: "studio", action: "procedural-juice:apply", status: "ok" });
+      }
+      return jsonResp(res, status, {
+        ...wire,
+        ...(toolName === "apply_procedural_juice" && result?.ok !== false ? { newHash: projectHash() } : {})
+      });
+    } catch (error) {
+      if (isWrite) {
+        writeRunTrace(PROJECT_DIR, {
+          source: "studio",
+          action: "procedural-juice:apply",
+          status: "error",
+          error: String(error?.code ?? "apply_failed").slice(0, 128)
+        });
+      }
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
+    }
+  }
+
   // Persona QA is evidence-only. The Studio wrapper accepts one closed request, binds the
   // computation to the saved project hash before and after execution, and delegates the actual
   // deterministic worker batch to the same compute-only MCP tool available to agents.

@@ -553,6 +553,9 @@ async function load() {
     CampaignUI.markerSchemaVersion = null;
     MechanicsUI.questGeneration = null;
     MechanicsUI.questGenerationRevision = null;
+    ProceduralJuiceUI.loaded = false;
+    ProceduralJuiceUI.preview = null;
+    ProceduralJuiceUI.error = null;
     markDirty(false);
     historyInit();
     PT.dirty = true; // force playtest to rebuild from the freshly loaded project
@@ -10497,6 +10500,174 @@ $("btn-script-delete")?.addEventListener("click", async () => {
   } catch (error) { toast(error.message, "err"); }
 });
 
+const ProceduralJuiceUI = {
+  loaded: false,
+  loading: false,
+  visualsRevision: null,
+  supported: true,
+  readOnly: false,
+  authored: false,
+  draft: null,
+  preview: null,
+  recipes: [],
+  error: null
+};
+
+function emptyProceduralJuiceDraft() {
+  return { schemaVersion: 1, particleEmitters: {}, audioCues: {}, cameraCues: {}, eventBindings: {} };
+}
+
+function parseProceduralJuiceDraft() {
+  const editor = $("procedural-juice-editor");
+  if (!editor) throw new Error("Procedural Juice editor is unavailable.");
+  const parsed = JSON.parse(editor.value);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Procedural Juice must be a JSON object.");
+  return parsed;
+}
+
+async function loadProceduralJuiceLab() {
+  if (ProceduralJuiceUI.loading) return;
+  ProceduralJuiceUI.loading = true;
+  ProceduralJuiceUI.error = null;
+  renderProceduralJuiceLab();
+  try {
+    const [current, recipeResult] = await Promise.all([
+      apiGet("/api/procedural-juice/read"),
+      apiGet("/api/procedural-juice/recipes")
+    ]);
+    ProceduralJuiceUI.visualsRevision = current.revision;
+    ProceduralJuiceUI.authored = current.authored === true;
+    ProceduralJuiceUI.supported = current.visualsSchemaVersion == null || current.visualsSchemaVersion <= 3;
+    ProceduralJuiceUI.readOnly = !ProceduralJuiceUI.supported
+      || (current.authored === true && current.proceduralJuice?.schemaVersion !== 1);
+    ProceduralJuiceUI.draft = current.proceduralJuice ?? emptyProceduralJuiceDraft();
+    ProceduralJuiceUI.recipes = Array.isArray(recipeResult.recipes) ? recipeResult.recipes : [];
+    ProceduralJuiceUI.preview = null;
+    ProceduralJuiceUI.loaded = true;
+  } catch (error) {
+    ProceduralJuiceUI.error = error;
+  } finally {
+    ProceduralJuiceUI.loading = false;
+    renderProceduralJuiceLab();
+  }
+}
+
+function renderProceduralJuiceLab() {
+  const panel = $("procedural-juice-lab");
+  if (!panel) return;
+  const state = $("procedural-juice-state");
+  const editor = $("procedural-juice-editor");
+  const result = $("procedural-juice-result");
+  const recipeSelect = $("procedural-juice-recipe");
+  const applyButton = $("btn-procedural-juice-apply");
+  if (!ProceduralJuiceUI.loaded && !ProceduralJuiceUI.loading && !ProceduralJuiceUI.error) {
+    void loadProceduralJuiceLab();
+  }
+  if (state) state.textContent = ProceduralJuiceUI.loading ? "Loading…"
+    : ProceduralJuiceUI.readOnly ? "Future schema · read-only"
+      : ProceduralJuiceUI.authored ? "Enabled · supported v1" : "Disabled · supported v1";
+  if (editor && document.activeElement !== editor) {
+    editor.value = JSON.stringify(ProceduralJuiceUI.draft ?? emptyProceduralJuiceDraft(), null, 2);
+  }
+  if (editor) {
+    editor.readOnly = ProceduralJuiceUI.readOnly;
+    editor.oninput = () => {
+      ProceduralJuiceUI.preview = null;
+      if (applyButton) applyButton.disabled = true;
+    };
+  }
+  if (recipeSelect) {
+    const current = recipeSelect.value;
+    recipeSelect.innerHTML = ProceduralJuiceUI.recipes.map((recipe) => `<option value="${esc(recipe.recipeId)}">${esc(recipe.label ?? recipe.recipeId)}</option>`).join("");
+    if (ProceduralJuiceUI.recipes.some((recipe) => recipe.recipeId === current)) recipeSelect.value = current;
+  }
+  for (const id of ["btn-procedural-juice-recipe", "btn-procedural-juice-preview", "btn-procedural-juice-disable"]) {
+    const button = $(id);
+    if (button) button.disabled = ProceduralJuiceUI.loading || ProceduralJuiceUI.readOnly;
+  }
+  if (applyButton) applyButton.disabled = ProceduralJuiceUI.readOnly || ProceduralJuiceUI.preview?.ok !== true;
+  if (result) result.textContent = ProceduralJuiceUI.error?.message
+    ?? (ProceduralJuiceUI.preview ? JSON.stringify(ProceduralJuiceUI.preview, null, 2) : `Project + visuals revision: ${ProceduralJuiceUI.visualsRevision ?? "pending"}`);
+  if ($("btn-procedural-juice-recipe")) $("btn-procedural-juice-recipe").onclick = loadProceduralJuiceRecipe;
+  if ($("btn-procedural-juice-preview")) $("btn-procedural-juice-preview").onclick = previewProceduralJuice;
+  if ($("btn-procedural-juice-apply")) $("btn-procedural-juice-apply").onclick = applyProceduralJuice;
+  if ($("btn-procedural-juice-disable")) $("btn-procedural-juice-disable").onclick = disableProceduralJuice;
+  if ($("btn-procedural-juice-event-preview")) $("btn-procedural-juice-event-preview").onclick = previewProceduralJuiceEvent;
+}
+
+async function loadProceduralJuiceRecipe() {
+  try {
+    const response = await apiGet("/api/procedural-juice/recipes");
+    ProceduralJuiceUI.recipes = Array.isArray(response.recipes) ? response.recipes : [];
+    const recipeId = $("procedural-juice-recipe")?.value;
+    const recipe = ProceduralJuiceUI.recipes.find((entry) => entry.recipeId === recipeId) ?? ProceduralJuiceUI.recipes[0];
+    if (!recipe?.proceduralJuice) throw new Error("The selected Procedural Juice recipe is unavailable.");
+    ProceduralJuiceUI.draft = deep(recipe.proceduralJuice);
+    ProceduralJuiceUI.preview = null;
+    renderProceduralJuiceLab();
+  } catch (error) { toast(error.message, "err"); }
+}
+
+async function previewProceduralJuice() {
+  if (S.dirty) { toast("Save or discard other project changes before previewing Procedural Juice.", "warn"); return null; }
+  try {
+    const proceduralJuice = parseProceduralJuiceDraft();
+    const preview = await apiPost("/api/procedural-juice/preview", { proceduralJuice });
+    ProceduralJuiceUI.draft = proceduralJuice;
+    ProceduralJuiceUI.preview = preview;
+    ProceduralJuiceUI.visualsRevision = preview.revision;
+    renderProceduralJuiceLab();
+    return preview;
+  } catch (error) { ProceduralJuiceUI.preview = null; toast(error.message, "err"); renderProceduralJuiceLab(); return null; }
+}
+
+async function applyProceduralJuice() {
+  const preview = ProceduralJuiceUI.preview ?? await previewProceduralJuice();
+  if (!preview?.ok) return;
+  try {
+    const result = await apiPost("/api/procedural-juice/apply", {
+      proceduralJuice: ProceduralJuiceUI.draft,
+      ifRevision: ProceduralJuiceUI.visualsRevision
+    });
+    ProceduralJuiceUI.loaded = false;
+    if (result.newHash) S.contentHash = result.newHash;
+    await load();
+    await loadProceduralJuiceLab();
+    toast("Procedural Juice applied.", "ok");
+  } catch (error) { toast(error.message, error.conflict ? "warn" : "err"); }
+}
+
+async function disableProceduralJuice() {
+  if (S.dirty) { toast("Save or discard other project changes before disabling Procedural Juice.", "warn"); return; }
+  try {
+    const preview = await apiPost("/api/procedural-juice/preview", { proceduralJuice: null });
+    if (!preview.ok) throw new Error("Procedural Juice disable preview failed.");
+    const result = await apiPost("/api/procedural-juice/apply", { proceduralJuice: null, ifRevision: preview.revision });
+    ProceduralJuiceUI.loaded = false;
+    if (result.newHash) S.contentHash = result.newHash;
+    await load();
+    await loadProceduralJuiceLab();
+    toast("Procedural Juice disabled; legacy presentation restored.", "ok");
+  } catch (error) { toast(error.message, error.conflict ? "warn" : "err"); }
+}
+
+async function previewProceduralJuiceEvent() {
+  try {
+    const missionId = S.project.defaultMissionId ?? Object.keys(S.project.missions ?? {})[0];
+    const mission = S.project.missions?.[missionId];
+    const map = S.project.maps?.[mission?.mapId];
+    const payload = JSON.parse($("procedural-juice-event-json")?.value || "{}");
+    const event = { type: $("procedural-juice-event")?.value ?? "enemyHit", ...payload };
+    const response = await apiPost("/api/procedural-juice/event-preview", {
+      missionId,
+      missionElapsed: 0,
+      originCoord: map?.spawnCoord ?? { q: 0, r: 0 },
+      event
+    });
+    $("procedural-juice-result").textContent = JSON.stringify(response, null, 2);
+  } catch (error) { toast(error.message, "err"); }
+}
+
 function renderAssetsTab() {
   if (!S.project.visuals) S.project.visuals = { schemaVersion: 2, assetsRoot: "assets", atlases: {}, sprites: {}, tileSets: {}, bindings: { towers: {}, enemies: {}, tiles: {}, tileSets: { grids: {}, maps: {} }, ui: {} }, audio: { sounds: {}, events: {}, musicTracks: {}, musicByMission: {} } };
   const textarea = $("visuals-json");
@@ -10521,6 +10692,7 @@ function renderAssetsTab() {
   renderMusicBindings();
   renderAtlasFrames();
   bindTilesetWorkbench();
+  renderProceduralJuiceLab();
 }
 
 let tilesetImportPreview = null;
@@ -11944,7 +12116,13 @@ async function refreshNavigationOverlay() {
   }
 }
 
+function resetPlaytestPresentation() {
+  PT.renderer?.resetProceduralJuicePresentation?.();
+  PT.audio?.disposeProceduralVoices?.();
+}
+
 function newPlaytestGame() {
+  resetPlaytestPresentation();
   clearNavigationOverlay("Loading mission navigation");
   if (!PT.content) return null;
   const ids = Object.keys(PT.content.missions ?? {});
@@ -12125,7 +12303,7 @@ async function renderPlaytestTab() {
     PT.error = null;
     try { await refreshPlaytestMaps(); }
     catch (e) { PT.error = "Cannot preview current map sources: " + e.message; }
-    if (!PT.error && buildPlaytestContent()) { PT.renderer = null; newPlaytestGame(); }
+    if (!PT.error && buildPlaytestContent()) { resetPlaytestPresentation(); PT.renderer = null; newPlaytestGame(); }
     PT.dirty = false;
   }
   if (PT.error || !PT.game) return fail(PT.error ?? "No playable mission.");
@@ -12533,7 +12711,10 @@ function presentPlaytestSnapshot(snapshot, events) {
     clearNavigationOverlay("Navigation field changed");
     void refreshNavigationOverlay();
   }
-  if (PT.audio && $("pt-sound")?.checked) PT.audio.handleEvents(events);
+  const proceduralCues = PT.renderer.drainProceduralAudioCues?.() ?? [];
+  if (PT.audio && $("pt-sound")?.checked) {
+    PT.audio.handleEvents(events, { proceduralCues });
+  }
   updatePlaytestHud(snapshot);
   const now = performance.now();
   if (events.length || (PT.selectedDebug && now - PT.lastDebugRender > 200)) {
