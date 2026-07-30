@@ -283,3 +283,8 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - Authored cohorts bind each enemy type to one role (`vanguard | body | support`) and one closed steering tuple. Bounds are 64 cohorts, 256 members per cohort, 4,096 assignments, radius 1..2, integer weights 0..1,000 with at least one positive weight. Vanguard protection remains outside this slice.
 - Independent content RED added 28 tests: 9 expected failures / 19 negative controls passed. Missing contracts were descriptor/profile support, formation-only normalization, canonical freezing, early budgets, dynamic-flow dependency and enemy references.
 - GREEN accepts detached binary-canonical formation-only or mixed profiles, preserves the exact boss-only normalized byte shape, rejects hostile/accessor/sparse/cyclic and over-budget data before reading a tail value, and reports active semantic errors versus inactive warnings. Focused content/component compatibility is 55/55; typecheck and engine build pass.
+
+### R12.3b RED/GREEN — pure formation planner
+
+- Independent planner RED added 33/33 expected failures against the missing exported pure API. Contracts pin the closed request/result, square/hex topology, exact safe-integer cohesion/separation/role score, host-candidate confinement, canonical/direction tie-breaks, permutation invariance, 16-neighbor bound, detached freeze, hostile inputs and overflow rejection.
+- GREEN adds `selectFormationSteeringNextV1` as a pure engine-only chooser over an already host-proven equal-optimal candidate set. It does not read maps, fields, entities, RNG or renderer state and cannot invent a navigation step. Focused planner/navigation compatibility passes 52/52; typecheck and engine build pass.
