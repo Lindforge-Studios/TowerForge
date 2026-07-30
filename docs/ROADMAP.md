@@ -532,27 +532,6 @@ build/validate/smoke. Независимые code и constructor-integration ver
 детерминизм, fail-closed transport/security boundaries, conditional packaging, Studio/MCP parity и
 legacy path без открытых P0–P3.
 
-### R9 — TowerScript DX 3.0: Behavior Trees и HFSM
-
-R9 реализован в отдельном PR
-[#20](https://github.com/Lindforge-Studios/TowerForge/pull/20), прошёл обязательные gates и два
-независимых sign-off и слит в `main`. Его единственная opt-in
-граница — TowerScript schema v7: `behaviorTrees` добавляет tower targeting controllers, а
-`stateMachines` — hierarchical state machines в существующих scopes. R9 не добавляет
-`content/mechanics.json` module; TowerScript v1–v6 и v7 scripts без controllers сохраняют прежний
-targeting, snapshot/checkpoint/replay digest, UI и package path.
-
-Graph, Trace и Debugger независимо повышаются до v2, layout остаётся v1. Behavior Tree v1
-ограничен синхронными `selector | sequence | condition | action`, а HFSM v1 — nested states,
-ordered transitions и общими typed TowerScript actions без arbitrary code, `Running`, hidden
-timers, parallel/history states или host bridges. Project v3, outer `GameCheckpointV1`,
-`towerforge-sim-v2`, `GameCommand`/journal v6, profile, campaign, mechanics и multiplayer domains
-не повышаются.
-
-R10 не использует TowerScript v7, HFSM или добавленные R9 enemy tags. Поэтому их runtime-контракты
-семантически независимы; объединённая основа сохраняет обе optional checkpoint-секции и оба
-набора событий.
-
 ### R10 — Multi-Agent Persona QA и Procedural Quests
 
 R10 разделён на независимый authoring-only Persona QA track и opt-in gameplay module `quests` v1.
@@ -620,7 +599,7 @@ checkpoint хранит exact snapshot-form quest entries schema v1 и при re
 victory/failure, не переносятся в profile/campaign/multiplayer, не дают implicit rewards и не
 добавляют commands. Решение зафиксировано как Accepted в
 [ADR 0051](adr/0051-r10-persona-qa-and-procedural-quests.md).
-### R9 — детали принятой реализации
+### R9 — TowerScript DX 3.0: Behavior Trees и HFSM
 R9 завершён и не является `mission.mechanics` module. Единственная opt-in граница —
 TowerScript schema v7: `behaviorTrees` добавляет tower-only target controllers, а `stateMachines`
 добавляет HFSM в любом существующем scope. Отсутствие контроллеров, выключенный script и все

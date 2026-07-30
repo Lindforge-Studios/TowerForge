@@ -10,6 +10,7 @@ import { TowerScriptDebugSession } from "./towerscript-debugger.js";
 import type { GameEvent, SingleAttackModel } from "./types.js";
 import type { TowerScriptDefinition } from "../scripting/types.js";
 import { createTowerScriptTraceCollector } from "../scripting/trace.js";
+import { computeCheckpointStateDigest, type GameCheckpointV1 } from "./checkpoint.js";
 
 // A compact registry whose tower/enemy ids deliberately do NOT match attack kinds, so the tests
 // double as regressions against hardcoded-id behavior in the engine.
@@ -1611,6 +1612,61 @@ describe("TowerDefenseGame", () => {
         }
       }
     });
+  });
+
+  it("rejects a digest-valid queued state-machine transition event with impossible provenance", () => {
+    const content = buildContent({
+      scripts: {
+        forged_probe: {
+          schemaVersion: 7,
+          id: "forged_probe",
+          bindings: [],
+          handlers: {},
+          stateMachines: [{
+            schemaVersion: 1,
+            id: "probe_machine",
+            bindings: [{ scope: "global" }],
+            initial: "idle",
+            states: [{
+              id: "idle",
+              transitions: [{
+                id: "accept_transition_event",
+                event: "stateMachineTransitioned",
+                target: "/armed"
+              }]
+            }, { id: "armed" }]
+          }]
+        }
+      }
+    });
+    const checkpoint = JSON.parse(JSON.stringify(new TowerDefenseGame({
+      missionId: "basic",
+      content,
+      seed: "forged-transition-event"
+    }).createCheckpoint())) as GameCheckpointV1;
+    const mutable = checkpoint as unknown as {
+      state: GameCheckpointV1["state"] & { lastEvents: unknown[]; scriptEventCursor: number };
+      stateDigest: string;
+    };
+    mutable.state.lastEvents = [{
+      type: "stateMachineTransitioned",
+      scriptId: "does_not_exist",
+      machineId: "does_not_exist",
+      contextId: "global:global",
+      transitionId: "does_not_exist",
+      fromStatePath: "/impossible",
+      toStatePath: "/impossible"
+    }];
+    mutable.state.scriptEventCursor = 0;
+    mutable.stateDigest = computeCheckpointStateDigest(
+      checkpoint.contentDigest,
+      checkpoint.identity,
+      checkpoint.rng,
+      checkpoint.state
+    );
+
+    expect(() => TowerDefenseGame.fromCheckpoint({ content, checkpoint }))
+      .toThrow(/state machine|transition|event|unknown/i);
   });
 });
 

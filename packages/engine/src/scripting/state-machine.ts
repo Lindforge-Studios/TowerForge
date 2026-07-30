@@ -68,6 +68,33 @@ export function collectTowerScriptStatePaths(machine: TowerScriptStateMachineV1)
   return [...flattenStates(machine).keys()].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
 }
 
+/**
+ * Verifies the authored provenance carried by a persisted transition event without re-evaluating
+ * its condition. Runtime checkpoint validation separately proves that the referenced context is
+ * bound to this machine and already holds the transition target as its active state.
+ */
+export function hasTowerScriptStateTransitionProvenance(
+  machine: TowerScriptStateMachineV1,
+  transitionId: string,
+  fromStatePath: string,
+  toStatePath: string
+): boolean {
+  const records = flattenStates(machine);
+  if (!records.has(fromStatePath) || !records.has(toStatePath)) return false;
+  let sourcePath = fromStatePath;
+  while (sourcePath) {
+    const record = records.get(sourcePath);
+    if (!record) return false;
+    const transition = (record.node.transitions ?? []).find((candidate) => candidate.id === transitionId);
+    if (transition) {
+      if (!transition.target.startsWith("/")) return false;
+      return resolveInitialLeaf(machine, records, transition.target) === toStatePath;
+    }
+    sourcePath = record.parentPath;
+  }
+  return false;
+}
+
 function resolveInitialLeaf(
   machine: TowerScriptStateMachineV1,
   records: ReadonlyMap<string, StateRecord>,
