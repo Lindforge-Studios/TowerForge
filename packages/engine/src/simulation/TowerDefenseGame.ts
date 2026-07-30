@@ -2644,7 +2644,6 @@ export class TowerDefenseGame {
       previousPoints,
       currentPoints: state.skillPoints
     });
-    this.finishScriptedAction();
     return { ok: true };
   }
 
@@ -6003,6 +6002,7 @@ export class TowerDefenseGame {
       unlockedSkillIds: string[];
     } | undefined;
     const checkpointTransitionEvents: Array<{
+      index: number;
       scriptId: string;
       machineId: string;
       contextId: string;
@@ -6011,7 +6011,7 @@ export class TowerDefenseGame {
       toStatePath: string;
     }> = [];
     const checkpointEvents = array(state.lastEvents, "lastEvents");
-    for (const value of checkpointEvents) {
+    for (const [eventIndex, value] of checkpointEvents.entries()) {
       const base = checkpointObjectDescriptors(value, "Game checkpoint last event");
       const type = stringValue(checkpointDataField(base, "type", "last event"), "last event type");
       const schema = eventSchemas[type];
@@ -6119,6 +6119,7 @@ export class TowerDefenseGame {
       }
       if (type === "stateMachineTransitioned") {
         checkpointTransitionEvents.push({
+          index: eventIndex,
           scriptId: stringValue(checkpointDataField(event, "scriptId", type), `${type}.scriptId`),
           machineId: stringValue(checkpointDataField(event, "machineId", type), `${type}.machineId`),
           contextId: stringValue(checkpointDataField(event, "contextId", type), `${type}.contextId`),
@@ -7197,9 +7198,7 @@ export class TowerDefenseGame {
       }
     }
     const eventCursor = integer(state.scriptEventCursor, "scriptEventCursor");
-    if (eventCursor !== state.lastEvents.length) {
-      throw new Error("Game checkpoint script event cursor must point past the fully drained event queue.");
-    }
+    if (eventCursor > state.lastEvents.length) throw new Error("Game checkpoint script event cursor is invalid.");
     integer(state.scriptActionsRemaining, "scriptActionsRemaining", 0);
     if (state.scriptActionsRemaining > TOWER_SCRIPT_LIMITS.actionsPerTransaction) throw new Error("Game checkpoint action budget is invalid.");
     integer(state.scriptTerrainChangesRemaining, "scriptTerrainChangesRemaining", 0);
@@ -7287,6 +7286,9 @@ export class TowerDefenseGame {
       }
     }
     for (const transitionEvent of checkpointTransitionEvents) {
+      if (transitionEvent.index >= eventCursor) {
+        throw new Error("Game checkpoint cannot restore a queued state-machine transition event.");
+      }
       const script = checkpointStateMachines.find((candidate) => candidate.id === transitionEvent.scriptId);
       const machine = script?.stateMachines?.find((candidate) => candidate.id === transitionEvent.machineId);
       if (!script || !machine || !hasTowerScriptStateTransitionProvenance(

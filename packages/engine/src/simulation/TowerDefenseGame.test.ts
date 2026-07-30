@@ -1657,7 +1657,7 @@ describe("TowerDefenseGame", () => {
       fromStatePath: "/impossible",
       toStatePath: "/impossible"
     }];
-    mutable.state.scriptEventCursor = 0;
+    mutable.state.scriptEventCursor = mutable.state.lastEvents.length;
     mutable.stateDigest = computeCheckpointStateDigest(
       checkpoint.contentDigest,
       checkpoint.identity,

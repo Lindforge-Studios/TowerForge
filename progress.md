@@ -20,14 +20,13 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   by this source change and both roles must re-sign the repaired commit.
 - S0 second verifier RED: Constructor Integration Verifier replayed a legitimate already-consumed
   `stateMachineTransitioned` event by rolling only `scriptEventCursor` backward; restore succeeded
-  and the next command repeated a TowerScript handler side effect. The final contract therefore
-  requires every public checkpoint to represent a fully drained script event queue
-  (`scriptEventCursor === lastEvents.length`) while still validating persisted historical transition
-  provenance. The authored cursor-rollback regression and the impossible-provenance regression are
-  GREEN. The compatibility pass exposed one legitimate undrained `heroSkillUnlocked` event and one
-  manually injected codec fixture; the production action now drains TowerScript synchronously and
-  the fixture explicitly marks its event historical. Focused checkpoint/HFSM/hero/terraforming is
-  GREEN at 152/152. Both earlier sign-offs are invalidated.
+  and the next command repeated a TowerScript handler side effect. The compatibility audit then
+  proved that a global drained-queue rule would reject valid v0.4.0 checkpoints. The narrowed final
+  contract preserves all historic non-HFSM queues but rejects any persisted
+  `stateMachineTransitioned` event at or beyond `scriptEventCursor`. The impossible-provenance test
+  marks its synthetic event historical so it independently reaches authored cross-reference
+  validation; the cursor-rollback test covers exactly-once dispatch. All earlier sign-offs are
+  invalidated until this narrow form is re-frozen.
 
 - R0–R2 and R3.1–R3.4a are complete with independent code and constructor-integration sign-off.
 - R3.4a opt-in physics v1 is complete through engine, validation, Studio Mechanics Hub, MCP/AI, recipes, shared renderer projection, Canvas/Phaser × hex/square builds, packages, plugin runtime, reference fixture, and documentation.
