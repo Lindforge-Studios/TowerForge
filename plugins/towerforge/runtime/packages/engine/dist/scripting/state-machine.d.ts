@@ -23,5 +23,11 @@ export interface TowerScriptStateTransitionPlanV1 {
 }
 /** Canonical absolute state paths used by checkpoint validation and authoring surfaces. */
 export declare function collectTowerScriptStatePaths(machine: TowerScriptStateMachineV1): readonly string[];
+/**
+ * Verifies the authored provenance carried by a persisted transition event without re-evaluating
+ * its condition. Runtime checkpoint validation separately proves that the referenced context is
+ * bound to this machine and already holds the transition target as its active state.
+ */
+export declare function hasTowerScriptStateTransitionProvenance(machine: TowerScriptStateMachineV1, transitionId: string, fromStatePath: string, toStatePath: string): boolean;
 export declare function initializeTowerScriptStateMachine(machine: TowerScriptStateMachineV1, enteredAt: number): TowerScriptMachineInitializationV1;
 export declare function planTowerScriptStateTransition(machine: TowerScriptStateMachineV1, current: TowerScriptMachineRuntimeStateV1, eventName: TowerScriptEventName, context: TowerScriptMachineExpressionContextV1, enteredAt: number): TowerScriptStateTransitionPlanV1 | null;

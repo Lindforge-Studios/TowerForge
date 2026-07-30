@@ -997,6 +997,35 @@
               </div>
             </div>
           </div>
+          <div id="mechanics-quests-editor" class="hidden">
+            <div id="mechanics-quests-capability" class="mechanics-notice" role="status"></div>
+            <div id="mechanics-quests-read-only" class="mechanics-notice warning hidden" role="status"></div>
+            <div class="mechanics-shield-section mechanics-quests-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Procedural challenge pool</h4>
+                  <p>Author weighted battle-local objectives. The engine selects them deterministically only when this profile is enabled for the mission.</p>
+                </div>
+              </div>
+              <div class="mechanics-director-fields">
+                <label>Quests per run
+                  <input id="mechanics-quests-selection-count" type="number" min="1" max="3" step="1">
+                </label>
+              </div>
+              <label class="mechanics-director-json">Quest definitions JSON
+                <textarea id="mechanics-quests-definitions" class="mono" rows="18" spellcheck="false" aria-describedby="mechanics-quests-definitions-help"></textarea>
+              </label>
+              <p id="mechanics-quests-definitions-help" class="text-muted">Definitions use a positive weight and either kill_with_source or preserve_shield. Shared engine validation checks source references and all limits during Preview.</p>
+            </div>
+            <div class="mechanics-shield-section mechanics-quests-section">
+              <div class="mechanics-section-head">
+                <div><h4>Seeded generation preview</h4><p>Read-only preview of the currently saved and active mission profile. This preview never simulates gameplay and never writes unsaved draft changes.</p></div>
+                <button id="btn-mechanics-quests-preview-generation" class="btn btn-outline" type="button">Preview selection</button>
+              </div>
+              <label>Seed<input id="mechanics-quests-preview-seed" class="mono" type="text" value="studio-preview" autocomplete="off" spellcheck="false"></label>
+              <pre id="mechanics-quests-generation-result" class="mechanics-preview-result" aria-live="polite">Enable and save this profile before previewing its seeded selection.</pre>
+            </div>
+          </div>
           <div id="mechanics-multiplayer-editor" class="hidden">
             <div id="mechanics-multiplayer-capability" class="mechanics-notice" role="status"></div>
             <div id="mechanics-multiplayer-read-only" class="mechanics-notice warning hidden" role="status"></div>
@@ -1269,6 +1298,7 @@
           <div id="pt-wave-draft" class="pt-artifact-inventory" hidden></div>
           <div id="pt-artifact-inventory" class="pt-artifact-inventory" hidden></div>
           <div id="pt-logistics-power" class="pt-artifact-inventory" hidden></div>
+          <div id="pt-quests" class="pt-artifact-inventory pt-quests" hidden></div>
           <div class="form-section-title pt-debug-title">Event timeline</div>
           <div id="pt-event-timeline" class="pt-event-timeline"></div>
           <div class="form-section-title" style="margin-top:6px">Build (click tower, then a tile)</div>
@@ -1287,6 +1317,35 @@
         <button id="btn-run-balance" class="btn btn-primary">Run analysis</button>
       </div>
       <div class="detail-panel" id="balance-results"></div>
+      <section id="persona-qa-lab" class="persona-qa-lab" aria-labelledby="persona-qa-title">
+        <div class="persona-qa-head">
+          <div>
+            <h3 id="persona-qa-title">Persona QA Lab</h3>
+            <p>Evidence-only, read-only mission testing. Three deterministic player policies run existing commands and never edit the project.</p>
+          </div>
+          <button id="btn-run-persona-qa" class="btn btn-outline" type="button">Run persona suite</button>
+        </div>
+        <div class="persona-qa-controls">
+          <label>Missions
+            <select id="persona-qa-missions" multiple size="4"></select>
+          </label>
+          <label>Seeds (comma or line separated)
+            <textarea id="persona-qa-seeds" class="mono" rows="4" spellcheck="false">studio-a, studio-b</textarea>
+          </label>
+          <label>Personas
+            <select id="persona-qa-personas" multiple size="3">
+              <option value="aggressive_rush" selected>Aggressive Rush</option>
+              <option value="greedy_economy" selected>Greedy Economy</option>
+              <option value="turtle_shield" selected>Turtle Shield</option>
+            </select>
+          </label>
+          <div class="persona-qa-number-controls">
+            <label>Simulation units<input id="persona-qa-seconds" type="number" min="0.05" max="3600" step="1" value="600"></label>
+            <label>Tick step<input id="persona-qa-tick-step" type="number" min="0.05" max="0.2" step="0.05" value="0.2"></label>
+          </div>
+        </div>
+        <div id="persona-qa-results" class="persona-qa-results" aria-live="polite">Select missions and run the read-only suite. Reports are tied to the current saved project revision.</div>
+      </section>
     </section>
 
     <section id="workbench-drawer" class="workbench-drawer" aria-label="Problems and activity" aria-hidden="true">

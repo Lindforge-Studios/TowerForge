@@ -37,6 +37,7 @@ const MECHANICS_MODULE_SCHEMA_VERSIONS = Object.freeze({
   heroes: Object.freeze([1, 2, 3, 4, 5, 6, 7]),
   logistics: Object.freeze([1, 2, 3]),
   director: Object.freeze([1]),
+  quests: Object.freeze([1]),
   multiplayer: Object.freeze([1, 2])
 });
 const SOURCE_BYTE_LIMITS = Object.freeze({
@@ -103,6 +104,7 @@ export async function inspectMechanicsAuthoring(projectDir, options = {}) {
   const heroes = moduleAuthoringView(files, mission, "heroes", engine.HEROES_MECHANICS_SCHEMA);
   const logistics = moduleAuthoringView(files, mission, "logistics", engine.LOGISTICS_MECHANICS_SCHEMA);
   const director = moduleAuthoringView(files, mission, "director", engine.DIRECTOR_MECHANICS_SCHEMA);
+  const quests = moduleAuthoringView(files, mission, "quests", engine.QUEST_MECHANICS_SCHEMA);
   const multiplayer = moduleAuthoringView(files, mission, "multiplayer", engine.MULTIPLAYER_MECHANICS_SCHEMA);
 
   const rawProjectSchemaVersion = snapshot.rawFiles.manifest?.schemaVersion;
@@ -129,6 +131,7 @@ export async function inspectMechanicsAuthoring(projectDir, options = {}) {
     heroes,
     logistics,
     director,
+    quests,
     multiplayer
   };
 }

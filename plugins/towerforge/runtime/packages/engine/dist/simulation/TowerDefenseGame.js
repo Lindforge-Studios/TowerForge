@@ -9,11 +9,12 @@ import { ROGUELITE_ARTIFACT_INVENTORY_LIMIT, ROGUELITE_DAMAGE_MODIFIER_RESERVE, 
 import { activeHeroAuraModifierReserve, heroPassiveAuraModifierIdV6, heroSkillModifierIdV5, resolveActiveHeroesMechanics } from "../content/heroes-mechanics.js";
 import { LOGISTICS_AMMUNITION_LIMITS, LOGISTICS_SUPPLY_LIMITS, resolveActiveLogisticsMechanics } from "../content/logistics-mechanics.js";
 import { DIRECTOR_LIMITS, resolveActiveDirectorMechanics } from "../content/director-mechanics.js";
+import { resolveActiveQuestMechanics, selectProceduralQuestsV1 } from "../content/quest-mechanics.js";
 import { CAMPAIGN_RUN_LIMITS } from "../run/campaign-run.js";
 import { campaignBattleWorstCaseModifierCount, preflightHeroAuraDamageFinite } from "../run/campaign-battle-policy.js";
 import { evaluateTowerScriptExpression } from "../scripting/expression.js";
 import { evaluateTowerScriptBehaviorTree } from "../scripting/behavior-tree.js";
-import { collectTowerScriptStatePaths, initializeTowerScriptStateMachine, planTowerScriptStateTransition } from "../scripting/state-machine.js";
+import { collectTowerScriptStatePaths, hasTowerScriptStateTransitionProvenance, initializeTowerScriptStateMachine, planTowerScriptStateTransition } from "../scripting/state-machine.js";
 import { TOWER_SCRIPT_EVENTS, TOWER_SCRIPT_EVENT_FIELDS, TOWER_SCRIPT_LIMITS } from "../scripting/schema-descriptor.js";
 import { diffTowerScriptState, TowerScriptTracePauseError } from "../scripting/trace.js";
 import { coordKey } from "./hex.js";
@@ -216,6 +217,10 @@ function waveDraftSeed(initialRngState, missionId) {
     const seedPayload = canonicalStringify(initialRngState);
     return `towerforge:wave-draft:v1|r:${seedPayload.length}:${seedPayload}|m:${missionId.length}:${missionId}`;
 }
+function questRuntimeSeed(initialRngState, missionId) {
+    const rng = canonicalStringify(initialRngState);
+    return `towerforge:quest-runtime:v1|r:${rng.length}:${rng}|m:${missionId.length}:${missionId}`;
+}
 function sampleDraftOfferCardIds(draft, poolId, rng) {
     const pool = draft.pools[poolId];
     if (!pool || pool.entries.length < ROGUELITE_DRAFT_LIMITS.offerSize) {
@@ -339,6 +344,8 @@ export class TowerDefenseGame {
     activeLogisticsSupply;
     activeLogisticsSchemaVersion;
     activeDirectorMechanics;
+    activeQuestMechanics;
+    questEntries = Object.freeze([]);
     scriptedTargetingByTowerType = new Map();
     directorDecisions = Object.freeze([]);
     activeHeroPassiveAura;
@@ -474,6 +481,8 @@ export class TowerDefenseGame {
         this.activeRogueliteMechanics = resolveActiveRogueliteMechanics(this.content, missionId);
         this.activeHeroesMechanics = resolveActiveHeroesMechanics(this.content, missionId);
         this.activeDirectorMechanics = resolveActiveDirectorMechanics(this.content, missionId);
+        this.activeQuestMechanics = resolveActiveQuestMechanics(this.content, missionId);
+        this.initializeQuestEntries();
         const activeLogistics = resolveActiveLogisticsMechanics(this.content, missionId);
         this.activeLogisticsSchemaVersion = activeLogistics?.schemaVersion;
         this.activeLogisticsPower = activeLogistics?.power ?? undefined;
@@ -754,6 +763,7 @@ export class TowerDefenseGame {
         this.towerShields = {};
         this.enemyMarks = {};
         this.directorDecisions = Object.freeze([]);
+        this.initializeQuestEntries();
         this.lastEvents = [];
         if (this.activePhysicsMechanics)
             this.displacementStepAttemptsThisTick = 0;
@@ -784,6 +794,121 @@ export class TowerDefenseGame {
             delete tile.occupiedBy;
         }
         this.syncNavigationResolver();
+    }
+    questRuntimeSeed() {
+        return questRuntimeSeed(this.initialRngState, this.mission.id);
+    }
+    initializeQuestEntries() {
+        const active = this.activeQuestMechanics;
+        if (!active) {
+            this.questEntries = Object.freeze([]);
+            return;
+        }
+        const selected = selectProceduralQuestsV1({ selectionCount: active.selectionCount, definitions: active.definitions }, { seed: this.questRuntimeSeed() });
+        this.questEntries = Object.freeze(selected.map(({ questId, definition }) => Object.freeze({
+            questId,
+            label: definition.label,
+            kind: definition.objective.kind,
+            current: 0,
+            target: definition.objective.kind === "kill_with_source"
+                ? definition.objective.count
+                : definition.objective.waves,
+            status: "active"
+        })));
+    }
+    replaceQuestEntry(questId, update) {
+        this.questEntries = Object.freeze(this.questEntries.map((entry) => (entry.questId === questId ? Object.freeze(update(entry)) : entry)));
+    }
+    completeQuest(questId, kind) {
+        const entry = this.questEntries.find((candidate) => candidate.questId === questId);
+        if (!entry || entry.status !== "active")
+            return;
+        this.replaceQuestEntry(questId, (current) => ({ ...current, current: current.target, status: "completed" }));
+        this.lastEvents.push({ type: "questCompleted", questId, kind });
+    }
+    failQuest(questId, kind) {
+        const entry = this.questEntries.find((candidate) => candidate.questId === questId);
+        if (!entry || entry.status !== "active")
+            return;
+        this.replaceQuestEntry(questId, (current) => ({ ...current, status: "failed" }));
+        this.lastEvents.push({ type: "questFailed", questId, kind });
+    }
+    questDamageSourceMatches(definition, source) {
+        if (definition.objective.kind !== "kill_with_source")
+            return false;
+        const expected = definition.objective.source;
+        if (source.kind !== expected.kind)
+            return false;
+        if (source.kind === "tower")
+            return source.towerTypeId === expected.id;
+        if (source.kind === "ability")
+            return source.abilityId === expected.id;
+        if (source.kind === "tower_script")
+            return source.scriptId === expected.id;
+        if (source.kind === "status")
+            return source.statusId === expected.id;
+        if (source.kind === "reaction")
+            return source.reactionId === expected.id;
+        return false;
+    }
+    creditQuestLethalDamage(source) {
+        const active = this.activeQuestMechanics;
+        if (!active)
+            return;
+        for (const entry of this.questEntries) {
+            if (entry.status !== "active")
+                continue;
+            const definition = active.definitions[entry.questId];
+            if (!definition || !this.questDamageSourceMatches(definition, source))
+                continue;
+            const next = Math.min(entry.target, entry.current + 1);
+            if (next >= entry.target) {
+                this.completeQuest(entry.questId, entry.kind);
+            }
+            else {
+                this.replaceQuestEntry(entry.questId, (current) => ({ ...current, current: next }));
+            }
+        }
+    }
+    questShieldScopeMatches(scope, target) {
+        return scope === "any" || scope === target;
+    }
+    failPreserveShieldQuests(target) {
+        const active = this.activeQuestMechanics;
+        if (!active)
+            return;
+        for (const entry of this.questEntries) {
+            const definition = active.definitions[entry.questId];
+            if (entry.status !== "active" || definition?.objective.kind !== "preserve_shield")
+                continue;
+            if (this.questShieldScopeMatches(definition.objective.scope, target)) {
+                this.failQuest(entry.questId, entry.kind);
+            }
+        }
+    }
+    advancePreserveShieldQuests() {
+        const active = this.activeQuestMechanics;
+        if (!active)
+            return;
+        for (const entry of this.questEntries) {
+            const definition = active.definitions[entry.questId];
+            if (entry.status !== "active" || definition?.objective.kind !== "preserve_shield")
+                continue;
+            const next = Math.min(entry.target, entry.current + 1);
+            if (next >= entry.target)
+                this.completeQuest(entry.questId, entry.kind);
+            else
+                this.replaceQuestEntry(entry.questId, (current) => ({ ...current, current: next }));
+        }
+    }
+    buildQuestSnapshot() {
+        if (!this.activeQuestMechanics)
+            return undefined;
+        return Object.freeze({
+            schemaVersion: 1,
+            profileId: this.activeQuestMechanics.profileId,
+            entries: Object.freeze(this.questEntries.map((entry) => Object.freeze({ ...entry })))
+        });
     }
     startNextWave() {
         if (this.outcome !== "playing") {
@@ -3105,6 +3230,7 @@ export class TowerDefenseGame {
                 }))
             }
             : undefined;
+        const quests = this.buildQuestSnapshot();
         const state = {
             coreHp: this.coreHp,
             resources: { ...this.resources },
@@ -3167,6 +3293,7 @@ export class TowerDefenseGame {
             ...(heroes === undefined ? {} : { heroes }),
             ...(logistics === undefined ? {} : { logistics }),
             ...(director === undefined ? {} : { director }),
+            ...(quests === undefined ? {} : { quests }),
             ...(this.campaignBattle === undefined ? {} : {
                 campaignBattle: {
                     schemaVersion: 1,
@@ -3223,6 +3350,7 @@ export class TowerDefenseGame {
         const checkpointRoguelite = resolveActiveRogueliteMechanics(content, identity.missionId);
         const checkpointHeroes = resolveActiveHeroesMechanics(content, identity.missionId);
         const checkpointDirector = resolveActiveDirectorMechanics(content, identity.missionId);
+        const checkpointQuests = resolveActiveQuestMechanics(content, identity.missionId);
         const checkpointStateMachines = Object.values(content.scripts ?? {})
             .filter((script) => Boolean(script && script.enabled !== false && script.schemaVersion === 7 && script.stateMachines?.length))
             .sort((left, right) => compareBinary(left.id, right.id));
@@ -3304,6 +3432,15 @@ export class TowerDefenseGame {
         }
         if (hasDirectorCheckpoint)
             checkpointDataField(descriptors, "director", "Game checkpoint state");
+        const hasQuestCheckpoint = Object.prototype.hasOwnProperty.call(descriptors, "quests");
+        if (checkpointQuests && !hasQuestCheckpoint) {
+            throw new Error("Game checkpoint quest state is required for an active capability.");
+        }
+        if (!checkpointQuests && hasQuestCheckpoint) {
+            throw new Error("Game checkpoint quest state is unsupported for an inactive capability.");
+        }
+        if (hasQuestCheckpoint)
+            checkpointDataField(descriptors, "quests", "Game checkpoint state");
         const hasScriptMachinesCheckpoint = Object.prototype.hasOwnProperty.call(descriptors, "scriptMachines");
         if (requiresScriptMachinesCheckpoint && !hasScriptMachinesCheckpoint) {
             throw new Error("Game checkpoint TowerScript machine state is required for active schema v7 machines.");
@@ -3324,6 +3461,7 @@ export class TowerDefenseGame {
             ...(hasHeroesCheckpoint ? ["heroes"] : []),
             ...(hasLogisticsCheckpoint ? ["logistics"] : []),
             ...(hasDirectorCheckpoint ? ["director"] : []),
+            ...(hasQuestCheckpoint ? ["quests"] : []),
             ...(hasScriptMachinesCheckpoint ? ["scriptMachines"] : [])
         ], "Game checkpoint state");
         const finite = (value, label, minimum = 0, maximum = Infinity) => {
@@ -3451,6 +3589,49 @@ export class TowerDefenseGame {
                 validateDirectorReason(checkpointDataField(decision, "reason", "Director decision"), "Director reason", counterId);
                 validateDirectorGroups(checkpointDataField(decision, "addedGroups", "Director decision"), "Director added groups", counterId);
             }
+        }
+        const checkpointQuestEntries = new Map();
+        if (checkpointQuests && state.quests) {
+            const quests = closed(state.quests, "quest state", ["schemaVersion", "profileId", "entries"]);
+            if (checkpointDataField(quests, "schemaVersion", "quest state") !== 1
+                || checkpointDataField(quests, "profileId", "quest state") !== checkpointQuests.profileId) {
+                throw new Error("Game checkpoint quest identity is invalid.");
+            }
+            const expected = selectProceduralQuestsV1({
+                selectionCount: checkpointQuests.selectionCount,
+                definitions: checkpointQuests.definitions
+            }, { seed: questRuntimeSeed(rootInitialRng, identity.missionId) });
+            const entries = array(checkpointDataField(quests, "entries", "quest state"), "quest entries");
+            if (entries.length !== expected.length) {
+                throw new Error("Game checkpoint quest selection is incomplete or contains duplicates.");
+            }
+            entries.forEach((entryValue, index) => {
+                const selected = expected[index];
+                const definition = selected.definition;
+                const entry = closed(entryValue, `quest entry ${index}`, ["questId", "label", "kind", "current", "target", "status"]);
+                const questId = stringValue(checkpointDataField(entry, "questId", "quest entry"), "quest entry questId");
+                const label = stringValue(checkpointDataField(entry, "label", "quest entry"), "quest entry label");
+                const kind = stringValue(checkpointDataField(entry, "kind", "quest entry"), "quest entry kind");
+                const target = integer(checkpointDataField(entry, "target", "quest entry"), "quest entry target", 1);
+                const current = integer(checkpointDataField(entry, "current", "quest entry"), "quest entry current");
+                const status = stringValue(checkpointDataField(entry, "status", "quest entry"), "quest entry status");
+                const authoredTarget = definition.objective.kind === "kill_with_source"
+                    ? definition.objective.count
+                    : definition.objective.waves;
+                if (questId !== selected.questId || label !== definition.label || kind !== definition.objective.kind
+                    || target !== authoredTarget) {
+                    throw new Error("Game checkpoint quest entry does not match the deterministic authored selection.");
+                }
+                if (current > target || !["active", "completed", "failed"].includes(status)) {
+                    throw new Error("Game checkpoint quest current, target, or status is invalid.");
+                }
+                if ((status === "active" && current >= target)
+                    || (status === "completed" && current !== target)
+                    || (status === "failed" && (definition.objective.kind !== "preserve_shield" || current >= target))) {
+                    throw new Error("Game checkpoint quest progress is impossible for the authored objective.");
+                }
+                checkpointQuestEntries.set(questId, { kind, status });
+            });
         }
         let campaignBattleState;
         if (hasCampaignBattleCheckpoint) {
@@ -4493,6 +4674,8 @@ export class TowerDefenseGame {
             waveStarted: { required: ["type", "waveIndex"] },
             directorDecision: { required: ["type", "waveIndex", "counterId", "threatCost", "reason", "addedGroups"] },
             waveCleared: { required: ["type", "waveIndex", "income", "interest"] },
+            questCompleted: { required: ["type", "questId", "kind"] },
+            questFailed: { required: ["type", "questId", "kind"] },
             resourcesGranted: { required: ["type", "source", "waveIndex", "resources"] },
             objectiveCompleted: { required: ["type", "objectiveId", "kind"] },
             objectiveFailed: { required: ["type", "objectiveId", "kind"] },
@@ -4560,14 +4743,16 @@ export class TowerDefenseGame {
             "exposureId", "reactionId", "originEnemyId", "originEnemyTypeId", "rootEnemyId", "rootEnemyTypeId",
             "triggerDamageType", "budget", "sourceKind", "sourceId", "stopReason", "terrainTag",
             "artifactInstanceId", "artifactId", "slotId", "heroId", "heroDefinitionId", "skillId",
-            "counterId", "machineId", "contextId", "transitionId", "fromStatePath", "toStatePath"
+            "counterId", "questId", "machineId", "contextId", "transitionId", "fromStatePath", "toStatePath"
         ]);
         const coordEventFields = new Set(["coord", "from", "to", "center", "originCoord", "sourceCoord"]);
         const bagEventFields = new Set(["refund", "cost", "resources", "income", "interest"]);
         const stringArrayEventFields = new Set(["towerIds", "enemyIds", "scheduledTargetIds"]);
         let retainedHeroAbilityState;
         let retainedHeroSkillPointState;
-        for (const value of array(state.lastEvents, "lastEvents")) {
+        const checkpointTransitionEvents = [];
+        const checkpointEvents = array(state.lastEvents, "lastEvents");
+        for (const [eventIndex, value] of checkpointEvents.entries()) {
             const base = checkpointObjectDescriptors(value, "Game checkpoint last event");
             const type = stringValue(checkpointDataField(base, "type", "last event"), "last event type");
             const schema = eventSchemas[type];
@@ -4662,6 +4847,26 @@ export class TowerDefenseGame {
                 const typeId = stringValue(checkpointDataField(event, key, type), `${type}.${key}`);
                 if (!own(content.enemies, typeId))
                     throw new Error("Game checkpoint event references an unknown enemy type.");
+            }
+            if (type === "questCompleted" || type === "questFailed") {
+                const questId = stringValue(checkpointDataField(event, "questId", type), `${type}.questId`);
+                const kind = stringValue(checkpointDataField(event, "kind", type), `${type}.kind`);
+                const selected = checkpointQuestEntries.get(questId);
+                const expectedStatus = type === "questCompleted" ? "completed" : "failed";
+                if (!checkpointQuests || !selected || selected.kind !== kind || selected.status !== expectedStatus) {
+                    throw new Error(`Game checkpoint ${type} event does not match active quest state.`);
+                }
+            }
+            if (type === "stateMachineTransitioned") {
+                checkpointTransitionEvents.push({
+                    index: eventIndex,
+                    scriptId: stringValue(checkpointDataField(event, "scriptId", type), `${type}.scriptId`),
+                    machineId: stringValue(checkpointDataField(event, "machineId", type), `${type}.machineId`),
+                    contextId: stringValue(checkpointDataField(event, "contextId", type), `${type}.contextId`),
+                    transitionId: stringValue(checkpointDataField(event, "transitionId", type), `${type}.transitionId`),
+                    fromStatePath: stringValue(checkpointDataField(event, "fromStatePath", type), `${type}.fromStatePath`),
+                    toStatePath: stringValue(checkpointDataField(event, "toStatePath", type), `${type}.toStatePath`)
+                });
             }
             if (own(event, "towerTypeId")) {
                 const typeId = stringValue(checkpointDataField(event, "towerTypeId", type), `${type}.towerTypeId`);
@@ -5555,6 +5760,21 @@ export class TowerDefenseGame {
                 }
             }
         }
+        for (const transitionEvent of checkpointTransitionEvents) {
+            if (transitionEvent.index >= eventCursor) {
+                throw new Error("Game checkpoint cannot restore a queued state-machine transition event.");
+            }
+            const script = checkpointStateMachines.find((candidate) => candidate.id === transitionEvent.scriptId);
+            const machine = script?.stateMachines?.find((candidate) => candidate.id === transitionEvent.machineId);
+            if (!script || !machine || !hasTowerScriptStateTransitionProvenance(machine, transitionEvent.transitionId, transitionEvent.fromStatePath, transitionEvent.toStatePath)) {
+                throw new Error("Game checkpoint state-machine transition event has unknown authored provenance.");
+            }
+            const separator = transitionEvent.contextId.indexOf(":");
+            const scope = separator < 0 ? "" : transitionEvent.contextId.slice(0, separator);
+            if (!machine.bindings.some((binding) => binding.scope === scope)) {
+                throw new Error("Game checkpoint state-machine transition event context is outside machine bindings.");
+            }
+        }
     }
     restoreCheckpointState(state, initialRng, currentRng) {
         const logisticsCounts = this.activeLogisticsPower
@@ -5659,6 +5879,7 @@ export class TowerDefenseGame {
             reason: Object.freeze({ ...decision.reason }),
             addedGroups: Object.freeze(decision.addedGroups.map((group) => Object.freeze({ ...group })))
         })));
+        this.questEntries = Object.freeze((state.quests?.entries ?? []).map((entry) => Object.freeze({ ...entry })));
         this.lastEvents = [...state.lastEvents];
         this.enemyCounter = state.enemyCounter;
         this.towerCounter = state.towerCounter;
@@ -6168,6 +6389,7 @@ export class TowerDefenseGame {
                 })))
             })
             : undefined;
+        const quests = this.buildQuestSnapshot();
         return {
             mapId: this.map.id,
             grid: { ...this.map.grid },
@@ -6261,6 +6483,7 @@ export class TowerDefenseGame {
             ...(heroes === undefined ? {} : { heroes }),
             ...(logistics === undefined ? {} : { logistics }),
             ...(director === undefined ? {} : { director }),
+            ...(quests === undefined ? {} : { quests }),
             scriptState: {
                 values: this.cloneScriptValues(),
                 diagnostics: this.scriptDiagnostics.map((diagnostic) => ({ ...diagnostic })),
@@ -10757,6 +10980,9 @@ export class TowerDefenseGame {
                         amount: shieldAbsorbed,
                         ...(hpDamage > 0 ? { overflowDamage: hpDamage } : {})
                     });
+                    if (previous > 0 && mutableTarget.hero.shieldCurrent === 0) {
+                        this.failPreserveShieldQuests("hero");
+                    }
                 }
             }
         }
@@ -10800,6 +11026,9 @@ export class TowerDefenseGame {
                             amount: shieldAbsorbed,
                             ...(hpDamage > 0 ? { overflowDamage: hpDamage } : {})
                         });
+                        if (previous > 0 && state.current === 0) {
+                            this.failPreserveShieldQuests("tower");
+                        }
                     }
                 }
             }
@@ -10808,10 +11037,14 @@ export class TowerDefenseGame {
         const resolution = hpDamage === resolvedDamage.finalAmount
             ? resolvedDamage
             : { ...resolvedDamage, finalAmount: hpDamage };
+        const previousEnemyHp = mutableTarget.kind === "enemy" ? mutableTarget.enemy.hp : undefined;
         if (mutableTarget.kind === "enemy") {
             // Zero is the canonical pending-death state. Settlement intentionally stays
             // deferred to removeDeadEnemies(), preserving reward/event ordering exactly once.
             mutableTarget.enemy.hp = Math.max(0, mutableTarget.enemy.hp - resolution.finalAmount);
+            if ((previousEnemyHp ?? 0) > 0 && mutableTarget.enemy.hp === 0) {
+                this.creditQuestLethalDamage(packet.source);
+            }
         }
         else if (mutableTarget.kind === "core") {
             this.coreHp = Math.max(0, this.coreHp - resolution.finalAmount);
@@ -11750,6 +11983,7 @@ export class TowerDefenseGame {
             this.addResources(interest);
             this.clearedWaveCount += 1;
             this.lastEvents.push({ type: "waveCleared", waveIndex, income, interest });
+            this.advancePreserveShieldQuests();
             const heroDefinition = (this.activeHeroesMechanics?.schemaVersion === 5
                 || this.activeHeroesMechanics?.schemaVersion === 6
                 || this.activeHeroesMechanics?.schemaVersion === 7) && this.heroStateV2

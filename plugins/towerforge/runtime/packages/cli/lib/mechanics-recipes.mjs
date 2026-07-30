@@ -26,6 +26,7 @@ const BASIC_POWER_GRID_ID = "basic_power_grid";
 const BASIC_LOCAL_AMMUNITION_ID = "basic_local_ammunition";
 const BASIC_FACTORY_AMMUNITION_SUPPLY_ID = "basic_factory_ammunition_supply";
 const BASIC_ADAPTIVE_WAVE_DIRECTOR_ID = "basic_adaptive_wave_director";
+const BASIC_PROCEDURAL_QUESTS_ID = "basic_procedural_quests";
 const BASIC_LOCAL_COOP_ID = "basic_local_coop";
 const BASIC_PARTITIONED_LOCAL_COOP_ID = "basic_partitioned_local_coop";
 const BASIC_ASYMMETRIC_SEND_VS_BUILD_ID = "basic_asymmetric_send_vs_build";
@@ -367,6 +368,14 @@ const RECIPES = Object.freeze([
     moduleSchemaVersion: 1
   }),
   Object.freeze({
+    id: BASIC_PROCEDURAL_QUESTS_ID,
+    moduleId: "quests",
+    label: "Basic Procedural Quests",
+    description: "Inert quests v1 profile that selects seeded source-specific battle challenges.",
+    suggestedId: BASIC_PROCEDURAL_QUESTS_ID,
+    moduleSchemaVersion: 1
+  }),
+  Object.freeze({
     id: BASIC_LOCAL_COOP_ID,
     moduleId: "multiplayer",
     label: "Basic Local Co-op",
@@ -525,6 +534,43 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
             maxAddedGroups: 2,
             maxAddedEnemies: 8
           }
+        }
+      }
+    };
+  }
+  if (recipeId === BASIC_PROCEDURAL_QUESTS_ID) {
+    const towerTypeId = chooseId(undefined, context.missionDamagingTowerIds);
+    const abilityId = chooseId(undefined, context.missionDamagingAbilityIds);
+    if (towerTypeId === undefined && abilityId === undefined) {
+      throw new MechanicsRecipeParameterError(
+        "quest_recipe_source_unavailable",
+        "Basic procedural quests require at least one damaging tower or damaging authored ability in the selected mission."
+      );
+    }
+    const definitions = {
+      ...(towerTypeId === undefined ? {} : { tower_finisher: {
+        label: "Tower finisher",
+        weight: 1,
+        objective: { kind: "kill_with_source", count: 10, source: { kind: "tower", id: towerTypeId } }
+      } }),
+      ...(abilityId === undefined ? {} : {
+        ability_finisher: {
+          label: "Ability finisher",
+          weight: 1,
+          objective: { kind: "kill_with_source", count: 5, source: { kind: "ability", id: abilityId } }
+        }
+      })
+    };
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "quests",
+        moduleSchemaVersion: 1,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: {
+          selectionCount: Math.min(2, Object.keys(definitions).length),
+          definitions
         }
       }
     };

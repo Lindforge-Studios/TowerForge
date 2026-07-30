@@ -139,16 +139,26 @@ function ownDataFieldPresent(value, key) {
 export function contentRecipeContext(files) {
   const balance = files.balance ?? files;
   const towerEntries = Object.entries(balance.towers ?? files.towers ?? {});
+  const abilityEntries = Object.entries(balance.abilities ?? files.abilities ?? {});
   const missionIds = Object.keys(balance.missions ?? {});
   const defaultMissionId = balance.defaultMissionId ?? files.manifest?.defaultMissionId;
   const missionId = missionIds.includes(defaultMissionId) ? defaultMissionId : [...missionIds].sort(compareBinary)[0];
   const selectedProfiles = ownDataValue(ownDataValue(ownDataValue(balance.missions, missionId), "mechanics"), "profiles");
+  const selectedMission = ownDataValue(balance.missions, missionId);
   const combatProfileId = ownDataValue(selectedProfiles, "combat");
   const modules = ownDataValue(files.mechanics, "modules");
   const combatModule = ownDataValue(modules, "combat");
   const combatProfiles = ownDataValue(combatModule, "profiles");
   const combatProfile = typeof combatProfileId === "string" ? ownDataValue(combatProfiles, combatProfileId) : undefined;
   const damageTypes = ownDataValue(combatProfile, "damageTypes");
+  const missionTowerIds = Array.isArray(ownDataValue(selectedMission, "buildTowerIds"))
+    ? [...ownDataValue(selectedMission, "buildTowerIds")].sort(compareBinary)
+    : [];
+  const missionAbilityIds = Array.isArray(ownDataValue(selectedMission, "abilityIds"))
+    ? [...ownDataValue(selectedMission, "abilityIds")].sort(compareBinary)
+    : [];
+  const towersById = new Map(towerEntries);
+  const abilitiesById = new Map(abilityEntries);
   return {
     mapIds: Object.keys(files.maps ?? {}),
     waveSetIds: Object.keys(balance.waveSets ?? files.waveSets ?? {}),
@@ -158,7 +168,11 @@ export function contentRecipeContext(files) {
       .filter(([, kind]) => typeof kind === "string")
       .sort(([left], [right]) => compareBinary(left, right))),
     towerTagsByTowerId: authoredTowerTags(towerEntries),
-    abilityIds: Object.keys(balance.abilities ?? files.abilities ?? {}),
+    abilityIds: abilityEntries.map(([id]) => id).sort(compareBinary),
+    missionTowerIds,
+    missionAbilityIds,
+    missionDamagingTowerIds: missionTowerIds.filter((id) => authoredTowerDealsDamage(towersById.get(id))),
+    missionDamagingAbilityIds: missionAbilityIds.filter((id) => authoredAbilityDealsDamage(id, abilitiesById.get(id))),
     defaultMissionId,
     missionIds,
     enemyIds: Object.keys(balance.enemies ?? files.enemies ?? {}),
@@ -173,6 +187,50 @@ export function contentRecipeContext(files) {
       .filter(([, tower]) => Number.isFinite(tower?.maxHp) && tower.maxHp > 0)
       .map(([id]) => id)
   };
+}
+
+function authoredTowerDealsDamage(tower) {
+  const attack = ownDataValue(tower, "attack");
+  const kind = ownDataValue(attack, "kind");
+  if (["single", "pulse", "sniper", "antiair", "splash"].includes(kind)) return true;
+  return kind === "pipeline" && authoredEffects(attack).some((effect) => (
+    ownDataValue(effect, "kind") === "damage"
+    && Number.isFinite(ownDataValue(effect, "amount"))
+    && ownDataValue(effect, "amount") > 0
+  ));
+}
+
+function authoredAbilityDealsDamage(abilityId, ability) {
+  const effects = authoredEffects(ability);
+  return effects.some((effect) => (
+    ownDataValue(effect, "kind") === "damage"
+    && Number.isFinite(ownDataValue(effect, "amount"))
+    && ownDataValue(effect, "amount") > 0
+  )) || (effects.length === 0
+    && ownDataValue(ability, "effects") === undefined
+    && abilityId === "strike"
+    && Number.isFinite(ownDataValue(ability, "damage"))
+    && ownDataValue(ability, "damage") > 0);
+}
+
+function authoredEffects(owner) {
+  const effects = ownDataValue(owner, "effects");
+  if (!Array.isArray(effects)) return [];
+  try {
+    const descriptors = Object.getOwnPropertyDescriptors(effects);
+    if (Object.getOwnPropertySymbols(descriptors).length > 0) return [];
+    const itemKeys = Object.keys(descriptors).filter((key) => key !== "length");
+    if (itemKeys.length !== effects.length) return [];
+    const result = [];
+    for (let index = 0; index < effects.length; index += 1) {
+      const descriptor = descriptors[String(index)];
+      if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) return [];
+      result.push(descriptor.value);
+    }
+    return result;
+  } catch {
+    return [];
+  }
 }
 
 function authoredTowerTags(towerEntries) {

@@ -21,6 +21,7 @@
     "validate": "node packages/cli/validate.mjs",
     "sim": "node packages/cli/sim.mjs",
     "balance": "node packages/cli/balance.mjs",
+    "persona-qa": "node packages/cli/persona-qa.mjs",
     "build": "node packages/cli/build.mjs",
     "package:web": "node packages/cli/package.mjs --kind web",
     "project:export": "node packages/cli/project-pack.mjs export",

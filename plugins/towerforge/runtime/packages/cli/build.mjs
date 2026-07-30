@@ -439,6 +439,7 @@ function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "
         <section id="wave-draft" class="roguelite-status" aria-label="Wave draft" hidden></section>
         <section id="artifact-inventory" class="roguelite-status" aria-label="Artifact inventory" hidden></section>
         <section id="logistics-status" class="roguelite-status" aria-label="Power grid" hidden></section>
+        <section id="quest-status" class="roguelite-status" aria-label="Optional challenges" hidden></section>
         <section id="campaign-run-panel" class="campaign-run-panel" aria-label="Campaign run" hidden>
           <strong>Campaign run</strong>
           <span id="campaign-run-summary"></span>
@@ -728,7 +729,7 @@ function playerTemplate(includeMultiplayer = false) {
 } from "./engine/index.js";
 ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multiplayer/index.js";' : ""}
 import { createPlayerProfileStore, derivePlayerProfileStorageKey } from "./player-runtime/index.mjs";
-import { createCanvasRenderer, hitTestHeroesPresentation, projectCampaignPresentation, projectDirectorDecisionCues, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectRoguelitePresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
+import { createCanvasRenderer, hitTestHeroesPresentation, projectCampaignPresentation, projectDirectorDecisionCues, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectQuestPresentation, projectRoguelitePresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
 import { createAudioPlayer } from "./renderer/audio.mjs";
 import project from "./project-data.js";
 
@@ -1623,6 +1624,12 @@ function draw(snap, events) {
   projectPhysicsPresentationCues(snap);
   const directorCue = projectDirectorDecisionCues(snap).at(-1);
   if (directorCue) message = directorCue.label;
+  const questPresentation = projectQuestPresentation(snap);
+  const questCue = questPresentation?.cues.at(-1);
+  if (questCue) {
+    const entry = questPresentation.entries.find((candidate) => candidate.questId === questCue.questId);
+    message = \`\${questCue.type === "completed" ? "Challenge completed" : "Challenge failed"}: \${entry?.label ?? questCue.questId}\`;
+  }
   renderer.drawSnapshot(snap);
   if ($("snd")?.checked) audio.handleEvents(events);
 }
@@ -1634,6 +1641,7 @@ function updateHud(snap) {
   updateTargetMode(snap);
   updateRogueliteStatus(snap);
   updateLogisticsStatus(snap);
+  updateQuestStatus(snap);
   if (snap.outcome === "victory" && !victoryRewarded) {
     victoryRewarded = true;
     const earnedStars = (snap.stars || []).filter((item) => item.achieved).length;
@@ -1783,6 +1791,24 @@ function updateRogueliteStatus(snap) {
       }
       artifactPanel.append(row);
     }
+  }
+}
+
+function updateQuestStatus(snap) {
+  const panel = $("quest-status");
+  if (!panel) return;
+  const presentation = projectQuestPresentation(snap);
+  panel.replaceChildren();
+  panel.hidden = !presentation;
+  if (!presentation) return;
+  const title = document.createElement("strong");
+  title.textContent = "Challenges";
+  panel.append(title);
+  for (const quest of presentation.entries) {
+    const row = document.createElement("span");
+    row.dataset.status = quest.status;
+    row.textContent = quest.label + ": " + quest.current + "/" + quest.target + " · " + quest.status;
+    panel.append(row);
   }
 }
 
@@ -1955,6 +1981,7 @@ import {
   projectMarkPresentationCues,
   projectNavigationPlacementCues,
   projectPhysicsPresentationCues,
+  projectQuestPresentation,
   hitTestHeroesPresentation,
   projectHeroesPresentation,
   projectHeroPresentationPoint,
@@ -2566,6 +2593,12 @@ class PlayScene extends Phaser.Scene {
     };
     const directorCue = projectDirectorDecisionCues(presentationSnapshot).at(-1);
     if (directorCue) message = directorCue.label;
+    const questPresentation = projectQuestPresentation(presentationSnapshot);
+    const questCue = questPresentation?.cues.at(-1);
+    if (questCue) {
+      const entry = questPresentation.entries.find((candidate) => candidate.questId === questCue.questId);
+      message = \`\${questCue.type === "completed" ? "Challenge completed" : "Challenge failed"}: \${entry?.label ?? questCue.questId}\`;
+    }
     const terraformingPresentation = projectTerraformingPresentation(presentationSnapshot);
     this.syncTileImages(snap, g, terraformingPresentation);
     const map = { id: snap.mapId || snap.missionId, grid: snap.grid, tiles: snap.tiles, pathRoutes: snap.pathRoutes || [] };
@@ -3461,6 +3494,7 @@ function updateHud(snap) {
   updateTargetMode(snap);
   updateRogueliteStatus(snap);
   updateLogisticsStatus(snap);
+  updateQuestStatus(snap);
   if (snap.outcome === "victory" && !victoryRewarded) {
     victoryRewarded = true;
     const earnedStars = (snap.stars || []).filter((item) => item.achieved).length;
@@ -3610,6 +3644,24 @@ function updateRogueliteStatus(snap) {
       }
       artifactPanel.append(row);
     }
+  }
+}
+
+function updateQuestStatus(snap) {
+  const panel = $("quest-status");
+  if (!panel) return;
+  const presentation = projectQuestPresentation(snap);
+  panel.replaceChildren();
+  panel.hidden = !presentation;
+  if (!presentation) return;
+  const title = document.createElement("strong");
+  title.textContent = "Challenges";
+  panel.append(title);
+  for (const quest of presentation.entries) {
+    const row = document.createElement("span");
+    row.dataset.status = quest.status;
+    row.textContent = quest.label + ": " + quest.current + "/" + quest.target + " · " + quest.status;
+    panel.append(row);
   }
 }
 

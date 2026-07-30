@@ -146,6 +146,24 @@ html[data-sidebar="collapsed"] .sidebar-toggle-expand { display: block; }
 .mechanics-hub-state { font: 10px var(--mono); text-transform: uppercase; }
 .mechanics-hub-body { overflow: auto; padding: 20px 20px 48px; }
 .mechanics-hub-intro { max-width: 760px; margin: 0 0 16px; color: var(--text-muted); font-size: 12px; line-height: 1.55; }
+.persona-qa-lab { margin: 0 20px 28px; padding: 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.persona-qa-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 14px; }
+.persona-qa-head h3 { margin: 0 0 5px; font-size: 15px; }
+.persona-qa-head p { margin: 0; max-width: 760px; color: var(--text-muted); font-size: 11.5px; line-height: 1.5; }
+.persona-qa-controls { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.4fr) minmax(180px, 1fr) minmax(150px, .8fr); gap: 12px; align-items: start; }
+.persona-qa-controls label, .persona-qa-number-controls { display: grid; gap: 6px; color: var(--text-muted); font-size: 11px; }
+.persona-qa-controls select, .persona-qa-controls textarea { min-height: 88px; }
+.persona-qa-controls select[multiple] option { padding: 5px 7px; color: var(--text); }
+.persona-qa-controls select[multiple] option:checked { color: #fff; background: var(--accent); }
+.persona-qa-number-controls { gap: 10px; }
+.persona-qa-number-controls label { display: grid; gap: 5px; }
+.persona-qa-results { margin-top: 14px; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
+.persona-qa-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.persona-qa-summary span { padding: 5px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); }
+.persona-qa-matrix { width: 100%; border-collapse: collapse; font-size: 11px; }
+.persona-qa-matrix th, .persona-qa-matrix td { padding: 7px 8px; border-bottom: 1px solid var(--border); text-align: left; }
+.persona-qa-finding { margin: 7px 0; padding: 8px 10px; border-left: 3px solid var(--warn); background: var(--surface-2); }
+@media (max-width: 980px) { .persona-qa-controls { grid-template-columns: 1fr 1fr; } }
 .mechanics-module-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; max-width: 1120px; }
 .mechanics-module-card { position: relative; min-height: 132px; padding: 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); opacity: .55; text-align: left; }
 .mechanics-module-card h3 { margin: 0 0 7px; font-size: 12px; }
@@ -1038,6 +1056,15 @@ button.workbench-row:hover { background: var(--surface-2); }
 .pt-inspector code { font-family: var(--mono); color: var(--accent); }
 .pt-artifact-inventory { display: grid; gap: 6px; padding: 7px 8px; border: 1px solid var(--border); background: var(--surface-2); border-radius: var(--radius); font-size: 10.5px; }
 .pt-artifact-inventory[hidden] { display: none; }
+.pt-quest-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; align-items: center; }
+.pt-quest-row.completed { color: var(--ok); }
+.pt-quest-row.failed { color: var(--text-muted); text-decoration: line-through; }
+.pt-quest-progress { grid-column: 1 / -1; height: 3px; overflow: hidden; border-radius: 999px; background: var(--border); }
+.pt-quest-progress span { display: block; height: 100%; background: var(--accent); }
+.pt-quest-cue { padding: 6px 8px; border-radius: 5px; font-weight: 650; animation: pt-quest-cue-in .18s ease-out; }
+.pt-quest-cue.completed { color: var(--ok); background: color-mix(in srgb, var(--ok) 13%, transparent); }
+.pt-quest-cue.failed { color: var(--err); background: color-mix(in srgb, var(--err) 13%, transparent); }
+@keyframes pt-quest-cue-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
 .pt-artifact-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; }
 .pt-artifact-row .btn { min-height: 24px; padding: 2px 7px; font-size: 10px; }
 .pt-inspector-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }

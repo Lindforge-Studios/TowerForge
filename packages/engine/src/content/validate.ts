@@ -6,6 +6,7 @@ import { createGridTopology, normalizeGridDefinition } from "../simulation/topol
 import { validateTowerScriptDefinitions } from "../scripting/validate.js";
 import { TOWER_SCRIPT_LIMITS } from "../scripting/schema-descriptor.js";
 import type { TowerScriptDefinition } from "../scripting/types.js";
+import { TOWER_SCRIPT_EVENT_FIELDS } from "../scripting/schema-descriptor.js";
 import { ARMOR_MATRIX_LIMITS, MARK_LIMITS, MECHANICS_MODULE_IDS, REACTION_LIMITS, SHIELD_LIMITS } from "./mechanics.js";
 import {
   NAVIGATION_LIMITS,
@@ -53,6 +54,7 @@ import {
   normalizeHeroesProfileV6,
   normalizeHeroesProfileV7,
   validateHeroSkillTreeSemanticsV5,
+  resolveActiveHeroesMechanics,
   type HeroesProfileV1,
   type HeroesProfileV2,
   type HeroesProfileV3,
@@ -73,6 +75,13 @@ import {
   DirectorProfileValidationError,
   normalizeDirectorProfileV1
 } from "./director-mechanics.js";
+import {
+  QuestProfileValidationError,
+  normalizeQuestProfileV1,
+  type QuestObjectiveV1
+} from "./quest-mechanics.js";
+import { resolveActiveCombatMechanics } from "./combat-mechanics.js";
+import { resolveActiveReactionsMechanics } from "./reaction-mechanics.js";
 import {
   MultiplayerProfileValidationError,
   normalizeMultiplayerProfileV1,
@@ -3849,6 +3858,340 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
   };
 
   validateDirectorMechanics();
+
+  const validateQuestMechanics = () => {
+    const safeRecord = (value: unknown, entityId: string, fieldPath: string, label: string) => {
+      if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        err("mechanics", entityId, fieldPath, `${label} must be a plain object.`);
+        return undefined;
+      }
+      try {
+        const prototype = Object.getPrototypeOf(value);
+        const descriptors = Object.getOwnPropertyDescriptors(value) as Record<PropertyKey, PropertyDescriptor>;
+        if (prototype !== Object.prototype && prototype !== null) {
+          err("mechanics", entityId, fieldPath, `${label} must be a plain object.`);
+          return undefined;
+        }
+        if (Object.getOwnPropertySymbols(descriptors).length > 0) {
+          err("mechanics", entityId, fieldPath, `${label} must not contain symbol fields.`);
+        }
+        const result = Object.create(null) as Record<string, unknown>;
+        for (const key of Object.keys(descriptors)) {
+          const descriptor = descriptors[key];
+          if (!descriptor?.enumerable || !("value" in descriptor)) {
+            err("mechanics", entityId, `${fieldPath}.${key}`, `${label} fields must be enumerable own data properties.`);
+            continue;
+          }
+          Object.defineProperty(result, key, { value: descriptor.value, enumerable: true });
+        }
+        return result;
+      } catch {
+        err("mechanics", entityId, fieldPath, `${label} could not be inspected safely.`);
+        return undefined;
+      }
+    };
+
+    const modules = safeRecord(content.mechanics.modules, "quests", "mechanics.modules", "Mechanics modules");
+    const moduleValue = modules?.quests;
+    if (moduleValue === undefined) return;
+    const module = safeRecord(moduleValue, "quests", "modules.quests", "Quests module");
+    if (!module) return;
+    const allowedModuleFields = new Set(["schemaVersion", "enabled", "profiles"]);
+    for (const key of Object.keys(module)) {
+      if (!allowedModuleFields.has(key)) {
+        err("mechanics", "quests", `modules.quests.${key}`, `Quests module is closed; unsupported field "${key}".`);
+      }
+    }
+    for (const key of allowedModuleFields) {
+      if (!Object.prototype.hasOwnProperty.call(module, key)) {
+        err("mechanics", "quests", `modules.quests.${key}`, `Quests module field "${key}" is required.`);
+      }
+    }
+    if (typeof module.enabled !== "boolean") {
+      err("mechanics", "quests", "modules.quests.enabled", "Quests enabled must be boolean.");
+    }
+    const profiles = safeRecord(module.profiles, "quests", "modules.quests.profiles", "Quests profiles");
+    if (module.schemaVersion !== 1) {
+      err(
+        "mechanics",
+        "quests",
+        "modules.quests.schemaVersion",
+        `Quests mechanics schemaVersion ${String(module.schemaVersion)} is unsupported; supported schemaVersion is 1.`
+      );
+      return;
+    }
+    if (!profiles) return;
+
+    const selectedByProfile = new Map<string, string[]>();
+    for (const [missionId, mission] of Object.entries(content.missions)) {
+      const selected = mission.mechanics?.profiles?.quests;
+      if (typeof selected !== "string") continue;
+      const selectedMissions = selectedByProfile.get(selected) ?? [];
+      selectedMissions.push(missionId);
+      selectedByProfile.set(selected, selectedMissions);
+      if (!Object.prototype.hasOwnProperty.call(profiles, selected)) {
+        (module.enabled === true ? err : warn)(
+          "mission",
+          missionId,
+          `missions.${missionId}.mechanics.profiles.quests`,
+          `Mission "${missionId}" selects unknown quests profile "${selected}".`
+        );
+      }
+    }
+
+    const invalidQuestData = Symbol("invalid quest data");
+    const questOwnData = (value: unknown, key: string): unknown | typeof invalidQuestData => {
+      if (value === null || typeof value !== "object") return invalidQuestData;
+      try {
+        const descriptor = Object.getOwnPropertyDescriptor(value, key);
+        if (descriptor === undefined) return undefined;
+        return descriptor.enumerable && "value" in descriptor ? descriptor.value : invalidQuestData;
+      } catch {
+        return invalidQuestData;
+      }
+    };
+    const questDataArray = (value: unknown): readonly unknown[] | undefined => {
+      if (!Array.isArray(value)) return undefined;
+      try {
+        const descriptors = Object.getOwnPropertyDescriptors(value);
+        if (Object.getOwnPropertySymbols(descriptors).length > 0
+          || Object.keys(descriptors).length !== value.length + 1) return undefined;
+        const result: unknown[] = [];
+        for (let index = 0; index < value.length; index += 1) {
+          const descriptor = descriptors[String(index)];
+          if (!descriptor?.enumerable || !("value" in descriptor)) return undefined;
+          result.push(descriptor.value);
+        }
+        return result;
+      } catch {
+        return undefined;
+      }
+    };
+    const questDataEntries = (value: unknown): readonly (readonly [string, unknown])[] | undefined => {
+      if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+      try {
+        const descriptors = Object.getOwnPropertyDescriptors(value);
+        if (Object.getOwnPropertySymbols(descriptors).length > 0) return undefined;
+        const result: Array<readonly [string, unknown]> = [];
+        for (const key of Object.keys(descriptors)) {
+          const descriptor = descriptors[key];
+          if (!descriptor?.enumerable || !("value" in descriptor)) return undefined;
+          result.push([key, descriptor.value]);
+        }
+        return result;
+      } catch {
+        return undefined;
+      }
+    };
+
+    const scriptHandlerAppliesToMission = (
+      script: TowerScriptDefinition,
+      missionId: string,
+      eventName: keyof typeof TOWER_SCRIPT_EVENT_FIELDS
+    ): boolean => {
+      const mission = content.missions[missionId];
+      const map = mission ? content.maps[mission.mapId] : undefined;
+      const eventFields = TOWER_SCRIPT_EVENT_FIELDS[eventName];
+      if (!mission || !map || !eventFields) return false;
+      const fields = new Set<string>(eventFields);
+      // Enemy and terrain contexts may be introduced by other typed scripts or active
+      // terraforming. Use the established conservative applicability policy for those two scopes,
+      // while mission/map/wave/tower/ability bindings are proved against this selected mission.
+      const authoredEnemies = new Set(Object.keys(content.enemies));
+      const authoredTerrain = new Set(Object.keys(content.terrainTypes));
+      const acceptsAny = (ids: readonly string[] | undefined, candidates: Iterable<string>): boolean => {
+        if (ids === undefined) {
+          for (const _candidate of candidates) return true;
+          return false;
+        }
+        const accepted = new Set(ids);
+        for (const candidate of candidates) if (accepted.has(candidate)) return true;
+        return false;
+      };
+      const bindings = questDataArray(questOwnData(script, "bindings"));
+      if (!bindings) return false;
+      return bindings.some((binding) => {
+        const scope = questOwnData(binding, "scope");
+        const rawIds = questOwnData(binding, "ids");
+        const ids = rawIds === undefined
+          ? undefined
+          : questDataArray(rawIds)?.filter((entry): entry is string => typeof entry === "string");
+        if (rawIds === invalidQuestData || (rawIds !== undefined && !ids)) return false;
+        if (scope === "global") return true;
+        if (scope === "mission") return acceptsAny(ids, [missionId]);
+        if (scope === "map") return acceptsAny(ids, [mission.mapId]);
+        if (scope === "wave") return acceptsAny(ids, [mission.waveSetId]);
+        if (scope === "tower") return (eventName === "tick" || fields.has("towerId") || fields.has("towerIds"))
+          && acceptsAny(ids, mission.buildTowerIds);
+        if (scope === "ability") return fields.has("abilityId")
+          && acceptsAny(ids, mission.abilityIds);
+        if (scope === "terrain") return (fields.has("coord") || fields.has("center") || fields.has("to"))
+          && acceptsAny(ids, authoredTerrain);
+        return scope === "enemy"
+          && (eventName === "tick" || fields.has("enemyId") || fields.has("targetEnemyId") || fields.has("enemyIds"))
+          && acceptsAny(ids, authoredEnemies);
+      });
+    };
+
+    const scriptHasApplicableAction = (
+      script: TowerScriptDefinition,
+      missionId: string,
+      predicate: (action: unknown) => boolean
+    ): boolean => {
+      const handlers = questDataEntries(questOwnData(script, "handlers"));
+      if (!handlers) return false;
+      return handlers.some(([eventName, handlerValue]) => {
+        const eventHandlers = questDataArray(handlerValue);
+        return eventHandlers?.some((handler) => {
+          const actions = questDataArray(questOwnData(handler, "actions"));
+          return actions?.some(predicate) === true
+            && scriptHandlerAppliesToMission(
+              script,
+              missionId,
+              eventName as keyof typeof TOWER_SCRIPT_EVENT_FIELDS
+            );
+        }) === true;
+      });
+    };
+
+    const sourceExists = (objective: QuestObjectiveV1, missionId: string): boolean => {
+      if (objective.kind !== "kill_with_source") return true;
+      const { kind, id } = objective.source;
+      if (kind === "ability") {
+        if (content.missions[missionId]?.abilityIds.includes(id as never) !== true) return false;
+        const ability = content.abilities[id as keyof typeof content.abilities];
+        if (!ability) return false;
+        return ability.effects?.some((effect) => effect.kind === "damage" && effect.amount > 0) === true
+          || (ability.effects === undefined && id === "strike" && (ability.damage ?? 0) > 0);
+      }
+      if (kind === "tower") {
+        if (content.missions[missionId]?.buildTowerIds.includes(id) !== true) return false;
+        const attack = content.towers[id]?.attack;
+        if (!attack || attack.kind === "support" || attack.kind === "support_buff") return false;
+        return attack.kind !== "pipeline" || attack.effects.some((effect) => (
+          effect.kind === "damage" && effect.amount > 0
+        ));
+      }
+      if (kind === "tower_script") {
+        const script = questOwnData(content.scripts, id);
+        if (!script || script === invalidQuestData || typeof script !== "object"
+          || questOwnData(script, "enabled") === false
+          || questOwnData(script, "enabled") === invalidQuestData) return false;
+        return scriptHasApplicableAction(script as TowerScriptDefinition, missionId, (action) => (
+          questOwnData(action, "action") === "damageEnemy"
+        ));
+      }
+      if (kind === "reaction") {
+        try {
+          const reaction = resolveActiveReactionsMechanics(content, missionId)?.reactions[id];
+          return reaction !== undefined && Object.keys(reaction.effects).length > 0;
+        } catch {
+          return false;
+        }
+      }
+      // Poison is the only authored status that emits DamagePackets in v1. Discover a typed
+      // producer instead of matching arbitrary JSON strings such as attack.kind === "single".
+      if (id !== "poison") return false;
+      const hasPoison = (status: unknown): boolean => Boolean(
+        status && typeof status === "object" && !Array.isArray(status)
+        && Object.prototype.hasOwnProperty.call(status, "poison")
+      );
+      const mission = content.missions[missionId];
+      const towerProducesPoison = mission?.buildTowerIds.some((towerId) => {
+        const attack = content.towers[towerId]?.attack;
+        if (!attack) return false;
+        if (hasPoison((attack as { statusOnHit?: unknown }).statusOnHit)) return true;
+        return attack.kind === "pipeline" && attack.effects.some((effect) => (
+          effect.kind === "status" && hasPoison(effect.status)
+        ));
+      }) === true;
+      const abilityProducesPoison = mission?.abilityIds.some((abilityId) => (
+        content.abilities[abilityId]?.effects?.some((effect) => (
+          effect.kind === "status" && hasPoison(effect.status)
+        )) === true
+      )) === true;
+      const scriptProducesPoison = (questDataEntries(content.scripts) ?? []).some(([, scriptValue]) => {
+        if (!scriptValue || typeof scriptValue !== "object"
+          || questOwnData(scriptValue, "enabled") === false
+          || questOwnData(scriptValue, "enabled") === invalidQuestData) return false;
+        return scriptHasApplicableAction(scriptValue as TowerScriptDefinition, missionId, (action) => (
+          questOwnData(action, "action") === "applyStatus"
+          && hasPoison(questOwnData(action, "status"))
+        ));
+      });
+      return towerProducesPoison || abilityProducesPoison || scriptProducesPoison;
+    };
+
+    const shieldScopeExists = (objective: QuestObjectiveV1, missionId: string): boolean => {
+      if (objective.kind !== "preserve_shield") return true;
+      const mission = content.missions[missionId];
+      let combat: ReturnType<typeof resolveActiveCombatMechanics>;
+      let heroes: ReturnType<typeof resolveActiveHeroesMechanics>;
+      try { combat = resolveActiveCombatMechanics(content, missionId); } catch { combat = undefined; }
+      try { heroes = resolveActiveHeroesMechanics(content, missionId); } catch { heroes = undefined; }
+      const towerShield = mission?.buildTowerIds.some((towerId) => (
+        Object.prototype.hasOwnProperty.call(combat?.shields.towers ?? {}, towerId)
+      )) === true;
+      const selectedHero = heroes?.definitions[heroes.selectedHeroId] as { durability?: { shield?: unknown } } | undefined;
+      const heroShield = (heroes?.schemaVersion ?? 0) >= 3 && selectedHero?.durability?.shield != null;
+      return objective.scope === "tower" ? towerShield : objective.scope === "hero" ? heroShield : towerShield || heroShield;
+    };
+
+    for (const profileId of Object.keys(profiles).sort()) {
+      const root = `modules.quests.profiles.${profileId}`;
+      let profile;
+      try {
+        profile = normalizeQuestProfileV1(profiles[profileId]);
+      } catch (error) {
+        err(
+          "mechanics",
+          profileId,
+          root,
+          error instanceof QuestProfileValidationError || error instanceof Error
+            ? error.message
+            : "Quest profile is invalid."
+        );
+        continue;
+      }
+      const selectedMissions = selectedByProfile.get(profileId) ?? [];
+      const active = module.enabled === true && selectedMissions.length > 0;
+      const semantic = active ? err : warn;
+      for (const missionId of selectedMissions) {
+        const mission = content.missions[missionId];
+        for (const [questId, definition] of Object.entries(profile.definitions)) {
+          const path = `${root}.definitions.${questId}.objective`;
+          if (definition.objective.kind === "kill_with_source" && !sourceExists(definition.objective, missionId)) {
+            semantic(
+              "mechanics",
+              profileId,
+              `${path}.source.id`,
+              `Quest "${questId}" references unknown or unavailable ${definition.objective.source.kind} "${definition.objective.source.id}" for mission "${missionId}".`
+            );
+          }
+          if (definition.objective.kind === "preserve_shield") {
+            if (definition.objective.waves > (mission?.waves.length ?? 0)) {
+              semantic(
+                "mechanics",
+                profileId,
+                `${path}.waves`,
+                `Quest "${questId}" requires ${definition.objective.waves} waves but mission "${missionId}" has fewer available waves.`
+              );
+            }
+            if (!shieldScopeExists(definition.objective, missionId)) {
+              semantic(
+                "mechanics",
+                profileId,
+                `${path}.scope`,
+                `Quest "${questId}" requires an authored active shield in scope "${definition.objective.scope}".`
+              );
+            }
+          }
+        }
+      }
+    }
+  };
+
+  validateQuestMechanics();
 
   const validateMultiplayerMechanics = () => {
     const inspect = (value: unknown, entityId: string, fieldPath: string, label: string) => {

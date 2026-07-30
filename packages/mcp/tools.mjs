@@ -32,6 +32,7 @@ import {
   stageGeneratedAsset
 } from "../cli/lib/generated-assets.mjs";
 import { runAutoBalancerWorkerBatch } from "../cli/lib/auto-balancer-worker.mjs";
+import { runPersonaQaWorkerBatch } from "../cli/lib/persona-qa-worker.mjs";
 import { exportProjectPack, inspectProjectPack } from "../cli/lib/project-pack.mjs";
 import { packageProject } from "../cli/lib/packaging.mjs";
 import { validateProjectSchemas } from "../cli/lib/project-schema.mjs";
@@ -79,7 +80,7 @@ const BALANCE_PATCH_KEYS = [
   "enemies", "towers", "waveSets", "missions", "abilities", "constants", "currencies", "defaultMissionId",
   "defaultDifficultyId", "difficulties", "metaProgression", "terrainTypes"
 ];
-const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "director", "multiplayer", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
+const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "director", "quests", "personaQa", "multiplayer", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
 
 // Maps an upsert_entity/delete_entity `collection` to (a) the balance.json key, (b) the shape
 // (a map keyed by id, or an array of {id,...} items — currencies only), and (c) the
@@ -984,6 +985,58 @@ export const TOOLS = [
     }
   },
   {
+    name: "run_persona_qa",
+    description:
+      "Run the fixed deterministic aggressive_rush, greedy_economy, and turtle_shield persona matrix and return evidence only. Writes no project files and never applies a balance patch.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory." },
+        schemaVersion: { type: "integer", const: 1 },
+        missionIds: {
+          type: "array", minItems: 1, maxItems: 32, uniqueItems: true,
+          items: { type: "string", minLength: 1, maxLength: 256, description: "Runtime also caps each value at 256 UTF-8 bytes." }
+        },
+        seeds: {
+          type: "array", minItems: 1, maxItems: 64, uniqueItems: true,
+          items: { type: "string", minLength: 1, maxLength: 256, description: "Runtime also caps each value at 256 UTF-8 bytes." }
+        },
+        personaIds: {
+          type: "array", minItems: 1, maxItems: 3, uniqueItems: true,
+          items: { type: "string", enum: ["aggressive_rush", "greedy_economy", "turtle_shield"] }
+        },
+        simSeconds: { type: "number", minimum: 0.05, maximum: 3600 },
+        tickStep: { type: "number", minimum: 0.05, maximum: 0.2 }
+      },
+      required: ["missionIds", "seeds", "personaIds", "simSeconds", "tickStep"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "preview_quest_generation",
+    description:
+      "Preview deterministic weighted quest selection from the active mission-selected quests v1 profile. Writes no project files and never enables or commits mechanics.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory." },
+        missionId: { type: "string", minLength: 1, maxLength: 128 },
+        seed: {
+          oneOf: [
+            { type: "string", minLength: 1, maxLength: 256 },
+            { type: "integer", minimum: -9007199254740991, maximum: 9007199254740991 }
+          ]
+        },
+        eligibleDefinitionIds: {
+          type: "array", maxItems: 256, uniqueItems: true,
+          items: { type: "string", minLength: 1, maxLength: 128 }
+        }
+      },
+      required: ["missionId", "seed"],
+      additionalProperties: false
+    }
+  },
+  {
     name: "propose_balance_patches",
     description:
       "Evaluate bounded candidate balance patches across a deterministic seed/strategy matrix and return ranked evidence-only proposals. This compute-only tool writes no project files and never commits or applies a proposal.",
@@ -1641,6 +1694,8 @@ const TOOL_RISK = {
   package_web: { riskClass: "write_local", sideEffect: "writes a portable web bundle and deterministic zip under the project" },
   package_desktop: { riskClass: "write_local", sideEffect: "writes desktop scaffold" },
   balance_report: { riskClass: "compute_only", sideEffect: "builds engine dist if stale" },
+  run_persona_qa: { riskClass: "compute_only", sideEffect: "builds engine dist if stale; writes no project files and returns evidence only" },
+  preview_quest_generation: { riskClass: "compute_only", sideEffect: "builds engine dist if stale; writes no project files and never enables mechanics" },
   propose_balance_patches: { riskClass: "compute_only", sideEffect: "builds engine dist if stale; writes no project files and returns evidence-only proposals" },
   dry_run_balance_patch: { riskClass: "compute_only", sideEffect: "none" },
   apply_balance_patch: { riskClass: "write_local", sideEffect: "writes content/balance.json with backup and rollback" },
@@ -1953,6 +2008,30 @@ export async function callTool(name, args = {}, ctx = {}) {
       snapshot: { field: "director", optional: true, supportedSchemaVersions: [1] },
       events: ["directorDecision"]
     };
+    const quests = {
+      authoring: engine.QUEST_MECHANICS_SCHEMA,
+      selection: {
+        schemaVersion: 1,
+        tool: "preview_quest_generation",
+        deterministic: true,
+        weightedWithoutReplacement: true,
+        activeMissionProfileOnly: true
+      },
+      snapshot: { field: "quests", optional: true, supportedSchemaVersions: [1] },
+      checkpoint: { field: "state.quests", optional: true, supportedSchemaVersions: [1] },
+      events: ["questCompleted", "questFailed"]
+    };
+    const personaQa = {
+      schemaVersion: 1,
+      personaIds: [...engine.PERSONA_QA_PERSONA_IDS],
+      deterministic: true,
+      tool: "run_persona_qa",
+      request: {
+        requiredFields: ["missionIds", "seeds", "personaIds", "simSeconds", "tickStep"],
+        additionalProperties: false,
+        limits: engine.PERSONA_QA_LIMITS
+      }
+    };
     const multiplayer = {
       entrypoint: "@towerforge/engine/multiplayer",
       authoring: engine.MULTIPLAYER_MECHANICS_SCHEMA,
@@ -2040,6 +2119,8 @@ export async function callTool(name, args = {}, ctx = {}) {
       ...(includes("heroes") ? { heroes } : {}),
       ...(includes("logistics") ? { logistics } : {}),
       ...(includes("director") ? { director } : {}),
+      ...(includes("quests") ? { quests } : {}),
+      ...(includes("personaQa") ? { personaQa } : {}),
       ...(includes("multiplayer") ? { multiplayer } : {}),
       ...(includes("assets") ? {
         assetAuthoring: {
@@ -2078,7 +2159,7 @@ export async function callTool(name, args = {}, ctx = {}) {
           schemaVersion: 1,
           moduleIds: [...engine.MECHANICS_MODULE_IDS],
           implementedModuleIds: [...engine.IMPLEMENTED_MECHANICS_MODULE_IDS],
-          modules: { combat: combatShields, reactions, navigation, elevation, physics, terraforming, roguelite, heroes, logistics, director, multiplayer }
+          modules: { combat: combatShields, reactions, navigation, elevation, physics, terraforming, roguelite, heroes, logistics, director, quests, multiplayer }
         }
       } : {})
     };
@@ -2229,7 +2310,7 @@ export async function callTool(name, args = {}, ctx = {}) {
           engine.ELEVATION_MECHANICS_SCHEMA
         );
       }
-      for (const moduleId of ["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "director", "multiplayer"]) {
+      for (const moduleId of ["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "director", "quests", "multiplayer"]) {
         if (!Number.isSafeInteger(result[moduleId]?.moduleSchemaVersion)) continue;
         result.capabilities = {
           ...result.capabilities,
@@ -2611,6 +2692,50 @@ export async function callTool(name, args = {}, ctx = {}) {
         simSeconds: Number.isFinite(args.simSeconds) ? args.simSeconds : undefined
       });
       return { projectDir, ...report };
+    }
+
+    case "run_persona_qa":
+      return runPersonaQaWorkerBatch(projectDir, {
+        schemaVersion: args.schemaVersion ?? 1,
+        missionIds: args.missionIds,
+        seeds: args.seeds,
+        personaIds: args.personaIds,
+        simSeconds: args.simSeconds,
+        tickStep: args.tickStep
+      }, { cache: false });
+
+    case "preview_quest_generation": {
+      const validation = await validateProjectDir(projectDir);
+      if (!validation.result.ok) throw mechanicsToolError("validation", "Quest generation preview requires a valid project.");
+      const { engine, content } = await loadContentRegistry(projectDir);
+      const active = engine.resolveActiveQuestMechanics(content, args.missionId);
+      if (!active) {
+        throw mechanicsToolError(
+          "module_inactive",
+          `Mission "${String(args.missionId)}" does not have an active supported quests profile.`
+        );
+      }
+      const selected = engine.selectProceduralQuestsV1(
+        { selectionCount: active.selectionCount, definitions: active.definitions },
+        {
+          seed: args.seed,
+          ...(args.eligibleDefinitionIds === undefined
+            ? {}
+            : { eligibleDefinitionIds: args.eligibleDefinitionIds })
+        }
+      );
+      return {
+        schemaVersion: 1,
+        missionId: args.missionId,
+        profileId: active.profileId,
+        seed: args.seed,
+        dryRun: true,
+        written: false,
+        quests: selected.map((entry) => ({
+          questId: entry.questId,
+          definition: entry.definition
+        }))
+      };
     }
 
     case "propose_balance_patches":

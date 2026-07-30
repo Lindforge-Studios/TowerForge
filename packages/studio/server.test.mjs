@@ -62,6 +62,54 @@ describe("studio server origin/host guard", () => {
     expect(JSON.parse(fs.readFileSync(manifestPath, "utf8")).schemaVersion).toBe(authoredSchemaVersion);
   });
 
+  it("runs revision-bound Persona QA through the read-only Studio facade and rejects stale evidence", async () => {
+    const project = await (await fetch(`${BASE}/api/project`)).json();
+    const request = {
+      contentHash: project.contentHash,
+      schemaVersion: 1,
+      missionIds: ["tutorial_01"],
+      seeds: ["studio-route"],
+      personaIds: ["aggressive_rush"],
+      simSeconds: 0.2,
+      tickStep: 0.2
+    };
+    const response = await fetch(`${BASE}/api/persona-qa/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request)
+    });
+    const report = await response.json();
+    expect(response.status).toBe(200);
+    expect(report).toMatchObject({
+      schemaVersion: 1,
+      status: "completed",
+      contentHash: project.contentHash,
+      missionIds: ["tutorial_01"],
+      seeds: ["studio-route"],
+      personaIds: ["aggressive_rush"],
+      completedRuns: 1
+    });
+
+    const stale = await fetch(`${BASE}/api/persona-qa/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...request, contentHash: "stale-revision" })
+    });
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({ code: "revision_conflict" });
+  }, 30_000);
+
+  it("keeps quest generation preview inactive until the mission explicitly selects quests", async () => {
+    const project = await (await fetch(`${BASE}/api/project`)).json();
+    const response = await fetch(`${BASE}/api/quests/preview-generation`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contentHash: project.contentHash, missionId: "tutorial_01", seed: "studio-route" })
+    });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ code: "module_inactive" });
+  });
+
   it("lists parameterized terraforming recipes as inert metadata without breaking existing mechanics recipes", async () => {
     const response = await fetch(`${BASE}/api/recipes?collection=mechanics`);
     const payload = await response.json();
@@ -254,6 +302,130 @@ describe("studio server origin/host guard", () => {
       fs.rmSync(mechanicsPath, { force: true });
     }
   });
+
+  it("previews, enables, edits, reloads, disables, and re-enables quests through the guarded Hub API", async () => {
+    const manifestPath = path.join(projectDir, "project.json");
+    const balancePath = path.join(projectDir, "content", "balance.json");
+    const mechanicsPath = path.join(projectDir, "content", "mechanics.json");
+    const originalManifest = fs.readFileSync(manifestPath);
+    const originalBalance = fs.readFileSync(balancePath);
+    const profile = {
+      selectionCount: 1,
+      definitions: {
+        arrow_finish: {
+          label: "Arrow finishers",
+          weight: 1,
+          objective: {
+            kind: "kill_with_source",
+            count: 1,
+            source: { kind: "tower", id: "arrow_tower" }
+          }
+        }
+      }
+    };
+    const request = {
+      moduleId: "quests",
+      moduleSchemaVersion: 1,
+      missionId: "tutorial_01",
+      profileId: "studio_quests",
+      enabled: true,
+      profile
+    };
+
+    try {
+      writeMigratedProjectFiles(projectDir, migrateProjectFiles(readRawProjectFiles(projectDir)).files);
+
+      const preview = await postJson("/api/mechanics/preview", request);
+      expect(preview.response.status).toBe(200);
+      expect(preview.body).toMatchObject({ ok: true, dryRun: true, validation: { ok: true, issues: [] } });
+      expect(fs.existsSync(mechanicsPath)).toBe(false);
+
+      const applied = await postJson("/api/mechanics/apply", {
+        ...request,
+        ifRevision: preview.body.revision
+      });
+      expect(applied.response.status).toBe(200);
+      let reloaded = await (await fetch(`${BASE}/api/project`)).json();
+      expect(reloaded.mechanics.modules.quests).toMatchObject({ schemaVersion: 1, enabled: true });
+      expect(reloaded.mechanics.modules.quests.profiles.studio_quests).toEqual(profile);
+      expect(reloaded.missions.tutorial_01.mechanics.profiles.quests).toBe("studio_quests");
+
+      const generation = await postJson("/api/quests/preview-generation", {
+        contentHash: reloaded.contentHash,
+        missionId: "tutorial_01",
+        seed: "studio-lifecycle"
+      });
+      expect(generation.response.status).toBe(200);
+      expect(generation.body).toMatchObject({
+        dryRun: true,
+        written: false,
+        profileId: "studio_quests",
+        contentHash: reloaded.contentHash,
+        quests: [{
+          questId: "arrow_finish",
+          definition: { objective: { kind: "kill_with_source", count: 1 } }
+        }]
+      });
+
+      const editedProfile = structuredClone(profile);
+      editedProfile.definitions.arrow_finish.objective.count = 2;
+      const editRequest = { ...request, profile: editedProfile };
+      const editPreview = await postJson("/api/mechanics/preview", editRequest);
+      expect(editPreview.response.status).toBe(200);
+      const edited = await postJson("/api/mechanics/apply", {
+        ...editRequest,
+        ifRevision: editPreview.body.revision
+      });
+      expect(edited.response.status).toBe(200);
+      reloaded = await (await fetch(`${BASE}/api/project`)).json();
+      expect(reloaded.mechanics.modules.quests.profiles.studio_quests).toEqual(editedProfile);
+
+      const disablePreview = await postJson("/api/mechanics/preview", {
+        moduleId: "quests", moduleSchemaVersion: 1, missionId: "tutorial_01", enabled: false
+      });
+      const disabled = await postJson("/api/mechanics/apply", {
+        moduleId: "quests", moduleSchemaVersion: 1, missionId: "tutorial_01", enabled: false,
+        ifRevision: disablePreview.body.revision
+      });
+      expect(disabled.response.status).toBe(200);
+      reloaded = await (await fetch(`${BASE}/api/project`)).json();
+      expect(reloaded.mechanics.modules.quests.enabled).toBe(false);
+      expect(reloaded.mechanics.modules.quests.profiles.studio_quests).toEqual(editedProfile);
+      const inactiveGeneration = await postJson("/api/quests/preview-generation", {
+        contentHash: reloaded.contentHash,
+        missionId: "tutorial_01",
+        seed: "studio-lifecycle"
+      });
+      expect(inactiveGeneration.response.status).toBe(422);
+      expect(inactiveGeneration.body).toMatchObject({ code: "module_inactive" });
+
+      const enablePreview = await postJson("/api/mechanics/preview", {
+        moduleId: "quests", moduleSchemaVersion: 1, missionId: "tutorial_01", enabled: true
+      });
+      const reenabled = await postJson("/api/mechanics/apply", {
+        moduleId: "quests", moduleSchemaVersion: 1, missionId: "tutorial_01", enabled: true,
+        ifRevision: enablePreview.body.revision
+      });
+      expect(reenabled.response.status).toBe(200);
+      reloaded = await (await fetch(`${BASE}/api/project`)).json();
+      expect(reloaded.mechanics.modules.quests.enabled).toBe(true);
+      expect(reloaded.mechanics.modules.quests.profiles.studio_quests).toEqual(editedProfile);
+      const regenerated = await postJson("/api/quests/preview-generation", {
+        contentHash: reloaded.contentHash,
+        missionId: "tutorial_01",
+        seed: "studio-lifecycle"
+      });
+      expect(regenerated.response.status).toBe(200);
+      expect(regenerated.body.quests).toMatchObject([{
+        questId: "arrow_finish",
+        definition: { objective: { kind: "kill_with_source", count: 2 } }
+      }]);
+    } finally {
+      fs.writeFileSync(manifestPath, originalManifest);
+      fs.writeFileSync(balancePath, originalBalance);
+      fs.rmSync(mechanicsPath, { force: true });
+    }
+  }, 30_000);
 
   it("serves public application metadata from the root package", async () => {
     const res = await fetch(`${BASE}/api/app-info`);
