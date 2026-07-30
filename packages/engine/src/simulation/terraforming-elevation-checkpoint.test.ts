@@ -34,10 +34,11 @@ interface MutableCheckpointContract {
   contentDigest: string;
   identity: GameCheckpointV1["identity"];
   rng: GameCheckpointV1["rng"];
-  state: Omit<GameCheckpointV1["state"], "lastEvents" | "runtimeTerrainOverrides" | "terraforming"> & {
+  state: Omit<GameCheckpointV1["state"], "lastEvents" | "runtimeTerrainOverrides" | "terraforming" | "scriptEventCursor"> & {
     lastEvents: Array<Record<string, unknown>>;
     runtimeTerrainOverrides: Array<Record<string, unknown>>;
     terraforming?: TerraformingCheckpointContract;
+    scriptEventCursor: number;
   };
   stateDigest: string;
 }
@@ -483,6 +484,7 @@ describe("R3.4b C3A terraforming elevation checkpoint codec", () => {
       toElevation: 2,
       source: "script"
     });
+    codecCheckpoint.state.scriptEventCursor = codecCheckpoint.state.lastEvents.length;
     resign(codecCheckpoint);
     const codecRestored = restore(subjectContent, codecCheckpoint);
     expect(codecRestored.lastEvents.at(-1)).toEqual(codecCheckpoint.state.lastEvents.at(-1));

@@ -24,7 +24,10 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   requires every public checkpoint to represent a fully drained script event queue
   (`scriptEventCursor === lastEvents.length`) while still validating persisted historical transition
   provenance. The authored cursor-rollback regression and the impossible-provenance regression are
-  GREEN in the 136/136 focused checkpoint/HFSM/R10 suite. Both earlier sign-offs are invalidated.
+  GREEN. The compatibility pass exposed one legitimate undrained `heroSkillUnlocked` event and one
+  manually injected codec fixture; the production action now drains TowerScript synchronously and
+  the fixture explicitly marks its event historical. Focused checkpoint/HFSM/hero/terraforming is
+  GREEN at 152/152. Both earlier sign-offs are invalidated.
 
 - R0–R2 and R3.1–R3.4a are complete with independent code and constructor-integration sign-off.
 - R3.4a opt-in physics v1 is complete through engine, validation, Studio Mechanics Hub, MCP/AI, recipes, shared renderer projection, Canvas/Phaser × hex/square builds, packages, plugin runtime, reference fixture, and documentation.

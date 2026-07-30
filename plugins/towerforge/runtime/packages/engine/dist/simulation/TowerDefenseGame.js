@@ -1898,6 +1898,7 @@ export class TowerDefenseGame {
             previousPoints,
             currentPoints: state.skillPoints
         });
+        this.finishScriptedAction();
         return { ok: true };
     }
     tick(deltaUnits) {
