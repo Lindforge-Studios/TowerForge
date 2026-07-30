@@ -10,6 +10,7 @@ import { TOWER_SCRIPT_EVENT_FIELDS, TOWER_SCRIPT_TARGETS } from "../scripting/sc
 import { ARMOR_MATRIX_LIMITS, MARK_LIMITS, REACTION_LIMITS, SHIELD_LIMITS } from "./mechanics.js";
 import { DIRECTOR_LIMITS } from "./director-mechanics.js";
 import { QUEST_LIMITS } from "./quest-mechanics.js";
+import { BOSS_COMPONENT_ABILITY_IDS, ENEMY_BEHAVIORS_LIMITS } from "./enemy-behaviors-mechanics.js";
 export { NAVIGATION_MECHANICS_SCHEMA } from "./navigation-mechanics.js";
 export { ELEVATION_MECHANICS_SCHEMA } from "./elevation-mechanics.js";
 export { TERRAFORMING_MECHANICS_SCHEMA } from "./terraforming-mechanics.js";
@@ -57,6 +58,45 @@ export const QUEST_MECHANICS_SCHEMA = Object.freeze({
   sourceKinds: ["tower", "ability", "tower_script", "status", "reaction"] as const,
   shieldScopes: ["tower", "hero", "any"] as const,
   limits: QUEST_LIMITS
+});
+
+export const ENEMY_BEHAVIORS_MECHANICS_SCHEMA = Object.freeze({
+  schemaVersion: 1,
+  moduleId: "enemyBehaviors",
+  supportedModuleSchemaVersions: [1] as const,
+  profile: {
+    requiredFields: ["bosses"] as const,
+    optionalFields: ["targeting"] as const,
+    additionalProperties: false
+  },
+  boss: {
+    requiredFields: ["components"] as const,
+    optionalFields: [] as const,
+    additionalProperties: false
+  },
+  component: {
+    requiredFields: ["maxHp", "hitRegion"] as const,
+    optionalFields: ["label", "tags", "shield", "armorTypeId", "disablesAbilities"] as const,
+    additionalProperties: false
+  },
+  hitRegion: {
+    kinds: ["circle"] as const,
+    requiredFields: ["kind", "offsetX", "offsetY", "radius"] as const,
+    optionalFields: [] as const,
+    additionalProperties: false
+  },
+  disablesAbilities: [...BOSS_COMPONENT_ABILITY_IDS],
+  targeting: {
+    requiredFields: ["towers"] as const,
+    optionalFields: [] as const,
+    additionalProperties: false,
+    towerBinding: {
+      requiredFields: ["priorityTags"] as const,
+      optionalFields: [] as const,
+      additionalProperties: false
+    }
+  },
+  limits: ENEMY_BEHAVIORS_LIMITS
 });
 
 /**

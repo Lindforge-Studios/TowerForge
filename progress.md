@@ -188,3 +188,27 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   Rust/Tauri 7/7 are GREEN.
 - The tree is now ready for an exact-commit Code Verifier and Constructor Integration Verifier
   re-freeze. Any subsequent source change invalidates those sign-offs.
+
+## 2026-07-31 — S0 complete and R12.1 contract freeze
+
+- The exact R9–R11 integration commit `917bcb5` passed GitHub CI, Code Verifier, Constructor
+  Integration Verifier, and the independent source/plugin/docs audit with no new P0–P3 findings.
+  PR #22 was merged to `main` as `e505e4f`; R12 starts from that source in
+  `codex/r12-advanced-enemies`.
+- ADR 0053 freezes the opt-in `enemyBehaviors` v1 boundary. The first R12.1 slice is content-only:
+  capability, closed normalizer, hostile-data budgets, active/inactive semantic references, and a
+  fail-closed resolver. DamagePacket routing and runtime component state are a separate RED.
+- Program Architect, Contract/Test Designer, and Constructor Surface Architect are separate roles.
+  The production author will not perform either final verification sign-off.
+- R12.1a RED is recorded with
+  `npm run test -- packages/engine/src/content/enemy-behaviors-mechanics.contract.test.ts`:
+  1 failed file, 6/6 expected failures. The baseline lacks the module/capability and descriptor,
+  reports `Unknown mechanics module "enemyBehaviors"`, exports no closed normalizer/resolver, and
+  cannot emit module-specific active-error/inactive-warning cross-reference diagnostics. No
+  production file was changed before this evidence.
+- R12.1a GREEN adds the pure engine-owned `enemyBehaviors` v1 types, closed normalizer, schema
+  descriptor, capability resolution, semantic cross-reference validation, and fail-closed active
+  resolver. The original contract is GREEN at 6/6; the compatibility content suite is 179/179 and
+  the complete engine suite is 2,039/2,039 across 118 files. Typecheck is GREEN. Runtime component
+  HP/shields, DamagePacket targeting, snapshots, and checkpoint state remain intentionally absent
+  until the next independent RED.

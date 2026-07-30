@@ -11,6 +11,7 @@ export const MECHANICS_MODULE_IDS = [
   "logistics",
   "director",
   "quests",
+  "enemyBehaviors",
   "scriptingDx",
   "multiplayer"
 ] as const;
@@ -30,6 +31,7 @@ export const IMPLEMENTED_MECHANICS_MODULE_IDS = [
   "logistics",
   "director",
   "quests",
+  "enemyBehaviors",
   "multiplayer"
 ] as const satisfies readonly MechanicsModuleId[];
 
