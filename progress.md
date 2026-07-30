@@ -373,6 +373,12 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - A separate projector-hardening RED found 5 fail-open own-data cases for extra/symbol array fields
   and a cyclic event value. Closed dense-array validation and event-shape screening make the expanded
   projector contract GREEN at 14/14 without changing gameplay state.
+- The first full browser gate exposed a recipe-list regression after a Combat profile without root
+  enemy shields was authored: two existing Mechanics Hub lifecycles reached `Mechanics unavailable`.
+  An independent focused RED pinned both the leaked empty shield-fact array and whole-list failure.
+  The project context now omits unavailable shield facts, preserving the inert binary-first recipe
+  candidate while authoritative preview still rejects the unmet prerequisite. Focused CLI is GREEN
+  at 5/5 and both affected Studio E2E lifecycles pass 2/2 in serial.
 
 ### R12.4d RED/GREEN — documentation and opt-in fixture
 

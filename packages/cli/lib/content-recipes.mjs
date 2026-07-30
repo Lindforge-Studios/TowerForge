@@ -152,6 +152,9 @@ export function contentRecipeContext(files) {
   const combatProfile = typeof combatProfileId === "string" ? ownDataValue(combatProfiles, combatProfileId) : undefined;
   const damageTypes = ownDataValue(combatProfile, "damageTypes");
   const combatEnemyShields = ownDataValue(ownDataValue(combatProfile, "shields"), "enemies");
+  const shieldedEnemyIds = isRecord(combatEnemyShields)
+    ? Object.keys(combatEnemyShields).sort(compareBinary)
+    : [];
   const missionTowerIds = Array.isArray(ownDataValue(selectedMission, "buildTowerIds"))
     ? [...ownDataValue(selectedMission, "buildTowerIds")].sort(compareBinary)
     : [];
@@ -177,11 +180,7 @@ export function contentRecipeContext(files) {
     defaultMissionId,
     missionIds,
     enemyIds: Object.keys(balance.enemies ?? files.enemies ?? {}),
-    ...(combatProfile === undefined ? {} : {
-      shieldedEnemyIds: isRecord(combatEnemyShields)
-        ? Object.keys(combatEnemyShields).sort(compareBinary)
-        : []
-    }),
+    ...(shieldedEnemyIds.length > 0 ? { shieldedEnemyIds } : {}),
     moduleSchemaVersions: mechanicsModuleSchemaVersions(files.mechanics),
     activeCombatModuleSchemaVersion: combatModule?.enabled === true && typeof combatProfileId === "string"
       ? ownDataValue(combatModule, "schemaVersion")

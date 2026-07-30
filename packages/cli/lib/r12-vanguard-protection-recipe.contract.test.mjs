@@ -4,6 +4,11 @@ import {
   listMechanicsRecipes,
   materializeMechanicsRecipe
 } from "./mechanics-recipes.mjs";
+import {
+  contentRecipeContext,
+  listContentRecipes,
+  materializeContentRecipe
+} from "./content-recipes.mjs";
 
 const RECIPE_ID = "basic_vanguard_protection";
 const SOURCE_KINDS = ["tower", "ability", "tower_script", "status", "reaction", "enemy"];
@@ -15,6 +20,49 @@ function context(overrides = {}) {
     enemyIds: ["support_zeta", "grunt_beta", "guard_alpha"],
     shieldedEnemyIds: ["guard_alpha"],
     ...overrides
+  };
+}
+
+function activeCombatWithoutRootShields() {
+  return {
+    manifest: { defaultMissionId: "protection_lab" },
+    maps: { arena: { id: "arena" } },
+    mechanics: {
+      schemaVersion: 1,
+      modules: {
+        combat: {
+          schemaVersion: 1,
+          enabled: true,
+          profiles: { utility: {} }
+        }
+      }
+    },
+    balance: {
+      defaultMissionId: "protection_lab",
+      missions: {
+        protection_lab: {
+          mechanics: { profiles: { combat: "utility" } },
+          buildTowerIds: ["probe"],
+          abilityIds: []
+        }
+      },
+      enemies: {
+        guard_alpha: { id: "guard_alpha" },
+        grunt_beta: { id: "grunt_beta" },
+        support_zeta: { id: "support_zeta" }
+      },
+      towers: {
+        probe: {
+          id: "probe",
+          attack: {
+            kind: "single", fireRate: 1, damagePerStack: 1,
+            startingStacks: 1, maxStacks: 1, upgradeCost: 1
+          }
+        }
+      },
+      abilities: {},
+      waveSets: { wave: [] }
+    }
   };
 }
 
@@ -97,5 +145,54 @@ describe("R12.4c inert vanguard protection recipe surface (RED)", () => {
       expect(thrown).toBeInstanceOf(MechanicsRecipeParameterError);
       expect(thrown).toMatchObject({ code: "enemy_behaviors_vanguard_protection_recipe_context_required" });
     }
+  });
+
+  it("omits unavailable shield facts for an active Combat profile without enemy root shields", () => {
+    const projectContext = contentRecipeContext(activeCombatWithoutRootShields());
+    expect(projectContext).not.toHaveProperty("shieldedEnemyIds");
+    expect(projectContext).toMatchObject({
+      defaultMissionId: "protection_lab",
+      enemyIds: ["guard_alpha", "grunt_beta", "support_zeta"],
+      activeCombatModuleSchemaVersion: 1
+    });
+  });
+
+  it("keeps whole mechanics-list materialization readable and returns the detached protection recipe", () => {
+    const projectContext = contentRecipeContext(activeCombatWithoutRootShields());
+    let materialized;
+    expect(() => {
+      materialized = listContentRecipes("mechanics").map((item) => (
+        item.parameterSchema
+          ? item
+          : materializeContentRecipe("mechanics", item.id, projectContext)
+      ));
+    }).not.toThrow();
+    expect(materialized.find((item) => item.id === RECIPE_ID)).toMatchObject({
+      id: RECIPE_ID,
+      prerequisites: {
+        combat: { moduleSchemaVersion: 1, enemyRootShields: true }
+      },
+      entity: {
+        moduleId: "enemyBehaviors",
+        missionId: "protection_lab",
+        profile: {
+          formations: {
+            cohorts: {
+              main: {
+                members: {
+                  grunt_beta: "vanguard",
+                  guard_alpha: "body",
+                  support_zeta: "support"
+                },
+                protection: { radius: 2, sourceKinds: SOURCE_KINDS }
+              }
+            }
+          }
+        }
+      }
+    });
+    expect(materialized.find((item) => item.id === RECIPE_ID).entity).not.toHaveProperty("enabled");
+    expect(materialized.find((item) => item.id === RECIPE_ID).entity.profile).not.toHaveProperty("shields");
+    expect(materialized.find((item) => item.id === RECIPE_ID).entity.profile).not.toHaveProperty("combat");
   });
 });
