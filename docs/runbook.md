@@ -529,6 +529,36 @@ Use `docs/examples/opt-in-towerscript-dx3/` as the copyable R9 fixture. It demon
 both controller arrays, disabling the script, or returning it to schema v6 restores the legacy
 targeting and editor surface.
 
+## Targetable Boss Components
+
+R12.1 is an opt-in `enemyBehaviors` v1 mission mechanic. In **Mechanics Hub**, select Enemy
+Behaviors, load `basic_targetable_boss_components` or author a closed profile, preview it, and save
+only against the revision returned by that preview. The equivalent AI sequence is:
+
+`describe_schema({domain:"enemyBehaviors"}) -> get_capabilities -> get_recipe({collection:"mechanics",recipeId:"basic_targetable_boss_components"}) -> preview_mechanics_module -> apply_mechanics_module(ifRevision=preview.revision) -> validate_project`.
+
+The recipe is a detached inert candidate. It chooses the binary-first authored enemy ID and, when
+present, tower ID so repeated materialization is deterministic; it does not enable the module,
+select a mission, or modify enemy/tower definitions. Review those IDs before apply. A profile may
+declare up to 32 components for each boss. Each component has stable ID, HP, a circular hit region,
+and optional label, tags, combat shield, armor override, and `disablesAbilities` from the closed
+`towerAttack | towerDisrupt | healAura` allowlist. A tower `priorityTags` binding routes damage only
+after normal root acquisition. Missing/no-live matches retain root targeting.
+
+At runtime, treat optional `snapshot.enemyBehaviors` v1 as the sole presentation source for
+component IDs, HP, shields, and destroyed state. Canvas and Phaser display that projection; they do
+not perform hit testing or damage routing. Component armor and shields pass through the engine
+resolver, overflow is discarded rather than transferred to root HP, and component destruction
+never grants a reward. Root death/leak still settles once and clears component state. The matching
+checkpoint section is also active-only, so restore and journal replay preserve the same digest.
+
+To disable the feature, remove the mission's `enemyBehaviors` profile selection or disable the
+module through the same preview/guarded-apply transaction. Confirm that the snapshot/checkpoint
+section and component UI disappear and ordinary root targeting returns. An absent catalog, a future
+module version, or an unselected profile must remain read-only/no-op and must not be normalized into
+an active v1 profile. See `docs/examples/opt-in-targetable-boss-components/` and Proposed
+[ADR 0053](adr/0053-r12-advanced-enemy-behaviors.md).
+
 ## Desktop Studio Navigation
 
 The packaged Studio uses a native application menu. macOS exposes `TowerForge`, `File`, `Edit`, `View`, `Project`, `Window`, and `Help` in the system menu bar. Windows and Linux expose the equivalent menu on the application window, with Exit and About in their conventional menus.

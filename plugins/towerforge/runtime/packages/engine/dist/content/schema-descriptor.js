@@ -5,6 +5,7 @@ import { TOWER_SCRIPT_EVENT_FIELDS, TOWER_SCRIPT_TARGETS } from "../scripting/sc
 import { ARMOR_MATRIX_LIMITS, MARK_LIMITS, REACTION_LIMITS, SHIELD_LIMITS } from "./mechanics.js";
 import { DIRECTOR_LIMITS } from "./director-mechanics.js";
 import { QUEST_LIMITS } from "./quest-mechanics.js";
+import { BOSS_COMPONENT_ABILITY_IDS, ENEMY_BEHAVIORS_LIMITS } from "./enemy-behaviors-mechanics.js";
 export { NAVIGATION_MECHANICS_SCHEMA } from "./navigation-mechanics.js";
 export { ELEVATION_MECHANICS_SCHEMA } from "./elevation-mechanics.js";
 export { TERRAFORMING_MECHANICS_SCHEMA } from "./terraforming-mechanics.js";
@@ -51,6 +52,44 @@ export const QUEST_MECHANICS_SCHEMA = Object.freeze({
     shieldScopes: ["tower", "hero", "any"],
     limits: QUEST_LIMITS
 });
+export const ENEMY_BEHAVIORS_MECHANICS_SCHEMA = Object.freeze({
+    schemaVersion: 1,
+    moduleId: "enemyBehaviors",
+    supportedModuleSchemaVersions: [1],
+    profile: {
+        requiredFields: ["bosses"],
+        optionalFields: ["targeting"],
+        additionalProperties: false
+    },
+    boss: {
+        requiredFields: ["components"],
+        optionalFields: [],
+        additionalProperties: false
+    },
+    component: {
+        requiredFields: ["maxHp", "hitRegion"],
+        optionalFields: ["label", "tags", "shield", "armorTypeId", "disablesAbilities"],
+        additionalProperties: false
+    },
+    hitRegion: {
+        kinds: ["circle"],
+        requiredFields: ["kind", "offsetX", "offsetY", "radius"],
+        optionalFields: [],
+        additionalProperties: false
+    },
+    disablesAbilities: [...BOSS_COMPONENT_ABILITY_IDS],
+    targeting: {
+        requiredFields: ["towers"],
+        optionalFields: [],
+        additionalProperties: false,
+        towerBinding: {
+            requiredFields: ["priorityTags"],
+            optionalFields: [],
+            additionalProperties: false
+        }
+    },
+    limits: ENEMY_BEHAVIORS_LIMITS
+});
 export const TARGET_MODE_SCHEMA = Object.freeze({
     selectable: TOWER_TARGET_MODES.filter((mode) => mode !== "fastest_ahead" && mode !== "largest_hp"),
     legacyAliases: { fastest_ahead: "first (armored first)", largest_hp: "strongest" },
@@ -77,11 +116,12 @@ export const MODIFIER_SPEC_SCHEMA = Object.freeze({
  * resistances; shields and HP remain at the entity mutation boundary.
  */
 export const DAMAGE_PACKET_SCHEMA = Object.freeze({
-    schemaVersion: 1,
+    schemaVersion: 2,
     requiredFields: ["amount", "source", "target"],
     optionalFields: ["damageType", "tags", "modifiers"],
     sourceKinds: ["tower", "ability", "tower_script", "status", "enemy", "leak", "reaction"],
     targetKinds: ["enemy", "tower", "hero", "core"],
+    enemyTargetOptionalFields: ["componentId"],
     tags: [...DAMAGE_TAGS],
     pipelineOrder: [
         "modifiers",

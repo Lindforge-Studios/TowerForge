@@ -20,6 +20,7 @@ import { projectElevationCues } from "./elevation-presentation.mjs";
 import { projectPhysicsPresentationCues } from "./physics-presentation.mjs";
 import { projectHeroPresentationPoint, projectHeroesPresentation } from "./heroes-presentation.mjs";
 import { projectProceduralJuicePresentation } from "./procedural-juice-presentation.mjs";
+import { projectEnemyComponentsPresentation } from "./enemy-components-presentation.mjs";
 import {
   createProceduralJuicePresentationRuntime,
   createProceduralJuiceWorldSnapshotBuffer
@@ -37,6 +38,7 @@ export * from "./director-presentation.mjs";
 export * from "./quest-presentation.mjs";
 export * from "./procedural-juice-presentation.mjs";
 export * from "./procedural-juice-runtime.mjs";
+export * from "./enemy-components-presentation.mjs";
 export { projectLogisticsPresentation } from "./logistics-power-presentation.mjs";
 
 function ownDataValue(record, key) {
@@ -73,6 +75,7 @@ export class TowerForgeCanvasRenderer {
     this.prevEnemyPos = new Map();
     this.prevTowerPos = new Map();
     this.prevCombat = null;
+    this.enemyComponentsByEnemyId = new Map();
     this.prevJuiceSnapshot = null;
     this.proceduralJuiceRuntime = null;
     this.proceduralJuiceWorldSnapshots = null;
@@ -150,6 +153,12 @@ export class TowerForgeCanvasRenderer {
     }
     const towerPositions = new Map();
     for (const tower of snapshot.towers ?? []) towerPositions.set(tower.id, this.center(tower.coord, geom));
+    this.enemyComponentsByEnemyId = new Map();
+    for (const row of projectEnemyComponentsPresentation(snapshot).rows) {
+      const existing = this.enemyComponentsByEnemyId.get(row.enemyId);
+      if (existing) existing.push(row);
+      else this.enemyComponentsByEnemyId.set(row.enemyId, [row]);
+    }
 
     this.spawnEffects(presentationSnapshot, geom, positions, towerPositions);
     this.advanceEffects(dt);
@@ -919,6 +928,20 @@ export class TowerForgeCanvasRenderer {
     this.ctx.fillRect(p.x - geom.r * 0.45, p.y - geom.r * 0.62, geom.r * 0.9 * hpRatio, 4);
     const shield = resolveShieldPresentation(snapshot, "enemy", enemy.id);
     if (shield) this.drawShieldRing(p, geom.r * 0.52, shield);
+    const components = this.enemyComponentsByEnemyId.get(enemy.id) ?? [];
+    if (components.length > 0) {
+      const width = geom.r * 0.9;
+      const cellWidth = width / components.length;
+      for (let index = 0; index < components.length; index += 1) {
+        const row = components[index];
+        const x = p.x - width / 2 + index * cellWidth;
+        const y = p.y + geom.r * 0.48;
+        this.ctx.fillStyle = "#1b1d18";
+        this.ctx.fillRect(x, y, Math.max(1, cellWidth - 1), 3);
+        this.ctx.fillStyle = row.destroyed ? this.theme.danger : this.theme.tower;
+        this.ctx.fillRect(x, y, Math.max(0, cellWidth - 1) * row.hpRatio, 3);
+      }
+    }
     this.drawExposureBadges(p, geom, resolveExposurePresentation(snapshot, enemy.id));
     this.drawMarkBadges(p, geom, resolveMarkPresentation(snapshot, enemy.id));
   }

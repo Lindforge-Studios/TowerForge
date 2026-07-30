@@ -27,6 +27,7 @@ const BASIC_LOCAL_AMMUNITION_ID = "basic_local_ammunition";
 const BASIC_FACTORY_AMMUNITION_SUPPLY_ID = "basic_factory_ammunition_supply";
 const BASIC_ADAPTIVE_WAVE_DIRECTOR_ID = "basic_adaptive_wave_director";
 const BASIC_PROCEDURAL_QUESTS_ID = "basic_procedural_quests";
+const BASIC_TARGETABLE_BOSS_COMPONENTS_ID = "basic_targetable_boss_components";
 const BASIC_LOCAL_COOP_ID = "basic_local_coop";
 const BASIC_PARTITIONED_LOCAL_COOP_ID = "basic_partitioned_local_coop";
 const BASIC_ASYMMETRIC_SEND_VS_BUILD_ID = "basic_asymmetric_send_vs_build";
@@ -376,6 +377,14 @@ const RECIPES = Object.freeze([
     moduleSchemaVersion: 1
   }),
   Object.freeze({
+    id: BASIC_TARGETABLE_BOSS_COMPONENTS_ID,
+    moduleId: "enemyBehaviors",
+    label: "Basic Targetable Boss Components",
+    description: "Inert enemyBehaviors v1 profile with one targetable component and one deterministic tower priority binding.",
+    suggestedId: BASIC_TARGETABLE_BOSS_COMPONENTS_ID,
+    moduleSchemaVersion: 1
+  }),
+  Object.freeze({
     id: BASIC_LOCAL_COOP_ID,
     moduleId: "multiplayer",
     label: "Basic Local Co-op",
@@ -572,6 +581,40 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
           selectionCount: Math.min(2, Object.keys(definitions).length),
           definitions
         }
+      }
+    };
+  }
+  if (recipeId === BASIC_TARGETABLE_BOSS_COMPONENTS_ID) {
+    const bossEnemyTypeId = firstSafeId(context.enemyIds);
+    if (bossEnemyTypeId === undefined) {
+      throw new MechanicsRecipeParameterError(
+        "enemy_behaviors_recipe_context_required",
+        "Basic targetable boss components require at least one authored enemy in the project."
+      );
+    }
+    const towerTypeId = firstSafeId(context.towerIds);
+    const bosses = safeRecord();
+    const components = safeRecord();
+    defineOwn(components, "core", {
+      maxHp: 20,
+      hitRegion: { kind: "circle", offsetX: 0, offsetY: 0, radius: 0.25 },
+      tags: ["core"]
+    });
+    defineOwn(bosses, bossEnemyTypeId, { components });
+    const profile = { bosses };
+    if (towerTypeId !== undefined) {
+      const towers = safeRecord();
+      defineOwn(towers, towerTypeId, { priorityTags: ["core"] });
+      profile.targeting = { towers };
+    }
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "enemyBehaviors",
+        moduleSchemaVersion: 1,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile
       }
     };
   }

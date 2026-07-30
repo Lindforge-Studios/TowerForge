@@ -41,6 +41,14 @@ optional checkpoint state. The outer `GameCheckpointV1`, command/journal v6, pro
 multiplayer, and project v3 domains do not change. R12.2 may add typed component events and HFSM
 read-only context in a separate RED/GREEN slice; Visual Graph changes are later still.
 
+Studio keeps this contract in Mechanics Hub rather than the ordinary enemy/tower forms. CLI, Studio,
+and MCP reuse the established mechanics `preview -> revision-guarded apply -> validation ->
+backup/rollback` transaction. `describe_schema(enemyBehaviors)`, `get_capabilities`, and the inert
+`basic_targetable_boss_components` recipe are discovery surfaces, not writes; the recipe chooses
+binary-first authored IDs and still requires an explicit mission/profile selection. Renderers and
+generated players consume the active snapshot projection and never perform component routing or
+hit-testing themselves. Future module versions are preserved read-only.
+
 R12.3 keeps the shared flow field authoritative and adds only bounded deterministic local formation
 steering through spatial buckets, at most 16 neighbours per enemy, stable tie-breaks, and no
 renderer-owned movement. R12.4 composes vanguard protection from the existing shield/damage
@@ -68,3 +76,5 @@ snapshot/checkpoint state, deterministic restore/replay, and exact-once settleme
 - GameCommand v7 stays reserved for R14 runtime tower-module configuration.
 - Full Boids, per-enemy A*, arbitrary component scripts, homing targeting, and renderer hit-testing
   authority are outside R12.
+- The copyable R12.1 authoring reference lives in
+  `docs/examples/opt-in-targetable-boss-components/`; it is never part of the ordinary starter.

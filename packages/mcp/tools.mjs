@@ -89,7 +89,7 @@ const BALANCE_PATCH_KEYS = [
   "enemies", "towers", "waveSets", "missions", "abilities", "constants", "currencies", "defaultMissionId",
   "defaultDifficultyId", "difficulties", "metaProgression", "terrainTypes"
 ];
-const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "director", "quests", "personaQa", "multiplayer", "proceduralJuice", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
+const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "director", "quests", "enemyBehaviors", "personaQa", "multiplayer", "proceduralJuice", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
 
 // Maps an upsert_entity/delete_entity `collection` to (a) the balance.json key, (b) the shape
 // (a map keyed by id, or an array of {id,...} items — currencies only), and (c) the
@@ -2228,6 +2228,14 @@ export async function callTool(name, args = {}, ctx = {}) {
       checkpoint: { field: "state.quests", optional: true, supportedSchemaVersions: [1] },
       events: ["questCompleted", "questFailed"]
     };
+    const enemyBehaviors = {
+      authoring: engine.ENEMY_BEHAVIORS_MECHANICS_SCHEMA,
+      snapshot: { field: "enemyBehaviors", optional: true, supportedSchemaVersions: [1] },
+      checkpoint: { field: "state.enemyBehaviors", optional: true, supportedSchemaVersions: [1] },
+      commands: [],
+      events: [],
+      targeting: "Authored tower priorityTags select live boss components; no manual component command exists in R12.1."
+    };
     const personaQa = {
       schemaVersion: 1,
       personaIds: [...engine.PERSONA_QA_PERSONA_IDS],
@@ -2337,6 +2345,7 @@ export async function callTool(name, args = {}, ctx = {}) {
       ...(includes("logistics") ? { logistics } : {}),
       ...(includes("director") ? { director } : {}),
       ...(includes("quests") ? { quests } : {}),
+      ...(includes("enemyBehaviors") ? { enemyBehaviors } : {}),
       ...(includes("personaQa") ? { personaQa } : {}),
       ...(includes("multiplayer") ? { multiplayer } : {}),
       ...(includes("proceduralJuice") ? { proceduralJuice } : {}),
@@ -2377,7 +2386,7 @@ export async function callTool(name, args = {}, ctx = {}) {
           schemaVersion: 1,
           moduleIds: [...engine.MECHANICS_MODULE_IDS],
           implementedModuleIds: [...engine.IMPLEMENTED_MECHANICS_MODULE_IDS],
-          modules: { combat: combatShields, reactions, navigation, elevation, physics, terraforming, roguelite, heroes, logistics, director, quests, multiplayer }
+          modules: { combat: combatShields, reactions, navigation, elevation, physics, terraforming, roguelite, heroes, logistics, director, quests, enemyBehaviors, multiplayer }
         }
       } : {})
     };
@@ -2581,7 +2590,7 @@ export async function callTool(name, args = {}, ctx = {}) {
           engine.ELEVATION_MECHANICS_SCHEMA
         );
       }
-      for (const moduleId of ["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "director", "quests", "multiplayer"]) {
+      for (const moduleId of ["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "director", "quests", "enemyBehaviors", "multiplayer"]) {
         if (!Number.isSafeInteger(result[moduleId]?.moduleSchemaVersion)) continue;
         result.capabilities = {
           ...result.capabilities,

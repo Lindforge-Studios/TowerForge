@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "enemyBehaviors": {
+      "schemaVersion": 1,
+      "enabled": true,
+      "profiles": {
+        "basic_targetable_boss_components": {
+          "bosses": {
+            "armored_brute": {
+              "components": {
+                "core": {
+                  "maxHp": 20,
+                  "hitRegion": {
+                    "kind": "circle",
+                    "offsetX": 0,
+                    "offsetY": 0,
+                    "radius": 0.25
+                  },
+                  "tags": [
+                    "core"
+                  ]
+                }
+              }
+            }
+          },
+          "targeting": {
+            "towers": {
+              "arrow_tower": {
+                "priorityTags": [
+                  "core"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

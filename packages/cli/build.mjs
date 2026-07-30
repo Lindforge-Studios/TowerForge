@@ -1999,6 +1999,7 @@ import {
   projectDirectorDecisionCues,
   projectElevationCues,
   projectEnemyNavigationPoint,
+  projectEnemyComponentsPresentation,
   projectLegacyPresentationEvents,
   projectExposurePresentationCues,
   projectMarkPresentationCues,
@@ -2921,6 +2922,12 @@ class PlayScene extends Phaser.Scene {
 
     const seenMarkLabels = new Set();
     const seenExposureLabels = new Set();
+    const componentRowsByEnemyId = new Map();
+    for (const row of projectEnemyComponentsPresentation(snap).rows) {
+      const existing = componentRowsByEnemyId.get(row.enemyId);
+      if (existing) existing.push(row);
+      else componentRowsByEnemyId.set(row.enemyId, [row]);
+    }
     for (const en of snap.enemies) {
       const p = this.enemyPos(en, snap, g);
       if (!p) continue;
@@ -2931,6 +2938,16 @@ class PlayScene extends Phaser.Scene {
       this.entG.fillStyle(0x1b1d18, 1); this.entG.fillRect(p.x - g.r * 0.45, p.y - g.r * 0.62, g.r * 0.9, 4);
       this.entG.fillStyle(ratio > 0.35 ? 0x8ac783 : 0xdf6a59, 1); this.entG.fillRect(p.x - g.r * 0.45, p.y - g.r * 0.62, g.r * 0.9 * ratio, 4);
       this.shieldRing(this.entG, p.x, p.y, g.r * 0.52, resolveShieldPresentation(snap, "enemy", en.id));
+      const components = componentRowsByEnemyId.get(en.id) ?? [];
+      if (components.length > 0) {
+        const width = g.r * 0.9, cellWidth = width / components.length;
+        for (let index = 0; index < components.length; index += 1) {
+          const row = components[index], x = p.x - width / 2 + index * cellWidth, y = p.y + g.r * 0.48;
+          this.entG.fillStyle(0x1b1d18, 1); this.entG.fillRect(x, y, Math.max(1, cellWidth - 1), 3);
+          this.entG.fillStyle(row.destroyed ? 0xdf6a59 : 0x8ac783, 1);
+          this.entG.fillRect(x, y, Math.max(0, cellWidth - 1) * row.hpRatio, 3);
+        }
+      }
       const exposurePresentation = resolveExposurePresentation(snap, en.id);
       const exposureBadges = exposurePresentation.entries.map((entry) => ({ key: entry.exposureId, label: String(entry.stacks) }));
       if (exposurePresentation.overflowCount > 0) exposureBadges.push({ key: "overflow", label: "+" + exposurePresentation.overflowCount });

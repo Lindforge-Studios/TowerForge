@@ -1,5 +1,5 @@
 import type { TowerScriptDiagnostic, TowerScriptJson, TowerScriptMachineRuntimeStateV1 } from "../scripting/types.js";
-import type { EnemyState, DirectorSnapshotV1, GameEvent, GameSnapshot, ResourceBag, RuntimeTerrainOverride, TowerState, WaveState } from "./types.js";
+import type { EnemyState, DirectorSnapshotV1, EnemyBehaviorsStateV1, GameEvent, GameSnapshot, ResourceBag, RuntimeTerrainOverride, TowerState, WaveState } from "./types.js";
 import type { QuestSnapshotV1 } from "./types.js";
 import type { SeededRngStateV1 } from "./rng.js";
 import type { CombatState } from "./shields.js";
@@ -258,6 +258,7 @@ export interface GameCheckpointStateV1 {
     readonly logistics?: LogisticsCheckpointStateV1 | LogisticsCheckpointStateV2;
     readonly director?: DirectorSnapshotV1;
     readonly quests?: QuestSnapshotV1;
+    readonly enemyBehaviors?: EnemyBehaviorsStateV1;
 }
 export interface GameCheckpointV1 {
     readonly schemaVersion: typeof GAME_CHECKPOINT_SCHEMA_VERSION;

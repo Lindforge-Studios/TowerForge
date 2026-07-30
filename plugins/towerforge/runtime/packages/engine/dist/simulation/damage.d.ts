@@ -30,6 +30,7 @@ export type DamageTargetRef = {
     readonly kind: "enemy";
     readonly enemyId: string;
     readonly enemyTypeId: string;
+    readonly componentId?: string;
 } | {
     readonly kind: "tower";
     readonly towerId: string;

@@ -236,3 +236,18 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - Tower-origin packets now select the first live component by authored tag order and binary component id; destroyed matches are skipped and exhausted bindings fall back to root HP.
 - Destroyed components suppress only the allowlisted authored boss abilities (`towerAttack`, `towerDisrupt`, `healAura`); component destruction itself grants no kill, reward, or root damage.
 - GREEN: R12 runtime/routing 12/12; focused TowerDefenseGame compatibility 66/66; `npm run typecheck` PASS; `npm run build:engine` PASS.
+
+### R12.1d RED evidence — constructor and AI surfaces
+
+- Independent CLI/MCP contract designers ran `npx vitest run packages/cli/lib/r12-enemy-behaviors-authoring.contract.test.mjs packages/mcp/r12-enemy-behaviors-authoring.contract.test.mjs --maxWorkers=1`: 2 files failed, 6/6 tests failed. The module was absent from loader authoring views, schema domains, capability output, and guarded preview/apply workflows.
+- Independent Studio contract designer ran `npx vitest run packages/studio/public/r12-enemy-behaviors-surface.contract.test.mjs --maxWorkers=1`: 3/3 failed. Mechanics Hub had no isolated card/editor or draft helpers, and its hard 32-recipe truncation hid the new recipe.
+- Independent renderer/player contract designer ran `npx vitest run packages/renderer/src/enemy-components-presentation.contract.test.mjs --maxWorkers=1`: 5/5 failed. No fail-closed shared component projector or Canvas/Phaser wiring existed.
+- The project-bound recipe contract ran with `npx vitest run packages/cli/lib/r12-enemy-behaviors-recipe.contract.test.mjs --maxWorkers=1`: 4/4 failed because `basic_targetable_boss_components` and its typed missing-context error did not exist.
+
+### R12.1d GREEN evidence — constructor and AI surfaces
+
+- CLI and MCP now expose the same engine-owned `enemyBehaviors` v1 descriptor, active capability, compact authoring view, and existing revision-guarded preview/apply transaction.
+- Mechanics Hub owns an isolated JSON editor with future-version read-only preservation; the ordinary enemy/tower forms remain unchanged. The recipe list is no longer truncated at 32 entries.
+- `basic_targetable_boss_components` materializes a deterministic binary-first authored enemy/tower candidate and remains inert until explicit guarded enablement.
+- Canvas and Phaser consume one bounded fail-closed projection of the authoritative optional snapshot; they only draw component bars while the module is active and do not own targeting or damage rules.
+- Focused GREEN command covering engine routing, recipe, CLI/MCP, Studio, and renderer/player contracts: 6 files, 23/23 tests passed.

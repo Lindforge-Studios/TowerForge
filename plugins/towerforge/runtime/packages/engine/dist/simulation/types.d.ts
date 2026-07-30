@@ -1299,6 +1299,20 @@ export interface QuestSnapshotV1 {
     readonly profileId: string;
     readonly entries: readonly QuestProgressSnapshotV1[];
 }
+export interface BossComponentRuntimeStateV1 {
+    readonly hp: number;
+    readonly maxHp: number;
+    readonly shield?: {
+        readonly current: number;
+        readonly capacity: number;
+        readonly regenerationDelayRemaining: number;
+    };
+}
+/** Active-only authoritative state for the opt-in enemyBehaviors v1 module. */
+export interface EnemyBehaviorsStateV1 {
+    readonly schemaVersion: 1;
+    readonly components: Readonly<Record<string, Readonly<Record<string, BossComponentRuntimeStateV1>>>>;
+}
 export interface GameSnapshot {
     /** Canonical authored map identity for presentation and renderer adapters. */
     mapId: string;
@@ -1348,6 +1362,7 @@ export interface GameSnapshot {
     logistics?: LogisticsSnapshot;
     director?: DirectorSnapshotV1;
     quests?: QuestSnapshotV1;
+    enemyBehaviors?: EnemyBehaviorsStateV1;
     scriptState: import("../scripting/types.js").TowerScriptStateSnapshot;
     lastEvents: GameEvent[];
 }

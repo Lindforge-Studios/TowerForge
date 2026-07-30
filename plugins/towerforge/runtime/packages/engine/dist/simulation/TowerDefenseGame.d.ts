@@ -89,6 +89,7 @@ export declare class TowerDefenseGame {
     private readonly activeLogisticsSchemaVersion;
     private readonly activeDirectorMechanics;
     private readonly activeQuestMechanics;
+    private readonly activeEnemyBehaviors;
     private questEntries;
     private readonly scriptedTargetingByTowerType;
     private directorDecisions;
@@ -135,6 +136,7 @@ export declare class TowerDefenseGame {
     private towerShields;
     private enemyMarks;
     private enemyExposures;
+    private enemyComponentStates;
     private enemyCounter;
     private towerCounter;
     private clearedWaveCount;
@@ -286,6 +288,7 @@ export declare class TowerDefenseGame {
     private checkpointIdentity;
     private buildCombatState;
     private buildReactionState;
+    private buildEnemyBehaviorsState;
     private consumeNavigationAnalysisField;
     private buildNavigationAnalysisFields;
     private navigationDiagnosticPairs;
@@ -367,6 +370,9 @@ export declare class TowerDefenseGame {
     private buildSpawnQueue;
     private spawnDueEnemies;
     private createEnemyState;
+    private initializeEnemyComponents;
+    private enemyAbilityEnabled;
+    private towerComponentTargetId;
     private initializeEnemyShield;
     private initializeTowerShield;
     private runtimeMarkApplicationCount;

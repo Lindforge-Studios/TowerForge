@@ -1046,6 +1046,22 @@
               <pre id="mechanics-quests-generation-result" class="mechanics-preview-result" aria-live="polite">Enable and save this profile before previewing its seeded selection.</pre>
             </div>
           </div>
+          <div id="mechanics-enemy-behaviors-editor" class="hidden">
+            <div id="mechanics-enemy-behaviors-capability" class="mechanics-notice" role="status"></div>
+            <div id="mechanics-enemy-behaviors-read-only" class="mechanics-notice warning hidden" role="status"></div>
+            <div class="mechanics-shield-section mechanics-enemy-behaviors-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Boss components and targeting</h4>
+                  <p>Define bounded component HP, shields, hit regions, tags, typed ability suppression, and tower priorityTags. Shared engine validation remains authoritative.</p>
+                </div>
+              </div>
+              <label>Enemy behaviors profile JSON
+                <textarea id="mechanics-enemy-behaviors-profile-json" class="mono" rows="22" spellcheck="false" aria-describedby="mechanics-enemy-behaviors-help"></textarea>
+              </label>
+              <p id="mechanics-enemy-behaviors-help" class="text-muted">R12.1 has no manual component command. Towers route damage only through explicit targeting bindings; removing or disabling the module restores root targeting.</p>
+            </div>
+          </div>
           <div id="mechanics-multiplayer-editor" class="hidden">
             <div id="mechanics-multiplayer-capability" class="mechanics-notice" role="status"></div>
             <div id="mechanics-multiplayer-read-only" class="mechanics-notice warning hidden" role="status"></div>
