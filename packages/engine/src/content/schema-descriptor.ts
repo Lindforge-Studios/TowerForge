@@ -105,8 +105,14 @@ export const ENEMY_BEHAVIORS_MECHANICS_SCHEMA = Object.freeze({
   },
   formationCohort: {
     requiredFields: ["members", "steering"] as const,
-    optionalFields: [] as const,
+    optionalFields: ["protection"] as const,
     additionalProperties: false
+  },
+  formationProtection: {
+    requiredFields: ["radius", "sourceKinds"] as const,
+    optionalFields: [] as const,
+    additionalProperties: false,
+    sourceKinds: ["tower", "ability", "tower_script", "status", "reaction", "enemy"] as const
   },
   formationSteering: {
     requiredFields: ["neighborRadius", "cohesionWeight", "separationWeight", "roleWeight"] as const,

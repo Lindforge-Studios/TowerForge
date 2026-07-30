@@ -303,3 +303,24 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - GREEN adds `basic_formation_steering` without enabling Navigation or Enemy Behaviors, reuses the existing preview/revision-guarded apply transaction, publishes the engine-owned closed descriptor and guide v40, and keeps formation editing inside Mechanics Hub. No broad or formation-specific writer was added.
 - One fail-closed bounded renderer projector turns authoritative `snapshot.enemyBehaviors.formations` membership into detached binary-stable role rows. Canvas and generated Phaser only draw role cues; neither path reads mechanics content or recomputes movement.
 - Focused surface GREEN passes 12/12. Renderer/Studio compatibility passes 362/362; related recipe and agent-guide suites pass 53/53; the production web build passes. Browser verification opened Advanced Enemy Behaviors, confirmed both recipes and the isolated Formation cohorts editor, exercised scrolling, and reported zero console errors. Evidence screenshot: `/private/tmp/towerforge-r12-formation-editor-detail.png`.
+
+## 2026-07-31 — R12.4 vanguard protection
+
+### R12.4a contract freeze / RED / GREEN — protected cohort content
+
+- Vanguard protection extends an authored formation cohort with the optional closed object
+  `{ radius, sourceKinds }`. Radius is bounded to 1..4 and source kinds are a non-empty canonical
+  subset of `tower | ability | tower_script | status | reaction | enemy`; leak damage is excluded.
+  Runtime budgets are frozen at 16 inspected candidates per packet and 512 successful redirects
+  per public tick.
+- Active semantic validation requires at least one vanguard and one body/support type and an active
+  root Combat shield for every authored vanguard. Disabled or unselected Enemy Behaviors retains
+  structural validation but downgrades those cross-module dependencies to warnings.
+- Independent RED command:
+  `npx vitest run packages/engine/src/content/r12-vanguard-protection-mechanics.contract.test.ts`
+  produced 16/16 expected failures against the missing protection schema, limits, normalizer and
+  semantic validation. Production code was unchanged when the evidence was captured.
+- GREEN implements detached, deeply frozen, binary-canonical normalization and closed own-data
+  validation, including accessor/proxy/sparse/cyclic/duplicate/future-source/over-budget cases.
+  Focused content contract is GREEN at 16/16; the R12.3 content compatibility contract remains
+  GREEN. Runtime interception and its event/snapshot/checkpoint state remain a separate RED slice.

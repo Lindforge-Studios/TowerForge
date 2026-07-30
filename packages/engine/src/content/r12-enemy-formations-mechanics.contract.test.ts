@@ -258,7 +258,7 @@ describe("R12.3 group 1 enemyBehaviors formation content contract (RED)", () => 
       requiredFields: ["cohorts"], optionalFields: [], additionalProperties: false
     });
     expect(schema.formationCohort).toEqual({
-      requiredFields: ["members", "steering"], optionalFields: [], additionalProperties: false
+      requiredFields: ["members", "steering"], optionalFields: ["protection"], additionalProperties: false
     });
     expect(schema.formationSteering).toEqual({
       requiredFields: ["neighborRadius", "cohesionWeight", "separationWeight", "roleWeight"],

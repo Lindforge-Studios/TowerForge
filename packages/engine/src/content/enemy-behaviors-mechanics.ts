@@ -10,6 +10,10 @@ export const ENEMY_BEHAVIORS_LIMITS = Object.freeze({
   formationAssignmentsPerProfile: 4_096,
   neighborRadius: 2,
   steeringWeight: 1_000,
+  protectionRadius: 4,
+  protectionSourceKinds: 6,
+  protectionCandidatesPerPacket: 16,
+  protectionTransactionsPerTick: 512,
   tagsPerComponent: 32,
   priorityTagsPerBinding: 32,
   idOrTagUtf8Bytes: 128,
@@ -54,6 +58,17 @@ export const FORMATION_ROLES = Object.freeze(["vanguard", "body", "support"] as 
 
 export type FormationRoleV1 = (typeof FORMATION_ROLES)[number];
 
+export const VANGUARD_PROTECTION_SOURCE_KINDS = Object.freeze([
+  "tower", "ability", "tower_script", "status", "reaction", "enemy"
+] as const);
+
+export type VanguardProtectionSourceKindV1 = (typeof VANGUARD_PROTECTION_SOURCE_KINDS)[number];
+
+export interface VanguardProtectionDefinitionV1 {
+  readonly radius: number;
+  readonly sourceKinds: readonly VanguardProtectionSourceKindV1[];
+}
+
 export interface FormationSteeringDefinitionV1 {
   readonly neighborRadius: 1 | 2;
   readonly cohesionWeight: number;
@@ -64,6 +79,7 @@ export interface FormationSteeringDefinitionV1 {
 export interface FormationCohortDefinitionV1 {
   readonly members: Readonly<Record<string, FormationRoleV1>>;
   readonly steering: FormationSteeringDefinitionV1;
+  readonly protection?: VanguardProtectionDefinitionV1;
 }
 
 export interface EnemyFormationsDefinitionV1 {
@@ -398,7 +414,7 @@ export function normalizeEnemyBehaviorsProfileV1(value: unknown): EnemyBehaviors
       boundedString(cohortId, "enemyBehaviors formation cohort id", ENEMY_BEHAVIORS_LIMITS.idOrTagUtf8Bytes);
       const cohortPath = `enemyBehaviors profile.formations.cohorts.${cohortId}`;
       const cohort = record(cohortsInput[cohortId], cohortPath);
-      closed(cohort, ["members", "steering"], [], cohortPath);
+      closed(cohort, ["members", "steering"], ["protection"], cohortPath);
       const membersInspection = recordDescriptors(
         cohort.members,
         `${cohortPath}.members`,
@@ -472,10 +488,34 @@ export function normalizeEnemyBehaviorsProfileV1(value: unknown): EnemyBehaviors
       if (cohesionWeight === 0 && separationWeight === 0 && roleWeight === 0) {
         throw new EnemyBehaviorsProfileValidationError(`${steeringPath} requires at least one positive steering weight.`);
       }
+      let protection: VanguardProtectionDefinitionV1 | undefined;
+      if (cohort.protection !== undefined) {
+        const protectionPath = `${cohortPath}.protection`;
+        const protectionInput = record(cohort.protection, protectionPath);
+        closed(protectionInput, ["radius", "sourceKinds"], [], protectionPath);
+        const sourceKinds = denseStringSet(
+          protectionInput.sourceKinds,
+          `${protectionPath}.sourceKinds`,
+          ENEMY_BEHAVIORS_LIMITS.protectionSourceKinds,
+          VANGUARD_PROTECTION_SOURCE_KINDS,
+          false
+        ) as readonly VanguardProtectionSourceKindV1[];
+        const sourceSet = new Set(sourceKinds);
+        protection = Object.freeze({
+          radius: integer(
+            protectionInput.radius,
+            `${protectionPath}.radius`,
+            1,
+            ENEMY_BEHAVIORS_LIMITS.protectionRadius
+          ),
+          sourceKinds: Object.freeze(VANGUARD_PROTECTION_SOURCE_KINDS.filter((kind) => sourceSet.has(kind)))
+        });
+      }
       Object.defineProperty(normalizedCohorts, cohortId, {
         value: Object.freeze({
           members: Object.freeze(members),
-          steering: Object.freeze({ neighborRadius, cohesionWeight, separationWeight, roleWeight })
+          steering: Object.freeze({ neighborRadius, cohesionWeight, separationWeight, roleWeight }),
+          ...(protection === undefined ? {} : { protection })
         }),
         enumerable: true
       });
