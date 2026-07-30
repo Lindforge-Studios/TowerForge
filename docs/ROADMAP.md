@@ -54,6 +54,7 @@ service. Нет соответствующего выбора или локал�
 | R10 — Persona QA и Procedural Quests | Завершён; code + constructor sign-off; ADR Accepted | Pure три-persona QA + opt-in `quests` v1 с CLI/Studio/MCP, renderer/player, packages и fixture; merge/release не входят в R10 |
 | R11 — Procedural Juice Engine | Завершён; ADR Accepted | Opt-in visuals v3: deterministic particle/audio/camera plans, shared Canvas/Phaser surfaces, Studio/MCP authoring и неизменный gameplay/legacy path |
 | R12.1 — targetable boss components | В работе; ADR Proposed | Opt-in `enemyBehaviors` v1, component damage/state, guarded Studio/MCP authoring, shared presentation и absent/disabled legacy path |
+| R12.2 — component-driven boss phases | В работе; ADR Proposed | Schema-v7 component events, exact read-only HFSM context, unchanged Graph/Trace v2 grammar и guarded AI authoring |
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Поставленные версии `combat`, `reactions`, `navigation` и `elevation` уже прошли полные вертикальные срезы. Остальные модули Mechanics Hub остаются planned, а preview/apply отклоняют их включение без записи.
 
@@ -724,9 +725,11 @@ combat resolver и HFSM. Модуль остаётся полностью opt-in
    authored `priorityTags` затем маршрутизируют tower damage в живую компоненту.
    Overflow не перетекает в root HP, component destruction не выдаёт награду, а root
    death/leak по-прежнему settles exactly once.
-2. **R12.2 — boss phases/HFSM.** Typed component events и read-only HFSM context выходят
-   отдельным RED/GREEN-срезом; Visual Graph подключается только после engine
-   action/event contracts.
+2. **R12.2 — boss phases/HFSM.** TowerScript schema v7 получает typed
+   `bossComponentDamaged`/`bossComponentDestroyed` и exact read-only `component` root только
+   во время этих events. HFSM сохраняет R9 semantics и common budgets. Graph v2
+   и Trace v2 используют существующие handler/transition nodes и event -> transition
+   provenance без нового grammar, layout version или write-tool.
 3. **R12.3 — formation steering.** Shared flow field остаётся авторитетным; deterministic
    spatial buckets дают не более 16 neighbours на enemy без per-enemy A* и O(n²)
    full scan.
@@ -739,6 +742,11 @@ R12.1 authoring идёт через Mechanics Hub и общий agent flow
 выбирает binary-first authored enemy/tower только для detached candidate и ничего не
 включает сам. См. [ADR 0053](adr/0053-r12-advanced-enemy-behaviors.md) и
 `docs/examples/opt-in-targetable-boss-components/`.
+
+R12.2 AI authoring начинается с `describe_schema(scripts).controllerRecipes` и inert
+`component_driven_boss_phase`. После подстановки точных authored enemy/component
+IDs агент использует только прежний `get_tower_script -> upsert_tower_script(dryRun)
+-> guarded upsert(ifRevision) -> validate_project -> preview_tower_script_trace` flow.
 
 ## TDD и роли
 

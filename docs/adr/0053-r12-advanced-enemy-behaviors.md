@@ -38,13 +38,27 @@ leak still settles reward/death exactly once and cleans all component state.
 
 Component state is exposed only through optional active `snapshot.enemyBehaviors` and matching
 optional checkpoint state. The outer `GameCheckpointV1`, command/journal v6, profile, campaign,
-multiplayer, and project v3 domains do not change. R12.2 may add typed component events and HFSM
-read-only context in a separate RED/GREEN slice; Visual Graph changes are later still.
+multiplayer, and project v3 domains do not change.
+
+R12.2 adds `bossComponentDamaged` and `bossComponentDestroyed` only to TowerScript schema v7. Each
+post-resolution event exposes the exact detached read-only `component` expression root with stable
+identity, HP ratio, tags, typed ability flags, and optional shield facts. HFSM resolution keeps the
+R9 contract: active leaf to ancestors, authored transition order, target state fixed before typed
+actions, and the common action/transition/recursion budgets. Schema v1–v6 scripts cannot bind these
+events. Component state does not become mutable TowerScript state and no component action is added.
+
+Graph v2 represents the new event names through its existing handler and transition nodes; no new
+grammar, node kind, layout version, or write tool is introduced. Trace v2 records the component
+event and linked HFSM transition provenance through the existing compute-only checkpoint/replay
+path. The inert descriptor recipe `component_driven_boss_phase` contains `$enemyTypeId` and
+`$componentId` placeholders and must be committed through the ordinary script dry-run and
+revision-guarded upsert workflow.
 
 Studio keeps this contract in Mechanics Hub rather than the ordinary enemy/tower forms. CLI, Studio,
 and MCP reuse the established mechanics `preview -> revision-guarded apply -> validation ->
 backup/rollback` transaction. `describe_schema(enemyBehaviors)`, `get_capabilities`, and the inert
-`basic_targetable_boss_components` recipe are discovery surfaces, not writes; the recipe chooses
+`basic_targetable_boss_components` mechanics recipe and `component_driven_boss_phase` TowerScript
+controller recipe are discovery surfaces, not writes; the mechanics recipe chooses
 binary-first authored IDs and still requires an explicit mission/profile selection. Renderers and
 generated players consume the active snapshot projection and never perform component routing or
 hit-testing themselves. Future module versions are preserved read-only.

@@ -559,6 +559,29 @@ module version, or an unselected profile must remain read-only/no-op and must no
 an active v1 profile. See `docs/examples/opt-in-targetable-boss-components/` and Proposed
 [ADR 0053](adr/0053-r12-advanced-enemy-behaviors.md).
 
+### Component-driven boss phases
+
+R12.2 keeps boss phases inside TowerScript schema v7. Call `describe_schema({domain:"scripts"})`
+and select the inert `component_driven_boss_phase` controller recipe. Replace `$enemyTypeId` with
+an authored composite enemy and `$componentId` with one of that enemy's stable component IDs from
+the mission-selected `enemyBehaviors` profile. The descriptor does not write or enable anything.
+Use the normal canonical script transaction:
+
+`get_tower_script -> upsert_tower_script(dryRun:true) -> upsert_tower_script(ifRevision=preview.revision) -> validate_project -> preview_tower_script_trace`.
+
+Only schema-v7 scripts may bind `bossComponentDamaged` or `bossComponentDestroyed`. During those
+events, HFSM conditions/actions may read `component.id`, identity, HP/max/ratio, destroyed state,
+tags, typed disabled-ability IDs, and optional shield current/capacity/ratio. The root is a detached
+post-resolution event view: it cannot mutate component state and is not available as ambient state
+for unrelated events. Transitions retain active-leaf-to-ancestor resolution, authored order, target
+commit before actions, and the common action/transition/recursion budgets.
+
+The Visual Graph stays schema v2 and represents these names through existing handler and transition
+nodes. Do not create a component-event node kind or edit the layout schema. Use compute-only trace
+to confirm the component event and its linked HFSM transition provenance; preview writes neither
+the script nor `.towerforge` state. Schema-v1–v6 scripts and projects without an active
+`enemyBehaviors` profile keep their previous event/UI/runtime path.
+
 ## Desktop Studio Navigation
 
 The packaged Studio uses a native application menu. macOS exposes `TowerForge`, `File`, `Edit`, `View`, `Project`, `Window`, and `Help` in the system menu bar. Windows and Linux expose the equivalent menu on the application window, with Exit and About in their conventional menus.

@@ -10026,7 +10026,11 @@ function towerScriptGraphPointerChild(path, field) {
 }
 
 function towerScriptGraphCatalogNames(group) {
+  const root = TowerScriptGraphUI.graph?.nodes?.find((node) => node.kind === "script" && node.astPath === "");
+  const schemaVersion = Number(root?.raw?.schemaVersion ?? TowerScriptGraphUI.schemaDescriptor?.schemaVersion ?? 1);
   return (TowerScriptGraphUI.nodeCatalog?.[group] ?? [])
+    .filter((entry) => !entry || typeof entry === "string" || entry.minimumSchemaVersion === undefined
+      || (Number.isInteger(schemaVersion) && schemaVersion >= Number(entry.minimumSchemaVersion)))
     .map((entry) => typeof entry === "string" ? entry : entry?.name)
     .filter((name) => typeof name === "string" && name);
 }
@@ -10426,7 +10430,9 @@ function renderTowerScriptGraph() {
       eventSelect.setAttribute("data-graph-event", node.id);
       eventSelect.setAttribute("aria-label", "Handler event");
       const eventName = towerScriptGraphPathTokens(node.astPath)[1];
-      eventSelect.innerHTML = (TowerScriptGraphUI.nodeCatalog?.events ?? []).map((entry) => {
+      const supportedEventNames = new Set(towerScriptGraphCatalogNames("events"));
+      eventSelect.innerHTML = (TowerScriptGraphUI.nodeCatalog?.events ?? [])
+        .filter((entry) => supportedEventNames.has(typeof entry === "string" ? entry : entry?.name)).map((entry) => {
         const name = typeof entry === "string" ? entry : entry?.name;
         return `<option value="${esc(name ?? "")}"${name === eventName ? " selected" : ""}>${esc(name ?? "")}</option>`;
       }).join("");

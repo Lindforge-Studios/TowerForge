@@ -74,6 +74,7 @@ type TowerScriptDescriptor = typeof TOWER_SCRIPT_SCHEMA | {
   readonly controllerRecipes?: unknown;
   readonly graph?: unknown;
   readonly debug?: unknown;
+  readonly completion?: unknown;
 };
 
 function clone<T>(value: T): T {
@@ -433,6 +434,11 @@ export function createTowerScriptNodeCatalog(descriptor: TowerScriptDescriptor) 
   }
   const entries = (names: readonly string[]) => names.map((name) => ({ name }));
   const actionDescriptors = descriptor.actions as Readonly<Record<string, unknown>>;
+  const completion = isRecord(descriptor.completion) ? descriptor.completion : undefined;
+  const completionCatalog = isRecord(completion?.catalog) ? completion.catalog : undefined;
+  const eventEntries = Array.isArray(completionCatalog?.events)
+    ? completionCatalog.events
+    : entries(descriptor.events);
   return clone({
     schemaVersion: 2 as const,
     towerScriptSchemaVersion: descriptor.schemaVersion,
@@ -448,7 +454,7 @@ export function createTowerScriptNodeCatalog(descriptor: TowerScriptDescriptor) 
       "script", "binding", "handler", "condition", "action", "raw", "behavior_tree", "behavior_selector",
       "behavior_sequence", "behavior_condition", "behavior_action", "state_machine", "state", "transition"
     ],
-    events: entries(descriptor.events),
+    events: eventEntries,
     actions: Object.keys(actionDescriptors).sort(compareBinary).map((name) => ({ name, descriptor: actionDescriptors[name] })),
     operators: entries(descriptor.expression.operators as readonly string[]),
     scopes: entries(descriptor.scopes)

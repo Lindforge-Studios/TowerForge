@@ -2233,7 +2233,7 @@ export async function callTool(name, args = {}, ctx = {}) {
       snapshot: { field: "enemyBehaviors", optional: true, supportedSchemaVersions: [1] },
       checkpoint: { field: "state.enemyBehaviors", optional: true, supportedSchemaVersions: [1] },
       commands: [],
-      events: [],
+      events: ["bossComponentDamaged", "bossComponentDestroyed"],
       targeting: "Authored tower priorityTags select live boss components; no manual component command exists in R12.1."
     };
     const personaQa = {
