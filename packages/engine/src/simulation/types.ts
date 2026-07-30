@@ -1288,6 +1288,13 @@ export interface BossComponentRuntimeStateV1 {
 export interface EnemyBehaviorsStateV1 {
   readonly schemaVersion: 1;
   readonly components: Readonly<Record<string, Readonly<Record<string, BossComponentRuntimeStateV1>>>>;
+  readonly formations?: {
+    readonly schemaVersion: 1;
+    readonly enemies: Readonly<Record<string, {
+      readonly cohortId: string;
+      readonly role: "vanguard" | "body" | "support";
+    }>>;
+  };
 }
 
 export interface GameSnapshot {

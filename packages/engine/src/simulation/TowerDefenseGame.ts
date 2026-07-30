@@ -74,7 +74,9 @@ import {
 } from "../content/quest-mechanics.js";
 import {
   resolveActiveEnemyBehaviorsV1,
-  type ActiveEnemyBehaviorsV1
+  type ActiveEnemyBehaviorsV1,
+  type FormationRoleV1,
+  type FormationSteeringDefinitionV1
 } from "../content/enemy-behaviors-mechanics.js";
 import { CAMPAIGN_RUN_LIMITS } from "../run/campaign-run.js";
 import {
@@ -128,6 +130,11 @@ import {
 import { NavigationResolver } from "./navigation-runtime.js";
 import { NavigationFieldLookupCache } from "./navigation-movement.js";
 import { buildNavigationField, type NavigationFieldResult } from "./navigation-field.js";
+import {
+  selectFormationSteeringNextV1,
+  type FormationSteeringNeighborV1,
+  type FormationSteeringRuntimeStatsV1
+} from "./formation-steering.js";
 import {
   planDynamicTerraformingNavigation,
   type DynamicTerraformingNavigationPlan
@@ -907,6 +914,28 @@ interface ScriptedTargetingControllerV1 {
   readonly tree: TowerScriptBehaviorTreeV1;
 }
 
+interface ActiveFormationAssignmentV1 {
+  readonly cohortId: string;
+  readonly role: FormationRoleV1;
+  readonly steering: FormationSteeringDefinitionV1;
+}
+
+interface FormationTickObservationV1 extends ActiveFormationAssignmentV1 {
+  readonly enemyId: string;
+  readonly anchorCoord: HexCoord;
+  readonly fieldKey: string;
+  readonly remainingCostMilli: number;
+}
+
+interface FormationTickIndexV1 {
+  readonly observations: ReadonlyMap<string, FormationTickObservationV1>;
+  readonly buckets: ReadonlyMap<string, readonly string[]>;
+}
+
+type MutableFormationSteeringRuntimeStatsV1 = {
+  -readonly [Key in keyof FormationSteeringRuntimeStatsV1]: FormationSteeringRuntimeStatsV1[Key];
+};
+
 export class TowerDefenseGame {
   readonly content: GameContentRegistry;
   readonly mission: GameContentRegistry["missions"][string];
@@ -946,6 +975,15 @@ export class TowerDefenseGame {
   private readonly activeDirectorMechanics: ActiveDirectorMechanicsV1 | undefined;
   private readonly activeQuestMechanics: ActiveQuestMechanicsV1 | undefined;
   private readonly activeEnemyBehaviors: ActiveEnemyBehaviorsV1 | undefined;
+  private readonly activeFormationAssignments: ReadonlyMap<string, ActiveFormationAssignmentV1> | undefined;
+  private formationSteeringStats: MutableFormationSteeringRuntimeStatsV1 = {
+    bucketBuildCount: 0,
+    bucketEntryCount: 0,
+    fieldReadCount: 0,
+    plannerInvocationCount: 0,
+    neighborEntriesInspected: 0,
+    maximumNeighborCount: 0
+  };
   private questEntries: NonNullable<GameSnapshot["quests"]>["entries"] = Object.freeze([]);
   private readonly scriptedTargetingByTowerType = new Map<string, ScriptedTargetingControllerV1>();
   private directorDecisions: NonNullable<GameSnapshot["director"]>["decisions"] = Object.freeze([]);
@@ -1245,6 +1283,14 @@ export class TowerDefenseGame {
       this.navigationFieldLookupCache = undefined;
       this.navigationEnemyFields = undefined;
     }
+    this.activeFormationAssignments = this.activeNavigationProfile && this.activeEnemyBehaviors?.formations
+      ? new Map(Object.entries(this.activeEnemyBehaviors.formations.cohorts).flatMap(([cohortId, cohort]) => (
+          Object.entries(cohort.members).map(([enemyTypeId, role]) => [
+            enemyTypeId,
+            Object.freeze({ cohortId, role, steering: cohort.steering })
+          ] as const)
+        )))
+      : undefined;
     this.difficulty = this.content.difficulties.find((item) => item.id === options.difficultyId)
       ?? this.content.difficulties.find((item) => item.id === this.content.defaultDifficultyId)
       ?? { id: "normal", label: "Normal" };
@@ -3765,6 +3811,15 @@ export class TowerDefenseGame {
 
   private buildEnemyBehaviorsState(): GameSnapshot["enemyBehaviors"] {
     if (!this.activeEnemyBehaviors) return undefined;
+    const formationEnemies = this.activeFormationAssignments === undefined
+      ? undefined
+      : Object.fromEntries(this.enemies
+          .filter((enemy) => enemy.hp > 0 && this.activeFormationAssignments!.has(enemy.typeId))
+          .sort((left, right) => compareBinary(left.id, right.id))
+          .map((enemy) => {
+            const assignment = this.activeFormationAssignments!.get(enemy.typeId)!;
+            return [enemy.id, { cohortId: assignment.cohortId, role: assignment.role }];
+          }));
     return {
       schemaVersion: 1,
       components: Object.fromEntries(Object.keys(this.enemyComponentStates).sort(compareBinary).map((enemyId) => [
@@ -3777,8 +3832,15 @@ export class TowerDefenseGame {
             ...(state.shield === undefined ? {} : { shield: { ...state.shield } })
           }];
         }))
-      ]))
+      ])),
+      ...(formationEnemies === undefined ? {} : {
+        formations: { schemaVersion: 1, enemies: formationEnemies }
+      })
     };
+  }
+
+  getFormationSteeringStats(): FormationSteeringRuntimeStatsV1 {
+    return Object.freeze({ ...this.formationSteeringStats });
   }
 
   private consumeNavigationAnalysisField(
@@ -5058,6 +5120,14 @@ export class TowerDefenseGame {
             : { enemyMovementProfiles: selectedNavigation.enemyMovementProfiles })
         }
       : undefined;
+    const checkpointFormationAssignments = activeNavigationProfile && checkpointEnemyBehaviors?.formations
+      ? new Map(Object.entries(checkpointEnemyBehaviors.formations.cohorts).flatMap(([cohortId, cohort]) => (
+          Object.entries(cohort.members).map(([enemyTypeId, role]) => [
+            enemyTypeId,
+            Object.freeze({ cohortId, role, steering: cohort.steering })
+          ] as const)
+        )))
+      : undefined;
     const optionalRoute = (descriptors: ReturnType<typeof closed>, label: string): void => {
       if (!own(descriptors, "routeId")) return;
       const routeId = stringValue(checkpointDataField(descriptors, "routeId", label), `${label}.routeId`);
@@ -5070,6 +5140,7 @@ export class TowerDefenseGame {
     };
 
     const enemyIds = new Set<string>();
+    const liveEnemyIds = new Set<string>();
     const enemyTypeByInstance = new Map<string, string>();
     const disruptTargetReferences: Array<{ enemyId: string; towerIds: string[] }> = [];
     const navigationStates: Array<{
@@ -5113,6 +5184,7 @@ export class TowerDefenseGame {
       if (maxHp !== expectedMaxHp || typeof hp !== "number" || hp > expectedMaxHp) {
         throw new Error("Game checkpoint enemy hp or maxHp is inconsistent with authored content.");
       }
+      if (hp > 0) liveEnemyIds.add(id);
       if (own(enemy, "dotSourceTowerTypeId")) {
         const towerTypeId = stringValue(checkpointDataField(enemy, "dotSourceTowerTypeId", "enemy"), "enemy.dotSourceTowerTypeId");
         if (!own(content.towers, towerTypeId)) throw new Error("Game checkpoint enemy references an unknown dot tower type.");
@@ -5265,7 +5337,9 @@ export class TowerDefenseGame {
       const section = closed(
         checkpointDataField(descriptors, "enemyBehaviors", "Game checkpoint state"),
         "enemyBehaviors state",
-        ["schemaVersion", "components"]
+        checkpointFormationAssignments
+          ? ["schemaVersion", "components", "formations"]
+          : ["schemaVersion", "components"]
       );
       if (checkpointDataField(section, "schemaVersion", "enemyBehaviors state") !== 1) {
         throw new Error("Game checkpoint enemyBehaviors schema version is unsupported.");
@@ -5329,6 +5403,43 @@ export class TowerDefenseGame {
               0,
               definition.shield.regeneration?.delayAfterDamage ?? 0
             );
+          }
+        }
+      }
+      if (checkpointFormationAssignments) {
+        const formations = closed(
+          checkpointDataField(section, "formations", "enemyBehaviors state"),
+          "enemyBehaviors formations state",
+          ["schemaVersion", "enemies"]
+        );
+        if (checkpointDataField(formations, "schemaVersion", "enemyBehaviors formations state") !== 1) {
+          throw new Error("Game checkpoint enemyBehaviors formation schema version is unsupported.");
+        }
+        const formationEnemies = checkpointObjectDescriptors(
+          checkpointDataField(formations, "enemies", "enemyBehaviors formations state"),
+          "Game checkpoint enemyBehaviors formation enemies"
+        );
+        const expectedFormationEnemyIds = [...enemyTypeByInstance.entries()]
+          .filter(([enemyId, typeId]) => liveEnemyIds.has(enemyId) && checkpointFormationAssignments.has(typeId))
+          .map(([enemyId]) => enemyId)
+          .sort(compareBinary);
+        const actualFormationEnemyIds = Object.keys(formationEnemies);
+        if (actualFormationEnemyIds.join("\u0000") !== expectedFormationEnemyIds.join("\u0000")) {
+          throw new Error("Game checkpoint enemyBehaviors formation state has missing, stale, extra, or non-canonical enemy ids.");
+        }
+        for (const enemyId of actualFormationEnemyIds) {
+          const typeId = enemyTypeByInstance.get(enemyId)!;
+          const expected = checkpointFormationAssignments.get(typeId)!;
+          const membership = closed(
+            checkpointDataField(formationEnemies, enemyId, "enemyBehaviors formation enemies"),
+            `enemyBehaviors formation membership ${enemyId}`,
+            ["cohortId", "role"]
+          );
+          if (
+            checkpointDataField(membership, "cohortId", `formation membership ${enemyId}`) !== expected.cohortId
+            || checkpointDataField(membership, "role", `formation membership ${enemyId}`) !== expected.role
+          ) {
+            throw new Error(`Game checkpoint enemyBehaviors formation membership for "${enemyId}" has an invalid cohort or role.`);
           }
         }
       }
@@ -7377,7 +7488,24 @@ export class TowerDefenseGame {
         if (!nextCell || nextCell.distance >= currentCell.distance) {
           throw new Error("Game checkpoint enemy navigation nextCoord must strictly lower field distance.");
         }
-        if (
+        const formationAssignment = checkpointFormationAssignments?.get(enemyTypeByInstance.get(entry.enemyId)!);
+        if (formationAssignment) {
+          const movementProfile = activeNavigationProfile.movementProfiles[navigation.movementProfileId]!;
+          const terrainId = terrainByCoord[coordKey(navigation.nextCoord)];
+          const hasTerrainOverride = terrainId !== undefined
+            && Object.prototype.hasOwnProperty.call(movementProfile.terrainCosts ?? {}, terrainId);
+          const enteredCost = terrainId === undefined
+            ? null
+            : hasTerrainOverride
+              ? movementProfile.terrainCosts![terrainId] ?? null
+              : movementProfile.terrainMode === "respect_walkable"
+                && content.terrainTypes[terrainId]?.walkable !== true
+                ? null
+                : movementProfile.defaultTerrainCost;
+          if (enteredCost === null || nextCell.distance + enteredCost !== currentCell.distance) {
+            throw new Error("Game checkpoint formation navigation nextCoord is not an equal-optimal field link.");
+          }
+        } else if (
           !currentCell.nextCoord
           || navigation.nextCoord.q !== currentCell.nextCoord.q
           || navigation.nextCoord.r !== currentCell.nextCoord.r
@@ -11470,9 +11598,13 @@ export class TowerDefenseGame {
 
   private moveDynamicEnemies(delta: number): void {
     this.stabilizeDynamicEnemyNavigation();
+    const formationIndex = this.buildFormationTickIndex();
     const blockingActive = this.heroBlockingActive();
     const blockedEnemyIds = new Set(blockingActive ? this.deriveHeroBlockedEnemyIds() : []);
-    const enemies = blockingActive ? [...this.enemies].sort((left, right) => compareBinary(left.id, right.id)) : this.enemies;
+    if (formationIndex !== undefined) this.enemies.sort((left, right) => compareBinary(left.id, right.id));
+    const enemies = blockingActive && formationIndex === undefined
+      ? [...this.enemies].sort((left, right) => compareBinary(left.id, right.id))
+      : this.enemies;
     for (const enemy of enemies) {
       if (enemy.hp <= 0 || !enemy.navigation || !enemy.routeId) continue;
       const type = this.enemyTypes[enemy.typeId];
@@ -11506,8 +11638,14 @@ export class TowerDefenseGame {
           if (cell.distance === 0) this.leakDynamicEnemy(enemy, type);
           break;
         }
-        navigation.nextCoord = { q: cell.nextCoord.q, r: cell.nextCoord.r };
-        const enteredCost = lookup.enteredCost(cell);
+        const selectedNextCoord = navigation.edgeProgress > 0 && navigation.nextCoord
+          ? navigation.nextCoord
+          : this.selectFormationNextCoord(enemy, field, formationIndex) ?? cell.nextCoord;
+        const selectedNextCell = lookup.get(selectedNextCoord);
+        const enteredCost = selectedNextCell === undefined
+          ? undefined
+          : cell.distance - selectedNextCell.distance;
+        navigation.nextCoord = { q: selectedNextCoord.q, r: selectedNextCoord.r };
         if (enteredCost === undefined || movementBudget <= 0) {
           enemy.pathProgress = navigation.stepsEntered + navigation.edgeProgress;
           break;
@@ -11519,7 +11657,7 @@ export class TowerDefenseGame {
           break;
         }
         movementBudget = Math.max(0, movementBudget - remainingCost);
-        navigation.currentCoord = { q: cell.nextCoord.q, r: cell.nextCoord.r };
+        navigation.currentCoord = { q: selectedNextCoord.q, r: selectedNextCoord.r };
         navigation.edgeProgress = 0;
         navigation.stepsEntered += 1;
         enemy.pathProgress = navigation.stepsEntered;
@@ -11546,6 +11684,158 @@ export class TowerDefenseGame {
         if (this.tryAcquireHeroBlock(enemy, lookup, blockedEnemyIds)) break;
       }
     }
+  }
+
+  private buildFormationTickIndex(): FormationTickIndexV1 | undefined {
+    const assignments = this.activeFormationAssignments;
+    const resolver = this.navigationResolver;
+    const lookupCache = this.navigationFieldLookupCache;
+    if (!assignments || !resolver || !lookupCache) return undefined;
+
+    const observations = new Map<string, FormationTickObservationV1>();
+    const mutableBuckets = new Map<string, string[]>();
+    const partitionKeys = new Set<string>();
+    const enemies = this.enemies
+      .filter((enemy) => enemy.hp > 0 && enemy.navigation && enemy.routeId && assignments.has(enemy.typeId))
+      .sort((left, right) => compareBinary(left.id, right.id));
+
+    for (const enemy of enemies) {
+      const navigation = enemy.navigation!;
+      const assignment = assignments.get(enemy.typeId)!;
+      const field = this.navigationField(navigation.movementProfileId, enemy.routeId!);
+      const lookup = lookupCache.get(field);
+      const anchorCoord = navigation.edgeProgress >= 0.5 && navigation.nextCoord
+        ? navigation.nextCoord
+        : navigation.currentCoord;
+      const remainingCost = lookup.remainingCost(navigation);
+      if (!Number.isFinite(remainingCost)) continue;
+      const fieldKey = JSON.stringify([
+        assignment.cohortId,
+        navigation.movementProfileId,
+        field.goal.q,
+        field.goal.r
+      ]);
+      const observation = Object.freeze({
+        enemyId: enemy.id,
+        cohortId: assignment.cohortId,
+        role: assignment.role,
+        steering: assignment.steering,
+        anchorCoord: Object.freeze({ q: anchorCoord.q, r: anchorCoord.r }),
+        fieldKey,
+        remainingCostMilli: Math.round(remainingCost)
+      });
+      observations.set(enemy.id, observation);
+      partitionKeys.add(fieldKey);
+      const bucketKey = `${fieldKey}:${coordKey(anchorCoord)}`;
+      const bucket = mutableBuckets.get(bucketKey) ?? [];
+      bucket.push(enemy.id);
+      mutableBuckets.set(bucketKey, bucket);
+      this.formationSteeringStats.fieldReadCount += 1;
+      this.formationSteeringStats.bucketEntryCount += 1;
+    }
+
+    this.formationSteeringStats.bucketBuildCount += partitionKeys.size;
+    const buckets = new Map<string, readonly string[]>();
+    for (const [key, ids] of mutableBuckets) {
+      buckets.set(key, Object.freeze(ids.sort(compareBinary)));
+    }
+    return { observations, buckets };
+  }
+
+  private collectFormationNeighbors(
+    self: FormationTickObservationV1,
+    index: FormationTickIndexV1
+  ): readonly FormationSteeringNeighborV1[] {
+    const neighborIds: string[] = [];
+    let inspected = 0;
+    const coords = this.map.topology.tilesWithin(self.anchorCoord, self.steering.neighborRadius)
+      .sort((left, right) => (
+        this.map.topology.distance(self.anchorCoord, left) - this.map.topology.distance(self.anchorCoord, right)
+        || left.r - right.r
+        || left.q - right.q
+      ));
+    for (const coord of coords) {
+      const ids = index.buckets.get(`${self.fieldKey}:${coordKey(coord)}`) ?? [];
+      for (const enemyId of ids) {
+        if (inspected >= 32 || neighborIds.length >= 16) break;
+        inspected += 1;
+        if (enemyId !== self.enemyId) neighborIds.push(enemyId);
+      }
+      if (inspected >= 32 || neighborIds.length >= 16) break;
+    }
+    this.formationSteeringStats.neighborEntriesInspected += inspected;
+
+    const neighbors = neighborIds
+      .map((enemyId) => index.observations.get(enemyId))
+      .filter((value): value is FormationTickObservationV1 => value !== undefined)
+      .sort((left, right) => (
+        this.map.topology.distance(self.anchorCoord, left.anchorCoord)
+          - this.map.topology.distance(self.anchorCoord, right.anchorCoord)
+        || compareBinary(left.enemyId, right.enemyId)
+      ))
+      .slice(0, 16)
+      .map((neighbor) => Object.freeze({
+        enemyId: neighbor.enemyId,
+        role: neighbor.role,
+        anchorCoord: neighbor.anchorCoord,
+        remainingCostMilli: neighbor.remainingCostMilli
+      }));
+    this.formationSteeringStats.maximumNeighborCount = Math.max(
+      this.formationSteeringStats.maximumNeighborCount,
+      neighbors.length
+    );
+    return Object.freeze(neighbors);
+  }
+
+  private navigationDestinationCost(movementProfileId: string, coord: HexCoord): number | undefined {
+    const profile = this.activeNavigationProfile?.movementProfiles[movementProfileId];
+    const terrain = this.map.getTile(coord)?.terrain;
+    if (!profile || terrain === undefined) return undefined;
+    if (Object.prototype.hasOwnProperty.call(profile.terrainCosts ?? {}, terrain)) {
+      return profile.terrainCosts![terrain] ?? undefined;
+    }
+    if (profile.terrainMode === "respect_walkable" && this.content.terrainTypes[terrain]?.walkable !== true) {
+      return undefined;
+    }
+    return profile.defaultTerrainCost ?? undefined;
+  }
+
+  private selectFormationNextCoord(
+    enemy: EnemyState,
+    field: NavigationFieldResult,
+    index: FormationTickIndexV1 | undefined
+  ): HexCoord | undefined {
+    const navigation = enemy.navigation;
+    const lookup = this.navigationFieldLookupCache?.get(field);
+    const currentCell = navigation && lookup?.get(navigation.currentCoord);
+    if (!navigation || navigation.edgeProgress !== 0 || !index || !lookup || !currentCell?.nextCoord) return undefined;
+    const self = index.observations.get(enemy.id);
+    if (!self) return undefined;
+
+    const candidates = this.map.topology.neighbors(navigation.currentCoord)
+      .map((coord) => ({ coord, cell: lookup.get(coord) }))
+      .filter((entry): entry is { coord: HexCoord; cell: NonNullable<typeof currentCell> } => {
+        if (!entry.cell) return false;
+        const enteredCost = this.navigationDestinationCost(navigation.movementProfileId, entry.coord);
+        return enteredCost !== undefined && entry.cell.distance + enteredCost === currentCell.distance;
+      })
+      .map((entry) => Object.freeze({
+        coord: Object.freeze({ q: entry.coord.q, r: entry.coord.r }),
+        remainingCostMilli: entry.cell.distance
+      }));
+    if (candidates.length === 0) return undefined;
+
+    this.formationSteeringStats.plannerInvocationCount += 1;
+    return selectFormationSteeringNextV1({
+      schemaVersion: 1,
+      grid: this.map.grid,
+      currentCoord: navigation.currentCoord,
+      canonicalNextCoord: currentCell.nextCoord,
+      candidates,
+      self: { enemyId: enemy.id, cohortId: self.cohortId, role: self.role },
+      neighbors: this.collectFormationNeighbors(self, index),
+      steering: self.steering
+    }).nextCoord;
   }
 
   private heroBlockingActive(): boolean {

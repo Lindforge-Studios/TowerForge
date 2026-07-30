@@ -43,6 +43,15 @@ export interface FormationSteeringResultV1 {
   readonly score: number;
 }
 
+export interface FormationSteeringRuntimeStatsV1 {
+  readonly bucketBuildCount: number;
+  readonly bucketEntryCount: number;
+  readonly fieldReadCount: number;
+  readonly plannerInvocationCount: number;
+  readonly neighborEntriesInspected: number;
+  readonly maximumNeighborCount: number;
+}
+
 type DescriptorMap = Readonly<Record<PropertyKey, PropertyDescriptor>>;
 
 const REQUEST_FIELDS = Object.freeze([
