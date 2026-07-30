@@ -76,8 +76,22 @@ Only the active module publishes optional `snapshot.enemyBehaviors.formations` i
 and journal replay. The shared renderer projector exposes only those authoritative labels and owns
 no steering weights or navigation rules. The inert `basic_formation_steering` recipe does not enable
 or select either dependency, edit enemies, or bypass the existing mechanics preview/apply writer.
-R12.4 composes vanguard protection from the existing shield/damage pipeline rather than replacing
-armor or resistances.
+
+R12.4 adds an optional closed `protection: { radius, sourceKinds }` block to a formation cohort. It
+is active only when the same mission selects Navigation v1 `dynamic_flow`, the `enemyBehaviors` v1
+formation, and Combat v1+ with a root Combat shield on the authored vanguard type. For an eligible
+packet against a body/support member, the engine inspects at most 16 binary-stable same-cohort
+vanguard candidates and selects the first living candidate with remaining root shield. The
+redirect is one-hop and cannot recursively intercept itself; at most 512 successful redirects are
+allowed per public tick. The redirected packet re-enters the common `DamageResolver`, so protection
+does not replace armor/resistances, component routing, or exactly-once root settlement.
+
+Only the active profile publishes optional `snapshot.enemyBehaviors.formations.protection` and the
+matching checkpoint inner state. `vanguardDamageIntercepted` is a read-only GameEvent for
+presentation and diagnostics, not a TowerScript or Visual Graph event. The renderer may display
+that event but cannot choose an interceptor or recreate the budgets. The inert
+`basic_vanguard_protection` recipe and reference fixture require explicit authoring/selection of all
+three prerequisites; disabling or unselecting any one restores the R12.3 shared-flow path.
 
 ## TDD delivery
 
@@ -96,6 +110,11 @@ R12.3 acceptance separately freezes formation-only content, the explicit same-mi
 dependency, pure bounded equal-cost selection, 16-neighbour and tick budgets, input-order
 invariance, active-only snapshot/checkpoint restore, shared Canvas/Phaser projection, and the
 existing guarded Studio/MCP transaction. It introduces no command, event, RNG domain, or new writer.
+
+R12.4 acceptance separately freezes root-shield-only interception, the one-hop rule, the 16-candidate
+and 512-redirect public-tick budgets, stable event/checkpoint validation, exact-once settlement,
+disabled dependency fallbacks, and the existing guarded mechanics transaction. It adds no command,
+TowerScript event, RNG domain, renderer-owned selection, or dedicated writer.
 
 ## Consequences
 

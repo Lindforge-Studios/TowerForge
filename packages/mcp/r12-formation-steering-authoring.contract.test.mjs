@@ -34,7 +34,7 @@ describe("R12.3 formation steering MCP/AI authoring surface (RED)", () => {
         },
         formations: { requiredFields: ["cohorts"], optionalFields: [], additionalProperties: false },
         formationCohort: {
-          requiredFields: ["members", "steering"], optionalFields: [], additionalProperties: false
+          requiredFields: ["members", "steering"], optionalFields: ["protection"], additionalProperties: false
         },
         formationSteering: {
           requiredFields: ["neighborRadius", "cohesionWeight", "separationWeight", "roleWeight"],
@@ -108,7 +108,7 @@ describe("R12.3 formation steering MCP/AI authoring surface (RED)", () => {
   }, 30_000);
 
   it("teaches agents the dependency and authoritative snapshot workflow without inventing steering tools", () => {
-    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBeGreaterThanOrEqual(40);
+    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBeGreaterThanOrEqual(41);
     for (const phrase of [
       "Enemy formations v1",
       "basic_formation_steering",

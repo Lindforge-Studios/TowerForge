@@ -607,6 +607,34 @@ snapshot/UI cues disappear and ordinary shared-field movement returns. See
 `docs/examples/opt-in-formation-steering/` and Proposed
 [ADR 0053](adr/0053-r12-advanced-enemy-behaviors.md).
 
+### Vanguard protection
+
+R12.4 is an optional `protection` block on an R12.3 formation cohort. Before enabling it, verify
+that the same mission explicitly selects all three prerequisites: Navigation v1 `dynamic_flow`,
+Combat with a root Combat shield on every authored vanguard type, and the `enemyBehaviors` v1
+formation profile. Component shields are not substitutes for that root shield. Start from the inert
+`basic_vanguard_protection` recipe and keep the common transaction:
+
+`describe_schema({domain:"enemyBehaviors"}) -> get_capabilities -> get_recipe({collection:"mechanics",recipeId:"basic_vanguard_protection"}) -> preview_mechanics_module -> apply_mechanics_module(ifRevision=preview.revision) -> validate_project`.
+
+The recipe supplies only a detached formation candidate. It never enables/selects the three
+modules, edits Combat, or invents shields. `sourceKinds` is a closed subset of
+`tower | ability | tower_script | status | reaction | enemy`; leak damage cannot be intercepted.
+At runtime the engine examines at most 16 binary-stable same-cohort vanguard candidates for an
+eligible body/support packet and permits at most 512 successful redirects per public tick. The
+redirect is one-hop, uses the first living candidate with remaining root shield, and continues
+through the common `DamageResolver`. It must not bypass armor/resistance or root exact-once death,
+reward, and resource settlement.
+
+Read protection only from `snapshot.enemyBehaviors.formations.protection`. Treat
+`vanguardDamageIntercepted` as a read-only GameEvent for presentation/diagnostics; it is not a
+TowerScript or Visual Graph event and must not be added to a script binding. Canvas and Phaser may
+display the authoritative event but may not select an interceptor. Continuous, checkpoint restore,
+and journal replay must converge on the same digest. Disable or unselect any prerequisite and
+confirm that the protection snapshot/checkpoint/UI disappears while ordinary dynamic-flow combat
+returns. See `docs/examples/opt-in-vanguard-protection/` and Proposed
+[ADR 0053](adr/0053-r12-advanced-enemy-behaviors.md).
+
 ## Desktop Studio Navigation
 
 The packaged Studio uses a native application menu. macOS exposes `TowerForge`, `File`, `Edit`, `View`, `Project`, `Window`, and `Help` in the system menu bar. Windows and Linux expose the equivalent menu on the application window, with Exit and About in their conventional menus.

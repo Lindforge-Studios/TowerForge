@@ -2001,6 +2001,7 @@ import {
   projectEnemyNavigationPoint,
   projectEnemyComponentsPresentation,
   projectEnemyFormationsPresentation,
+  projectVanguardProtectionPresentation,
   projectLegacyPresentationEvents,
   projectExposurePresentationCues,
   projectMarkPresentationCues,
@@ -2932,6 +2933,11 @@ class PlayScene extends Phaser.Scene {
     const enemyFormationsByEnemyId = new Map(
       projectEnemyFormationsPresentation(snap).rows.map((row) => [row.enemyId, row])
     );
+    const vanguardDamageInterceptedCues = projectVanguardProtectionPresentation(snap).cues;
+    const vanguardProtectionCueEnemyIds = new Set(vanguardDamageInterceptedCues.flatMap((cue) => [
+      cue.protectedEnemyId,
+      cue.vanguardEnemyId
+    ]));
     for (const en of snap.enemies) {
       const p = this.enemyPos(en, snap, g);
       if (!p) continue;
@@ -2948,6 +2954,10 @@ class PlayScene extends Phaser.Scene {
           : formation.role === "support" ? 0x73bfe8 : 0xa79bdc;
         this.entG.lineStyle(Math.max(1, g.r * 0.07), formationColor, 1);
         this.entG.strokeCircle(p.x, p.y, g.r * 0.46);
+      }
+      if (vanguardProtectionCueEnemyIds.has(en.id)) {
+        this.entG.lineStyle(Math.max(1, g.r * 0.09), 0xf7d774, 1);
+        this.entG.strokeCircle(p.x, p.y, g.r * 0.58);
       }
       const components = componentRowsByEnemyId.get(en.id) ?? [];
       if (components.length > 0) {

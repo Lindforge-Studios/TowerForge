@@ -66,7 +66,7 @@ export function projectEnemyFormationsPresentation(snapshot) {
   if (!enemyBehaviors || field(enemyBehaviors, "schemaVersion") !== 1) return INACTIVE;
   const formationsValue = field(enemyBehaviors, "formations");
   if (formationsValue === undefined) return INACTIVE;
-  const formations = ownDataRecord(formationsValue, ["schemaVersion", "enemies"]);
+  const formations = ownDataRecord(formationsValue, ["schemaVersion", "enemies"], ["protection"]);
   if (!formations || field(formations, "schemaVersion") !== 1) return INACTIVE;
   const enemies = dictionary(field(formations, "enemies"));
   if (!enemies) return INACTIVE;

@@ -738,8 +738,12 @@ combat resolver и HFSM. Модуль остаётся полностью opt-in
    enemy без per-enemy A* и O(n²) full scan. Результат публикуется только в
    active `snapshot.enemyBehaviors.formations`/checkpoint state; renderer не считает
    steering.
-4. **R12.4 — vanguard protection.** Authored cohort/radius и существующие combat shields
-   защищают formation, не подменяя armor/resistances и exact-once settlement.
+4. **R12.4 — vanguard protection.** Optional `protection { radius, sourceKinds }` в
+   formation cohort требует в той же mission `dynamic_flow`, active
+   `enemyBehaviors` и root Combat shield у vanguard. Engine проверяет не более
+   16 stable candidates на packet и допускает не более 512 redirects за public
+   tick. Interception всегда one-hop, после чего packet идёт через общий
+   resolver без подмены armor/resistances и exact-once settlement.
 
 R12.1 authoring идёт через Mechanics Hub и общий agent flow
 `describe_schema(enemyBehaviors) -> get_capabilities -> get_recipe(basic_targetable_boss_components)
@@ -758,6 +762,12 @@ R12.3 authoring идёт только через общий guarded mechanics fl
 -> preview_mechanics_module -> apply_mechanics_module(ifRevision) -> validate_project`. Recipe
 ничего не включает и не создаёт Navigation; `dynamic_flow` нужно явно выбрать
 для той же mission. См. `docs/examples/opt-in-formation-steering/`.
+
+R12.4 использует тот же flow и inert recipe `basic_vanguard_protection`;
+recipe не включает Navigation/Combat/enemyBehaviors и не создаёт shield.
+Active metadata читается из `snapshot.enemyBehaviors.formations.protection`, а
+`vanguardDamageIntercepted` — только read-only GameEvent, не TowerScript event.
+См. `docs/examples/opt-in-vanguard-protection/`.
 
 ## TDD и роли
 

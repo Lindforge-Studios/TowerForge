@@ -22,6 +22,7 @@ import { projectHeroPresentationPoint, projectHeroesPresentation } from "./heroe
 import { projectProceduralJuicePresentation } from "./procedural-juice-presentation.mjs";
 import { projectEnemyComponentsPresentation } from "./enemy-components-presentation.mjs";
 import { projectEnemyFormationsPresentation } from "./enemy-formations-presentation.mjs";
+import { projectVanguardProtectionPresentation } from "./vanguard-protection-presentation.mjs";
 import {
   createProceduralJuicePresentationRuntime,
   createProceduralJuiceWorldSnapshotBuffer
@@ -41,6 +42,7 @@ export * from "./procedural-juice-presentation.mjs";
 export * from "./procedural-juice-runtime.mjs";
 export * from "./enemy-components-presentation.mjs";
 export * from "./enemy-formations-presentation.mjs";
+export * from "./vanguard-protection-presentation.mjs";
 export { projectLogisticsPresentation } from "./logistics-power-presentation.mjs";
 
 function ownDataValue(record, key) {
@@ -165,6 +167,11 @@ export class TowerForgeCanvasRenderer {
     this.enemyFormationsByEnemyId = new Map(
       projectEnemyFormationsPresentation(snapshot).rows.map((row) => [row.enemyId, row])
     );
+    const vanguardDamageInterceptedCues = projectVanguardProtectionPresentation(snapshot).cues;
+    this.vanguardProtectionCueEnemyIds = new Set(vanguardDamageInterceptedCues.flatMap((cue) => [
+      cue.protectedEnemyId,
+      cue.vanguardEnemyId
+    ]));
 
     this.spawnEffects(presentationSnapshot, geom, positions, towerPositions);
     this.advanceEffects(dt);
@@ -942,6 +949,13 @@ export class TowerForgeCanvasRenderer {
       this.ctx.arc(p.x, p.y, geom.r * 0.46, 0, Math.PI * 2);
       this.ctx.strokeStyle = color;
       this.ctx.lineWidth = Math.max(1, geom.r * 0.07);
+      this.ctx.stroke();
+    }
+    if (this.vanguardProtectionCueEnemyIds?.has(enemy.id)) {
+      this.ctx.beginPath();
+      this.ctx.arc(p.x, p.y, geom.r * 0.58, 0, Math.PI * 2);
+      this.ctx.strokeStyle = "#f7d774";
+      this.ctx.lineWidth = Math.max(1, geom.r * 0.09);
       this.ctx.stroke();
     }
     const components = this.enemyComponentsByEnemyId.get(enemy.id) ?? [];

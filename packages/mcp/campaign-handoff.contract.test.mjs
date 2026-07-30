@@ -30,7 +30,7 @@ describe("R4.4C MCP/agent campaign handoff discovery", () => {
   });
 
   it("teaches agents the guarded authoring flow and forbids host-side loadout merging", () => {
-    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(40);
+    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(41);
     expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/campaign marker v2/i);
     expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/prepareCampaignBattle[\s\S]*settleCampaignBattleVictory/);
     expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/deck[\s\S]*artifacts[\s\S]*(?:unsocket|socket assignments)/i);

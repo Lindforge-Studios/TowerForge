@@ -112,7 +112,8 @@ const DIRECTOR_RECIPE_IDS = new Set(["basic_adaptive_wave_director"]);
 const QUEST_RECIPE_IDS = new Set(["basic_procedural_quests"]);
 const ENEMY_BEHAVIORS_RECIPE_IDS = new Set([
   "basic_targetable_boss_components",
-  "basic_formation_steering"
+  "basic_formation_steering",
+  "basic_vanguard_protection"
 ]);
 const MULTIPLAYER_RECIPE_IDS = new Set([
   "basic_local_coop", "basic_partitioned_local_coop", "basic_asymmetric_send_vs_build"
@@ -866,6 +867,20 @@ function normalizeEnemyBehaviorsMechanicsDraft(profile) {
           separationWeight: 800,
           roleWeight: 400
         };
+      }
+      if (cohort.protection !== undefined) {
+        if (!cohort.protection || typeof cohort.protection !== "object" || Array.isArray(cohort.protection)) {
+          delete cohort.protection;
+          continue;
+        }
+        const sourceKinds = ["tower", "ability", "tower_script", "status", "reaction", "enemy"];
+        const selected = new Set(Array.isArray(cohort.protection.sourceKinds)
+          ? cohort.protection.sourceKinds.filter((kind) => sourceKinds.includes(kind))
+          : []);
+        cohort.protection.radius = Number.isInteger(cohort.protection.radius)
+          ? cohort.protection.radius
+          : 2;
+        cohort.protection.sourceKinds = sourceKinds.filter((kind) => selected.has(kind));
       }
     }
   }
@@ -5696,6 +5711,18 @@ function renderEnemyFormationsMechanicsEditor() {
   };
 }
 
+function renderEnemyFormationProtectionEditor() {
+  if (MechanicsUI.selectedModuleId !== "enemyBehaviors") return;
+  const input = $("mechanics-enemy-formations-profile-json");
+  const help = $("mechanics-enemy-formation-protection-help");
+  if (!input || !help) return;
+  const descriptor = MechanicsUI.schemas?.enemyBehaviors?.authoring?.formationProtection;
+  const sourceKinds = descriptor?.sourceKinds
+    ?? ["tower", "ability", "tower_script", "status", "reaction", "enemy"];
+  const radius = MechanicsUI.schemas?.enemyBehaviors?.authoring?.limits?.protectionRadius ?? 4;
+  help.textContent = `Optional cohort protection uses radius 1..${radius} and sourceKinds: ${sourceKinds.join(", ")}. Edit the shared Formation cohorts JSON; Preview remains authoritative.`;
+}
+
 function renderEnemyBehaviorsMechanicsEditor() {
   if (MechanicsUI.selectedModuleId !== "enemyBehaviors") return;
   const capability = MechanicsUI.capabilities?.enemyBehaviors;
@@ -5718,6 +5745,7 @@ function renderEnemyBehaviorsMechanicsEditor() {
     if (updateEnemyBehaviorsMechanicsDraft()) renderMechanicsPreviewResult();
   };
   renderEnemyFormationsMechanicsEditor();
+  renderEnemyFormationProtectionEditor();
 }
 
 function mechanicsRequest(enabled) {

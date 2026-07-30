@@ -356,3 +356,33 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - Reset, TowerScript spawn, phase spawn, and death/replacement paths invalidate the lazy protection
   index; reset also clears all protection counters. Focused regression plus original runtime contracts
   pass 14/14 and `npm run typecheck` passes.
+
+### R12.4c RED/GREEN — constructor, AI, renderer, and player surfaces
+
+- Independent surface RED added four contracts and produced 12/12 expected failures: the inert
+  recipe and explicit prerequisites were missing; MCP omitted the closed protection vocabulary and
+  read-only GameEvent; Mechanics Hub had no isolated protection guidance; Canvas/Phaser had no
+  shared active-only presentation projector.
+- GREEN adds `basic_vanguard_protection` without enabling or selecting Navigation, Combat, or Enemy
+  Behaviors; guide v41 and schema discovery reuse the existing guarded mechanics transaction and add
+  no dedicated writer. Mechanics Hub keeps protection inside the formation JSON editor.
+- Canvas and generated Phaser consume one bounded fail-closed projector over authoritative active
+  snapshot metadata/events and do not own interceptor selection. Focused surface GREEN passes 12/12;
+  Renderer/Studio compatibility passes 379/379 and related guide/descriptor compatibility passes
+  83/83.
+- A separate projector-hardening RED found 5 fail-open own-data cases for extra/symbol array fields
+  and a cyclic event value. Closed dense-array validation and event-shape screening make the expanded
+  projector contract GREEN at 14/14 without changing gameplay state.
+
+### R12.4d RED/GREEN — documentation and opt-in fixture
+
+- Independent docs/fixture RED command:
+  `npx vitest run packages/mcp/r12-vanguard-protection-docs.contract.test.mjs` produced 3/3
+  expected failures because the `opt-in-vanguard-protection` catalog, mission selection, and README
+  did not exist. Production runtime was unchanged when the evidence was captured.
+- GREEN adds one detached fixture that explicitly composes Navigation v1 `dynamic_flow`, a Combat
+  root shield, and an `enemyBehaviors` protected formation. Architecture, ADR, roadmap, and runbook
+  freeze one-hop interception, 16 candidates per packet, 512 redirects per public tick, and the
+  read-only non-TowerScript `vanguardDamageIntercepted` GameEvent.
+- Focused docs/fixture contract is GREEN at 3/3. The combined agent-guide/docs check is GREEN at
+  7/7; both fixture JSON documents parse successfully and the scoped diff check passes.
