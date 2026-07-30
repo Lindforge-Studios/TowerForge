@@ -37,7 +37,7 @@ describe("TowerScript v6 transactional terraforming contract", () => {
   it("publishes the exact v6 action, operation union, limits, and elevation event", () => {
     const actions = TOWER_SCRIPT_ACTION_SCHEMA as unknown as Record<string, unknown>;
     const action = actions.terraformTiles as Record<string, unknown> | undefined;
-    expect(TOWER_SCRIPT_SCHEMA.schemaVersion).toBe(6);
+    expect(TOWER_SCRIPT_SCHEMA.schemaVersion).toBe(7);
     expect(action).toMatchObject({
       required: { operations: "1..64 closed terraform operations" },
       optional: { duration: expect.stringMatching(/expression.*all.*set/i) },

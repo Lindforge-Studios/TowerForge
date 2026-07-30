@@ -6,13 +6,15 @@ import type {
 } from "./types.js";
 import { canonicalStringify } from "../simulation/stable-digest.js";
 
-export const TOWER_SCRIPT_TRACE_SCHEMA_VERSION = 1 as const;
+export const TOWER_SCRIPT_TRACE_SCHEMA_VERSION = 2 as const;
 
 export type TowerScriptTracePhase =
   | "event"
   | "binding"
   | "handler"
   | "condition"
+  | "behavior"
+  | "transition"
   | "action"
   | "state_diff"
   | "diagnostic";
@@ -44,16 +46,29 @@ interface TowerScriptTraceEntryBaseV1 {
   readonly phaseOrdinal: number;
 }
 
-export type TowerScriptTraceEntryV1 = Readonly<TowerScriptTraceEntryBaseV1 & {
+export type TowerScriptTraceEntryV2 = Readonly<TowerScriptTraceEntryBaseV1 & {
   readonly event?: Readonly<Record<string, TowerScriptJson>>;
   readonly scope?: string;
   readonly result?: boolean;
+  readonly controllerId?: string;
+  readonly nodeId?: string;
+  readonly nodeKind?: string;
+  readonly status?: "success" | "failure";
+  readonly selectedTargetIds?: readonly string[];
+  readonly machineId?: string;
+  readonly transitionId?: string;
+  readonly fromStatePath?: string;
+  readonly toStatePath?: string;
+  readonly actionPhase?: "entry" | "exit" | "transition";
   readonly action?: TowerScriptAction;
   readonly changes?: readonly TowerScriptStateChangeV1[];
   readonly diagnostic?: TowerScriptDiagnostic;
 }>;
 
-export interface TowerScriptTraceSnapshotV1 {
+/** Compatibility type name retained for consumers compiled against R6. */
+export type TowerScriptTraceEntryV1 = TowerScriptTraceEntryV2;
+
+export interface TowerScriptTraceSnapshotV2 {
   readonly schemaVersion: typeof TOWER_SCRIPT_TRACE_SCHEMA_VERSION;
   readonly maxEntries: number;
   readonly maxBytes: number;
@@ -62,19 +77,24 @@ export interface TowerScriptTraceSnapshotV1 {
   readonly totalEntries: number;
   readonly totalActions: number;
   readonly phaseTotals: Readonly<Record<TowerScriptTracePhase, number>>;
-  readonly entries: readonly TowerScriptTraceEntryV1[];
+  readonly entries: readonly TowerScriptTraceEntryV2[];
 }
+
+/** Compatibility type name retained for consumers compiled against R6. */
+export type TowerScriptTraceSnapshotV1 = TowerScriptTraceSnapshotV2;
 
 export interface TowerScriptTraceCollector {
   readonly maxEntries: number;
   readonly maxBytes: number;
-  record(entry: Omit<TowerScriptTraceEntryV1, "schemaVersion" | "sequence" | "actionsBefore" | "actionOrdinal" | "phaseOrdinal">): TowerScriptTraceEntryV1;
+  record(entry: Omit<TowerScriptTraceEntryV2, "schemaVersion" | "sequence" | "actionsBefore" | "actionOrdinal" | "phaseOrdinal">): TowerScriptTraceEntryV2;
   clear(): void;
   getSnapshot(): TowerScriptTraceSnapshotV1;
   /** Internal debugger control-flow check; ordinary collectors always return false. */
   shouldPauseAfterAction(sequence: number): boolean;
   /** Internal debugger control-flow check for pre-event/pre-handler boundaries. */
   shouldPauseBeforeEntry(sequence: number): boolean;
+  /** Internal debugger control-flow check for post-phase boundaries. */
+  shouldPauseAfterEntry(sequence: number): boolean;
 }
 
 const MIN_TRACE_ENTRIES = 1;
@@ -111,6 +131,8 @@ export function createTowerScriptTraceCollector(options: {
   readonly maxBytes?: number;
   /** Zero-based action occurrence inside one replayed command. */
   readonly pauseAfterAction?: number;
+  /** Zero-based occurrence of any trace phase inside one replayed command. */
+  readonly pauseAfter?: Readonly<{ phase: TowerScriptTracePhase; occurrence: number }>;
   /** Zero-based phase occurrence inside one replayed command. */
   readonly pauseBefore?: Readonly<{ phase: "event" | "handler"; occurrence: number }>;
 }): TowerScriptTraceCollector {
@@ -123,7 +145,7 @@ export function createTowerScriptTraceCollector(options: {
     throw new Error(`TowerScript trace maxBytes must be an integer ${MIN_TRACE_BYTES}..${MAX_TRACE_BYTES}.`);
   }
   let nextSequence = 0;
-  let entries: TowerScriptTraceEntryV1[] = [];
+  let entries: TowerScriptTraceEntryV2[] = [];
   let entryBytes: number[] = [];
   let retainedBytes = 0;
   let nextActionOccurrence = 0;
@@ -132,12 +154,15 @@ export function createTowerScriptTraceCollector(options: {
     binding: 0,
     handler: 0,
     condition: 0,
+    behavior: 0,
+    transition: 0,
     action: 0,
     state_diff: 0,
     diagnostic: 0
   };
   let pauseSequence: number | undefined;
   let pauseBeforeSequence: number | undefined;
+  let pauseAfterSequence: number | undefined;
   if (options.pauseAfterAction !== undefined
     && (!Number.isInteger(options.pauseAfterAction) || options.pauseAfterAction < 0 || options.pauseAfterAction >= MAX_TRACE_ENTRIES)) {
     throw new Error("TowerScript trace pauseAfterAction is outside the trace budget.");
@@ -148,11 +173,17 @@ export function createTowerScriptTraceCollector(options: {
       || options.pauseBefore.occurrence >= MAX_TRACE_ENTRIES)) {
     throw new Error("TowerScript trace pauseBefore occurrence is outside the trace budget.");
   }
+  if (options.pauseAfter !== undefined
+    && (!Number.isInteger(options.pauseAfter.occurrence)
+      || options.pauseAfter.occurrence < 0
+      || options.pauseAfter.occurrence >= MAX_TRACE_ENTRIES)) {
+    throw new Error("TowerScript trace pauseAfter occurrence is outside the trace budget.");
+  }
 
   return Object.freeze({
     maxEntries,
     maxBytes,
-    record(input: Omit<TowerScriptTraceEntryV1, "schemaVersion" | "sequence" | "actionsBefore" | "actionOrdinal" | "phaseOrdinal">) {
+    record(input: Omit<TowerScriptTraceEntryV2, "schemaVersion" | "sequence" | "actionsBefore" | "actionOrdinal" | "phaseOrdinal">) {
       const actionOrdinal = input.phase === "action" ? nextActionOccurrence : undefined;
       const phaseOrdinal = phaseTotals[input.phase];
       const serialized = canonicalStringify({
@@ -163,7 +194,7 @@ export function createTowerScriptTraceCollector(options: {
         schemaVersion: TOWER_SCRIPT_TRACE_SCHEMA_VERSION,
         sequence: nextSequence
       }, { maxDepth: 64, maxNodes: 100_000, maxBytes: 2 * 1024 * 1024 });
-      const entry = Object.freeze(JSON.parse(serialized)) as TowerScriptTraceEntryV1;
+      const entry = Object.freeze(JSON.parse(serialized)) as TowerScriptTraceEntryV2;
       const bytes = utf8ByteLength(serialized);
       nextSequence += 1;
       entries.push(entry);
@@ -173,6 +204,10 @@ export function createTowerScriptTraceCollector(options: {
       if (options.pauseBefore?.phase === input.phase
         && options.pauseBefore.occurrence === phaseOrdinal) {
         pauseBeforeSequence = entry.sequence;
+      }
+      if (options.pauseAfter?.phase === input.phase
+        && options.pauseAfter.occurrence === phaseOrdinal) {
+        pauseAfterSequence = entry.sequence;
       }
       if (entry.phase === "action") {
         if (options.pauseAfterAction === nextActionOccurrence) pauseSequence = entry.sequence;
@@ -195,12 +230,15 @@ export function createTowerScriptTraceCollector(options: {
         binding: 0,
         handler: 0,
         condition: 0,
+        behavior: 0,
+        transition: 0,
         action: 0,
         state_diff: 0,
         diagnostic: 0
       };
       pauseSequence = undefined;
       pauseBeforeSequence = undefined;
+      pauseAfterSequence = undefined;
     },
     getSnapshot() {
       const detached = jsonClone(entries);
@@ -221,6 +259,9 @@ export function createTowerScriptTraceCollector(options: {
     },
     shouldPauseBeforeEntry(sequence: number) {
       return pauseBeforeSequence === sequence;
+    },
+    shouldPauseAfterEntry(sequence: number) {
+      return pauseAfterSequence === sequence;
     }
   });
 }
@@ -228,12 +269,15 @@ export function createTowerScriptTraceCollector(options: {
 /** Debugger-only control flow. The runtime must never convert it to a gameplay diagnostic. */
 export class TowerScriptTracePauseError extends Error {
   readonly code = "TOWER_SCRIPT_TRACE_PAUSE" as const;
+  readonly traceSequence: number;
+  /** @deprecated Use traceSequence. */
   readonly actionSequence: number;
 
-  constructor(actionSequence: number) {
-    super(`TowerScript debug replay paused after action trace ${actionSequence}.`);
+  constructor(traceSequence: number) {
+    super(`TowerScript debug replay paused at trace ${traceSequence}.`);
     this.name = "TowerScriptTracePauseError";
-    this.actionSequence = actionSequence;
+    this.traceSequence = traceSequence;
+    this.actionSequence = traceSequence;
   }
 }
 

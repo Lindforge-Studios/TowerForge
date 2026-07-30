@@ -86,6 +86,8 @@ export interface EnemyHealAuraDefinition {
 export interface EnemyType {
     id: string;
     label: string;
+    /** Optional author-defined decision/quest tags; inert unless a feature explicitly reads them. */
+    tags?: readonly string[];
     maxHp: number;
     speed: number;
     reward: ResourceCost;
@@ -604,6 +606,16 @@ export interface TowerState {
     /** Current health if the tower type has `maxHp`; when it reaches 0 the tower is destroyed. */
     hp?: number;
 }
+export interface TowerScriptedTargetingSnapshotV1 {
+    readonly schemaVersion: 1;
+    readonly scriptId: string;
+    readonly behaviorTreeId: string;
+    readonly fallbackMode: TowerTargetMode;
+}
+export interface TowerSnapshot extends TowerState {
+    /** Derived from active TowerScript v7 content; never stored in authoritative tower state. */
+    readonly scriptedTargeting?: TowerScriptedTargetingSnapshotV1;
+}
 export type EnemyMarkChangeCause = "application" | "consume" | "expiration" | "script";
 export interface EnemyMarkChangedEvent {
     type: "enemyMarkChanged";
@@ -890,6 +902,14 @@ export type GameEvent = {
     fromElevation: number;
     toElevation: number;
     source: "script" | "restore";
+} | {
+    type: "stateMachineTransitioned";
+    scriptId: string;
+    machineId: string;
+    contextId: string;
+    transitionId: string;
+    fromStatePath: string;
+    toStatePath: string;
 } | {
     type: "scriptSignal";
     scriptId: string;
@@ -1307,7 +1327,7 @@ export interface GameSnapshot {
     nextWaveRemaining: number;
     nextWaveDelayUnits: number;
     enemies: EnemyState[];
-    towers: TowerState[];
+    towers: TowerSnapshot[];
     tiles: HexTile[];
     abilities: Partial<Record<MissionAbilityId, AbilitySnapshot>>;
     temporaryWaterTiles: TemporaryWaterTile[];

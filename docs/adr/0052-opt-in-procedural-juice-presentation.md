@@ -1,4 +1,4 @@
-# ADR 0051: Opt-in Procedural Juice Presentation
+# ADR 0052: Opt-in Procedural Juice Presentation
 
 - Status: Accepted
 - Date: 2026-07-29

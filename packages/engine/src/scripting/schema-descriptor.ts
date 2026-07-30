@@ -5,6 +5,7 @@ import type {
   TowerScriptOperator,
   TowerScriptScope
 } from "./types.js";
+import { TOWER_TARGET_MODES } from "../simulation/types.js";
 
 export const TOWER_SCRIPT_SCOPES = Object.freeze([
   "global", "mission", "map", "wave", "tower", "enemy", "ability", "terrain"
@@ -16,7 +17,7 @@ export const TOWER_SCRIPT_EVENTS = Object.freeze([
   "enemyMarkChanged",
   "enemyExposureChanged", "enemyReactionTriggered",
   "enemySpawnedOnDeath", "enemyPhaseSpawned", "waveStarted", "waveCleared", "resourcesGranted", "abilityUsed",
-  "enemyEnteredTile", "terrainChanged", "elevationChanged", "objectiveCompleted", "objectiveFailed", "starEarned", "victory", "defeat", "signal"
+  "enemyEnteredTile", "terrainChanged", "elevationChanged", "stateMachineTransitioned", "objectiveCompleted", "objectiveFailed", "starEarned", "victory", "defeat", "signal"
 ] satisfies TowerScriptEventName[]);
 
 export const TOWER_SCRIPT_OPERATORS = Object.freeze([
@@ -118,6 +119,9 @@ export const TOWER_SCRIPT_EVENT_FIELDS = Object.freeze({
   enemyEnteredTile: ["type", "enemyId", "enemyTypeId", "coord", "terrain", "terrainMetadata", "routeId", "pathOrder"],
   terrainChanged: ["type", "coord", "fromTerrain", "toTerrain", "terrainMetadata", "source"],
   elevationChanged: ["type", "coord", "fromElevation", "toElevation", "source"],
+  stateMachineTransitioned: [
+    "type", "scriptId", "machineId", "contextId", "transitionId", "fromStatePath", "toStatePath"
+  ],
   objectiveCompleted: ["type", "objectiveId", "kind"],
   objectiveFailed: ["type", "objectiveId", "kind"],
   starEarned: ["type", "starId"],
@@ -141,11 +145,166 @@ export const TOWER_SCRIPT_LIMITS = Object.freeze({
   activeTerrainOverrides: 512,
   stateBytesPerBinding: 65_536,
   externalSignalPayloadBytes: 65_536,
-  retainedDiagnostics: 32
+  retainedDiagnostics: 32,
+  behaviorTreesPerScript: 32,
+  behaviorTreeNodes: 256,
+  behaviorTreeDepth: 16,
+  behaviorChildrenPerComposite: 64,
+  behaviorCandidatesPerAcquisition: 512,
+  behaviorExpressionOperationsPerAcquisition: 512,
+  enemyTagsPerDefinition: 32,
+  stateMachinesPerScript: 16,
+  stateMachineStates: 128,
+  stateMachineDepth: 8,
+  stateTransitionsPerState: 32,
+  stateTransitionsPerTransaction: 128
 });
 
-export const TOWER_SCRIPT_GRAPH_DESCRIPTOR = Object.freeze({
+export const TOWER_SCRIPT_BEHAVIOR_TREE_DESCRIPTOR = Object.freeze({
   schemaVersion: 1,
+  optIn: true,
+  bindingScope: "tower",
+  statuses: Object.freeze(["success", "failure"] as const),
+  nodes: Object.freeze({
+    selector: Object.freeze({ required: Object.freeze(["id", "type", "children"] as const) }),
+    sequence: Object.freeze({ required: Object.freeze(["id", "type", "children"] as const) }),
+    condition: Object.freeze({
+      required: Object.freeze(["id", "type", "mode", "expression"] as const),
+      modes: Object.freeze(["context", "any_candidate"] as const)
+    }),
+    action: Object.freeze({
+      required: Object.freeze(["id", "type", "action", "mode"] as const),
+      optional: Object.freeze(["filter"] as const),
+      actions: Object.freeze(["select_targets"] as const),
+      targetModes: TOWER_TARGET_MODES
+    })
+  }),
+  contextRoots: Object.freeze(["tower", "game", "state", "candidates", "candidate"] as const),
+  fallback: "tower_target_mode"
+});
+
+export const TOWER_SCRIPT_STATE_MACHINE_DESCRIPTOR = Object.freeze({
+  schemaVersion: 1,
+  optIn: true,
+  nodes: Object.freeze({
+    state: Object.freeze({
+      required: Object.freeze(["id"] as const),
+      optional: Object.freeze(["initial", "states", "entryActions", "exitActions", "transitions"] as const)
+    }),
+    transition: Object.freeze({
+      required: Object.freeze(["id", "event", "target"] as const),
+      optional: Object.freeze(["when", "actions"] as const)
+    })
+  }),
+  hierarchy: "nested_states",
+  transitionOrder: "active_leaf_to_ancestors_then_authored_order",
+  transitionTarget: "absolute_state_path",
+  transitionLimit: "one_per_machine_context_event",
+  selfTransition: "full_exit_entry",
+  actionPhases: Object.freeze(["exit", "transition", "entry"] as const),
+  features: Object.freeze({
+    parallelRegions: false,
+    historyStates: false,
+    delayedTransitions: false,
+    arbitraryCode: false
+  })
+});
+
+/**
+ * Copyable, parameter-marked controller recipes exposed through describe_schema(scripts).
+ * They are inert descriptor data: authoring clients must bind the `$...` placeholders to existing
+ * content ids and use the ordinary preview/revision-guarded script transaction.
+ */
+export const TOWER_SCRIPT_CONTROLLER_RECIPES = Object.freeze([
+  Object.freeze({
+    id: "boss_finisher_targeting",
+    controller: "behavior_tree",
+    schemaVersion: 1,
+    parameters: Object.freeze({ towerTypeId: "existing attacking tower type id" }),
+    template: Object.freeze({
+      schemaVersion: 1,
+      id: "boss_finisher",
+      bindings: Object.freeze([{ scope: "tower", ids: Object.freeze(["$towerTypeId"]) }]),
+      root: Object.freeze({
+        id: "choose_target",
+        type: "selector",
+        children: Object.freeze([
+          Object.freeze({
+            id: "finish_low_boss",
+            type: "sequence",
+            children: Object.freeze([
+              Object.freeze({
+                id: "boss_below_twenty_percent",
+                type: "condition",
+                mode: "any_candidate",
+                expression: Object.freeze({
+                  $op: "and",
+                  args: Object.freeze([
+                    Object.freeze({ $get: "candidate.tags.boss" }),
+                    Object.freeze({
+                      $op: "lt",
+                      args: Object.freeze([Object.freeze({ $get: "candidate.hpRatio" }), 0.2])
+                    })
+                  ])
+                })
+              }),
+              Object.freeze({
+                id: "select_boss",
+                type: "action",
+                action: "select_targets",
+                filter: Object.freeze({ $get: "candidate.tags.boss" }),
+                mode: "first"
+              })
+            ])
+          }),
+          Object.freeze({
+            id: "select_weakest",
+            type: "action",
+            action: "select_targets",
+            mode: "weakest"
+          })
+        ])
+      })
+    })
+  }),
+  Object.freeze({
+    id: "multi_phase_boss",
+    controller: "state_machine",
+    schemaVersion: 1,
+    parameters: Object.freeze({ enemyTypeId: "existing enemy type id" }),
+    template: Object.freeze({
+      schemaVersion: 1,
+      id: "boss_phases",
+      bindings: Object.freeze([{ scope: "enemy", ids: Object.freeze(["$enemyTypeId"]) }]),
+      initial: "combat",
+      states: Object.freeze([
+        Object.freeze({
+          id: "combat",
+          initial: "phase_one",
+          states: Object.freeze([
+            Object.freeze({
+              id: "phase_one",
+              transitions: Object.freeze([Object.freeze({
+                id: "enrage",
+                event: "enemyHit",
+                target: "/combat/phase_two",
+                when: Object.freeze({
+                  $op: "lt",
+                  args: Object.freeze([Object.freeze({ $get: "self.hpRatio" }), 0.2])
+                })
+              })])
+            }),
+            Object.freeze({ id: "phase_two" })
+          ])
+        })
+      ])
+    })
+  })
+]);
+
+export const TOWER_SCRIPT_GRAPH_DESCRIPTOR = Object.freeze({
+  schemaVersion: 2,
+  acceptsSchemaVersions: Object.freeze([1, 2] as const),
   canonicalAst: true,
   projection: "lossless",
   unknownNodes: "raw_lossless",
@@ -155,9 +314,9 @@ export const TOWER_SCRIPT_GRAPH_DESCRIPTOR = Object.freeze({
 });
 
 export const TOWER_SCRIPT_DEBUG_DESCRIPTOR = Object.freeze({
-  schemaVersion: 1,
+  schemaVersion: 2,
   optIn: true,
-  stepModes: Object.freeze(["tick", "event", "handler", "action"] as const),
+  stepModes: Object.freeze(["tick", "event", "handler", "action", "behavior", "transition"] as const),
   actionStepping: "checkpoint_replay_to_cursor",
   analysis: Object.freeze({
     tool: "preview_tower_script_trace",
@@ -167,8 +326,8 @@ export const TOWER_SCRIPT_DEBUG_DESCRIPTOR = Object.freeze({
   }),
   rewind: Object.freeze({ bounded: true, maxCheckpointRingCapacity: 2_048 }),
   trace: Object.freeze({
-    schemaVersion: 1,
-    phases: Object.freeze(["event", "binding", "handler", "condition", "action", "state_diff", "diagnostic"] as const),
+    schemaVersion: 2,
+    phases: Object.freeze(["event", "binding", "handler", "condition", "behavior", "transition", "action", "state_diff", "diagnostic"] as const),
     retention: "bounded_in_memory",
     maxEntries: 16_384,
     persistedInSnapshot: false,
@@ -195,13 +354,16 @@ export const TOWER_SCRIPT_COMPLETION_DESCRIPTOR = Object.freeze({
 });
 
 export const TOWER_SCRIPT_SCHEMA = Object.freeze({
-  schemaVersion: 6,
-  supportedSchemaVersions: Object.freeze([1, 2, 3, 4, 5, 6] as const),
+  schemaVersion: 7,
+  supportedSchemaVersions: Object.freeze([1, 2, 3, 4, 5, 6, 7] as const),
   filePattern: "scripts/**/*.tower.json",
   semantics: "Deterministic JSON rules interpreted by the engine; never executable host code.",
   graph: TOWER_SCRIPT_GRAPH_DESCRIPTOR,
   debug: TOWER_SCRIPT_DEBUG_DESCRIPTOR,
   completion: TOWER_SCRIPT_COMPLETION_DESCRIPTOR,
+  behaviorTrees: TOWER_SCRIPT_BEHAVIOR_TREE_DESCRIPTOR,
+  stateMachines: TOWER_SCRIPT_STATE_MACHINE_DESCRIPTOR,
+  controllerRecipes: TOWER_SCRIPT_CONTROLLER_RECIPES,
   developerExperience: Object.freeze({
     optIn: true,
     gameplayCapability: false,

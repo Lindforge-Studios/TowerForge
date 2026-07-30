@@ -1,5 +1,5 @@
 export declare const TOWER_SCRIPT_SCOPES: readonly ("map" | "global" | "mission" | "wave" | "tower" | "enemy" | "ability" | "terrain")[];
-export declare const TOWER_SCRIPT_EVENTS: readonly ("gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "towerShieldChanged" | "enemyHit" | "enemyShieldChanged" | "enemyMarkChanged" | "enemyExposureChanged" | "enemyReactionTriggered" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "elevationChanged" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal")[];
+export declare const TOWER_SCRIPT_EVENTS: readonly ("gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "towerShieldChanged" | "enemyHit" | "enemyShieldChanged" | "enemyMarkChanged" | "enemyExposureChanged" | "enemyReactionTriggered" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "elevationChanged" | "stateMachineTransitioned" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal")[];
 export declare const TOWER_SCRIPT_OPERATORS: readonly ("eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "and" | "or" | "not" | "add" | "sub" | "mul" | "div" | "min" | "max" | "coalesce")[];
 export declare const TOWER_SCRIPT_TARGETS: Readonly<{
     entity: ("self" | "eventEnemy" | "eventTower" | "allEnemies" | "allTowers")[];
@@ -181,6 +181,7 @@ export declare const TOWER_SCRIPT_EVENT_FIELDS: Readonly<{
     enemyEnteredTile: string[];
     terrainChanged: string[];
     elevationChanged: string[];
+    stateMachineTransitioned: string[];
     objectiveCompleted: string[];
     objectiveFailed: string[];
     starEarned: string[];
@@ -204,9 +205,168 @@ export declare const TOWER_SCRIPT_LIMITS: Readonly<{
     stateBytesPerBinding: 65536;
     externalSignalPayloadBytes: 65536;
     retainedDiagnostics: 32;
+    behaviorTreesPerScript: 32;
+    behaviorTreeNodes: 256;
+    behaviorTreeDepth: 16;
+    behaviorChildrenPerComposite: 64;
+    behaviorCandidatesPerAcquisition: 512;
+    behaviorExpressionOperationsPerAcquisition: 512;
+    enemyTagsPerDefinition: 32;
+    stateMachinesPerScript: 16;
+    stateMachineStates: 128;
+    stateMachineDepth: 8;
+    stateTransitionsPerState: 32;
+    stateTransitionsPerTransaction: 128;
 }>;
-export declare const TOWER_SCRIPT_GRAPH_DESCRIPTOR: Readonly<{
+export declare const TOWER_SCRIPT_BEHAVIOR_TREE_DESCRIPTOR: Readonly<{
     schemaVersion: 1;
+    optIn: true;
+    bindingScope: "tower";
+    statuses: readonly ["success", "failure"];
+    nodes: Readonly<{
+        selector: Readonly<{
+            required: readonly ["id", "type", "children"];
+        }>;
+        sequence: Readonly<{
+            required: readonly ["id", "type", "children"];
+        }>;
+        condition: Readonly<{
+            required: readonly ["id", "type", "mode", "expression"];
+            modes: readonly ["context", "any_candidate"];
+        }>;
+        action: Readonly<{
+            required: readonly ["id", "type", "action", "mode"];
+            optional: readonly ["filter"];
+            actions: readonly ["select_targets"];
+            targetModes: readonly ["first", "last", "closest", "furthest", "strongest", "weakest", "fastest_ahead", "largest_hp"];
+        }>;
+    }>;
+    contextRoots: readonly ["tower", "game", "state", "candidates", "candidate"];
+    fallback: "tower_target_mode";
+}>;
+export declare const TOWER_SCRIPT_STATE_MACHINE_DESCRIPTOR: Readonly<{
+    schemaVersion: 1;
+    optIn: true;
+    nodes: Readonly<{
+        state: Readonly<{
+            required: readonly ["id"];
+            optional: readonly ["initial", "states", "entryActions", "exitActions", "transitions"];
+        }>;
+        transition: Readonly<{
+            required: readonly ["id", "event", "target"];
+            optional: readonly ["when", "actions"];
+        }>;
+    }>;
+    hierarchy: "nested_states";
+    transitionOrder: "active_leaf_to_ancestors_then_authored_order";
+    transitionTarget: "absolute_state_path";
+    transitionLimit: "one_per_machine_context_event";
+    selfTransition: "full_exit_entry";
+    actionPhases: readonly ["exit", "transition", "entry"];
+    features: Readonly<{
+        parallelRegions: false;
+        historyStates: false;
+        delayedTransitions: false;
+        arbitraryCode: false;
+    }>;
+}>;
+/**
+ * Copyable, parameter-marked controller recipes exposed through describe_schema(scripts).
+ * They are inert descriptor data: authoring clients must bind the `$...` placeholders to existing
+ * content ids and use the ordinary preview/revision-guarded script transaction.
+ */
+export declare const TOWER_SCRIPT_CONTROLLER_RECIPES: readonly (Readonly<{
+    id: "boss_finisher_targeting";
+    controller: "behavior_tree";
+    schemaVersion: 1;
+    parameters: Readonly<{
+        towerTypeId: "existing attacking tower type id";
+    }>;
+    template: Readonly<{
+        schemaVersion: 1;
+        id: "boss_finisher";
+        bindings: readonly {
+            scope: string;
+            ids: readonly string[];
+        }[];
+        root: Readonly<{
+            id: "choose_target";
+            type: "selector";
+            children: readonly (Readonly<{
+                id: "finish_low_boss";
+                type: "sequence";
+                children: readonly (Readonly<{
+                    id: "boss_below_twenty_percent";
+                    type: "condition";
+                    mode: "any_candidate";
+                    expression: Readonly<{
+                        $op: "and";
+                        args: readonly (Readonly<{
+                            $get: "candidate.tags.boss";
+                        }> | Readonly<{
+                            $op: "lt";
+                            args: readonly (number | Readonly<{
+                                $get: "candidate.hpRatio";
+                            }>)[];
+                        }>)[];
+                    }>;
+                }> | Readonly<{
+                    id: "select_boss";
+                    type: "action";
+                    action: "select_targets";
+                    filter: Readonly<{
+                        $get: "candidate.tags.boss";
+                    }>;
+                    mode: "first";
+                }>)[];
+            }> | Readonly<{
+                id: "select_weakest";
+                type: "action";
+                action: "select_targets";
+                mode: "weakest";
+            }>)[];
+        }>;
+    }>;
+}> | Readonly<{
+    id: "multi_phase_boss";
+    controller: "state_machine";
+    schemaVersion: 1;
+    parameters: Readonly<{
+        enemyTypeId: "existing enemy type id";
+    }>;
+    template: Readonly<{
+        schemaVersion: 1;
+        id: "boss_phases";
+        bindings: readonly {
+            scope: string;
+            ids: readonly string[];
+        }[];
+        initial: "combat";
+        states: readonly Readonly<{
+            id: "combat";
+            initial: "phase_one";
+            states: readonly (Readonly<{
+                id: "phase_one";
+                transitions: readonly Readonly<{
+                    id: "enrage";
+                    event: "enemyHit";
+                    target: "/combat/phase_two";
+                    when: Readonly<{
+                        $op: "lt";
+                        args: readonly (number | Readonly<{
+                            $get: "self.hpRatio";
+                        }>)[];
+                    }>;
+                }>[];
+            }> | Readonly<{
+                id: "phase_two";
+            }>)[];
+        }>[];
+    }>;
+}>)[];
+export declare const TOWER_SCRIPT_GRAPH_DESCRIPTOR: Readonly<{
+    schemaVersion: 2;
+    acceptsSchemaVersions: readonly [1, 2];
     canonicalAst: true;
     projection: "lossless";
     unknownNodes: "raw_lossless";
@@ -215,9 +375,9 @@ export declare const TOWER_SCRIPT_GRAPH_DESCRIPTOR: Readonly<{
     layoutInGameplayPackages: false;
 }>;
 export declare const TOWER_SCRIPT_DEBUG_DESCRIPTOR: Readonly<{
-    schemaVersion: 1;
+    schemaVersion: 2;
     optIn: true;
-    stepModes: readonly ["tick", "event", "handler", "action"];
+    stepModes: readonly ["tick", "event", "handler", "action", "behavior", "transition"];
     actionStepping: "checkpoint_replay_to_cursor";
     analysis: Readonly<{
         tool: "preview_tower_script_trace";
@@ -230,8 +390,8 @@ export declare const TOWER_SCRIPT_DEBUG_DESCRIPTOR: Readonly<{
         maxCheckpointRingCapacity: 2048;
     }>;
     trace: Readonly<{
-        schemaVersion: 1;
-        phases: readonly ["event", "binding", "handler", "condition", "action", "state_diff", "diagnostic"];
+        schemaVersion: 2;
+        phases: readonly ["event", "binding", "handler", "condition", "behavior", "transition", "action", "state_diff", "diagnostic"];
         retention: "bounded_in_memory";
         maxEntries: 16384;
         persistedInSnapshot: false;
@@ -244,7 +404,7 @@ export declare const TOWER_SCRIPT_COMPLETION_DESCRIPTOR: Readonly<{
     source: "engine_schema_descriptor";
     catalog: Readonly<{
         events: readonly Readonly<{
-            name: "gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "towerShieldChanged" | "enemyHit" | "enemyShieldChanged" | "enemyMarkChanged" | "enemyExposureChanged" | "enemyReactionTriggered" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "elevationChanged" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal";
+            name: "gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "towerShieldChanged" | "enemyHit" | "enemyShieldChanged" | "enemyMarkChanged" | "enemyExposureChanged" | "enemyReactionTriggered" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "elevationChanged" | "stateMachineTransitioned" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal";
             fields: string[];
         }>[];
         actions: readonly Readonly<{
@@ -384,12 +544,13 @@ export declare const TOWER_SCRIPT_COMPLETION_DESCRIPTOR: Readonly<{
     }>;
 }>;
 export declare const TOWER_SCRIPT_SCHEMA: Readonly<{
-    schemaVersion: 6;
-    supportedSchemaVersions: readonly [1, 2, 3, 4, 5, 6];
+    schemaVersion: 7;
+    supportedSchemaVersions: readonly [1, 2, 3, 4, 5, 6, 7];
     filePattern: "scripts/**/*.tower.json";
     semantics: "Deterministic JSON rules interpreted by the engine; never executable host code.";
     graph: Readonly<{
-        schemaVersion: 1;
+        schemaVersion: 2;
+        acceptsSchemaVersions: readonly [1, 2];
         canonicalAst: true;
         projection: "lossless";
         unknownNodes: "raw_lossless";
@@ -398,9 +559,9 @@ export declare const TOWER_SCRIPT_SCHEMA: Readonly<{
         layoutInGameplayPackages: false;
     }>;
     debug: Readonly<{
-        schemaVersion: 1;
+        schemaVersion: 2;
         optIn: true;
-        stepModes: readonly ["tick", "event", "handler", "action"];
+        stepModes: readonly ["tick", "event", "handler", "action", "behavior", "transition"];
         actionStepping: "checkpoint_replay_to_cursor";
         analysis: Readonly<{
             tool: "preview_tower_script_trace";
@@ -413,8 +574,8 @@ export declare const TOWER_SCRIPT_SCHEMA: Readonly<{
             maxCheckpointRingCapacity: 2048;
         }>;
         trace: Readonly<{
-            schemaVersion: 1;
-            phases: readonly ["event", "binding", "handler", "condition", "action", "state_diff", "diagnostic"];
+            schemaVersion: 2;
+            phases: readonly ["event", "binding", "handler", "condition", "behavior", "transition", "action", "state_diff", "diagnostic"];
             retention: "bounded_in_memory";
             maxEntries: 16384;
             persistedInSnapshot: false;
@@ -427,7 +588,7 @@ export declare const TOWER_SCRIPT_SCHEMA: Readonly<{
         source: "engine_schema_descriptor";
         catalog: Readonly<{
             events: readonly Readonly<{
-                name: "gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "towerShieldChanged" | "enemyHit" | "enemyShieldChanged" | "enemyMarkChanged" | "enemyExposureChanged" | "enemyReactionTriggered" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "elevationChanged" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal";
+                name: "gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "towerShieldChanged" | "enemyHit" | "enemyShieldChanged" | "enemyMarkChanged" | "enemyExposureChanged" | "enemyReactionTriggered" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "elevationChanged" | "stateMachineTransitioned" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal";
                 fields: string[];
             }>[];
             actions: readonly Readonly<{
@@ -566,12 +727,153 @@ export declare const TOWER_SCRIPT_SCHEMA: Readonly<{
             }>[];
         }>;
     }>;
+    behaviorTrees: Readonly<{
+        schemaVersion: 1;
+        optIn: true;
+        bindingScope: "tower";
+        statuses: readonly ["success", "failure"];
+        nodes: Readonly<{
+            selector: Readonly<{
+                required: readonly ["id", "type", "children"];
+            }>;
+            sequence: Readonly<{
+                required: readonly ["id", "type", "children"];
+            }>;
+            condition: Readonly<{
+                required: readonly ["id", "type", "mode", "expression"];
+                modes: readonly ["context", "any_candidate"];
+            }>;
+            action: Readonly<{
+                required: readonly ["id", "type", "action", "mode"];
+                optional: readonly ["filter"];
+                actions: readonly ["select_targets"];
+                targetModes: readonly ["first", "last", "closest", "furthest", "strongest", "weakest", "fastest_ahead", "largest_hp"];
+            }>;
+        }>;
+        contextRoots: readonly ["tower", "game", "state", "candidates", "candidate"];
+        fallback: "tower_target_mode";
+    }>;
+    stateMachines: Readonly<{
+        schemaVersion: 1;
+        optIn: true;
+        nodes: Readonly<{
+            state: Readonly<{
+                required: readonly ["id"];
+                optional: readonly ["initial", "states", "entryActions", "exitActions", "transitions"];
+            }>;
+            transition: Readonly<{
+                required: readonly ["id", "event", "target"];
+                optional: readonly ["when", "actions"];
+            }>;
+        }>;
+        hierarchy: "nested_states";
+        transitionOrder: "active_leaf_to_ancestors_then_authored_order";
+        transitionTarget: "absolute_state_path";
+        transitionLimit: "one_per_machine_context_event";
+        selfTransition: "full_exit_entry";
+        actionPhases: readonly ["exit", "transition", "entry"];
+        features: Readonly<{
+            parallelRegions: false;
+            historyStates: false;
+            delayedTransitions: false;
+            arbitraryCode: false;
+        }>;
+    }>;
+    controllerRecipes: readonly (Readonly<{
+        id: "boss_finisher_targeting";
+        controller: "behavior_tree";
+        schemaVersion: 1;
+        parameters: Readonly<{
+            towerTypeId: "existing attacking tower type id";
+        }>;
+        template: Readonly<{
+            schemaVersion: 1;
+            id: "boss_finisher";
+            bindings: readonly {
+                scope: string;
+                ids: readonly string[];
+            }[];
+            root: Readonly<{
+                id: "choose_target";
+                type: "selector";
+                children: readonly (Readonly<{
+                    id: "finish_low_boss";
+                    type: "sequence";
+                    children: readonly (Readonly<{
+                        id: "boss_below_twenty_percent";
+                        type: "condition";
+                        mode: "any_candidate";
+                        expression: Readonly<{
+                            $op: "and";
+                            args: readonly (Readonly<{
+                                $get: "candidate.tags.boss";
+                            }> | Readonly<{
+                                $op: "lt";
+                                args: readonly (number | Readonly<{
+                                    $get: "candidate.hpRatio";
+                                }>)[];
+                            }>)[];
+                        }>;
+                    }> | Readonly<{
+                        id: "select_boss";
+                        type: "action";
+                        action: "select_targets";
+                        filter: Readonly<{
+                            $get: "candidate.tags.boss";
+                        }>;
+                        mode: "first";
+                    }>)[];
+                }> | Readonly<{
+                    id: "select_weakest";
+                    type: "action";
+                    action: "select_targets";
+                    mode: "weakest";
+                }>)[];
+            }>;
+        }>;
+    }> | Readonly<{
+        id: "multi_phase_boss";
+        controller: "state_machine";
+        schemaVersion: 1;
+        parameters: Readonly<{
+            enemyTypeId: "existing enemy type id";
+        }>;
+        template: Readonly<{
+            schemaVersion: 1;
+            id: "boss_phases";
+            bindings: readonly {
+                scope: string;
+                ids: readonly string[];
+            }[];
+            initial: "combat";
+            states: readonly Readonly<{
+                id: "combat";
+                initial: "phase_one";
+                states: readonly (Readonly<{
+                    id: "phase_one";
+                    transitions: readonly Readonly<{
+                        id: "enrage";
+                        event: "enemyHit";
+                        target: "/combat/phase_two";
+                        when: Readonly<{
+                            $op: "lt";
+                            args: readonly (number | Readonly<{
+                                $get: "self.hpRatio";
+                            }>)[];
+                        }>;
+                    }>[];
+                }> | Readonly<{
+                    id: "phase_two";
+                }>)[];
+            }>[];
+        }>;
+    }>)[];
     developerExperience: Readonly<{
         optIn: true;
         gameplayCapability: false;
         trace: Readonly<{
-            schemaVersion: 1;
-            phases: readonly ["event", "binding", "handler", "condition", "action", "state_diff", "diagnostic"];
+            schemaVersion: 2;
+            phases: readonly ["event", "binding", "handler", "condition", "behavior", "transition", "action", "state_diff", "diagnostic"];
             retention: "bounded_in_memory";
             maxEntries: 16384;
             persistedInSnapshot: false;
@@ -579,9 +881,9 @@ export declare const TOWER_SCRIPT_SCHEMA: Readonly<{
             includedInStateDigest: false;
         }>;
         debugger: Readonly<{
-            schemaVersion: 1;
+            schemaVersion: 2;
             optIn: true;
-            stepModes: readonly ["tick", "event", "handler", "action"];
+            stepModes: readonly ["tick", "event", "handler", "action", "behavior", "transition"];
             actionStepping: "checkpoint_replay_to_cursor";
             analysis: Readonly<{
                 tool: "preview_tower_script_trace";
@@ -594,8 +896,8 @@ export declare const TOWER_SCRIPT_SCHEMA: Readonly<{
                 maxCheckpointRingCapacity: 2048;
             }>;
             trace: Readonly<{
-                schemaVersion: 1;
-                phases: readonly ["event", "binding", "handler", "condition", "action", "state_diff", "diagnostic"];
+                schemaVersion: 2;
+                phases: readonly ["event", "binding", "handler", "condition", "behavior", "transition", "action", "state_diff", "diagnostic"];
                 retention: "bounded_in_memory";
                 maxEntries: 16384;
                 persistedInSnapshot: false;
@@ -605,7 +907,8 @@ export declare const TOWER_SCRIPT_SCHEMA: Readonly<{
             mismatchPolicy: "reject_engine_content_checkpoint_or_replay_mismatch";
         }>;
         visualGraph: Readonly<{
-            schemaVersion: 1;
+            schemaVersion: 2;
+            acceptsSchemaVersions: readonly [1, 2];
             canonicalAst: true;
             projection: "lossless";
             unknownNodes: "raw_lossless";
@@ -617,7 +920,7 @@ export declare const TOWER_SCRIPT_SCHEMA: Readonly<{
             source: "engine_schema_descriptor";
             catalog: Readonly<{
                 events: readonly Readonly<{
-                    name: "gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "towerShieldChanged" | "enemyHit" | "enemyShieldChanged" | "enemyMarkChanged" | "enemyExposureChanged" | "enemyReactionTriggered" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "elevationChanged" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal";
+                    name: "gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "towerShieldChanged" | "enemyHit" | "enemyShieldChanged" | "enemyMarkChanged" | "enemyExposureChanged" | "enemyReactionTriggered" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "elevationChanged" | "stateMachineTransitioned" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal";
                     fields: string[];
                 }>[];
                 actions: readonly Readonly<{
@@ -762,7 +1065,7 @@ export declare const TOWER_SCRIPT_SCHEMA: Readonly<{
         otherScopes: string;
     };
     scopes: readonly ("map" | "global" | "mission" | "wave" | "tower" | "enemy" | "ability" | "terrain")[];
-    events: readonly ("gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "towerShieldChanged" | "enemyHit" | "enemyShieldChanged" | "enemyMarkChanged" | "enemyExposureChanged" | "enemyReactionTriggered" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "elevationChanged" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal")[];
+    events: readonly ("gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "towerShieldChanged" | "enemyHit" | "enemyShieldChanged" | "enemyMarkChanged" | "enemyExposureChanged" | "enemyReactionTriggered" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "elevationChanged" | "stateMachineTransitioned" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal")[];
     eventFields: Readonly<{
         gameStarted: string[];
         tick: string[];
@@ -791,6 +1094,7 @@ export declare const TOWER_SCRIPT_SCHEMA: Readonly<{
         enemyEnteredTile: string[];
         terrainChanged: string[];
         elevationChanged: string[];
+        stateMachineTransitioned: string[];
         objectiveCompleted: string[];
         objectiveFailed: string[];
         starEarned: string[];
@@ -984,6 +1288,18 @@ export declare const TOWER_SCRIPT_SCHEMA: Readonly<{
         stateBytesPerBinding: 65536;
         externalSignalPayloadBytes: 65536;
         retainedDiagnostics: 32;
+        behaviorTreesPerScript: 32;
+        behaviorTreeNodes: 256;
+        behaviorTreeDepth: 16;
+        behaviorChildrenPerComposite: 64;
+        behaviorCandidatesPerAcquisition: 512;
+        behaviorExpressionOperationsPerAcquisition: 512;
+        enemyTagsPerDefinition: 32;
+        stateMachinesPerScript: 16;
+        stateMachineStates: 128;
+        stateMachineDepth: 8;
+        stateTransitionsPerState: 32;
+        stateTransitionsPerTransaction: 128;
     }>;
     example: {
         schemaVersion: number;

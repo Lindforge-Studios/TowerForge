@@ -1100,6 +1100,8 @@ button.pt-event-row:hover { background: var(--surface-2); }
 .script-debug-trace-detail { color: var(--text-muted); overflow-wrap: anywhere; }
 .script-debug-trace-entry.diagnostic .script-debug-trace-phase { color: var(--err); }
 .script-debug-trace-entry.state_diff .script-debug-trace-phase { color: var(--ok); }
+.script-debug-trace-entry.behavior .script-debug-trace-phase { color: #7fc8ff; }
+.script-debug-trace-entry.transition .script-debug-trace-phase { color: #d8a6ff; }
 .playtest-toolbar label { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--text-muted); white-space: nowrap; }
 .playtest-toolbar select { width: auto; min-width: 130px; }
 input[type="range"] { accent-color: var(--accent); width: 120px; padding: 0; }
@@ -1434,6 +1436,8 @@ html[data-ai-dock="closed"] .ai-dock { display: none; }
 .script-graph-help code { color: var(--accent); font-family: var(--mono); }
 .script-graph-canvas { position: relative; min-width: 0; min-height: 360px; overflow: auto; background-color: var(--bg); background-image: radial-gradient(circle, var(--border) 1px, transparent 1px); background-size: 18px 18px; }
 .script-graph-edge { position: absolute; height: 1px; transform-origin: left center; background: var(--border-2); pointer-events: none; }
+.script-graph-edge.transition-target { height: 0; border-top: 2px dashed var(--accent); background: transparent; opacity: .8; }
+.script-graph-node.behavior-tree, .script-graph-node.state-machine { border-width: 2px; }
 .script-graph-node { position: absolute; width: 260px; min-height: 92px; display: grid; grid-template-rows: auto minmax(0, 1fr); border: 1px solid var(--border-2); border-radius: 7px; background: var(--surface); box-shadow: 0 8px 24px rgba(0,0,0,.24); overflow: hidden; }
 .script-graph-node:focus-within, .script-graph-node.selected { border-color: var(--accent); }
 .script-graph-node.raw { border-color: var(--warn); }

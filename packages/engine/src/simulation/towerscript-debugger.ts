@@ -12,9 +12,9 @@ import { JournaledGameSession, type GameCommandJournal } from "./journal.js";
 import { TowerDefenseGame } from "./TowerDefenseGame.js";
 import type { ActionResult, GameSnapshot } from "./types.js";
 
-export const TOWER_SCRIPT_DEBUG_SCHEMA_VERSION = 1 as const;
+export const TOWER_SCRIPT_DEBUG_SCHEMA_VERSION = 2 as const;
 
-export type TowerScriptDebugStepMode = "tick" | "event" | "handler" | "action";
+export type TowerScriptDebugStepMode = "tick" | "event" | "handler" | "action" | "behavior" | "transition";
 
 export interface TowerScriptDebugCursorV1 {
   readonly schemaVersion: typeof TOWER_SCRIPT_DEBUG_SCHEMA_VERSION;
@@ -35,6 +35,9 @@ export interface TowerScriptDebugStepResultV1 {
   readonly live: false;
 }
 
+export type TowerScriptDebugCursorV2 = TowerScriptDebugCursorV1;
+export type TowerScriptDebugStepResultV2 = TowerScriptDebugStepResultV1;
+
 interface DebugCommandRecord {
   readonly command: GameCommand;
   readonly preCheckpoint?: GameCheckpointV1;
@@ -43,8 +46,8 @@ interface DebugCommandRecord {
   readonly traceEnd: number;
   readonly actionStart: number;
   readonly actionEnd: number;
-  readonly phaseStart: Readonly<{ event: number; handler: number }>;
-  readonly phaseEnd: Readonly<{ event: number; handler: number }>;
+  readonly phaseStart: Readonly<{ event: number; handler: number; behavior: number; transition: number }>;
+  readonly phaseEnd: Readonly<{ event: number; handler: number; behavior: number; transition: number }>;
   readonly tick: number;
 }
 
@@ -99,7 +102,9 @@ export class TowerScriptDebugSession {
     tick: 0,
     event: 0,
     handler: 0,
-    action: 0
+    action: 0,
+    behavior: 0,
+    transition: 0
   };
 
   constructor(options: TowerScriptDebugSessionOptions) {
@@ -131,7 +136,9 @@ export class TowerScriptDebugSession {
     const actionStart = beforeTrace?.totalActions ?? 0;
     const phaseStart = {
       event: beforeTrace?.phaseTotals.event ?? 0,
-      handler: beforeTrace?.phaseTotals.handler ?? 0
+      handler: beforeTrace?.phaseTotals.handler ?? 0,
+      behavior: beforeTrace?.phaseTotals.behavior ?? 0,
+      transition: beforeTrace?.phaseTotals.transition ?? 0
     };
     const result = this.journalSession.dispatch(input);
     const acceptedTail = this.journalSession.getAcceptedTail();
@@ -149,7 +156,9 @@ export class TowerScriptDebugSession {
     const actionEnd = afterTrace?.totalActions ?? actionStart;
     const phaseEnd = {
       event: afterTrace?.phaseTotals.event ?? phaseStart.event,
-      handler: afterTrace?.phaseTotals.handler ?? phaseStart.handler
+      handler: afterTrace?.phaseTotals.handler ?? phaseStart.handler,
+      behavior: afterTrace?.phaseTotals.behavior ?? phaseStart.behavior,
+      transition: afterTrace?.phaseTotals.transition ?? phaseStart.transition
     };
     const hasRetainedTraceRange = this.traceCollector !== undefined && traceEnd > traceStart;
     this.commandRecords.push(Object.freeze({
@@ -288,6 +297,8 @@ export class TowerScriptDebugSession {
     this.stepPositions.event = 0;
     this.stepPositions.handler = 0;
     this.stepPositions.action = 0;
+    this.stepPositions.behavior = 0;
+    this.stepPositions.transition = 0;
   }
 
   private pruneReplayCheckpoints(): void {
@@ -318,6 +329,8 @@ export class TowerScriptDebugSession {
     if (mode === "event") return trace.entries.filter((entry) => entry.phase === "event");
     if (mode === "handler") return trace.entries.filter((entry) => entry.phase === "handler");
     if (mode === "action") return trace.entries.filter((entry) => entry.phase === "action");
+    if (mode === "behavior") return trace.entries.filter((entry) => entry.phase === "behavior");
+    if (mode === "transition") return trace.entries.filter((entry) => entry.phase === "transition");
     const bySequence = new Map(trace.entries.map((entry) => [entry.sequence, entry] as const));
     const ticks: TowerScriptTraceEntryV1[] = [];
     for (const record of this.commandRecords) {
@@ -350,6 +363,7 @@ export class TowerScriptDebugSession {
     if (!record) throw new Error("TowerScript debug cursor is outside retained command history.");
     if (mode === "tick") return this.checkpointFrame(record.postCheckpoint, "tick");
     if (mode === "action") return this.previewAction(entry);
+    if (mode === "behavior" || mode === "transition") return this.previewAfterPhase(record, entry, mode);
     return this.previewBeforePhase(record, entry, mode);
   }
 
@@ -409,6 +423,36 @@ export class TowerScriptDebugSession {
     const replayTrace = createTowerScriptTraceCollector({
       maxEntries: this.traceMaxEntries ?? 256,
       pauseBefore: { phase, occurrence }
+    });
+    const replay = TowerDefenseGame.fromCheckpoint({
+      content: this.content,
+      checkpoint: record.preCheckpoint,
+      towerScriptTrace: replayTrace
+    });
+    let paused = false;
+    try {
+      dispatchGameCommand(replay, record.command);
+    } catch (error) {
+      if (!(error instanceof TowerScriptTracePauseError)) throw error;
+      paused = true;
+    }
+    if (!paused) throw new Error(`TowerScript debug replay did not reach the requested ${phase} cursor.`);
+    return { snapshot: replay.getSnapshot(), stateDigest: replay.getStateDigest() };
+  }
+
+  private previewAfterPhase(
+    record: DebugCommandRecord,
+    entry: TowerScriptTraceEntryV1,
+    phase: "behavior" | "transition"
+  ): { snapshot: GameSnapshot; stateDigest: string } {
+    const occurrence = entry.phaseOrdinal - record.phaseStart[phase];
+    if (occurrence < 0 || occurrence >= record.phaseEnd[phase] - record.phaseStart[phase]) {
+      throw new Error(`TowerScript debug ${phase} cursor has an invalid stable ordinal.`);
+    }
+    if (!record.preCheckpoint) throw new Error(`TowerScript debug ${phase} cursor checkpoint is no longer retained.`);
+    const replayTrace = createTowerScriptTraceCollector({
+      maxEntries: this.traceMaxEntries ?? 256,
+      pauseAfter: { phase, occurrence }
     });
     const replay = TowerDefenseGame.fromCheckpoint({
       content: this.content,

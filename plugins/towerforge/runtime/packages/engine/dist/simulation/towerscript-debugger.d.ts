@@ -4,8 +4,8 @@ import { type GameCheckpointV1 } from "./checkpoint.js";
 import { type GameCommandJournal } from "./journal.js";
 import { TowerDefenseGame } from "./TowerDefenseGame.js";
 import type { ActionResult, GameSnapshot } from "./types.js";
-export declare const TOWER_SCRIPT_DEBUG_SCHEMA_VERSION: 1;
-export type TowerScriptDebugStepMode = "tick" | "event" | "handler" | "action";
+export declare const TOWER_SCRIPT_DEBUG_SCHEMA_VERSION: 2;
+export type TowerScriptDebugStepMode = "tick" | "event" | "handler" | "action" | "behavior" | "transition";
 export interface TowerScriptDebugCursorV1 {
     readonly schemaVersion: typeof TOWER_SCRIPT_DEBUG_SCHEMA_VERSION;
     readonly mode: TowerScriptDebugStepMode;
@@ -23,6 +23,8 @@ export interface TowerScriptDebugStepResultV1 {
     /** Partial replay frames are inspection-only and never replace the live game. */
     readonly live: false;
 }
+export type TowerScriptDebugCursorV2 = TowerScriptDebugCursorV1;
+export type TowerScriptDebugStepResultV2 = TowerScriptDebugStepResultV1;
 export interface TowerScriptDebugCheckpointRingSummaryV1 {
     readonly capacity: number;
     readonly size: number;
@@ -78,4 +80,5 @@ export declare class TowerScriptDebugSession {
     private checkpointFrame;
     private previewAfterAction;
     private previewBeforePhase;
+    private previewAfterPhase;
 }

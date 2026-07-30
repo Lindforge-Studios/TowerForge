@@ -65,4 +65,4 @@ multiplayer state.
 Removing the `quests` mission selection or disabling the module removes quest selection, RNG work,
 snapshot/checkpoint fields, events, and UI projection. Removing the separate combat selection also
 makes `shield_watch` semantically invalid rather than silently inventing a shield. See Accepted
-[ADR 0050](../../adr/0050-r10-persona-qa-and-procedural-quests.md).
+[ADR 0051](../../adr/0051-r10-persona-qa-and-procedural-quests.md).

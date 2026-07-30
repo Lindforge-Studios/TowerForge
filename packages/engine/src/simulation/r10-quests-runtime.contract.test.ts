@@ -440,6 +440,53 @@ describe("R10 procedural quests runtime contract (RED)", () => {
     expect(quest(replay.game, "lava_two")).toMatchObject({ current: 2, status: "completed" });
   });
 
+  it("round-trips R9 scriptMachines and R10 quests together without dropping either optional state", () => {
+    const input = runtimeInput({ profileMode: "kill_one" });
+    input.scripts = {
+      quest_phase: {
+        schemaVersion: 7,
+        id: "quest_phase",
+        bindings: [],
+        handlers: {},
+        stateMachines: [{
+          schemaVersion: 1,
+          id: "mission_phase",
+          bindings: [{ scope: "global" }],
+          initial: "setup",
+          states: [{
+            id: "setup",
+            transitions: [{ id: "start", event: "waveStarted", target: "/combat" }]
+          }, { id: "combat" }]
+        }]
+      }
+    };
+    const subjectContent = createGameContentRegistry(input);
+    const subject = new TowerDefenseGame({
+      content: subjectContent,
+      missionId: "quest_runtime",
+      seed: "r9-r10-checkpoint"
+    });
+    expect(subject.startNextWave()).toEqual({ ok: true });
+
+    const checkpoint = jsonRoundTrip(subject.createCheckpoint());
+    expect(checkpoint.state.quests).toMatchObject({ schemaVersion: 1, profileId: "runtime" });
+    expect(checkpoint.state.scriptMachines).toMatchObject({
+      schemaVersion: 1,
+      values: {
+        quest_phase: {
+          mission_phase: {
+            "global:global": { activeStatePath: "/combat", transitionCount: 1 }
+          }
+        }
+      }
+    });
+
+    const restored = TowerDefenseGame.fromCheckpoint({ content: subjectContent, checkpoint });
+    expect(restored.getStateDigest()).toBe(subject.getStateDigest());
+    expect(restored.getSnapshot().quests).toEqual(subject.getSnapshot().quests);
+    expect(restored.getSnapshot().scriptState.machines).toEqual(subject.getSnapshot().scriptState.machines);
+  });
+
   it("rejects future, unknown, duplicate, impossible, and accessor-backed quest checkpoint state", () => {
     const subjectContent = content({ profileMode: "kill_two", enemyHp: 1 });
     const subject = new TowerDefenseGame({ content: subjectContent, missionId: "quest_runtime", seed: "hostile-seed" });

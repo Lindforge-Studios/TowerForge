@@ -19,4 +19,4 @@ Removing only `proceduralJuice` disables R11. Canvas, Phaser, Studio Playtest, a
 then use their unchanged legacy effects and audio path. Reduced-motion mode removes hit stop and
 chromatic separation and limits particles/shake; audio remains independently muteable.
 
-See [ADR 0051](../../adr/0051-opt-in-procedural-juice-presentation.md).
+See [ADR 0052](../../adr/0052-opt-in-procedural-juice-presentation.md).

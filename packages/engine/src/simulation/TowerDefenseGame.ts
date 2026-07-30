@@ -79,6 +79,18 @@ import {
 } from "../run/campaign-battle-policy.js";
 import { evaluateTowerScriptExpression } from "../scripting/expression.js";
 import {
+  evaluateTowerScriptBehaviorTree,
+  type TowerScriptTargetCandidateV1
+} from "../scripting/behavior-tree.js";
+import {
+  collectTowerScriptStatePaths,
+  hasTowerScriptStateTransitionProvenance,
+  initializeTowerScriptStateMachine,
+  planTowerScriptStateTransition,
+  type TowerScriptMachineExpressionContextV1,
+  type TowerScriptMachineRuntimeStateV1
+} from "../scripting/state-machine.js";
+import {
   TOWER_SCRIPT_EVENTS,
   TOWER_SCRIPT_EVENT_FIELDS,
   TOWER_SCRIPT_LIMITS
@@ -91,12 +103,14 @@ import {
 import type {
   TowerScriptAction,
   TowerScriptBinding,
+  TowerScriptBehaviorTreeV1,
   TowerScriptDefinition,
   TowerScriptDiagnostic,
   TowerScriptEntityTarget,
   TowerScriptEventName,
   TowerScriptHandler,
   TowerScriptJson,
+  TowerScriptStateMachineV1,
   TowerScriptTileTarget,
   TerraformOperationV1,
   TerraformTilesActionV1
@@ -654,7 +668,8 @@ const SCRIPT_GAME_EVENT_NAMES = new Set<TowerScriptEventName>([
   "towerFired", "towerResourcesGranted", "towerShieldChanged", "enemyHit", "enemyShieldChanged", "enemyMarkChanged", "enemyKilled", "enemyLeaked", "enemySpawnedOnDeath",
   "enemyExposureChanged", "enemyReactionTriggered",
   "enemyPhaseSpawned", "waveStarted", "waveCleared", "resourcesGranted", "abilityUsed", "objectiveCompleted",
-  "enemyEnteredTile", "terrainChanged", "elevationChanged", "objectiveFailed", "starEarned", "victory", "defeat"
+  "enemyEnteredTile", "terrainChanged", "elevationChanged", "objectiveFailed", "starEarned", "victory", "defeat",
+  "stateMachineTransitioned"
 ]);
 
 function artifactLootSeed(seed: GameSeed, missionId: string): string {
@@ -875,6 +890,11 @@ interface LogisticsStorageRuntimeStateV3 {
   transferProgress: number;
 }
 
+interface ScriptedTargetingControllerV1 {
+  readonly script: TowerScriptDefinition;
+  readonly tree: TowerScriptBehaviorTreeV1;
+}
+
 export class TowerDefenseGame {
   readonly content: GameContentRegistry;
   readonly mission: GameContentRegistry["missions"][string];
@@ -914,6 +934,7 @@ export class TowerDefenseGame {
   private readonly activeDirectorMechanics: ActiveDirectorMechanicsV1 | undefined;
   private readonly activeQuestMechanics: ActiveQuestMechanicsV1 | undefined;
   private questEntries: NonNullable<GameSnapshot["quests"]>["entries"] = Object.freeze([]);
+  private readonly scriptedTargetingByTowerType = new Map<string, ScriptedTargetingControllerV1>();
   private directorDecisions: NonNullable<GameSnapshot["director"]>["decisions"] = Object.freeze([]);
   private readonly activeHeroPassiveAura: Readonly<{
     definitionId: string;
@@ -1006,6 +1027,9 @@ export class TowerDefenseGame {
   private scriptActionsRemaining = 0;
   private scriptTerrainChangesRemaining = 0;
   private scriptSignalDepth = 0;
+  private scriptStateTransitionsRemaining = 0;
+  private scriptMachines: Record<string, Record<string, Record<string, TowerScriptMachineRuntimeStateV1>>> = {};
+  private hasScriptStateMachines = false;
   private readonly towerScriptTrace: TowerScriptTraceCollector | undefined;
   private displacementStepAttemptsThisTick = 0;
   private initialRngState: SeededRngStateV1;
@@ -1239,6 +1263,7 @@ export class TowerDefenseGame {
     );
     this.coreHp = this.maxCoreHp;
     this.resources = this.initialResources();
+    this.initializeScriptedTargeting();
     this.initializeScripts();
     if (!internal.skipGameStarted) {
       this.beginScriptTransaction();
@@ -2126,6 +2151,13 @@ export class TowerDefenseGame {
     const tower = this.towers.find((item) => item.id === towerId);
     if (!tower) {
       return this.fail("No tower selected.", "reason.noTowerSelected");
+    }
+
+    if (this.scriptedTargetingByTowerType.has(tower.typeId)) {
+      return this.fail(
+        "This tower's target priority is controlled by TowerScript.",
+        "reason.targetModeScripted"
+      );
     }
 
     if (!this.towerSupportsTargetMode(tower)) {
@@ -4203,6 +4235,13 @@ export class TowerDefenseGame {
       scriptActionsRemaining: this.scriptActionsRemaining,
       scriptTerrainChangesRemaining: this.scriptTerrainChangesRemaining,
       scriptSignalDepth: this.scriptSignalDepth,
+      ...(this.hasScriptStateMachines ? {
+        scriptMachines: {
+          schemaVersion: 1 as const,
+          transitionsRemaining: this.scriptStateTransitionsRemaining,
+          values: this.cloneScriptMachines()
+        }
+      } : {}),
       ...(combat === undefined ? {} : { combat }),
       ...(reactions === undefined ? {} : { reactions }),
       ...(artifacts === undefined ? {} : { artifacts }),
@@ -4280,6 +4319,12 @@ export class TowerDefenseGame {
     const checkpointHeroes = resolveActiveHeroesMechanics(content, identity.missionId);
     const checkpointDirector = resolveActiveDirectorMechanics(content, identity.missionId);
     const checkpointQuests = resolveActiveQuestMechanics(content, identity.missionId);
+    const checkpointStateMachines = Object.values(content.scripts ?? {})
+      .filter((script): script is TowerScriptDefinition => Boolean(
+        script && script.enabled !== false && script.schemaVersion === 7 && script.stateMachines?.length
+      ))
+      .sort((left, right) => compareBinary(left.id, right.id));
+    const requiresScriptMachinesCheckpoint = checkpointStateMachines.length > 0;
     const checkpointLogisticsMechanics = resolveActiveLogisticsMechanics(content, identity.missionId);
     const checkpointAmmunition = checkpointLogisticsMechanics?.schemaVersion === 2
       || checkpointLogisticsMechanics?.schemaVersion === 3
@@ -4361,6 +4406,14 @@ export class TowerDefenseGame {
       throw new Error("Game checkpoint quest state is unsupported for an inactive capability.");
     }
     if (hasQuestCheckpoint) checkpointDataField(descriptors, "quests", "Game checkpoint state");
+    const hasScriptMachinesCheckpoint = Object.prototype.hasOwnProperty.call(descriptors, "scriptMachines");
+    if (requiresScriptMachinesCheckpoint && !hasScriptMachinesCheckpoint) {
+      throw new Error("Game checkpoint TowerScript machine state is required for active schema v7 machines.");
+    }
+    if (!requiresScriptMachinesCheckpoint && hasScriptMachinesCheckpoint) {
+      throw new Error("Game checkpoint TowerScript machine state is unsupported without active schema v7 machines.");
+    }
+    if (hasScriptMachinesCheckpoint) checkpointDataField(descriptors, "scriptMachines", "Game checkpoint state");
     requireExactCheckpointKeys(descriptors, [
       ...required,
       ...(hasTerraformingCheckpoint ? ["terraforming"] : []),
@@ -4372,7 +4425,8 @@ export class TowerDefenseGame {
       ...(hasHeroesCheckpoint ? ["heroes"] : []),
       ...(hasLogisticsCheckpoint ? ["logistics"] : []),
       ...(hasDirectorCheckpoint ? ["director"] : []),
-      ...(hasQuestCheckpoint ? ["quests"] : [])
+      ...(hasQuestCheckpoint ? ["quests"] : []),
+      ...(hasScriptMachinesCheckpoint ? ["scriptMachines"] : [])
     ], "Game checkpoint state");
 
     const finite = (value: unknown, label: string, minimum = 0, maximum = Infinity): number => {
@@ -5906,6 +5960,11 @@ export class TowerDefenseGame {
       enemyEnteredTile: { required: ["type", "enemyId", "enemyTypeId", "coord", "terrain", "terrainMetadata", "pathOrder"], optional: ["routeId"] },
       terrainChanged: { required: ["type", "coord", "fromTerrain", "toTerrain", "terrainMetadata", "source"] },
       elevationChanged: { required: ["type", "coord", "fromElevation", "toElevation", "source"] },
+      stateMachineTransitioned: {
+        required: [
+          "type", "scriptId", "machineId", "contextId", "transitionId", "fromStatePath", "toStatePath"
+        ]
+      },
       scriptSignal: { required: ["type", "scriptId", "signal", "payload"] },
       scriptDiagnostic: { required: ["type", "diagnostic"] },
       victory: { required: ["type"] },
@@ -5927,7 +5986,7 @@ export class TowerDefenseGame {
       "exposureId", "reactionId", "originEnemyId", "originEnemyTypeId", "rootEnemyId", "rootEnemyTypeId",
       "triggerDamageType", "budget", "sourceKind", "sourceId", "stopReason", "terrainTag",
       "artifactInstanceId", "artifactId", "slotId", "heroId", "heroDefinitionId", "skillId",
-      "counterId", "questId"
+      "counterId", "questId", "machineId", "contextId", "transitionId", "fromStatePath", "toStatePath"
     ]);
     const coordEventFields = new Set(["coord", "from", "to", "center", "originCoord", "sourceCoord"]);
     const bagEventFields = new Set(["refund", "cost", "resources", "income", "interest"]);
@@ -5942,7 +6001,17 @@ export class TowerDefenseGame {
       currentPoints: number;
       unlockedSkillIds: string[];
     } | undefined;
-    for (const value of array(state.lastEvents, "lastEvents")) {
+    const checkpointTransitionEvents: Array<{
+      index: number;
+      scriptId: string;
+      machineId: string;
+      contextId: string;
+      transitionId: string;
+      fromStatePath: string;
+      toStatePath: string;
+    }> = [];
+    const checkpointEvents = array(state.lastEvents, "lastEvents");
+    for (const [eventIndex, value] of checkpointEvents.entries()) {
       const base = checkpointObjectDescriptors(value, "Game checkpoint last event");
       const type = stringValue(checkpointDataField(base, "type", "last event"), "last event type");
       const schema = eventSchemas[type];
@@ -6047,6 +6116,17 @@ export class TowerDefenseGame {
         if (!checkpointQuests || !selected || selected.kind !== kind || selected.status !== expectedStatus) {
           throw new Error(`Game checkpoint ${type} event does not match active quest state.`);
         }
+      }
+      if (type === "stateMachineTransitioned") {
+        checkpointTransitionEvents.push({
+          index: eventIndex,
+          scriptId: stringValue(checkpointDataField(event, "scriptId", type), `${type}.scriptId`),
+          machineId: stringValue(checkpointDataField(event, "machineId", type), `${type}.machineId`),
+          contextId: stringValue(checkpointDataField(event, "contextId", type), `${type}.contextId`),
+          transitionId: stringValue(checkpointDataField(event, "transitionId", type), `${type}.transitionId`),
+          fromStatePath: stringValue(checkpointDataField(event, "fromStatePath", type), `${type}.fromStatePath`),
+          toStatePath: stringValue(checkpointDataField(event, "toStatePath", type), `${type}.toStatePath`)
+        });
       }
       if (own(event, "towerTypeId")) {
         const typeId = stringValue(checkpointDataField(event, "towerTypeId", type), `${type}.towerTypeId`);
@@ -7125,6 +7205,106 @@ export class TowerDefenseGame {
     if (state.scriptTerrainChangesRemaining > TOWER_SCRIPT_LIMITS.terrainChangesPerTransaction) throw new Error("Game checkpoint terrain budget is invalid.");
     integer(state.scriptSignalDepth, "scriptSignalDepth", 0);
     if (state.scriptSignalDepth > TOWER_SCRIPT_LIMITS.signalRecursionDepth) throw new Error("Game checkpoint signal depth is invalid.");
+    if (requiresScriptMachinesCheckpoint) {
+      const machineCheckpoint = closed(
+        state.scriptMachines,
+        "TowerScript machine state",
+        ["schemaVersion", "transitionsRemaining", "values"]
+      );
+      if (checkpointDataField(machineCheckpoint, "schemaVersion", "TowerScript machine state") !== 1) {
+        throw new Error("Game checkpoint TowerScript machine schema version is unsupported.");
+      }
+      const transitionsRemaining = integer(
+        checkpointDataField(machineCheckpoint, "transitionsRemaining", "TowerScript machine state"),
+        "TowerScript machine transitionsRemaining"
+      );
+      if (transitionsRemaining > TOWER_SCRIPT_LIMITS.stateTransitionsPerTransaction) {
+        throw new Error("Game checkpoint TowerScript machine transition budget is invalid.");
+      }
+      const scriptValues = checkpointObjectDescriptors(
+        checkpointDataField(machineCheckpoint, "values", "TowerScript machine state"),
+        "Game checkpoint TowerScript machine values"
+      );
+      const expectedScriptIds = checkpointStateMachines.map((script) => script.id);
+      if (Object.keys(scriptValues).join("\u0000") !== expectedScriptIds.join("\u0000")) {
+        throw new Error("Game checkpoint TowerScript machine script ids are not canonical.");
+      }
+      for (const script of checkpointStateMachines) {
+        const machines = checkpointObjectDescriptors(
+          checkpointDataField(scriptValues, script.id, "TowerScript machine values"),
+          `Game checkpoint TowerScript machines for ${script.id}`
+        );
+        const definitions = [...(script.stateMachines ?? [])].sort((left, right) => compareBinary(left.id, right.id));
+        if (Object.keys(machines).join("\u0000") !== definitions.map((machine) => machine.id).join("\u0000")) {
+          throw new Error(`Game checkpoint TowerScript machine ids for "${script.id}" are not canonical.`);
+        }
+        for (const machine of definitions) {
+          const contexts = checkpointObjectDescriptors(
+            checkpointDataField(machines, machine.id, "TowerScript machine values"),
+            `Game checkpoint TowerScript contexts for ${script.id}/${machine.id}`
+          );
+          const contextIds = Object.keys(contexts);
+          if (contextIds.join("\u0000") !== [...contextIds].sort(compareBinary).join("\u0000")) {
+            throw new Error("Game checkpoint TowerScript machine context order is not canonical.");
+          }
+          const statePaths = new Set(collectTowerScriptStatePaths(machine));
+          const allowedScopes = new Set(machine.bindings.map((binding) => binding.scope));
+          for (const contextId of contextIds) {
+            const separator = contextId.indexOf(":");
+            const scope = separator < 0 ? "" : contextId.slice(0, separator);
+            if (!allowedScopes.has(scope as TowerScriptBinding["scope"])) {
+              throw new Error(`Game checkpoint TowerScript context "${contextId}" is outside machine bindings.`);
+            }
+            const runtime = closed(
+              checkpointDataField(contexts, contextId, "TowerScript machine contexts"),
+              `TowerScript machine runtime ${contextId}`,
+              ["schemaVersion", "activeStatePath", "enteredAt", "transitionCount"]
+            );
+            if (checkpointDataField(runtime, "schemaVersion", "TowerScript machine runtime") !== 1) {
+              throw new Error("Game checkpoint TowerScript machine runtime schema version is unsupported.");
+            }
+            const activeStatePath = stringValue(
+              checkpointDataField(runtime, "activeStatePath", "TowerScript machine runtime"),
+              "TowerScript machine activeStatePath"
+            );
+            if (!statePaths.has(activeStatePath)) {
+              throw new Error(`Game checkpoint TowerScript machine active state "${activeStatePath}" is unknown.`);
+            }
+            const enteredAt = finite(
+              checkpointDataField(runtime, "enteredAt", "TowerScript machine runtime"),
+              "TowerScript machine enteredAt"
+            );
+            if (enteredAt > state.missionElapsed) {
+              throw new Error("Game checkpoint TowerScript machine enteredAt is in the future.");
+            }
+            integer(
+              checkpointDataField(runtime, "transitionCount", "TowerScript machine runtime"),
+              "TowerScript machine transitionCount"
+            );
+          }
+        }
+      }
+    }
+    for (const transitionEvent of checkpointTransitionEvents) {
+      if (transitionEvent.index >= eventCursor) {
+        throw new Error("Game checkpoint cannot restore a queued state-machine transition event.");
+      }
+      const script = checkpointStateMachines.find((candidate) => candidate.id === transitionEvent.scriptId);
+      const machine = script?.stateMachines?.find((candidate) => candidate.id === transitionEvent.machineId);
+      if (!script || !machine || !hasTowerScriptStateTransitionProvenance(
+        machine,
+        transitionEvent.transitionId,
+        transitionEvent.fromStatePath,
+        transitionEvent.toStatePath
+      )) {
+        throw new Error("Game checkpoint state-machine transition event has unknown authored provenance.");
+      }
+      const separator = transitionEvent.contextId.indexOf(":");
+      const scope = separator < 0 ? "" : transitionEvent.contextId.slice(0, separator);
+      if (!machine.bindings.some((binding) => binding.scope === scope)) {
+        throw new Error("Game checkpoint state-machine transition event context is outside machine bindings.");
+      }
+    }
   }
 
   private restoreCheckpointState(
@@ -7263,6 +7443,11 @@ export class TowerDefenseGame {
     this.scriptActionsRemaining = state.scriptActionsRemaining;
     this.scriptTerrainChangesRemaining = state.scriptTerrainChangesRemaining;
     this.scriptSignalDepth = state.scriptSignalDepth;
+    this.scriptStateTransitionsRemaining = state.scriptMachines?.transitionsRemaining ?? 0;
+    this.scriptMachines = state.scriptMachines
+      ? cloneCheckpointJson(state.scriptMachines.values) as Record<string, Record<string, Record<string, TowerScriptMachineRuntimeStateV1>>>
+      : {};
+    this.hasScriptStateMachines = state.scriptMachines !== undefined;
     this.enemyShields = Object.fromEntries(Object.entries(state.combat?.shields.enemies ?? {}).map(([id, shield]) => [id, { ...shield }]));
     this.towerShields = Object.fromEntries(Object.entries(state.combat?.shields.towers ?? {}).map(([id, shield]) => [id, { ...shield }]));
     this.enemyMarks = state.combat?.schemaVersion === 2
@@ -7802,7 +7987,20 @@ export class TowerDefenseGame {
       towers: this.towers.map((tower) => ({
         ...tower,
         coord: { ...tower.coord },
-        footprint: tower.footprint.map((coord) => ({ ...coord }))
+        footprint: tower.footprint.map((coord) => ({ ...coord })),
+        ...(() => {
+          const controller = this.scriptedTargetingByTowerType.get(tower.typeId);
+          return controller
+            ? {
+                scriptedTargeting: {
+                  schemaVersion: 1 as const,
+                  scriptId: controller.script.id,
+                  behaviorTreeId: controller.tree.id,
+                  fallbackMode: tower.targetMode ?? "first"
+                }
+              }
+            : {};
+        })()
       })),
       tiles: copyStaticState || this.runtimeTerrainOverrides.size > 0
         ? [...this.map.tiles.values()].map((tile) => ({ ...tile }))
@@ -7837,7 +8035,8 @@ export class TowerDefenseGame {
       ...(quests === undefined ? {} : { quests }),
       scriptState: {
         values: this.cloneScriptValues(),
-        diagnostics: this.scriptDiagnostics.map((diagnostic) => ({ ...diagnostic }))
+        diagnostics: this.scriptDiagnostics.map((diagnostic) => ({ ...diagnostic })),
+        ...(this.hasScriptStateMachines ? { machines: this.cloneScriptMachines() } : {})
       },
       lastEvents: [...this.lastEvents]
     };
@@ -7850,13 +8049,47 @@ export class TowerDefenseGame {
     this.scriptEventCursor = 0;
     this.scriptActionsRemaining = 0;
     this.scriptSignalDepth = 0;
+    this.scriptStateTransitionsRemaining = 0;
+    this.scriptMachines = {};
+    this.hasScriptStateMachines = false;
     for (const scriptId of Object.keys(this.content.scripts ?? {}).sort()) this.scriptValues[scriptId] = {};
+    for (const script of Object.values(this.content.scripts ?? {})) {
+      if (script?.enabled === false || script?.schemaVersion !== 7 || !script.stateMachines?.length) continue;
+      this.hasScriptStateMachines = true;
+      this.scriptMachines[script.id] = Object.fromEntries(script.stateMachines.map((machine) => [machine.id, {}]));
+    }
+  }
+
+  private initializeScriptedTargeting(): void {
+    this.scriptedTargetingByTowerType.clear();
+    const allTowerIds = Object.keys(this.content.towers).sort(compareBinary);
+    const scripts = Object.values(this.content.scripts ?? {}).sort((left, right) => compareBinary(left.id, right.id));
+    for (const script of scripts) {
+      if (!script || script.enabled === false || script.schemaVersion !== 7 || !Array.isArray(script.behaviorTrees)) continue;
+      for (const tree of script.behaviorTrees) {
+        if (!tree || tree.schemaVersion !== 1 || !Array.isArray(tree.bindings)) continue;
+        for (const binding of tree.bindings) {
+          if (!binding || binding.scope !== "tower") continue;
+          for (const towerTypeId of binding.ids ?? allTowerIds) {
+            if (this.scriptedTargetingByTowerType.has(towerTypeId)) continue;
+            const tower = this.content.towers[towerTypeId];
+            if (!tower) continue;
+            const supported = tower.attack.kind !== "support"
+              && tower.attack.kind !== "support_buff"
+              && tower.attack.kind !== "pulse"
+              && !(tower.attack.kind === "pipeline" && tower.attack.delivery.kind === "aura");
+            if (supported) this.scriptedTargetingByTowerType.set(towerTypeId, Object.freeze({ script, tree }));
+          }
+        }
+      }
+    }
   }
 
   private beginScriptTransaction(): void {
     this.scriptActionsRemaining = TOWER_SCRIPT_LIMITS.actionsPerTransaction;
     this.scriptTerrainChangesRemaining = TOWER_SCRIPT_LIMITS.terrainChangesPerTransaction;
     this.scriptSignalDepth = 0;
+    this.scriptStateTransitionsRemaining = TOWER_SCRIPT_LIMITS.stateTransitionsPerTransaction;
   }
 
   private finishScriptedAction(): void {
@@ -7884,6 +8117,7 @@ export class TowerDefenseGame {
       });
       this.scriptEventCursor = this.lastEvents.length;
     }
+    this.cleanupScriptMachineContexts();
   }
 
   private runScriptEvent(eventName: TowerScriptEventName, event: Record<string, unknown>): void {
@@ -7897,6 +8131,9 @@ export class TowerDefenseGame {
     }
     for (const script of Object.values(this.content.scripts ?? {}).sort((a, b) => a.id.localeCompare(b.id))) {
       if (!script || script.enabled === false) continue;
+      if (script.schemaVersion === 7 && script.stateMachines?.length) {
+        this.runScriptStateMachines(script, eventName, event, eventTrace?.sequence);
+      }
       const handlers = script.handlers?.[eventName] ?? [];
       if (!Array.isArray(handlers) || handlers.length === 0) continue;
       const seenContexts = new Set<string>();
@@ -7930,6 +8167,229 @@ export class TowerDefenseGame {
             index,
             bindingTrace?.sequence
           ));
+        }
+      }
+    }
+  }
+
+  private runScriptStateMachines(
+    script: TowerScriptDefinition,
+    eventName: TowerScriptEventName,
+    event: Record<string, unknown>,
+    parentTraceSequence?: number
+  ): void {
+    for (const machine of script.stateMachines ?? []) {
+      const machineContexts = new Set<string>();
+      for (const binding of machine.bindings) {
+        for (const self of this.scriptContexts(binding, eventName, event)) {
+          const contextId = `${self.scope}:${self.id}`;
+          if (machineContexts.has(contextId)) continue;
+          machineContexts.add(contextId);
+          const state = this.scriptStateFor(script, contextId);
+          const context: TowerScriptExecutionContext = {
+            script,
+            binding,
+            self,
+            state,
+            stateKey: contextId,
+            event,
+            eventName
+          };
+          const machineStates = (this.scriptMachines[script.id] ??= {});
+          const contexts = (machineStates[machine.id] ??= {});
+          let runtime = contexts[contextId];
+          if (!runtime) {
+            try {
+              const initialized = initializeTowerScriptStateMachine(machine, this.missionElapsed);
+              runtime = initialized.state;
+              contexts[contextId] = runtime;
+              if (!this.runScriptMachineActions(
+                context,
+                machine,
+                "entry",
+                initialized.entryActions,
+                undefined,
+                parentTraceSequence
+              )) continue;
+            } catch (error) {
+              if (error instanceof TowerScriptTracePauseError) throw error;
+              this.recordScriptMachineDiagnostic(script, machine, context, error, parentTraceSequence);
+              continue;
+            }
+          }
+          try {
+            const root = this.scriptExpressionContext(context);
+            const plan = planTowerScriptStateTransition(
+              machine,
+              runtime,
+              eventName,
+              { ...root, machine: { ...runtime } } as unknown as TowerScriptMachineExpressionContextV1,
+              this.missionElapsed
+            );
+            if (!plan) continue;
+            if (this.scriptStateTransitionsRemaining <= 0) {
+              this.scriptStateTransitionsRemaining = 0;
+              throw new Error("TowerScript state transition budget exceeded.");
+            }
+            this.scriptStateTransitionsRemaining -= 1;
+            // The target is authoritative before any user-authored action runs.
+            contexts[contextId] = plan.state;
+            const transitionTrace = this.towerScriptTrace?.record({
+              phase: "transition",
+              ...(parentTraceSequence === undefined ? {} : { parentSequence: parentTraceSequence }),
+              eventName,
+              scriptId: script.id,
+              contextId,
+              controllerId: machine.id,
+              machineId: machine.id,
+              transitionId: plan.transitionId,
+              fromStatePath: plan.fromStatePath,
+              toStatePath: plan.toStatePath
+            });
+            if (transitionTrace && this.towerScriptTrace?.shouldPauseAfterEntry(transitionTrace.sequence)) {
+              throw new TowerScriptTracePauseError(transitionTrace.sequence);
+            }
+            const phases = [
+              ["exit", plan.exitActions],
+              ["transition", plan.transitionActions],
+              ["entry", plan.entryActions]
+            ] as const;
+            let completed = true;
+            for (const [phase, actions] of phases) {
+              if (!this.runScriptMachineActions(
+                context,
+                machine,
+                phase,
+                actions,
+                plan.transitionId,
+                transitionTrace?.sequence ?? parentTraceSequence
+              )) {
+                completed = false;
+                break;
+              }
+            }
+            this.lastEvents.push({
+              type: "stateMachineTransitioned",
+              scriptId: script.id,
+              machineId: machine.id,
+              contextId,
+              transitionId: plan.transitionId,
+              fromStatePath: plan.fromStatePath,
+              toStatePath: plan.toStatePath
+            });
+            if (!completed) continue;
+          } catch (error) {
+            if (error instanceof TowerScriptTracePauseError) throw error;
+            this.recordScriptMachineDiagnostic(script, machine, context, error, parentTraceSequence);
+          }
+        }
+      }
+    }
+  }
+
+  private runScriptMachineActions(
+    context: TowerScriptExecutionContext,
+    machine: TowerScriptStateMachineV1,
+    phase: "entry" | "exit" | "transition",
+    actions: readonly TowerScriptAction[],
+    transitionId?: string,
+    parentTraceSequence?: number
+  ): boolean {
+    const handlerId = transitionId === undefined
+      ? `${machine.id}:${phase}`
+      : `${machine.id}:${transitionId}:${phase}`;
+    const expressionBudget = { remaining: TOWER_SCRIPT_LIMITS.expressionOperationsPerHandler };
+    const runtime = this.scriptMachines[context.script.id]?.[machine.id]?.[context.stateKey];
+    const root = {
+      ...this.scriptExpressionContext(context),
+      ...(runtime ? { machine: { ...runtime } } : {})
+    };
+    for (const [actionIndex, action] of actions.entries()) {
+      try {
+        if (this.scriptActionsRemaining <= 0) {
+          this.scriptActionsRemaining = 0;
+          throw new Error("TowerScript action budget exceeded.");
+        }
+        this.scriptActionsRemaining -= 1;
+        const stateBefore = this.towerScriptTrace ? this.cloneScriptJsonObject(context.state) : undefined;
+        const actionTrace = this.towerScriptTrace?.record({
+          phase: "action",
+          ...(parentTraceSequence === undefined ? {} : { parentSequence: parentTraceSequence }),
+          eventName: context.eventName,
+          scriptId: context.script.id,
+          contextId: context.stateKey,
+          handlerId,
+          handlerIndex: -1,
+          actionIndex,
+          actionPhase: phase,
+          action
+        });
+        this.applyScriptAction(action, context, root, expressionBudget);
+        if (stateBefore && this.towerScriptTrace) {
+          const changes = diffTowerScriptState(stateBefore, context.state);
+          if (changes.length > 0) {
+            this.towerScriptTrace.record({
+              phase: "state_diff",
+              ...(actionTrace ? { parentSequence: actionTrace.sequence } : {}),
+              eventName: context.eventName,
+              scriptId: context.script.id,
+              contextId: context.stateKey,
+              handlerId,
+              handlerIndex: -1,
+              actionIndex,
+              changes
+            });
+          }
+        }
+        if (actionTrace && this.towerScriptTrace?.shouldPauseAfterAction(actionTrace.sequence)) {
+          throw new TowerScriptTracePauseError(actionTrace.sequence);
+        }
+      } catch (error) {
+        if (error instanceof TowerScriptTracePauseError) throw error;
+        this.recordScriptMachineDiagnostic(context.script, machine, context, error, parentTraceSequence, handlerId, actionIndex);
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private recordScriptMachineDiagnostic(
+    script: TowerScriptDefinition,
+    machine: TowerScriptStateMachineV1,
+    context: TowerScriptExecutionContext,
+    error: unknown,
+    parentSequence?: number,
+    handlerId = machine.id,
+    actionIndex?: number
+  ): void {
+    const message = error instanceof Error ? error.message : String(error);
+    this.recordScriptDiagnostic({
+      scriptId: script.id,
+      handlerId,
+      event: context.eventName,
+      code: /budget exceeded/i.test(message)
+        ? "budget_exceeded"
+        : /expression|\$get|\$op|context path/i.test(message) ? "invalid_expression" : "runtime_error",
+      message
+    }, {
+      ...(actionIndex === undefined ? {} : { actionIndex }),
+      contextId: context.stateKey,
+      handlerIndex: -1,
+      ...(parentSequence === undefined ? {} : { parentSequence })
+    });
+  }
+
+  private cleanupScriptMachineContexts(): void {
+    if (!this.hasScriptStateMachines) return;
+    const liveTowers = new Set(this.towers.map((tower) => `tower:${tower.id}`));
+    const liveEnemies = new Set(this.enemies.filter((enemy) => enemy.hp > 0).map((enemy) => `enemy:${enemy.id}`));
+    for (const machines of Object.values(this.scriptMachines)) {
+      for (const contexts of Object.values(machines)) {
+        for (const contextId of Object.keys(contexts)) {
+          if ((contextId.startsWith("tower:") && !liveTowers.has(contextId))
+            || (contextId.startsWith("enemy:") && !liveEnemies.has(contextId))) {
+            delete contexts[contextId];
+          }
         }
       }
     }
@@ -9519,6 +9979,19 @@ export class TowerDefenseGame {
 
   private cloneScriptValues(): Record<string, Record<string, Record<string, TowerScriptJson>>> {
     return JSON.parse(JSON.stringify(this.scriptValues)) as Record<string, Record<string, Record<string, TowerScriptJson>>>;
+  }
+
+  private cloneScriptMachines(): Record<string, Record<string, Record<string, TowerScriptMachineRuntimeStateV1>>> {
+    return Object.fromEntries(Object.keys(this.scriptMachines).sort(compareBinary).map((scriptId) => [
+      scriptId,
+      Object.fromEntries(Object.keys(this.scriptMachines[scriptId] ?? {}).sort(compareBinary).map((machineId) => [
+        machineId,
+        Object.fromEntries(Object.keys(this.scriptMachines[scriptId]?.[machineId] ?? {}).sort(compareBinary).map((contextId) => [
+          contextId,
+          { ...this.scriptMachines[scriptId]![machineId]![contextId]! }
+        ]))
+      ]))
+    ]));
   }
 
   enemyCoord(enemy: EnemyState): HexCoord {
@@ -11956,14 +12429,11 @@ export class TowerDefenseGame {
     attack: EffectPipelineAttackModel
   ): Array<{ enemy: EnemyState; damageMultiplier: number }> {
     const classes = attack.targeting?.classes?.length ? attack.targeting.classes : ["ground" as const];
-    const sortedInRange = this.enemies
-      .filter((enemy) => enemy.hp > 0 && classes.includes(this.enemyTargetClass(enemy)) && this.enemyInTowerAcquisitionRange(tower, enemy))
-      .sort((left, right) => this.compareTargets(tower, left, right));
-    const inRange = this.activeLineOfSightProfile
-      ? sortedInRange
-        .slice(0, LINE_OF_SIGHT_LIMITS.candidatesPerAcquisition)
-        .filter((enemy) => this.towerHasLineOfSight(tower, enemy))
-      : sortedInRange;
+    const inRange = this.orderTowerTargetCandidates(tower, this.enemies.filter((enemy) => (
+      enemy.hp > 0
+      && classes.includes(this.enemyTargetClass(enemy))
+      && this.enemyInTowerAcquisitionRange(tower, enemy)
+    )));
     if (attack.delivery.kind === "aura") return inRange.map((enemy) => ({ enemy, damageMultiplier: 1 }));
 
     if (attack.delivery.kind === "cone") {
@@ -12088,14 +12558,123 @@ export class TowerDefenseGame {
   }
 
   private selectTargets(tower: TowerState, targetClass: "ground" | "flying", limit: number): EnemyState[] {
-    const sorted = this.enemies
-      .filter((enemy) => enemy.hp > 0 && this.enemyTargetClass(enemy) === targetClass && this.enemyInTowerAcquisitionRange(tower, enemy))
-      .sort((left, right) => this.compareTargets(tower, left, right));
-    if (!this.activeLineOfSightProfile) return sorted.slice(0, Math.max(0, limit));
+    return this.orderTowerTargetCandidates(tower, this.enemies.filter((enemy) => (
+      enemy.hp > 0
+      && this.enemyTargetClass(enemy) === targetClass
+      && this.enemyInTowerAcquisitionRange(tower, enemy)
+    ))).slice(0, Math.max(0, limit));
+  }
+
+  private legacyOrderTowerTargetCandidates(tower: TowerState, candidates: readonly EnemyState[]): EnemyState[] {
+    const sorted = [...candidates].sort((left, right) => this.compareTargets(tower, left, right));
+    if (!this.activeLineOfSightProfile) return sorted;
     return sorted
       .slice(0, LINE_OF_SIGHT_LIMITS.candidatesPerAcquisition)
-      .filter((enemy) => this.towerHasLineOfSight(tower, enemy))
-      .slice(0, Math.max(0, limit));
+      .filter((enemy) => this.towerHasLineOfSight(tower, enemy));
+  }
+
+  private orderTowerTargetCandidates(tower: TowerState, candidates: readonly EnemyState[]): EnemyState[] {
+    const controller = this.scriptedTargetingByTowerType.get(tower.typeId);
+    if (!controller) return this.legacyOrderTowerTargetCandidates(tower, candidates);
+
+    const stable = [...candidates].sort((left, right) => compareBinary(left.id, right.id));
+    const visible: EnemyState[] = [];
+    for (const enemy of stable) {
+      if (this.activeLineOfSightProfile && !this.towerHasLineOfSight(tower, enemy)) continue;
+      visible.push(enemy);
+      // The engine owns the acquisition bound and keeps the first binary-stable candidates.
+      // The pure evaluator separately rejects hostile over-budget direct callers.
+      if (visible.length === TOWER_SCRIPT_LIMITS.behaviorCandidatesPerAcquisition) break;
+    }
+    const facts: TowerScriptTargetCandidateV1[] = visible.map((enemy) => {
+      const shield = this.enemyShields[enemy.id];
+      const remaining = this.activeNavigationProfile ? this.dynamicEnemyRemainingCost(enemy) : undefined;
+      const routeProgress = remaining !== undefined && Number.isFinite(remaining)
+        ? -remaining
+        : this.enemyRouteProgressRatio(enemy);
+      return Object.freeze({
+        id: enemy.id,
+        typeId: enemy.typeId,
+        tags: Object.freeze([...(this.enemyTypes[enemy.typeId]?.tags ?? [])].sort(compareBinary)),
+        hp: enemy.hp,
+        maxHp: enemy.maxHp,
+        hpRatio: enemy.maxHp > 0 ? enemy.hp / enemy.maxHp : 0,
+        distance: this.map.distance(tower.coord, this.enemyCoord(enemy)),
+        routeProgress,
+        hasPierceOnlyArmor: this.hasPierceOnlyArmor(enemy),
+        ...(shield ? { shieldCurrent: shield.current, shieldCapacity: shield.capacity } : {}),
+        ...(enemy.statuses ? { statuses: enemy.statuses as unknown as Record<string, TowerScriptJson> } : {}),
+        ...(this.enemyMarks[enemy.id] ? { marks: this.enemyMarks[enemy.id] as unknown as Record<string, TowerScriptJson> } : {}),
+        ...(this.enemyExposures[enemy.id] ? { exposures: this.enemyExposures[enemy.id] as unknown as Record<string, TowerScriptJson> } : {})
+      });
+    });
+    const stateKey = `tower:${tower.id}`;
+    const decision = evaluateTowerScriptBehaviorTree(controller.tree, {
+      tower: Object.freeze({
+        id: tower.id,
+        typeId: tower.typeId,
+        level: tower.level,
+        targetMode: tower.targetMode ?? "first",
+        hp: tower.hp ?? null,
+        maxHp: this.towerTypes[tower.typeId]?.maxHp ?? null
+      }),
+      game: Object.freeze({
+        missionId: this.mission.id,
+        mapId: this.mission.mapId,
+        difficultyId: this.difficulty.id,
+        elapsed: this.missionElapsed,
+        waveIndex: this.waveIndex,
+        coreHp: this.coreHp,
+        maxCoreHp: this.maxCoreHp,
+        enemyCount: this.enemies.length,
+        towerCount: this.towers.length,
+        outcome: this.outcome
+      }),
+      state: this.scriptStateFor(controller.script, stateKey),
+      candidates: facts
+    });
+    for (const node of decision.trace) {
+      const trace = this.towerScriptTrace?.record({
+        phase: "behavior",
+        eventName: "tick",
+        scriptId: controller.script.id,
+        contextId: stateKey,
+        controllerId: controller.tree.id,
+        nodeId: node.nodeId,
+        nodeKind: node.nodeKind,
+        status: node.status,
+        ...(node.selectedTargetIds === undefined ? {} : {
+          selectedTargetIds: node.selectedTargetIds.slice(0, TOWER_SCRIPT_LIMITS.behaviorCandidatesPerAcquisition)
+        })
+      });
+      if (trace && this.towerScriptTrace?.shouldPauseAfterEntry(trace.sequence)) {
+        throw new TowerScriptTracePauseError(trace.sequence);
+      }
+    }
+    if (decision.status !== "success") {
+      if (decision.diagnostic) {
+        this.recordScriptDiagnostic({
+          scriptId: controller.script.id,
+          handlerId: controller.tree.id,
+          event: "tick",
+          code: decision.diagnostic.code === "budget_exceeded" ? "budget_exceeded"
+            : decision.diagnostic.code === "invalid_expression" ? "invalid_expression" : "runtime_error",
+          message: decision.diagnostic.message
+        });
+      }
+      return this.legacyOrderTowerTargetCandidates(tower, candidates);
+    }
+    const byId = new Map(visible.map((enemy) => [enemy.id, enemy] as const));
+    const selected: EnemyState[] = [];
+    const seen = new Set<string>();
+    for (const id of decision.selectedTargetIds) {
+      const enemy = byId.get(id);
+      if (enemy && !seen.has(id)) {
+        seen.add(id);
+        selected.push(enemy);
+      }
+    }
+    return selected.length > 0 ? selected : this.legacyOrderTowerTargetCandidates(tower, candidates);
   }
 
   private towerHasLineOfSight(tower: TowerState, enemy: EnemyState): boolean {

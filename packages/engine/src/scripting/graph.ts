@@ -5,13 +5,22 @@ import {
 import type { TowerScriptDefinition } from "./types.js";
 import { canonicalStringify } from "../simulation/stable-digest.js";
 
-export const TOWER_SCRIPT_GRAPH_SCHEMA_VERSION = 1 as const;
+export const TOWER_SCRIPT_GRAPH_SCHEMA_VERSION = 2 as const;
 
-export type TowerScriptGraphNodeKind = "script" | "binding" | "handler" | "condition" | "action" | "raw";
+export type TowerScriptGraphNodeKindV1 = "script" | "binding" | "handler" | "condition" | "action" | "raw";
+export type TowerScriptGraphNodeKind = TowerScriptGraphNodeKindV1
+  | "behavior_tree"
+  | "behavior_selector"
+  | "behavior_sequence"
+  | "behavior_condition"
+  | "behavior_action"
+  | "state_machine"
+  | "state"
+  | "transition";
 
 export interface TowerScriptGraphNodeV1 {
   readonly id: string;
-  readonly kind: TowerScriptGraphNodeKind;
+  readonly kind: TowerScriptGraphNodeKindV1;
   readonly astPath: string;
   readonly raw: unknown;
 }
@@ -24,11 +33,35 @@ export interface TowerScriptGraphEdgeV1 {
 }
 
 export interface TowerScriptGraphV1 {
-  readonly schemaVersion: typeof TOWER_SCRIPT_GRAPH_SCHEMA_VERSION;
+  readonly schemaVersion: 1;
   readonly scriptId: string;
   readonly nodes: readonly TowerScriptGraphNodeV1[];
   readonly edges: readonly TowerScriptGraphEdgeV1[];
 }
+
+export interface TowerScriptGraphNodeV2 {
+  readonly id: string;
+  readonly kind: TowerScriptGraphNodeKind;
+  readonly astPath: string;
+  readonly raw: unknown;
+}
+
+export interface TowerScriptGraphEdgeV2 {
+  readonly id: string;
+  readonly kind: "containment" | "transition_target";
+  readonly from: string;
+  readonly to: string;
+  readonly order: number;
+}
+
+export interface TowerScriptGraphV2 {
+  readonly schemaVersion: typeof TOWER_SCRIPT_GRAPH_SCHEMA_VERSION;
+  readonly scriptId: string;
+  readonly nodes: readonly TowerScriptGraphNodeV2[];
+  readonly edges: readonly TowerScriptGraphEdgeV2[];
+}
+
+export type TowerScriptGraph = TowerScriptGraphV1 | TowerScriptGraphV2;
 
 type TowerScriptDescriptor = typeof TOWER_SCRIPT_SCHEMA | {
   readonly schemaVersion: number;
@@ -36,6 +69,11 @@ type TowerScriptDescriptor = typeof TOWER_SCRIPT_SCHEMA | {
   readonly scopes: readonly string[];
   readonly actions: Readonly<Record<string, unknown>>;
   readonly expression: { readonly operators: readonly string[] };
+  readonly behaviorTrees?: unknown;
+  readonly stateMachines?: unknown;
+  readonly controllerRecipes?: unknown;
+  readonly graph?: unknown;
+  readonly debug?: unknown;
 };
 
 function clone<T>(value: T): T {
@@ -54,111 +92,299 @@ function unescapePointer(value: string): string {
   return value.replaceAll("~1", "/").replaceAll("~0", "~");
 }
 
-function nodeId(path: string): string {
+function legacyNodeId(path: string): string {
   return path === "" ? "00:script" : `10:${path}`;
 }
 
-function edgeId(from: string, to: string, order: number): string {
-  return `edge:${from}:${String(order).padStart(6, "0")}:${to}`;
+function stableId(prefix: string, ...parts: readonly string[]): string {
+  return `${prefix}:${parts.map((part) => encodeURIComponent(part)).join(":")}`;
+}
+
+function edgeId(kind: TowerScriptGraphEdgeV2["kind"], from: string, to: string, order: number): string {
+  return `edge:${kind}:${from}:${String(order).padStart(6, "0")}:${to}`;
+}
+
+function compareBinary(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function pathParent(path: string): string {
-  const index = path.lastIndexOf("/");
-  return index <= 0 ? "" : path.slice(0, index);
+function behaviorKind(value: unknown): TowerScriptGraphNodeKind {
+  if (!isRecord(value)) return "raw";
+  if (value.type === "selector") return "behavior_selector";
+  if (value.type === "sequence") return "behavior_sequence";
+  if (value.type === "condition") return "behavior_condition";
+  if (value.type === "action") return "behavior_action";
+  return "raw";
 }
 
-export function towerScriptAstToGraph(source: TowerScriptDefinition | Record<string, unknown>): TowerScriptGraphV1 {
+export function towerScriptAstToGraph(source: TowerScriptDefinition | Record<string, unknown>): TowerScriptGraphV2 {
   const root = clone(source) as Record<string, unknown>;
   if (!isRecord(root) || typeof root.id !== "string" || root.id.length === 0) {
     throw new Error("TowerScript graph source needs a non-empty script id.");
   }
-  const nodes: TowerScriptGraphNodeV1[] = [{ id: nodeId(""), kind: "script", astPath: "", raw: root }];
-  const edges: TowerScriptGraphEdgeV1[] = [];
-  const addNode = (kind: TowerScriptGraphNodeKind, astPath: string, raw: unknown, parentPath: string, order: number): void => {
-    const id = nodeId(astPath);
-    const parent = nodeId(parentPath);
+  const rootId = legacyNodeId("");
+  const nodes: TowerScriptGraphNodeV2[] = [{ id: rootId, kind: "script", astPath: "", raw: root }];
+  const edges: TowerScriptGraphEdgeV2[] = [];
+  const addNode = (
+    kind: TowerScriptGraphNodeKind,
+    astPath: string,
+    raw: unknown,
+    parentId: string,
+    order: number,
+    id = legacyNodeId(astPath)
+  ): string => {
     nodes.push({ id, kind, astPath, raw: clone(raw) });
-    edges.push({ id: edgeId(parent, id, order), from: parent, to: id, order });
+    edges.push({ id: edgeId("containment", parentId, id, order), kind: "containment", from: parentId, to: id, order });
+    return id;
+  };
+  const addActionList = (actions: unknown, basePath: string, parentId: string, orderOffset = 0): void => {
+    if (!Array.isArray(actions)) return;
+    actions.forEach((action, actionIndex) => {
+      const actionPath = `${basePath}/${actionIndex}`;
+      const name = isRecord(action) && typeof action.action === "string" ? action.action : "";
+      addNode(Object.hasOwn(TOWER_SCRIPT_ACTION_SCHEMA, name) ? "action" : "raw", actionPath, action, parentId, orderOffset + actionIndex);
+    });
   };
 
   if (Array.isArray(root.bindings)) {
-    root.bindings.forEach((binding, index) => addNode("binding", `/bindings/${index}`, binding, "", index));
+    root.bindings.forEach((binding, index) => addNode("binding", `/bindings/${index}`, binding, rootId, index));
   }
   if (isRecord(root.handlers)) {
-    for (const eventName of Object.keys(root.handlers).sort()) {
+    for (const eventName of Object.keys(root.handlers).sort(compareBinary)) {
       const handlers = root.handlers[eventName];
       if (!Array.isArray(handlers)) continue;
       handlers.forEach((handler, handlerIndex) => {
         if (!isRecord(handler)) return;
         const handlerPath = `/handlers/${escapePointer(eventName)}/${handlerIndex}`;
-        addNode("handler", handlerPath, handler, "", handlerIndex);
-        if (Object.hasOwn(handler, "when")) addNode("condition", `${handlerPath}/when`, handler.when, handlerPath, 0);
-        if (!Array.isArray(handler.actions)) return;
-        handler.actions.forEach((action, actionIndex) => {
-          const actionPath = `${handlerPath}/actions/${actionIndex}`;
-          const name = isRecord(action) && typeof action.action === "string" ? action.action : "";
-          addNode(Object.hasOwn(TOWER_SCRIPT_ACTION_SCHEMA, name) ? "action" : "raw", actionPath, action, handlerPath, actionIndex + 1);
-        });
+        const handlerId = addNode("handler", handlerPath, handler, rootId, handlerIndex);
+        if (Object.hasOwn(handler, "when")) addNode("condition", `${handlerPath}/when`, handler.when, handlerId, 0);
+        addActionList(handler.actions, `${handlerPath}/actions`, handlerId, 1);
       });
     }
   }
-  nodes.sort((left, right) => left.id.localeCompare(right.id));
-  edges.sort((left, right) => left.id.localeCompare(right.id));
-  return clone({
-    schemaVersion: TOWER_SCRIPT_GRAPH_SCHEMA_VERSION,
-    scriptId: root.id,
-    nodes,
-    edges
+
+  const addBehaviorNode = (
+    node: unknown,
+    path: string,
+    parentId: string,
+    order: number,
+    treeId: string
+  ): void => {
+    const authoredId = isRecord(node) && typeof node.id === "string" ? node.id : path;
+    const kind = behaviorKind(node);
+    const id = addNode(kind, path, node, parentId, order, stableId("bt", treeId, authoredId));
+    if (kind === "behavior_selector" || kind === "behavior_sequence") {
+      const children = isRecord(node) ? node.children : undefined;
+      if (Array.isArray(children)) children.forEach((child, index) => addBehaviorNode(
+        child,
+        `${path}/children/${index}`,
+        id,
+        index,
+        treeId
+      ));
+    }
+  };
+  if (Array.isArray(root.behaviorTrees)) root.behaviorTrees.forEach((tree, treeIndex) => {
+    if (!isRecord(tree)) return;
+    const treeIdValue = typeof tree.id === "string" ? tree.id : String(treeIndex);
+    const path = `/behaviorTrees/${treeIndex}`;
+    const treeId = addNode("behavior_tree", path, tree, rootId, treeIndex, stableId("bt", treeIdValue));
+    if (Array.isArray(tree.bindings)) tree.bindings.forEach((binding, bindingIndex) => addNode(
+      "binding",
+      `${path}/bindings/${bindingIndex}`,
+      binding,
+      treeId,
+      bindingIndex,
+      stableId("bt", treeIdValue, "binding", String(bindingIndex))
+    ));
+    if (Object.hasOwn(tree, "root")) addBehaviorNode(tree.root, `${path}/root`, treeId, 1_000, treeIdValue);
   });
+
+  const stateNodesByPath = new Map<string, string>();
+  const transitionTargets: Array<{ transitionNodeId: string; targetPath: string }> = [];
+  const addState = (
+    state: unknown,
+    path: string,
+    parentId: string,
+    order: number,
+    machineId: string,
+    absoluteParent: string
+  ): void => {
+    if (!isRecord(state)) {
+      addNode("raw", path, state, parentId, order);
+      return;
+    }
+    const stateName = typeof state.id === "string" ? state.id : String(order);
+    const absolutePath = `${absoluteParent}/${stateName}`;
+    const id = addNode("state", path, state, parentId, order, stableId("hfsm", machineId, "state", absolutePath));
+    stateNodesByPath.set(`${machineId}:${absolutePath}`, id);
+    addActionList(state.entryActions, `${path}/entryActions`, id, 100);
+    addActionList(state.exitActions, `${path}/exitActions`, id, 200);
+    if (Array.isArray(state.transitions)) state.transitions.forEach((transition, transitionIndex) => {
+      const transitionPath = `${path}/transitions/${transitionIndex}`;
+      const transitionName = isRecord(transition) && typeof transition.id === "string"
+        ? transition.id
+        : String(transitionIndex);
+      const transitionId = addNode(
+        "transition",
+        transitionPath,
+        transition,
+        id,
+        300 + transitionIndex,
+        stableId("hfsm", machineId, "transition", transitionName)
+      );
+      if (isRecord(transition) && typeof transition.target === "string") {
+        transitionTargets.push({ transitionNodeId: transitionId, targetPath: `${machineId}:${transition.target}` });
+      }
+      if (isRecord(transition)) addActionList(transition.actions, `${transitionPath}/actions`, transitionId);
+    });
+    if (Array.isArray(state.states)) state.states.forEach((child, childIndex) => addState(
+      child,
+      `${path}/states/${childIndex}`,
+      id,
+      400 + childIndex,
+      machineId,
+      absolutePath
+    ));
+  };
+  if (Array.isArray(root.stateMachines)) root.stateMachines.forEach((machine, machineIndex) => {
+    if (!isRecord(machine)) return;
+    const machineName = typeof machine.id === "string" ? machine.id : String(machineIndex);
+    const path = `/stateMachines/${machineIndex}`;
+    const machineId = addNode("state_machine", path, machine, rootId, machineIndex, stableId("hfsm", machineName));
+    if (Array.isArray(machine.bindings)) machine.bindings.forEach((binding, bindingIndex) => addNode(
+      "binding",
+      `${path}/bindings/${bindingIndex}`,
+      binding,
+      machineId,
+      bindingIndex,
+      stableId("hfsm", machineName, "binding", String(bindingIndex))
+    ));
+    if (Array.isArray(machine.states)) machine.states.forEach((state, stateIndex) => addState(
+      state,
+      `${path}/states/${stateIndex}`,
+      machineId,
+      stateIndex,
+      machineName,
+      ""
+    ));
+  });
+  for (const [order, target] of transitionTargets.entries()) {
+    const targetId = stateNodesByPath.get(target.targetPath);
+    if (!targetId) continue;
+    edges.push({
+      id: edgeId("transition_target", target.transitionNodeId, targetId, order),
+      kind: "transition_target",
+      from: target.transitionNodeId,
+      to: targetId,
+      order
+    });
+  }
+
+  nodes.sort((left, right) => compareBinary(left.id, right.id));
+  edges.sort((left, right) => compareBinary(left.id, right.id));
+  return clone({ schemaVersion: TOWER_SCRIPT_GRAPH_SCHEMA_VERSION, scriptId: root.id, nodes, edges });
 }
 
-function validateGraph(graph: TowerScriptGraphV1): void {
-  if (!isRecord(graph) || graph.schemaVersion !== TOWER_SCRIPT_GRAPH_SCHEMA_VERSION) {
+function validateGraph(graph: TowerScriptGraph): void {
+  if (!isRecord(graph) || (graph.schemaVersion !== 1 && graph.schemaVersion !== 2)) {
     throw new Error("Unsupported TowerScript graph schema version.");
   }
   if (!Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) throw new Error("TowerScript graph needs node and edge arrays.");
   const ids = new Set<string>();
   const astPaths = new Set<string>();
+  const nodeById = new Map<string, TowerScriptGraphNodeV1 | TowerScriptGraphNodeV2>();
+  const allowedKinds = new Set<TowerScriptGraphNodeKind>([
+    "script", "binding", "handler", "condition", "action", "raw", "behavior_tree", "behavior_selector",
+    "behavior_sequence", "behavior_condition", "behavior_action", "state_machine", "state", "transition"
+  ]);
   for (const node of graph.nodes) {
     if (!isRecord(node) || typeof node.id !== "string" || typeof node.astPath !== "string") throw new Error("TowerScript graph node is invalid.");
-    if (typeof node.kind !== "string"
-      || !(["script", "binding", "handler", "condition", "action", "raw"] as readonly string[]).includes(node.kind)) {
+    if (typeof node.kind !== "string" || !allowedKinds.has(node.kind as TowerScriptGraphNodeKind)) {
       throw new Error(`TowerScript graph node "${node.id}" has an unsupported kind.`);
+    }
+    if (graph.schemaVersion === 1 && !(["script", "binding", "handler", "condition", "action", "raw"] as const).includes(node.kind as TowerScriptGraphNodeKindV1)) {
+      throw new Error(`TowerScript graph v1 node "${node.id}" has an unsupported kind.`);
     }
     if (ids.has(node.id)) throw new Error(`TowerScript graph contains duplicate node id "${node.id}".`);
     if (astPaths.has(node.astPath)) throw new Error(`TowerScript graph contains duplicate AST path "${node.astPath}".`);
-    if (node.id !== nodeId(node.astPath)) throw new Error(`TowerScript graph node "${node.id}" does not match its AST path.`);
+    if (graph.schemaVersion === 1 && node.id !== legacyNodeId(node.astPath)) {
+      throw new Error(`TowerScript graph node "${node.id}" does not match its AST path.`);
+    }
     ids.add(node.id);
     astPaths.add(node.astPath);
+    nodeById.set(node.id, node as unknown as TowerScriptGraphNodeV1 | TowerScriptGraphNodeV2);
   }
   const edgeIds = new Set<string>();
+  const containmentEdges: Array<TowerScriptGraphEdgeV1 | TowerScriptGraphEdgeV2> = [];
+  const transitionEdges: TowerScriptGraphEdgeV2[] = [];
   for (const edge of graph.edges) {
-    if (!isRecord(edge) || typeof edge.id !== "string" || typeof edge.from !== "string" || typeof edge.to !== "string") {
-      throw new Error("TowerScript graph edge is invalid.");
-    }
+    if (!isRecord(edge) || typeof edge.id !== "string" || typeof edge.from !== "string" || typeof edge.to !== "string"
+      || !Number.isInteger(edge.order)) throw new Error("TowerScript graph edge is invalid.");
     if (edgeIds.has(edge.id)) throw new Error(`TowerScript graph contains duplicate edge id "${edge.id}".`);
     edgeIds.add(edge.id);
     if (!ids.has(edge.from) || !ids.has(edge.to)) throw new Error(`TowerScript graph edge "${edge.id}" has a missing endpoint.`);
+    if (graph.schemaVersion === 2 && edge.kind !== "containment" && edge.kind !== "transition_target") {
+      throw new Error(`TowerScript graph edge "${edge.id}" has an unsupported kind.`);
+    }
+    if (graph.schemaVersion === 2 && edge.kind === "transition_target") {
+      transitionEdges.push(edge as unknown as TowerScriptGraphEdgeV2);
+    } else containmentEdges.push(edge as unknown as TowerScriptGraphEdgeV1 | TowerScriptGraphEdgeV2);
   }
   const root = graph.nodes.find((node) => node.astPath === "" && node.kind === "script");
   if (!root) throw new Error("TowerScript graph is missing its script root node.");
-  if (graph.edges.length !== graph.nodes.length - 1) throw new Error("TowerScript graph must contain one parent edge per non-root node.");
+  if (containmentEdges.length !== graph.nodes.length - 1) {
+    throw new Error("TowerScript graph must contain one containment edge per non-root node.");
+  }
   for (const node of graph.nodes) {
-    if (node === root) continue;
-    const actionMarker = node.astPath.lastIndexOf("/actions/");
-    const directParent = node.kind === "condition"
-      ? pathParent(node.astPath)
-      : (node.kind === "action" || node.kind === "raw") && actionMarker > 0
-        ? node.astPath.slice(0, actionMarker)
-        : "";
-    const expectedParent = astPaths.has(directParent) ? nodeId(directParent) : root.id;
-    const incoming = graph.edges.filter((edge) => edge.to === node.id);
-    if (incoming.length !== 1 || incoming[0]!.from !== expectedParent) {
-      throw new Error(`TowerScript graph node "${node.id}" has an invalid parent edge.`);
+    const incoming = containmentEdges.filter((edge) => edge.to === node.id);
+    if (node === root ? incoming.length !== 0 : incoming.length !== 1) {
+      throw new Error(`TowerScript graph node "${node.id}" has an invalid containment parent.`);
+    }
+  }
+  const visited = new Set<string>();
+  const visit = (id: string): void => {
+    if (visited.has(id)) return;
+    visited.add(id);
+    for (const edge of containmentEdges.filter((candidate) => candidate.from === id)) visit(edge.to);
+  };
+  visit(root.id);
+  if (visited.size !== graph.nodes.length) throw new Error("TowerScript graph containment has a cycle or unreachable node.");
+  for (const edge of transitionEdges) {
+    const from = nodeById.get(edge.from);
+    const to = nodeById.get(edge.to);
+    if (from?.kind !== "transition" || to?.kind !== "state" || !isRecord(from.raw) || typeof from.raw.target !== "string") {
+      throw new Error(`TowerScript graph transition edge "${edge.id}" is invalid.`);
+    }
+    const stateRaw = to.raw;
+    if (!isRecord(stateRaw) || typeof stateRaw.id !== "string" || !to.astPath.includes("/states/")) {
+      throw new Error(`TowerScript graph transition edge "${edge.id}" has an invalid target state.`);
+    }
+    const machinePath = from.astPath.slice(0, from.astPath.indexOf("/states/"));
+    const targetNode = [...nodeById.values()].find((node) => node.kind === "state"
+      && node.astPath.startsWith(`${machinePath}/states/`)
+      && node.id === edge.to);
+    if (!targetNode) throw new Error(`TowerScript graph transition edge "${edge.id}" target is outside its machine.`);
+    const stateNames = [...nodeById.values()]
+      .filter((node) => node.kind === "state"
+        && node.astPath.startsWith(`${machinePath}/states/`)
+        && (targetNode.astPath === node.astPath || targetNode.astPath.startsWith(`${node.astPath}/states/`)))
+      .sort((left, right) => left.astPath.length - right.astPath.length)
+      .map((node) => isRecord(node.raw) && typeof node.raw.id === "string" ? node.raw.id : "");
+    if (`/${stateNames.join("/")}` !== from.raw.target) {
+      throw new Error(`TowerScript graph transition edge "${edge.id}" does not match its authored target.`);
+    }
+  }
+  if (graph.schemaVersion === 2) {
+    for (const node of graph.nodes) {
+      if (node.kind !== "transition" || !isRecord(node.raw) || typeof node.raw.target !== "string") continue;
+      if (transitionEdges.filter((edge) => edge.from === node.id).length !== 1) {
+        throw new Error(`TowerScript graph transition node "${node.id}" needs one target edge.`);
+      }
     }
   }
 }
@@ -173,36 +399,28 @@ function setPointer(root: unknown, pointer: string, value: unknown): void {
       const arrayIndex = Number(token);
       if (!Number.isInteger(arrayIndex) || arrayIndex < 0 || arrayIndex >= parent.length) throw new Error(`TowerScript graph path "${pointer}" is dangling.`);
       parent = parent[arrayIndex];
-    } else if (isRecord(parent) && Object.hasOwn(parent, token)) {
-      parent = parent[token];
-    } else {
-      throw new Error(`TowerScript graph path "${pointer}" is dangling.`);
-    }
+    } else if (isRecord(parent) && Object.hasOwn(parent, token)) parent = parent[token];
+    else throw new Error(`TowerScript graph path "${pointer}" is dangling.`);
   }
   const last = parts.at(-1)!;
   if (Array.isArray(parent)) {
     const arrayIndex = Number(last);
     if (!Number.isInteger(arrayIndex) || arrayIndex < 0 || arrayIndex >= parent.length) throw new Error(`TowerScript graph path "${pointer}" is dangling.`);
     parent[arrayIndex] = clone(value);
-  } else if (isRecord(parent) && Object.hasOwn(parent, last)) {
-    parent[last] = clone(value);
-  } else {
-    throw new Error(`TowerScript graph path "${pointer}" is dangling.`);
-  }
+  } else if (isRecord(parent) && Object.hasOwn(parent, last)) parent[last] = clone(value);
+  else throw new Error(`TowerScript graph path "${pointer}" is dangling.`);
 }
 
-export function towerScriptGraphToAst(graph: TowerScriptGraphV1): TowerScriptDefinition {
-  const safeGraph = clone(graph) as TowerScriptGraphV1;
+export function towerScriptGraphToAst(graph: TowerScriptGraph): TowerScriptDefinition {
+  const safeGraph = clone(graph) as TowerScriptGraph;
   validateGraph(safeGraph);
   const root = safeGraph.nodes.find((node) => node.astPath === "" && node.kind === "script")!;
   if (!isRecord(root.raw)) throw new Error("TowerScript graph script root must contain an object AST.");
   const ast = clone(root.raw);
-  const children = safeGraph.nodes
-    .filter((node) => node.astPath !== "")
-    .sort((left, right) => {
-      const depth = left.astPath.split("/").length - right.astPath.split("/").length;
-      return depth || left.astPath.localeCompare(right.astPath);
-    });
+  const children = safeGraph.nodes.filter((node) => node.astPath !== "").sort((left, right) => {
+    const depth = left.astPath.split("/").length - right.astPath.split("/").length;
+    return depth || compareBinary(left.astPath, right.astPath);
+  });
   for (const node of children) setPointer(ast, node.astPath, node.raw);
   if (typeof ast.id !== "string" || ast.id !== safeGraph.scriptId) throw new Error("TowerScript graph script id does not match its AST.");
   return clone(ast) as unknown as TowerScriptDefinition;
@@ -216,10 +434,22 @@ export function createTowerScriptNodeCatalog(descriptor: TowerScriptDescriptor) 
   const entries = (names: readonly string[]) => names.map((name) => ({ name }));
   const actionDescriptors = descriptor.actions as Readonly<Record<string, unknown>>;
   return clone({
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     towerScriptSchemaVersion: descriptor.schemaVersion,
+    graph: descriptor.graph,
+    debug: descriptor.debug,
+    controllers: {
+      handlers: { schemaVersion: 1 },
+      behaviorTrees: descriptor.behaviorTrees,
+      stateMachines: descriptor.stateMachines
+    },
+    controllerRecipes: descriptor.controllerRecipes,
+    nodeKinds: [
+      "script", "binding", "handler", "condition", "action", "raw", "behavior_tree", "behavior_selector",
+      "behavior_sequence", "behavior_condition", "behavior_action", "state_machine", "state", "transition"
+    ],
     events: entries(descriptor.events),
-    actions: Object.keys(actionDescriptors).sort().map((name) => ({ name, descriptor: actionDescriptors[name] })),
+    actions: Object.keys(actionDescriptors).sort(compareBinary).map((name) => ({ name, descriptor: actionDescriptors[name] })),
     operators: entries(descriptor.expression.operators as readonly string[]),
     scopes: entries(descriptor.scopes)
   });

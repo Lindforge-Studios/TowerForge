@@ -1929,7 +1929,10 @@ function updateTargetMode(snap) {
   const select = $("target-mode");
   const tower = selectedTowerId ? snap.towers.find((item) => item.id === selectedTowerId) : null;
   if (!tower) selectedTowerId = null;
-  select.disabled = !tower || !tower.targetMode;
+  select.disabled = !tower || !tower.targetMode || Boolean(tower.scriptedTargeting);
+  select.title = tower?.scriptedTargeting
+    ? "Target priority is controlled by TowerScript " + tower.scriptedTargeting.scriptId + "/" + tower.scriptedTargeting.behaviorTreeId
+    : "";
   if (tower && tower.targetMode) select.value = tower.targetMode === "largest_hp" ? "strongest" : tower.targetMode === "fastest_ahead" ? "first" : tower.targetMode;
 }
 
@@ -3888,7 +3891,10 @@ function updateTargetMode(snap) {
   const select = $("target-mode");
   const tower = selectedTowerId ? snap.towers.find((item) => item.id === selectedTowerId) : null;
   if (!tower) selectedTowerId = null;
-  select.disabled = !tower || !tower.targetMode;
+  select.disabled = !tower || !tower.targetMode || Boolean(tower.scriptedTargeting);
+  select.title = tower?.scriptedTargeting
+    ? "Target priority is controlled by TowerScript " + tower.scriptedTargeting.scriptId + "/" + tower.scriptedTargeting.behaviorTreeId
+    : "";
   if (tower && tower.targetMode) select.value = tower.targetMode === "largest_hp" ? "strongest" : tower.targetMode === "fastest_ahead" ? "first" : tower.targetMode;
 }
 
