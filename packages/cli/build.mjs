@@ -729,7 +729,7 @@ function playerTemplate(includeMultiplayer = false) {
 } from "./engine/index.js";
 ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multiplayer/index.js";' : ""}
 import { createPlayerProfileStore, derivePlayerProfileStorageKey } from "./player-runtime/index.mjs";
-import { createCanvasRenderer, hitTestHeroesPresentation, projectCampaignPresentation, projectDirectorDecisionCues, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectProceduralJuicePresentation, projectQuestPresentation, projectRoguelitePresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
+import { createCanvasRenderer, hitTestHeroesPresentation, projectCampaignPresentation, projectDirectorDecisionCues, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectProceduralJuicePresentation, projectQuestPresentation, projectRoguelitePresentation, projectVanguardProtectionPresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
 import { createAudioPlayer } from "./renderer/audio.mjs";
 import project from "./project-data.js";
 
@@ -833,6 +833,7 @@ window.__towerforgeInspect = () => {
 };
 window.render_game_to_text = () => {
   const snapshot = window.__towerforgeInspect();
+  const vanguardProtection = projectVanguardProtectionPresentation(snapshot);
   return JSON.stringify({
     coordinateSystem: "tile coordinates: q increases right/east; r increases down/south",
     missionId: snapshot.missionId,
@@ -846,7 +847,8 @@ window.render_game_to_text = () => {
     enemies: snapshot.enemies.map((enemy) => ({
       id: enemy.id, typeId: enemy.typeId, hp: enemy.hp,
       coord: enemy.navigation?.currentCoord ?? null, routeProgress: enemy.pathProgress
-    }))
+    })),
+    ...(vanguardProtection.active ? { vanguardProtection } : {})
   });
 };
 window.__towerforgeCampaignInspect = () => ({
@@ -3129,6 +3131,7 @@ window.__towerforgeInspect = () => {
 };
 window.render_game_to_text = () => {
   const snapshot = window.__towerforgeInspect();
+  const vanguardProtection = projectVanguardProtectionPresentation(snapshot);
   return JSON.stringify({
     coordinateSystem: "tile coordinates: q increases right/east; r increases down/south",
     missionId: snapshot.missionId,
@@ -3142,7 +3145,8 @@ window.render_game_to_text = () => {
     enemies: snapshot.enemies.map((enemy) => ({
       id: enemy.id, typeId: enemy.typeId, hp: enemy.hp,
       coord: enemy.navigation?.currentCoord ?? null, routeProgress: enemy.pathProgress
-    }))
+    })),
+    ...(vanguardProtection.active ? { vanguardProtection } : {})
   });
 };
 window.__towerforgeCampaignInspect = () => ({

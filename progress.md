@@ -379,6 +379,15 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   The project context now omits unavailable shield facts, preserving the inert binary-first recipe
   candidate while authoritative preview still rejects the unmet prerequisite. Focused CLI is GREEN
   at 5/5 and both affected Studio E2E lifecycles pass 2/2 in serial.
+- Independent browser acceptance then recorded 2 RED / 1 GREEN: Studio injected `bosses: {}` into a
+  valid formations-only profile, while Canvas/Phaser headless text omitted the already-authoritative
+  protection projection; absent/disabled controls were already GREEN. The lossless Studio normalizer
+  now preserves omitted bosses and both player templates expose the shared active-only projector in
+  `render_game_to_text`. Full Studio lifecycle, Canvas/Phaser × hex/square, and absent/disabled paths
+  pass 3/3 Playwright scenarios.
+- The active package contract passes 2/2 and covers Canvas/Phaser × hex/square, PWA, single-file,
+  portable web ZIP, `.tdpack`, exact project selection, bundled engine/renderer projection, and an
+  untouched starter without synthesized protection snapshot/checkpoint state.
 
 ### R12.4d RED/GREEN — documentation and opt-in fixture
 

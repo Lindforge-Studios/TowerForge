@@ -826,10 +826,14 @@ function normalizeMechanicsDraft(profile) {
 function normalizeEnemyBehaviorsMechanicsDraft(profile) {
   const draft = deep(profile ?? { bosses: {} });
   if (!draft || typeof draft !== "object" || Array.isArray(draft)) return { bosses: {} };
-  if (!draft.bosses || typeof draft.bosses !== "object" || Array.isArray(draft.bosses)) draft.bosses = {};
-  for (const boss of Object.values(draft.bosses)) {
-    if (!boss || typeof boss !== "object" || Array.isArray(boss)) continue;
-    if (!boss.components || typeof boss.components !== "object" || Array.isArray(boss.components)) boss.components = {};
+  if (draft.bosses !== undefined) {
+    if (!draft.bosses || typeof draft.bosses !== "object" || Array.isArray(draft.bosses)) draft.bosses = {};
+    for (const boss of Object.values(draft.bosses)) {
+      if (!boss || typeof boss !== "object" || Array.isArray(boss)) continue;
+      if (!boss.components || typeof boss.components !== "object" || Array.isArray(boss.components)) boss.components = {};
+    }
+  } else if (draft.formations === undefined) {
+    draft.bosses = {};
   }
   if (draft.targeting !== undefined) {
     if (!draft.targeting || typeof draft.targeting !== "object" || Array.isArray(draft.targeting)) {
