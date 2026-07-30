@@ -729,7 +729,7 @@ function playerTemplate(includeMultiplayer = false) {
 } from "./engine/index.js";
 ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multiplayer/index.js";' : ""}
 import { createPlayerProfileStore, derivePlayerProfileStorageKey } from "./player-runtime/index.mjs";
-import { createCanvasRenderer, hitTestHeroesPresentation, projectCampaignPresentation, projectDirectorDecisionCues, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectQuestPresentation, projectRoguelitePresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
+import { createCanvasRenderer, hitTestHeroesPresentation, projectCampaignPresentation, projectDirectorDecisionCues, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectProceduralJuicePresentation, projectQuestPresentation, projectRoguelitePresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
 import { createAudioPlayer } from "./renderer/audio.mjs";
 import project from "./project-data.js";
 
@@ -753,7 +753,7 @@ const audio = createAudioPlayer({ audio: project.visuals && project.visuals.audi
 const canvas = $("playfield");
 let missionId = content.defaultMissionId || Object.keys(content.missions)[0];
 let towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
-let game = createGame();
+let game = new TowerDefenseGame({ missionId, content, ...currentPlayerLaunchOptions() });
 const activeCampaign = resolveWorldCampaign(content);
 let campaignRun = activeCampaign ? createCampaignRun("campaign") : null;
 let pendingCampaignNodeId = null;
@@ -796,7 +796,7 @@ if ("serviceWorker" in navigator) {
 $("start-wave").addEventListener("click", () => { audio.resume(); report(game.startNextWave()); });
 $("pause-run").addEventListener("click", () => setPaused(Number($("speed").value) > 0));
 $("sell-mode").addEventListener("click", () => setSellMode(targetingMode.kind !== "sell"));
-$("reset-run").addEventListener("click", () => { game.reset(); victoryRewarded = false; selectedTowerId = null; setTargetingMode({ kind: "build" }); initAbilityBar(); clearNavigationOverlay(); message = "Run reset."; });
+$("reset-run").addEventListener("click", () => { game.reset(); renderer.resetProceduralJuicePresentation(); audio.disposeProceduralVoices(); victoryRewarded = false; selectedTowerId = null; setTargetingMode({ kind: "build" }); initAbilityBar(); clearNavigationOverlay(); message = "Run reset."; });
 $("reset-progress")?.addEventListener("click", resetPlayerProgress);
 $("speed").addEventListener("input", syncSpeedUi);
 $("snd").addEventListener("change", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
@@ -830,6 +830,24 @@ window.__towerforgeInspect = () => {
     snapshot.lastEvents = lastObservedEvents;
   }
   return snapshot;
+};
+window.render_game_to_text = () => {
+  const snapshot = window.__towerforgeInspect();
+  return JSON.stringify({
+    coordinateSystem: "tile coordinates: q increases right/east; r increases down/south",
+    missionId: snapshot.missionId,
+    outcome: snapshot.outcome,
+    coreHp: snapshot.coreHp,
+    maxCoreHp: snapshot.maxCoreHp,
+    waveState: snapshot.waveState,
+    startedWaveCount: snapshot.startedWaveCount,
+    resources: snapshot.resources,
+    towers: snapshot.towers.map((tower) => ({ id: tower.id, typeId: tower.typeId, coord: tower.coord })),
+    enemies: snapshot.enemies.map((enemy) => ({
+      id: enemy.id, typeId: enemy.typeId, hp: enemy.hp,
+      coord: enemy.navigation?.currentCoord ?? null, routeProgress: enemy.pathProgress
+    }))
+  });
 };
 window.__towerforgeCampaignInspect = () => ({
   active: Boolean(activeCampaign && campaignRun),
@@ -1083,6 +1101,8 @@ function moveKeyboardCursor(dq, dr) {
 }
 
 function createGame() {
+  renderer.resetProceduralJuicePresentation();
+  audio.disposeProceduralVoices();
   return new TowerDefenseGame({ missionId, content, ...currentPlayerLaunchOptions() });
 }
 
@@ -1631,7 +1651,8 @@ function draw(snap, events) {
     message = \`\${questCue.type === "completed" ? "Challenge completed" : "Challenge failed"}: \${entry?.label ?? questCue.questId}\`;
   }
   renderer.drawSnapshot(snap);
-  if ($("snd")?.checked) audio.handleEvents(events);
+  const proceduralCues = renderer.drainProceduralAudioCues();
+  if ($("snd")?.checked) audio.handleEvents(events, { proceduralCues });
 }
 
 function updateHud(snap) {
@@ -1972,6 +1993,8 @@ ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multipl
 import { createPlayerProfileStore, derivePlayerProfileStorageKey } from "./player-runtime/index.mjs";
 import { createAudioPlayer } from "./renderer/audio.mjs";
 import {
+  createProceduralJuicePresentationRuntime,
+  createProceduralJuiceWorldSnapshotBuffer,
   projectCampaignPresentation,
   projectDirectorDecisionCues,
   projectElevationCues,
@@ -1981,6 +2004,7 @@ import {
   projectMarkPresentationCues,
   projectNavigationPlacementCues,
   projectPhysicsPresentationCues,
+  projectProceduralJuicePresentation,
   projectQuestPresentation,
   hitTestHeroesPresentation,
   projectHeroesPresentation,
@@ -2028,7 +2052,7 @@ applyProjectTheme();
 const audio = createAudioPlayer({ audio: project.visuals && project.visuals.audio });
 let missionId = content.defaultMissionId || Object.keys(content.missions)[0];
 let towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
-let game = createGame();
+let game = new TowerDefenseGame({ missionId, content, ...currentPlayerLaunchOptions() });
 const activeCampaign = resolveWorldCampaign(content);
 let campaignRun = activeCampaign ? createCampaignRun("campaign") : null;
 let pendingCampaignNodeId = null;
@@ -2047,6 +2071,7 @@ let storyWasRunning = false;
 let victoryRewarded = false;
 let lastObservedEvents = [];
 const shownStories = new Set();
+let phaserGame = null;
 
 const rendererTheme = content.visuals?.theme?.renderer ?? {};
 const TERRAIN_COLORS = {
@@ -2067,7 +2092,7 @@ updateCampaignRun();
 $("start-wave").addEventListener("click", () => { audio.resume(); report(game.startNextWave()); });
 $("pause-run").addEventListener("click", () => setPaused(Number($("speed").value) > 0));
 $("sell-mode").addEventListener("click", () => setSellMode(targetingMode.kind !== "sell"));
-$("reset-run").addEventListener("click", () => { game.reset(); victoryRewarded = false; selectedTowerId = null; setTargetingMode({ kind: "build" }); initAbilityBar(); clearNavigationOverlay(); message = "Run reset."; });
+$("reset-run").addEventListener("click", () => { game.reset(); resetPlayerPresentation(); victoryRewarded = false; selectedTowerId = null; setTargetingMode({ kind: "build" }); initAbilityBar(); clearNavigationOverlay(); message = "Run reset."; });
 $("reset-progress")?.addEventListener("click", resetPlayerProgress);
 $("speed").addEventListener("input", syncSpeedUi);
 $("snd").addEventListener("change", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
@@ -2097,7 +2122,16 @@ selectMissionMusic();
 showStoryForMission("beforeMission");
 $("playfield").addEventListener("focus", () => syncKeyboardCursor(ensureKeyboardCoord()));
 
-function createGame() { return new TowerDefenseGame({ missionId, content, ...currentPlayerLaunchOptions() }); }
+function resetPlayerPresentation() {
+  const scene = phaserGame?.scene.getScenes(true)[0];
+  scene?.resetProceduralJuicePresentation?.();
+  audio.disposeProceduralVoices();
+}
+
+function createGame() {
+  resetPlayerPresentation();
+  return new TowerDefenseGame({ missionId, content, ...currentPlayerLaunchOptions() });
+}
 
 function hitTestHeroAtCoord(coord) {
   const scene = typeof phaserGame === "undefined" ? null : phaserGame.scene.getScenes(true)[0];
@@ -2322,8 +2356,12 @@ class PlayScene extends Phaser.Scene {
     }
   }
   create() {
+    const proceduralJuiceEnabled = content.visuals?.schemaVersion === 3 && content.visuals?.proceduralJuice !== undefined;
     this.tileG = this.add.graphics();
     this.fxG = this.add.graphics();
+    this.juiceNormalG = proceduralJuiceEnabled ? this.add.graphics() : null;
+    this.juiceAdditiveG = proceduralJuiceEnabled ? this.add.graphics().setBlendMode(Phaser.BlendModes.ADD) : null;
+    this.juiceMultiplyG = proceduralJuiceEnabled ? this.add.graphics().setBlendMode(Phaser.BlendModes.MULTIPLY) : null;
     this.entG = this.add.graphics();
     this.towerLabels = new Map();
     this.heroImages = new Map();
@@ -2334,6 +2372,15 @@ class PlayScene extends Phaser.Scene {
     this.previousEnemyPositions = new Map();
     this.previousTowerPositions = new Map();
     this.previousCombat = null;
+    const reducedMotion = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+    this.proceduralJuiceRuntime = proceduralJuiceEnabled
+      ? createProceduralJuicePresentationRuntime({ motionPreference: reducedMotion ? "reduced" : "full" })
+      : null;
+    this.proceduralJuiceWorldSnapshots = proceduralJuiceEnabled
+      ? createProceduralJuiceWorldSnapshotBuffer()
+      : null;
+    this.previousProceduralJuiceSnapshot = null;
+    this.proceduralJuiceMissionId = null;
     this.markLabels = new Map();
     this.exposureLabels = new Map();
     this.elevationLabels = new Map();
@@ -2358,6 +2405,18 @@ class PlayScene extends Phaser.Scene {
       navigationHoverCoord = null;
       refreshNavigationOverlay(keyboardCoord);
     });
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.resetProceduralJuicePresentation();
+    });
+  }
+  resetProceduralJuicePresentation() {
+    this.proceduralJuiceRuntime?.reset();
+    this.proceduralJuiceWorldSnapshots?.reset();
+    this.previousProceduralJuiceSnapshot = null;
+    this.proceduralJuiceMissionId = null;
+    for (const graphics of [this.juiceNormalG, this.juiceAdditiveG, this.juiceMultiplyG]) graphics?.clear();
+    this.cameras.main.setScroll(0, 0);
+    this.game.canvas.style.filter = "";
   }
   pointerScenePoint(pointer) {
     const event = pointer && pointer.event;
@@ -2578,7 +2637,40 @@ class PlayScene extends Phaser.Scene {
     const events = ticked ? pending.concat(snap.lastEvents) : pending;
     if (events.length > 0) lastObservedEvents = events;
     game.lastEvents = []; // consumed this frame — clear so nothing replays next frame
-    if ($("snd")?.checked) audio.handleEvents(events);
+    const authoritativeSnapshot = snap;
+    const presentationSnapshot = {
+      ...snap,
+      ...(snap.combat === undefined && this.previousCombat !== null ? { combat: this.previousCombat } : {}),
+      lastEvents: events
+    };
+    let proceduralJuiceState = null;
+    if (this.proceduralJuiceRuntime) {
+      if (this.proceduralJuiceMissionId !== null && this.proceduralJuiceMissionId !== snap.missionId) {
+        this.proceduralJuiceRuntime.reset();
+        this.proceduralJuiceWorldSnapshots?.reset();
+        this.previousProceduralJuiceSnapshot = null;
+      }
+      this.proceduralJuiceMissionId = snap.missionId;
+      this.proceduralJuiceRuntime.advance(Math.min(50, delta));
+      const proceduralJuicePresentation = projectProceduralJuicePresentation({
+        snapshot: presentationSnapshot,
+        previousSnapshot: this.previousProceduralJuiceSnapshot ?? presentationSnapshot,
+        visuals: content.visuals,
+        content
+      });
+      this.proceduralJuiceRuntime.ingest(proceduralJuicePresentation);
+      proceduralJuiceState = this.proceduralJuiceRuntime.read();
+      const proceduralCues = this.proceduralJuiceRuntime.drainAudioCues();
+      if ($("snd")?.checked) audio.handleEvents(events, { proceduralCues });
+    } else if ($("snd")?.checked) {
+      audio.handleEvents(events);
+    }
+    snap = this.proceduralJuiceWorldSnapshots?.select({
+      snapshot: authoritativeSnapshot,
+      previousSnapshot: this.previousProceduralJuiceSnapshot ?? presentationSnapshot,
+      frame: proceduralJuiceState,
+      deltaMs: Math.min(50, delta)
+    }) ?? authoritativeSnapshot;
     const g = this.geometry(snap.tiles, snap.grid);
     const enemyPositions = new Map();
     for (const enemy of snap.enemies) {
@@ -2586,11 +2678,6 @@ class PlayScene extends Phaser.Scene {
       if (point) enemyPositions.set(enemy.id, point);
     }
     const towerPositions = new Map(snap.towers.map((tower) => [tower.id, this.center(tower.coord, g)]));
-    const presentationSnapshot = {
-      ...snap,
-      ...(snap.combat === undefined && this.previousCombat !== null ? { combat: this.previousCombat } : {}),
-      lastEvents: events
-    };
     const directorCue = projectDirectorDecisionCues(presentationSnapshot).at(-1);
     if (directorCue) message = directorCue.label;
     const questPresentation = projectQuestPresentation(presentationSnapshot);
@@ -2711,6 +2798,30 @@ class PlayScene extends Phaser.Scene {
         this.fxG.lineStyle(Math.max(2, g.r * 0.12), 0xff8b5c, 0.92);
         this.fxG.strokeCircle(to.x, to.y, g.r * 0.78);
       }
+    }
+    for (const graphics of [this.juiceNormalG, this.juiceAdditiveG, this.juiceMultiplyG]) graphics?.clear();
+    if (proceduralJuiceState) {
+      for (const particle of proceduralJuiceState.particles) {
+        const origin = this.center(particle.origin, g);
+        const graphics = particle.blendMode === "additive" ? this.juiceAdditiveG
+          : particle.blendMode === "multiply" ? this.juiceMultiplyG : this.juiceNormalG;
+        const color = Number.parseInt(particle.color.slice(1, 7), 16);
+        const authoredAlpha = particle.color.length === 9 ? Number.parseInt(particle.color.slice(7, 9), 16) / 255 : 1;
+        graphics.fillStyle(color, particle.alpha * authoredAlpha);
+        graphics.fillCircle(origin.x + particle.offsetX, origin.y + particle.offsetY, Math.max(0.1, particle.sizePx));
+      }
+      const shakeCap = g.r * 0.75;
+      this.cameras.main.setScroll(
+        -proceduralJuiceState.shakeOffset.x * shakeCap,
+        -proceduralJuiceState.shakeOffset.y * shakeCap
+      );
+      const chromatic = proceduralJuiceState.chromaticAberration;
+      this.game.canvas.style.filter = chromatic > 0
+        ? \`drop-shadow(\${Math.max(1, chromatic * 5)}px 0 rgba(255,32,64,.25)) drop-shadow(\${-Math.max(1, chromatic * 5)}px 0 rgba(32,160,255,.22))\`
+        : "";
+    } else {
+      this.cameras.main.setScroll(0, 0);
+      this.game.canvas.style.filter = "";
     }
 
     this.entG.clear();
@@ -2898,8 +3009,9 @@ class PlayScene extends Phaser.Scene {
 
     this.previousEnemyPositions = enemyPositions;
     this.previousTowerPositions = towerPositions;
-    this.previousCombat = snap.combat ?? null;
-    updateHud(snap);
+    this.previousCombat = authoritativeSnapshot.combat ?? null;
+    this.previousProceduralJuiceSnapshot = presentationSnapshot;
+    updateHud(authoritativeSnapshot);
   }
 
   drawElevationPresentation(presentation, g) {
@@ -2958,7 +3070,7 @@ class PlayScene extends Phaser.Scene {
   }
 }
 
-const phaserGame = new Phaser.Game({
+phaserGame = new Phaser.Game({
   type: Phaser.AUTO,
   parent: "playfield",
   transparent: true,
@@ -2976,6 +3088,24 @@ window.__towerforgeInspect = () => {
     snapshot.lastEvents = lastObservedEvents;
   }
   return snapshot;
+};
+window.render_game_to_text = () => {
+  const snapshot = window.__towerforgeInspect();
+  return JSON.stringify({
+    coordinateSystem: "tile coordinates: q increases right/east; r increases down/south",
+    missionId: snapshot.missionId,
+    outcome: snapshot.outcome,
+    coreHp: snapshot.coreHp,
+    maxCoreHp: snapshot.maxCoreHp,
+    waveState: snapshot.waveState,
+    startedWaveCount: snapshot.startedWaveCount,
+    resources: snapshot.resources,
+    towers: snapshot.towers.map((tower) => ({ id: tower.id, typeId: tower.typeId, coord: tower.coord })),
+    enemies: snapshot.enemies.map((enemy) => ({
+      id: enemy.id, typeId: enemy.typeId, hp: enemy.hp,
+      coord: enemy.navigation?.currentCoord ?? null, routeProgress: enemy.pathProgress
+    }))
+  });
 };
 window.__towerforgeCampaignInspect = () => ({
   active: Boolean(activeCampaign && campaignRun),

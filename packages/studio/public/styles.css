@@ -142,6 +142,13 @@ html[data-sidebar="collapsed"] .sidebar-toggle-expand { display: block; }
 
 .panel-layout { display: flex; height: 100%; overflow: hidden; }
 
+#procedural-juice-event-json { min-height: 88px; resize: vertical; }
+#procedural-juice-result {
+  max-height: 240px; margin: 10px 0 0; padding: 10px 12px; overflow: auto;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2);
+  color: var(--text); font-size: 10.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+}
+
 /* ── Planned opt-in mechanics hub ─────────────────────────────────────────── */
 .mechanics-hub-state { font: 10px var(--mono); text-transform: uppercase; }
 .mechanics-hub-body { overflow: auto; padding: 20px 20px 48px; }

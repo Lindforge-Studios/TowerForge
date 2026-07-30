@@ -530,6 +530,8 @@ function validateVisuals(visuals, err, warn, balance, maps = {}, mechanics = {})
   const assetsRootIssue = validateSafeAssetPath(visuals.assetsRoot ?? "assets", "assetsRoot");
   if (assetsRootIssue) err("visuals", "content/visuals.json", "assetsRoot", assetsRootIssue);
 
+  validateProceduralJuice(visuals, err, balance);
+
   if (visuals.theme !== undefined) {
     if (!visuals.theme || typeof visuals.theme !== "object" || Array.isArray(visuals.theme)) {
       err("visuals", "content/visuals.json", "theme", "theme must be an object.");
@@ -726,6 +728,307 @@ function validateVisuals(visuals, err, warn, balance, maps = {}, mechanics = {})
   } else for (const [missionId, trackId] of Object.entries(musicByMission)) {
     if (trackId && !tracks[trackId]) warn("visuals", missionId, `audio.musicByMission.${missionId}`, `Mission "${missionId}" is bound to unknown music track "${trackId}".`);
     if (trackId && balance?.missions && !balance.missions[missionId]) warn("visuals", missionId, `audio.musicByMission.${missionId}`, `Music is bound to unknown mission "${missionId}".`);
+  }
+}
+
+const PROCEDURAL_JUICE_LIMITS = Object.freeze({
+  particleEmitters: 64,
+  audioCues: 64,
+  cameraCues: 64,
+  eventBindings: 128,
+  referencesPerBinding: 16,
+  missionIdsPerBinding: 64,
+  enemyTypeIdsPerBinding: 64,
+  totalParticles: 4_096
+});
+
+export const PROCEDURAL_JUICE_SUPPORTED_EVENTS = Object.freeze([
+  "towerPlaced", "towerUpgraded", "towerFired", "enemyHit", "enemyKilled", "enemyLeaked",
+  "areaPulse", "waveStarted", "waveCleared", "victory", "defeat", "enemyShieldChanged",
+  "towerShieldChanged", "enemyMarkChanged", "enemyExposureChanged", "enemyReactionTriggered",
+  "enemyDisplacementResolved", "enemyFell", "heroAbilityUsed", "objectiveCompleted", "objectiveFailed"
+]);
+const PROCEDURAL_JUICE_EVENTS = new Set(PROCEDURAL_JUICE_SUPPORTED_EVENTS);
+
+const INVALID_OWN_DATA = Symbol("invalid-own-data");
+
+function ownData(record, key) {
+  if (record === null || typeof record !== "object") return INVALID_OWN_DATA;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(record, key);
+    if (!descriptor) return undefined;
+    if (!("value" in descriptor) || descriptor.enumerable !== true) return INVALID_OWN_DATA;
+    return descriptor.value;
+  } catch {
+    return INVALID_OWN_DATA;
+  }
+}
+
+function ownRecordDescriptors(value) {
+  try {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return undefined;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    if (Object.getOwnPropertySymbols(value).length > 0) return undefined;
+    return descriptors;
+  } catch {
+    return undefined;
+  }
+}
+
+function closedRecord(value, allowedKeys, fieldPath, err) {
+  const descriptors = ownRecordDescriptors(value);
+  if (!descriptors) {
+    err("visuals", "content/visuals.json", fieldPath, `${fieldPath} must be a closed object with own data properties.`);
+    return undefined;
+  }
+  const allowed = new Set(allowedKeys);
+  for (const [key, descriptor] of Object.entries(descriptors)) {
+    if (!("value" in descriptor) || descriptor.enumerable !== true) {
+      err("visuals", "content/visuals.json", `${fieldPath}.${key}`, `${fieldPath}.${key} must be an enumerable own data property; accessors are not allowed.`);
+      continue;
+    }
+    if (!allowed.has(key)) {
+      err("visuals", "content/visuals.json", `${fieldPath}.${key}`, `Unknown procedural juice field "${key}".`);
+    }
+  }
+  return descriptors;
+}
+
+function catalogEntries(value, limit, fieldPath, err) {
+  const descriptors = ownRecordDescriptors(value);
+  if (!descriptors) {
+    err("visuals", "content/visuals.json", fieldPath, `${fieldPath} must be an object keyed by authored id.`);
+    return [];
+  }
+  const entries = [];
+  for (const [id, descriptor] of Object.entries(descriptors)) {
+    if (!("value" in descriptor) || descriptor.enumerable !== true) {
+      err("visuals", "content/visuals.json", `${fieldPath}.${id}`, `${fieldPath}.${id} must be an enumerable own data property; accessors are not allowed.`);
+      continue;
+    }
+    if (!/^[a-z][a-z0-9_-]{0,63}$/i.test(id)) {
+      err("visuals", "content/visuals.json", `${fieldPath}.${id}`, `Procedural juice id "${id}" must be 1–64 ASCII letters, digits, '_' or '-'.`);
+    }
+    entries.push([id, descriptor.value]);
+  }
+  if (entries.length > limit) {
+    err("visuals", "content/visuals.json", fieldPath, `${fieldPath} exceeds its ${limit}-entry budget.`);
+  }
+  return entries.slice(0, limit + 1);
+}
+
+function finiteInRange(value, min, max) {
+  return Number.isFinite(value) && value >= min && value <= max;
+}
+
+function validateNumber(value, min, max, fieldPath, err, options = {}) {
+  const valid = finiteInRange(value, min, max) && (!options.integer || Number.isInteger(value))
+    && (!options.exclusiveMin || value > min);
+  if (!valid) {
+    const lower = options.exclusiveMin ? `> ${min}` : `>= ${min}`;
+    err("visuals", "content/visuals.json", fieldPath, `${fieldPath} must be a finite${options.integer ? " integer" : " number"} ${lower} and <= ${max}.`);
+  }
+  return valid;
+}
+
+function validateRange(value, min, max, fieldPath, err) {
+  const descriptors = closedRecord(value, ["min", "max"], fieldPath, err);
+  if (!descriptors) return;
+  const low = ownData(value, "min");
+  const high = ownData(value, "max");
+  const lowValid = validateNumber(low, min, max, `${fieldPath}.min`, err);
+  const highValid = validateNumber(high, min, max, `${fieldPath}.max`, err);
+  if (lowValid && highValid && low > high) {
+    err("visuals", "content/visuals.json", fieldPath, `${fieldPath}.min must be <= max.`);
+  }
+}
+
+function denseStringArray(value, limit, fieldPath, err, options = {}) {
+  if (!Array.isArray(value)) {
+    err("visuals", "content/visuals.json", fieldPath, `${fieldPath} must be a dense string array.`);
+    return [];
+  }
+  let descriptors;
+  try {
+    if (Object.getPrototypeOf(value) !== Array.prototype || Object.getOwnPropertySymbols(value).length > 0) throw new Error();
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    err("visuals", "content/visuals.json", fieldPath, `${fieldPath} must be a safe dense string array.`);
+    return [];
+  }
+  const lengthDescriptor = descriptors.length;
+  const length = lengthDescriptor && "value" in lengthDescriptor ? lengthDescriptor.value : -1;
+  if (!Number.isSafeInteger(length) || length < 0 || length > limit) {
+    err("visuals", "content/visuals.json", fieldPath, `${fieldPath} exceeds its ${limit}-entry budget.`);
+    return [];
+  }
+  const result = [];
+  const seen = new Set();
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = descriptors[String(index)];
+    if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true || typeof descriptor.value !== "string") {
+      err("visuals", "content/visuals.json", `${fieldPath}[${index}]`, `${fieldPath} must contain only dense own string values.`);
+      continue;
+    }
+    if (options.contentReference === true && descriptor.value.length === 0) {
+      err("visuals", "content/visuals.json", `${fieldPath}[${index}]`, `${fieldPath} content IDs must be non-empty strings.`);
+      continue;
+    }
+    if (seen.has(descriptor.value)) {
+      err("visuals", "content/visuals.json", `${fieldPath}[${index}]`, `${fieldPath} must contain unique values; duplicate "${descriptor.value}" is not allowed.`);
+      continue;
+    }
+    seen.add(descriptor.value);
+    result.push(descriptor.value);
+  }
+  for (const key of Object.keys(descriptors)) {
+    if (key === "length" || /^(0|[1-9][0-9]*)$/.test(key)) continue;
+    err("visuals", "content/visuals.json", `${fieldPath}.${key}`, `${fieldPath} must not contain extra properties.`);
+  }
+  return result;
+}
+
+function validateProceduralJuice(visuals, err, balance) {
+  const descriptor = (() => {
+    try { return Object.getOwnPropertyDescriptor(visuals, "proceduralJuice"); } catch { return undefined; }
+  })();
+  if (!descriptor) return;
+  if (!("value" in descriptor) || descriptor.enumerable !== true) {
+    err("visuals", "content/visuals.json", "proceduralJuice", "proceduralJuice must be an enumerable own data property; accessors are not allowed.");
+    return;
+  }
+  if (visuals.schemaVersion !== 3) {
+    err("visuals", "content/visuals.json", "proceduralJuice", "proceduralJuice requires visuals schemaVersion 3.");
+  }
+  const juice = descriptor.value;
+  const root = closedRecord(juice, ["schemaVersion", "particleEmitters", "audioCues", "cameraCues", "eventBindings"], "proceduralJuice", err);
+  if (!root) return;
+  const version = ownData(juice, "schemaVersion");
+  if (version !== 1) {
+    err("visuals", "content/visuals.json", "proceduralJuice.schemaVersion", Number.isInteger(version) && version > 1
+      ? `Procedural juice schemaVersion ${version} is newer than supported version 1.`
+      : "proceduralJuice.schemaVersion must be 1.");
+  }
+
+  const emittersValue = ownData(juice, "particleEmitters");
+  const audioValue = ownData(juice, "audioCues");
+  const cameraValue = ownData(juice, "cameraCues");
+  const bindingsValue = ownData(juice, "eventBindings");
+  const emitters = catalogEntries(emittersValue, PROCEDURAL_JUICE_LIMITS.particleEmitters, "proceduralJuice.particleEmitters", err);
+  const audioCues = catalogEntries(audioValue, PROCEDURAL_JUICE_LIMITS.audioCues, "proceduralJuice.audioCues", err);
+  const cameraCues = catalogEntries(cameraValue, PROCEDURAL_JUICE_LIMITS.cameraCues, "proceduralJuice.cameraCues", err);
+  const bindings = catalogEntries(bindingsValue, PROCEDURAL_JUICE_LIMITS.eventBindings, "proceduralJuice.eventBindings", err);
+  const emitterIds = new Set(emitters.map(([id]) => id));
+  const audioIds = new Set(audioCues.map(([id]) => id));
+  const cameraIds = new Set(cameraCues.map(([id]) => id));
+
+  let totalParticles = 0;
+  for (const [id, emitter] of emitters) {
+    const base = `proceduralJuice.particleEmitters.${id}`;
+    const shape = closedRecord(emitter, ["maxParticles", "lifetimeMs", "speedPxPerSecond", "angleDegrees", "sizePx", "color", "gravityPxPerSecondSquared", "blendMode"], base, err);
+    if (!shape) continue;
+    const count = ownData(emitter, "maxParticles");
+    if (validateNumber(count, 1, 256, `${base}.maxParticles`, err, { integer: true })) totalParticles += count;
+    validateRange(ownData(emitter, "lifetimeMs"), 1, 10_000, `${base}.lifetimeMs`, err);
+    validateRange(ownData(emitter, "speedPxPerSecond"), 0, 4_096, `${base}.speedPxPerSecond`, err);
+    validateRange(ownData(emitter, "angleDegrees"), -3_600, 3_600, `${base}.angleDegrees`, err);
+    validateRange(ownData(emitter, "sizePx"), 0.1, 256, `${base}.sizePx`, err);
+    if (!/^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(ownData(emitter, "color"))) {
+      err("visuals", "content/visuals.json", `${base}.color`, `${base}.color must be a six- or eight-digit hex color.`);
+    }
+    const gravity = ownData(emitter, "gravityPxPerSecondSquared");
+    if (gravity !== undefined) validateNumber(gravity, -4_096, 4_096, `${base}.gravityPxPerSecondSquared`, err);
+    const blend = ownData(emitter, "blendMode");
+    if (blend !== undefined && !["normal", "additive", "multiply"].includes(blend)) {
+      err("visuals", "content/visuals.json", `${base}.blendMode`, `${base}.blendMode must be normal, additive, or multiply.`);
+    }
+  }
+  if (totalParticles > PROCEDURAL_JUICE_LIMITS.totalParticles) {
+    err("visuals", "content/visuals.json", "proceduralJuice.particleEmitters", `Particle catalog exceeds the ${PROCEDURAL_JUICE_LIMITS.totalParticles}-particle budget.`);
+  }
+
+  for (const [id, cue] of audioCues) {
+    const base = `proceduralJuice.audioCues.${id}`;
+    if (!closedRecord(cue, ["waveform", "baseFrequencyHz", "durationMs", "gain", "pitchSemitones"], base, err)) continue;
+    if (!["sine", "triangle", "square", "sawtooth", "noise"].includes(ownData(cue, "waveform"))) {
+      err("visuals", "content/visuals.json", `${base}.waveform`, `${base}.waveform is unsupported.`);
+    }
+    validateNumber(ownData(cue, "baseFrequencyHz"), 20, 20_000, `${base}.baseFrequencyHz`, err);
+    validateNumber(ownData(cue, "durationMs"), 1, 10_000, `${base}.durationMs`, err);
+    validateNumber(ownData(cue, "gain"), 0, 1, `${base}.gain`, err);
+    const pitch = ownData(cue, "pitchSemitones");
+    if (pitch !== undefined) {
+      if (closedRecord(pitch, ["damage", "attackSpeed", "targetSize", "variation"], `${base}.pitchSemitones`, err)) {
+        for (const field of ["damage", "attackSpeed", "targetSize"]) {
+          const value = ownData(pitch, field);
+          if (value !== undefined) validateNumber(value, -48, 48, `${base}.pitchSemitones.${field}`, err);
+        }
+        const variation = ownData(pitch, "variation");
+        if (variation !== undefined) validateRange(variation, -24, 24, `${base}.pitchSemitones.variation`, err);
+      }
+    }
+  }
+
+  for (const [id, cue] of cameraCues) {
+    const base = `proceduralJuice.cameraCues.${id}`;
+    if (!closedRecord(cue, ["shake", "hitStop", "chromaticAberration"], base, err)) continue;
+    const shake = ownData(cue, "shake");
+    const hitStop = ownData(cue, "hitStop");
+    const chromatic = ownData(cue, "chromaticAberration");
+    if (shake === undefined && hitStop === undefined && chromatic === undefined) {
+      err("visuals", "content/visuals.json", base, `${base} must declare at least one screen effect.`);
+    }
+    if (shake !== undefined && closedRecord(shake, ["durationMs", "intensity"], `${base}.shake`, err)) {
+      validateNumber(ownData(shake, "durationMs"), 1, 10_000, `${base}.shake.durationMs`, err);
+      validateNumber(ownData(shake, "intensity"), 0, 1, `${base}.shake.intensity`, err);
+    }
+    if (hitStop !== undefined && closedRecord(hitStop, ["durationMs", "timeScale"], `${base}.hitStop`, err)) {
+      validateNumber(ownData(hitStop, "durationMs"), 1, 1_000, `${base}.hitStop.durationMs`, err);
+      validateNumber(ownData(hitStop, "timeScale"), 0, 1, `${base}.hitStop.timeScale`, err, { exclusiveMin: true });
+    }
+    if (chromatic !== undefined && closedRecord(chromatic, ["durationMs", "intensity"], `${base}.chromaticAberration`, err)) {
+      validateNumber(ownData(chromatic, "durationMs"), 1, 10_000, `${base}.chromaticAberration.durationMs`, err);
+      validateNumber(ownData(chromatic, "intensity"), 0, 1, `${base}.chromaticAberration.intensity`, err);
+    }
+  }
+
+  for (const [id, binding] of bindings) {
+    const base = `proceduralJuice.eventBindings.${id}`;
+    if (!closedRecord(binding, ["event", "missionIds", "enemyTypeIds", "particleEmitterIds", "audioCueIds", "cameraCueIds"], base, err)) continue;
+    const event = ownData(binding, "event");
+    if (!PROCEDURAL_JUICE_EVENTS.has(event)) {
+      err("visuals", "content/visuals.json", `${base}.event`, `${base}.event "${String(event)}" is not a supported deterministic game event.`);
+    }
+    const missionIdsValue = ownData(binding, "missionIds");
+    const enemyTypeIdsValue = ownData(binding, "enemyTypeIds");
+    const particleIdsValue = ownData(binding, "particleEmitterIds");
+    const audioCueIdsValue = ownData(binding, "audioCueIds");
+    const cameraCueIdsValue = ownData(binding, "cameraCueIds");
+    const missionIds = missionIdsValue === undefined ? [] : denseStringArray(missionIdsValue, PROCEDURAL_JUICE_LIMITS.missionIdsPerBinding, `${base}.missionIds`, err, { contentReference: true });
+    const enemyTypeIds = enemyTypeIdsValue === undefined ? [] : denseStringArray(enemyTypeIdsValue, PROCEDURAL_JUICE_LIMITS.enemyTypeIdsPerBinding, `${base}.enemyTypeIds`, err, { contentReference: true });
+    const particleIds = particleIdsValue === undefined ? [] : denseStringArray(particleIdsValue, PROCEDURAL_JUICE_LIMITS.referencesPerBinding, `${base}.particleEmitterIds`, err);
+    const referencedAudioIds = audioCueIdsValue === undefined ? [] : denseStringArray(audioCueIdsValue, PROCEDURAL_JUICE_LIMITS.referencesPerBinding, `${base}.audioCueIds`, err);
+    const referencedCameraIds = cameraCueIdsValue === undefined ? [] : denseStringArray(cameraCueIdsValue, PROCEDURAL_JUICE_LIMITS.referencesPerBinding, `${base}.cameraCueIds`, err);
+    if (particleIds.length + referencedAudioIds.length + referencedCameraIds.length === 0) {
+      err("visuals", "content/visuals.json", base, `${base} must reference at least one particle, audio, or camera cue.`);
+    }
+    for (const missionId of missionIds) if (!Object.hasOwn(balance?.missions ?? {}, missionId)) {
+      err("visuals", "content/visuals.json", `${base}.missionIds`, `Binding references unknown mission "${missionId}".`);
+    }
+    for (const enemyTypeId of enemyTypeIds) if (!Object.hasOwn(balance?.enemies ?? {}, enemyTypeId)) {
+      err("visuals", "content/visuals.json", `${base}.enemyTypeIds`, `Binding references unknown enemy type "${enemyTypeId}".`);
+    }
+    for (const emitterId of particleIds) if (!emitterIds.has(emitterId)) {
+      err("visuals", "content/visuals.json", `${base}.particleEmitterIds`, `Binding references unknown particle emitter "${emitterId}".`);
+    }
+    for (const audioId of referencedAudioIds) if (!audioIds.has(audioId)) {
+      err("visuals", "content/visuals.json", `${base}.audioCueIds`, `Binding references unknown audio cue "${audioId}".`);
+    }
+    for (const cameraId of referencedCameraIds) if (!cameraIds.has(cameraId)) {
+      err("visuals", "content/visuals.json", `${base}.cameraCueIds`, `Binding references unknown camera cue "${cameraId}".`);
+    }
   }
 }
 

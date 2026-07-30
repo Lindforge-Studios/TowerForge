@@ -116,6 +116,31 @@ or disabling the module must remove all quest snapshot/checkpoint/events and pre
 digest. The accepted architectural source is
 [ADR 0051](adr/0051-r10-persona-qa-and-procedural-quests.md).
 
+For R11, author presentation only through `content/visuals.json` schema v3 and its optional
+`proceduralJuice` schema v1 block. It is not a Mechanics Hub module and must not be added to
+`content/mechanics.json` or `mission.mechanics`. In Studio use the separate Juice workspace. For an
+agent, follow `describe_schema({domain:"proceduralJuice"})` → read the current catalog and combined
+project+visuals authoring revision → optional inert recipe or compute-only event preview → exact
+preview → guarded apply with that revision → `validate_project` → playtest. Preview must not launch Web Audio or write source;
+recipes return detached fragments only. Future juice versions stay visible/read-only and must not be
+downgraded.
+
+An R11 event binding uses one supported event plus optional mission/enemy filters and plural
+particle/audio/camera cue references. Keep it within the published descriptor budgets: at most 64
+particle emitters, 64 audio cues, 64 camera cues, 128 bindings, 16 references of each kind per
+binding, and 256 particles per emitter. Test full, reduced, and off motion. Reduced/off preferences
+override authored camera and particle intensity; mute and browser autoplay policy override authored
+audio. The adapter permits at most 32 simultaneously live procedural Web Audio sources and releases
+them on completion or suspension. An explicitly bound asset SFX precedes a matching procedural cue, which precedes the legacy
+synth fallback; an unmatched event uses the existing path. Hit stop/time scale is presentation-only: never compensate
+for it by changing `tick(delta)`, multiplayer fixed ticks, cooldowns, journal commands, or replay.
+
+After removing `proceduralJuice`, rebuild and verify that both Canvas and Phaser return to the
+literal legacy visuals/audio surface, with no new snapshot/checkpoint/digest fields. For active and
+absent cases verify square and hex, PWA, single-file, portable web, `.tdpack`, desktop packaging,
+Studio Playtest, and plugin runtime parity. The proposed boundary and exact exclusions are in
+[ADR 0052](adr/0052-opt-in-procedural-juice-presentation.md).
+
 For R4.1A use `describe_schema({domain:"roguelite"})` → `get_capabilities` →
 `get_recipe({collection:"mechanics",recipeId:"basic_elemental_synergy",parameters:{towerTypeIds:[...]}})`.
 Preview and apply the returned `profile` and `towerTags` together with the same mechanics revision,

@@ -19,6 +19,11 @@ export { projectLineOfSightAnalysis } from "./line-of-sight-presentation.mjs";
 import { projectElevationCues } from "./elevation-presentation.mjs";
 import { projectPhysicsPresentationCues } from "./physics-presentation.mjs";
 import { projectHeroPresentationPoint, projectHeroesPresentation } from "./heroes-presentation.mjs";
+import { projectProceduralJuicePresentation } from "./procedural-juice-presentation.mjs";
+import {
+  createProceduralJuicePresentationRuntime,
+  createProceduralJuiceWorldSnapshotBuffer
+} from "./procedural-juice-runtime.mjs";
 export * from "./autotile.mjs";
 export * from "./combat-presentation.mjs";
 export * from "./navigation-presentation.mjs";
@@ -30,6 +35,8 @@ export * from "./campaign-presentation.mjs";
 export * from "./heroes-presentation.mjs";
 export * from "./director-presentation.mjs";
 export * from "./quest-presentation.mjs";
+export * from "./procedural-juice-presentation.mjs";
+export * from "./procedural-juice-runtime.mjs";
 export { projectLogisticsPresentation } from "./logistics-power-presentation.mjs";
 
 function ownDataValue(record, key) {
@@ -56,6 +63,9 @@ export class TowerForgeCanvasRenderer {
     this.canvas = options.canvas;
     this.ctx = options.canvas.getContext("2d");
     this.content = options.content ?? {};
+    const authoredVisuals = ownDataValue(this.content, "visuals");
+    this.proceduralJuiceConfigured = ownDataValue(authoredVisuals, "schemaVersion") === 3
+      && ownDataValue(authoredVisuals, "proceduralJuice") !== undefined;
     this.assetBase = options.assetBase ?? "";
     this.effects = [];
     this.shake = 0;
@@ -63,6 +73,11 @@ export class TowerForgeCanvasRenderer {
     this.prevEnemyPos = new Map();
     this.prevTowerPos = new Map();
     this.prevCombat = null;
+    this.prevJuiceSnapshot = null;
+    this.proceduralJuiceRuntime = null;
+    this.proceduralJuiceWorldSnapshots = null;
+    this.proceduralJuiceFrame = null;
+    this.proceduralJuiceMissionId = null;
     this.lastDrawTime = null;
     this.focusCoord = null;
     this.navigationOverlay = projectNavigationPlacementCues(undefined);
@@ -106,11 +121,24 @@ export class TowerForgeCanvasRenderer {
     this.canvas.height = Math.floor(cssH * scale);
   }
 
-  drawSnapshot(snapshot) {
-    if (!snapshot) return;
+  drawSnapshot(authoritativeSnapshot, proceduralProjection = undefined) {
+    if (!authoritativeSnapshot) return;
     const now = (globalThis.performance && globalThis.performance.now) ? globalThis.performance.now() : Date.now();
     const dt = this.lastDrawTime == null ? 0 : Math.min(0.05, (now - this.lastDrawTime) / 1000);
     this.lastDrawTime = now;
+
+    const presentationSnapshot = authoritativeSnapshot.combat === undefined && this.prevCombat !== null
+      ? { ...authoritativeSnapshot, combat: this.prevCombat }
+      : authoritativeSnapshot;
+    if (this.proceduralJuiceConfigured) {
+      this.advanceProceduralJuice(presentationSnapshot, dt * 1_000, proceduralProjection);
+    }
+    const snapshot = this.proceduralJuiceWorldSnapshots?.select({
+      snapshot: authoritativeSnapshot,
+      previousSnapshot: this.prevJuiceSnapshot ?? authoritativeSnapshot,
+      frame: this.proceduralJuiceFrame,
+      deltaMs: dt * 1_000
+    }) ?? authoritativeSnapshot;
 
     this.lastGrid = snapshot.grid ?? this.lastGrid;
     const geom = this.geometry(snapshot.tiles ?? [], this.lastGrid);
@@ -122,15 +150,12 @@ export class TowerForgeCanvasRenderer {
     }
     const towerPositions = new Map();
     for (const tower of snapshot.towers ?? []) towerPositions.set(tower.id, this.center(tower.coord, geom));
-    const presentationSnapshot = snapshot.combat === undefined && this.prevCombat !== null
-      ? { ...snapshot, combat: this.prevCombat }
-      : snapshot;
 
     this.spawnEffects(presentationSnapshot, geom, positions, towerPositions);
     this.advanceEffects(dt);
 
     this.clear();
-    const offset = this.shakeOffset(now, geom);
+    const offset = this.combinedShakeOffset(now, geom);
     this.ctx.save();
     this.ctx.translate(offset.x, offset.y);
 
@@ -152,12 +177,83 @@ export class TowerForgeCanvasRenderer {
     for (const enemy of snapshot.enemies ?? []) this.drawEnemy(enemy, snapshot, geom);
     for (const hero of heroPresentation.units) this.drawHeroBlocking(hero, positions, geom);
     this.drawEffects(geom);
+    this.drawProceduralJuice(geom);
 
     this.ctx.restore();
+    this.drawProceduralChromaticAberration();
     this.drawOutcomeOverlay(snapshot);
     this.prevEnemyPos = positions;
     this.prevTowerPos = towerPositions;
-    this.prevCombat = snapshot.combat ?? null;
+    this.prevCombat = authoritativeSnapshot.combat ?? null;
+    this.prevJuiceSnapshot = authoritativeSnapshot;
+  }
+
+  proceduralJuiceEnabled() {
+    return this.proceduralJuiceConfigured;
+  }
+
+  ensureProceduralJuiceRuntime() {
+    if (!this.proceduralJuiceRuntime) {
+      let motionPreference = "full";
+      try {
+        if (globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) motionPreference = "reduced";
+      } catch {}
+      this.proceduralJuiceRuntime = createProceduralJuicePresentationRuntime({ motionPreference });
+      this.proceduralJuiceWorldSnapshots = createProceduralJuiceWorldSnapshotBuffer();
+    }
+    return this.proceduralJuiceRuntime;
+  }
+
+  setMotionPreference(preference) {
+    if (!this.proceduralJuiceEnabled() && !this.proceduralJuiceRuntime) return;
+    this.ensureProceduralJuiceRuntime().setMotionPreference(preference);
+  }
+
+  resetProceduralJuicePresentation() {
+    this.proceduralJuiceRuntime?.reset();
+    this.proceduralJuiceFrame = null;
+    this.proceduralJuiceWorldSnapshots?.reset();
+    this.proceduralJuiceMissionId = null;
+    this.prevJuiceSnapshot = null;
+    this.lastDrawTime = null;
+  }
+
+  advanceProceduralJuice(snapshot, deltaMs, projectedFrame = undefined) {
+    if (!this.proceduralJuiceEnabled()) {
+      this.proceduralJuiceRuntime?.reset();
+      this.proceduralJuiceRuntime = null;
+      this.proceduralJuiceWorldSnapshots?.reset();
+      this.proceduralJuiceWorldSnapshots = null;
+      this.proceduralJuiceFrame = null;
+      this.proceduralJuiceMissionId = null;
+      this.prevJuiceSnapshot = null;
+      this.proceduralJuiceConfigured = false;
+      return;
+    }
+    const runtime = this.ensureProceduralJuiceRuntime();
+    if (this.proceduralJuiceMissionId !== null && this.proceduralJuiceMissionId !== snapshot.missionId) {
+      runtime.reset();
+      this.proceduralJuiceWorldSnapshots?.reset();
+      this.prevJuiceSnapshot = null;
+    }
+    this.proceduralJuiceMissionId = snapshot.missionId ?? null;
+    runtime.advance(deltaMs);
+    const frame = projectedFrame?.active === true ? projectedFrame : projectProceduralJuicePresentation({
+        snapshot,
+        previousSnapshot: this.prevJuiceSnapshot ?? snapshot,
+        visuals: this.content.visuals,
+        content: this.content
+      });
+    runtime.ingest(frame);
+    this.proceduralJuiceFrame = runtime.read();
+  }
+
+  drainProceduralAudioCues() {
+    return this.proceduralJuiceRuntime?.drainAudioCues() ?? [];
+  }
+
+  getProceduralJuicePresentation() {
+    return this.proceduralJuiceFrame;
   }
 
   setFocusCoord(coord) {
@@ -467,6 +563,47 @@ export class TowerForgeCanvasRenderer {
       }
     }
     this.ctx.globalAlpha = 1;
+  }
+  drawProceduralJuice(geom) {
+    const frame = this.proceduralJuiceFrame;
+    if (!frame?.particles?.length) return;
+    this.ctx.save();
+    for (const particle of frame.particles) {
+      const origin = this.center(particle.origin, geom);
+      this.ctx.globalCompositeOperation = particle.blendMode === "additive" ? "lighter"
+        : particle.blendMode === "multiply" ? "multiply" : "source-over";
+      this.ctx.globalAlpha = particle.alpha;
+      this.ctx.fillStyle = particle.color;
+      this.ctx.beginPath();
+      this.ctx.arc(origin.x + particle.offsetX, origin.y + particle.offsetY, Math.max(0.1, particle.sizePx), 0, Math.PI * 2);
+      this.ctx.fill();
+    }
+    this.ctx.restore();
+  }
+  combinedShakeOffset(now, geom) {
+    const legacy = this.shakeOffset(now, geom);
+    const procedural = this.proceduralJuiceFrame?.shakeOffset ?? { x: 0, y: 0 };
+    const cap = geom.r * 0.75;
+    return {
+      x: Math.max(-cap, Math.min(cap, legacy.x + procedural.x * cap)),
+      y: Math.max(-cap, Math.min(cap, legacy.y + procedural.y * cap))
+    };
+  }
+  drawProceduralChromaticAberration() {
+    const intensity = this.proceduralJuiceFrame?.chromaticAberration ?? 0;
+    if (!(intensity > 0)) return;
+    const ctx = this.ctx;
+    const offset = Math.max(1, Math.min(8, intensity * 8));
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    ctx.globalAlpha = Math.min(0.18, intensity * 0.18);
+    ctx.drawImage(this.canvas, -offset, 0);
+    ctx.fillStyle = "rgba(255,32,64,.24)";
+    ctx.fillRect(0, 0, Math.ceil(offset), this.canvas.height);
+    ctx.drawImage(this.canvas, offset, 0);
+    ctx.fillStyle = "rgba(32,160,255,.2)";
+    ctx.fillRect(this.canvas.width - Math.ceil(offset), 0, Math.ceil(offset), this.canvas.height);
+    ctx.restore();
   }
   shakeOffset(now, geom) {
     if (this.shake <= 0) return { x: 0, y: 0 };

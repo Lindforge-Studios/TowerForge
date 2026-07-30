@@ -1,9 +1,33 @@
 Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R8 roadmap with subagents and independent verification.
 
+## R11 architecture handoff (2026-07-29)
+
+- R11 is an independent opt-in presentation milestone semantically built on the accepted R8 surface;
+  it must not import or require R9/R10 contracts. The delivery branch is stacked on R10 only because
+  both milestones touch shared Studio/player/plugin files. During S0 integration it is renumbered
+  to ADR 0052; its accepted feature contract remains unchanged.
+- Public storage is visuals schema v3 with optional `proceduralJuice` schema v1 and exactly
+  `particleEmitters`, `audioCues`, `cameraCues`, and `eventBindings`. It is not a mechanics module.
+  First guarded authoring promotes the project manifest and visuals document to the existing v3;
+  absence keeps current renderer/audio behavior and snapshot bytes.
+- Exact v1 records and production budgets are documented in ADR 0052. Current agreed catalog caps
+  are 64/64/64 cues and 128 bindings, with 16 references of each cue kind per binding, 256 particles
+  per emitter, at most 64 source events, 2,048 live renderer particles, and 32 scheduled audio voices
+  per frame and simultaneously live in Web Audio.
+- `packages/renderer` owns the pure deterministic plan and thin Canvas/Phaser/Web Audio/compositor
+  adapters. Engine events/snapshots remain authoritative; no engine RNG, state, event, snapshot,
+  checkpoint, command/journal, digest, TowerScript, mechanics, profile, campaign, or multiplayer
+  version changes are allowed.
+- Delivery order is R11.1 catalog/pure planner → R11.2 particles → R11.3 audio → R11.4 camera plus
+  Studio/MCP/packages. Every slice starts RED. Final work needs active/absent and adversarial schema
+  tests, continuous/checkpoint/replay projection equivalence, Canvas/Phaser × square/hex,
+  accessibility/audio fallbacks, guarded authoring, packaging/plugin parity, and independent Code
+  Verifier plus Constructor Integration Verifier PASS.
+
 ## Current milestone
 
-- S0 integration is in progress: R9 PR #20 is merged into `main`; R10 is being reconciled on top
-  before R11 is retargeted. The shared engine merge preserves both active-only `scriptMachines` and
+- S0 integration is in progress: R9 PR #20 and R10 PR #21 are merged into `main`; R11 is being
+  reconciled on top. The shared engine merge preserves both active-only `scriptMachines` and
   `quests` checkpoint sections plus both event-field sets.
 - S0 regression RED: `npx vitest run packages/engine/src/simulation/r10-quests-runtime.contract.test.ts --maxWorkers=1`
   initially failed the new combined R9+R10 checkpoint assertion because the test assumed a flat
@@ -11,7 +35,7 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   assertion, the focused suite is GREEN at 10/10 and restore digest/snapshot parity is proven with
   both optional sections active.
 - ADR numbering collision was resolved without changing feature version domains: R9 remains ADR
-  0050 and R10 moved to ADR 0051. R11 will move from 0051 to 0052 during its integration.
+  0050, R10 is ADR 0051, and R11 is ADR 0052.
 - S0 verifier repair RED: the Code Verifier demonstrated that a digest-valid checkpoint could queue
   an impossible `stateMachineTransitioned` event and dispatch it after restore. The focused test
   `rejects a digest-valid queued state-machine transition event with impossible provenance` failed
@@ -25,8 +49,8 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   contract preserves all historic non-HFSM queues but rejects any persisted
   `stateMachineTransitioned` event at or beyond `scriptEventCursor`. The impossible-provenance test
   marks its synthetic event historical so it independently reaches authored cross-reference
-  validation; the cursor-rollback test covers exactly-once dispatch. All earlier sign-offs are
-  invalidated until this narrow form is re-frozen.
+  validation; the cursor-rollback test covers exactly-once dispatch. The narrow form was re-frozen
+  at `ffb4c26`, independently re-signed, passed full CI, and merged through PR #21.
 
 - R0–R2 and R3.1–R3.4a are complete with independent code and constructor-integration sign-off.
 - R3.4a opt-in physics v1 is complete through engine, validation, Studio Mechanics Hub, MCP/AI, recipes, shared renderer projection, Canvas/Phaser × hex/square builds, packages, plugin runtime, reference fixture, and documentation.
@@ -116,6 +140,29 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   same-user derived-cache authenticity; strict audits can use `--no-cache`.
 - R10 is accepted. Full evidence is Vitest 3,070/3,070 across 271 files, Playwright 133/133,
   Studio 17/17, surface contracts 6/6, all required repository gates and exact plugin parity.
+## 2026-07-29 — R11 accepted
+
+- RED contracts independently fixed the visuals-v3 closed schema, catalog/reference/budget limits,
+  hostile-own-data handling, deterministic projector semantics, legacy engine invariants, shared
+  renderer consumption, runtime bounds, Web Audio precedence, Studio lifecycle, packages, and MCP.
+- GREEN implementation adds the opt-in `proceduralJuice` v1 catalogs, `tf-juice-rng-v1` pure
+  projector, bounded local particle/audio/camera runtime, Canvas/Phaser adapters, presentation-only
+  hit stop, reduced/off motion, isolated Studio Juice workspace, guarded CLI/MCP authoring, recipes,
+  synthetic-event preview, AI descriptors/instructions, reference fixture, and package surfaces.
+- First authoring explicitly promotes both the project manifest and visuals document to the existing
+  schema v3. Absent data allocates no Juice runtime and preserves gameplay snapshots, checkpoints,
+  journals, state/content digests, ordinary Studio forms, and legacy renderer/audio behavior.
+- Focused R11 contracts are GREEN at 53/53 across nine files. The final complete unit run is
+  3,123/3,123 across 280 files and the complete browser run is 134/134. Typecheck, engine/build,
+  validate, tutorial sim, balance, map compile, production build, mobile/desktop packages, and
+  plugin build/validate/smoke have passed.
+- Real browser acceptance verifies guarded Studio authoring and both generated players. Canvas and
+  Phaser render the same placed tower and deterministic spark burst with matching structured state
+  and no application errors (only the expected missing favicon request). Independent Code Verifier
+  and Constructor Integration Verifier sign-offs are PASS with no open P0–P2 findings; the final
+  frozen-tree rerun, both package targets, and exact source-to-plugin parity are green. ADR 0052 is
+  Accepted.
+
 ## R9 — TowerScript DX 3.0 (2026-07-29)
 
 - User-approved scope: one opt-in PR on `codex/r9-towerscript-dx3`; TowerScript v7 only; Behavior Tree/HFSM internal v1; Graph, Trace, and Debugger v2; layout v1; optional checkpoint `scriptMachines` v1. R10/R11, release, tag, merge, and auto-merge are excluded.
@@ -123,8 +170,21 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - R9.2 integrates scripted targeting at the shared engine acquisition boundary after alive/class/range/LoS filtering, binary-stable bounded candidate ordering, fallback target modes, support/overlap rejection, stable manual-mode rejection, and active-only `Scripted` snapshot/player/Studio metadata.
 - R9.3 implements hierarchical state resolution, leaf-to-root authored transitions, self-transition exit/entry, shared typed action execution, diagnostics after committed-state action failures, nested-signal transition budgets, `stateMachineTransitioned`, optional checkpoint/replay state, digest parity, and entity-state cleanup.
 - R9.4 implements lossless Graph v2 projection and primitive authoring, behavior/transition Trace and Debugger v2 records, descriptor-driven controller recipes, guarded Studio/MCP preview/apply, updated agent guidance, and `docs/examples/opt-in-towerscript-dx3/`.
-- TDD evidence includes independent RED for hostile runtime validation and Studio primitive authoring, plus an E2E RED that exposed the nested descriptor palette lookup before the production fix. Focused engine, graph, Studio, MCP, compatibility, and isolated legacy-heroes checks are green. Full final gates, browser screenshot inspection, two independent sign-offs, commit, push, and PR remain pending.
+- TDD evidence includes independent RED for hostile runtime validation and Studio primitive authoring, plus an E2E RED that exposed the nested descriptor palette lookup before the production fix. Focused engine, graph, Studio, MCP, compatibility, and isolated legacy-heroes checks are green.
 - Visual inspection exposed overlapping auto-positioned Graph cards after the functional suite was green. A separate RED layout contract now covers containment depth/order, input-order invariance, stable-ID pinned positions, idempotence, and collision avoidance. The Studio-only helper is GREEN at 2/2; R9 browser lifecycle is GREEN at 4/4 with pairwise DOM overlap assertions. The required skill client rendered the generated hex player without console errors, and a separate 1600×1000 Studio screenshot confirmed 11 Graph cards, zero overlaps, and zero console/page errors.
 - The first independent code audit reproduced one selection-rollback P1 and two hostile-validation P2 findings. A separate seven-test RED repair slice now proves transactional failed-branch selection, fail-fast controller/child/transition budgets, and revoked-Proxy diagnostics. Focused repair is 20/20 GREEN; the verifier's 10,000-tree probe now emits one bounded issue in 1 ms without inspecting the tail.
 - Final post-repair Vitest is GREEN at 3,028/3,028 across 263 files with constrained worker scheduling; sequential Playwright is GREEN at 133/133. Typecheck, engine/build, validate, 60-unit sim, balance, maps compile, plugin build/validate/smoke, desktop runtime preparation, Rust/Tauri 7/7, unsigned arm64 macOS app/DMG build, and macOS bundle/DMG verification are GREEN.
 - Final independent Code Verifier and Constructor Integration Verifier re-sign-offs are PASS with no open P0-P2. ADR 0050 is Accepted. PR #20 was merged into `main` as the first S0 integration step.
+
+## 2026-07-31 — S0 combined R9–R11 freeze candidate
+
+- PR #20 and PR #21 are merged into `main`. R11 was merged with that exact base while preserving
+  TowerScript v7/Graph-Trace-Debugger v2, Persona QA/quests v1, and visuals-v3 Procedural Juice v1.
+- The ADR collision is resolved as R9 0050, R10 0051, and R11 0052 without changing feature version
+  domains. Canonical source was merged first; the Codex plugin mirror was then regenerated.
+- Focused combined contracts are GREEN at 362/362. Full Vitest is GREEN at 3,157/3,157 across 283
+  files and full Playwright is GREEN at 135/135. Typecheck, engine build, validate, tutorial sim,
+  balance, maps compile, production build, plugin build/validate/smoke, mobile/desktop scaffolds, and
+  Rust/Tauri 7/7 are GREEN.
+- The tree is now ready for an exact-commit Code Verifier and Constructor Integration Verifier
+  re-freeze. Any subsequent source change invalidates those sign-offs.
