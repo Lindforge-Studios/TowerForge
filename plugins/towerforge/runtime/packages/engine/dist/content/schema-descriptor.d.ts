@@ -69,8 +69,12 @@ export declare const ENEMY_BEHAVIORS_MECHANICS_SCHEMA: Readonly<{
     moduleId: "enemyBehaviors";
     supportedModuleSchemaVersions: readonly [1];
     profile: {
-        requiredFields: readonly ["bosses"];
-        optionalFields: readonly ["targeting"];
+        requiredFields: readonly [];
+        optionalFields: readonly ["bosses", "targeting", "formations"];
+        atLeastOneFields: readonly ["bosses", "formations"];
+        dependencies: {
+            targeting: readonly ["bosses"];
+        };
         additionalProperties: boolean;
     };
     boss: {
@@ -100,10 +104,31 @@ export declare const ENEMY_BEHAVIORS_MECHANICS_SCHEMA: Readonly<{
             additionalProperties: boolean;
         };
     };
+    formations: {
+        requiredFields: readonly ["cohorts"];
+        optionalFields: readonly [];
+        additionalProperties: boolean;
+    };
+    formationCohort: {
+        requiredFields: readonly ["members", "steering"];
+        optionalFields: readonly [];
+        additionalProperties: boolean;
+    };
+    formationSteering: {
+        requiredFields: readonly ["neighborRadius", "cohesionWeight", "separationWeight", "roleWeight"];
+        optionalFields: readonly [];
+        additionalProperties: boolean;
+    };
+    formationRoles: readonly ["vanguard", "body", "support"];
     limits: Readonly<{
         bossesPerProfile: 256;
         componentsPerRoot: 32;
         towerBindingsPerProfile: 256;
+        cohortsPerProfile: 64;
+        membersPerCohort: 256;
+        formationAssignmentsPerProfile: 4096;
+        neighborRadius: 2;
+        steeringWeight: 1000;
         tagsPerComponent: 32;
         priorityTagsPerBinding: 32;
         idOrTagUtf8Bytes: 128;

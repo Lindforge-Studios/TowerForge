@@ -2,6 +2,7 @@ import { type GameContentRegistry } from "../content/registry.js";
 import { type TowerScriptTraceCollector } from "../scripting/trace.js";
 import type { TowerScriptJson } from "../scripting/types.js";
 import { GridMap } from "./map.js";
+import { type FormationSteeringRuntimeStatsV1 } from "./formation-steering.js";
 import { type NavigationAnalysisRequestV1, type NavigationAnalysisV1 } from "./navigation-analysis.js";
 import { type LineOfSightAnalysisRequestV1, type LineOfSightAnalysisV1 } from "./line-of-sight.js";
 import { type GameCheckpointV1 } from "./checkpoint.js";
@@ -90,6 +91,8 @@ export declare class TowerDefenseGame {
     private readonly activeDirectorMechanics;
     private readonly activeQuestMechanics;
     private readonly activeEnemyBehaviors;
+    private readonly activeFormationAssignments;
+    private formationSteeringStats;
     private questEntries;
     private readonly scriptedTargetingByTowerType;
     private directorDecisions;
@@ -289,6 +292,7 @@ export declare class TowerDefenseGame {
     private buildCombatState;
     private buildReactionState;
     private buildEnemyBehaviorsState;
+    getFormationSteeringStats(): FormationSteeringRuntimeStatsV1;
     private consumeNavigationAnalysisField;
     private buildNavigationAnalysisFields;
     private navigationDiagnosticPairs;
@@ -391,6 +395,10 @@ export declare class TowerDefenseGame {
     private buildSunlightTilesSnapshot;
     private moveEnemies;
     private moveDynamicEnemies;
+    private buildFormationTickIndex;
+    private collectFormationNeighbors;
+    private navigationDestinationCost;
+    private selectFormationNextCoord;
     private heroBlockingActive;
     private heroBlockingCandidate;
     private deriveHeroBlockedEnemyIds;

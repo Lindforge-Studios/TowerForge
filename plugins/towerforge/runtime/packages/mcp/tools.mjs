@@ -2230,7 +2230,17 @@ export async function callTool(name, args = {}, ctx = {}) {
     };
     const enemyBehaviors = {
       authoring: engine.ENEMY_BEHAVIORS_MECHANICS_SCHEMA,
-      snapshot: { field: "enemyBehaviors", optional: true, supportedSchemaVersions: [1] },
+      snapshot: {
+        field: "enemyBehaviors",
+        optional: true,
+        supportedSchemaVersions: [1],
+        formations: {
+          field: "enemyBehaviors.formations",
+          optional: true,
+          schemaVersion: 1,
+          roles: ["vanguard", "body", "support"]
+        }
+      },
       checkpoint: { field: "state.enemyBehaviors", optional: true, supportedSchemaVersions: [1] },
       commands: [],
       events: ["bossComponentDamaged", "bossComponentDestroyed"],

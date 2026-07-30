@@ -71,7 +71,7 @@ function finite(value, minimum, maximum) {
 export function projectEnemyComponentsPresentation(snapshot) {
   const sectionValue = ownField(snapshot, "enemyBehaviors");
   if (sectionValue === undefined) return INACTIVE_ENEMY_COMPONENTS_PRESENTATION;
-  const section = ownRecord(sectionValue, ["schemaVersion", "components"], []);
+  const section = ownRecord(sectionValue, ["schemaVersion", "components"], ["formations"]);
   if (!section || data(section, "schemaVersion") !== 1) return INACTIVE_ENEMY_COMPONENTS_PRESENTATION;
   const roots = dictionary(data(section, "components"), MAX_ROOTS);
   if (!roots) return INACTIVE_ENEMY_COMPONENTS_PRESENTATION;

@@ -582,6 +582,31 @@ to confirm the component event and its linked HFSM transition provenance; previe
 the script nor `.towerforge` state. Schema-v1–v6 scripts and projects without an active
 `enemyBehaviors` profile keep their previous event/UI/runtime path.
 
+### Formation steering
+
+R12.3 is an independent optional block inside `enemyBehaviors` v1. It requires an enabled
+Navigation v1 `dynamic_flow` profile selected by the same mission; an authored-routes mission is an
+authoring error, not a signal to auto-enable Navigation. Start with the inert
+`basic_formation_steering` recipe, review its binary-first enemy assignments, and use:
+
+`describe_schema({domain:"enemyBehaviors"}) -> get_capabilities -> get_recipe({collection:"mechanics",recipeId:"basic_formation_steering"}) -> preview_mechanics_module -> apply_mechanics_module(ifRevision=preview.revision) -> validate_project`.
+
+The recipe creates no enemy, never enables/selects either module, and does not patch Navigation.
+Author cohorts with unique enemy-type membership and only `vanguard`, `body`, or `support` roles.
+`neighborRadius` is 1–2; cohesion, separation, and role weights are bounded by the engine descriptor.
+The shared reverse flow field remains authoritative. Local steering examines at most 16
+binary-ordered same-cohort neighbours in deterministic spatial buckets and chooses only an
+equal-optimal flow candidate. Do not add per-enemy search, unbounded Boids, or presentation-owned
+movement.
+
+At runtime, read only `snapshot.enemyBehaviors.formations` inner v1. Its `enemies` record maps a
+live enemy ID to `{cohortId, role}`; renderers display those labels and never derive or recompute
+steering. The same optional section is checkpointed, so continuous, restore, and journal replay
+must converge on one digest. Disable/unselect either required capability and verify that formation
+snapshot/UI cues disappear and ordinary shared-field movement returns. See
+`docs/examples/opt-in-formation-steering/` and Proposed
+[ADR 0053](adr/0053-r12-advanced-enemy-behaviors.md).
+
 ## Desktop Studio Navigation
 
 The packaged Studio uses a native application menu. macOS exposes `TowerForge`, `File`, `Edit`, `View`, `Project`, `Window`, and `Help` in the system menu bar. Windows and Linux expose the equivalent menu on the application window, with Exit and About in their conventional menus.

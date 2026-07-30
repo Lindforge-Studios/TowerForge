@@ -1061,6 +1061,18 @@
               </label>
               <p id="mechanics-enemy-behaviors-help" class="text-muted">R12.1 has no manual component command. Towers route damage only through explicit targeting bindings; removing or disabling the module restores root targeting.</p>
             </div>
+            <div id="mechanics-enemy-formations-editor" class="mechanics-shield-section mechanics-enemy-behaviors-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Enemy formations</h4>
+                  <p>Bind authored enemy types to bounded vanguard, body, and support cohorts. Dynamic-flow navigation remains authoritative; the engine computes steering.</p>
+                </div>
+              </div>
+              <label>Formation cohorts JSON
+                <textarea id="mechanics-enemy-formations-profile-json" class="mono" rows="18" spellcheck="false" aria-describedby="mechanics-enemy-formations-help"></textarea>
+              </label>
+              <p id="mechanics-enemy-formations-help" class="text-muted">Each cohort defines members and neighborRadius, cohesionWeight, separationWeight, and roleWeight. Preview performs the authoritative closed-schema and dynamic_flow validation.</p>
+            </div>
           </div>
           <div id="mechanics-multiplayer-editor" class="hidden">
             <div id="mechanics-multiplayer-capability" class="mechanics-notice" role="status"></div>

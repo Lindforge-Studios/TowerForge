@@ -4,6 +4,11 @@ export declare const ENEMY_BEHAVIORS_LIMITS: Readonly<{
     bossesPerProfile: 256;
     componentsPerRoot: 32;
     towerBindingsPerProfile: 256;
+    cohortsPerProfile: 64;
+    membersPerCohort: 256;
+    formationAssignmentsPerProfile: 4096;
+    neighborRadius: 2;
+    steeringWeight: 1000;
     tagsPerComponent: 32;
     priorityTagsPerBinding: 32;
     idOrTagUtf8Bytes: 128;
@@ -35,11 +40,27 @@ export interface BossComponentsDefinitionV1 {
 export interface BossComponentTowerTargetingV1 {
     readonly priorityTags: readonly string[];
 }
+export declare const FORMATION_ROLES: readonly ["vanguard", "body", "support"];
+export type FormationRoleV1 = (typeof FORMATION_ROLES)[number];
+export interface FormationSteeringDefinitionV1 {
+    readonly neighborRadius: 1 | 2;
+    readonly cohesionWeight: number;
+    readonly separationWeight: number;
+    readonly roleWeight: number;
+}
+export interface FormationCohortDefinitionV1 {
+    readonly members: Readonly<Record<string, FormationRoleV1>>;
+    readonly steering: FormationSteeringDefinitionV1;
+}
+export interface EnemyFormationsDefinitionV1 {
+    readonly cohorts: Readonly<Record<string, FormationCohortDefinitionV1>>;
+}
 export interface EnemyBehaviorsProfileV1 {
-    readonly bosses: Readonly<Record<string, BossComponentsDefinitionV1>>;
+    readonly bosses?: Readonly<Record<string, BossComponentsDefinitionV1>>;
     readonly targeting?: {
         readonly towers: Readonly<Record<string, BossComponentTowerTargetingV1>>;
     };
+    readonly formations?: EnemyFormationsDefinitionV1;
 }
 export interface ActiveEnemyBehaviorsV1 extends EnemyBehaviorsProfileV1 {
     readonly schemaVersion: 1;

@@ -1,0 +1,8 @@
+{
+  "mechanics": {
+    "profiles": {
+      "navigation": "basic_dynamic_navigation",
+      "enemyBehaviors": "basic_formation_steering"
+    }
+  }
+}

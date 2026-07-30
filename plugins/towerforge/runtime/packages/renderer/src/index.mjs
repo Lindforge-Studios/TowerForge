@@ -21,6 +21,7 @@ import { projectPhysicsPresentationCues } from "./physics-presentation.mjs";
 import { projectHeroPresentationPoint, projectHeroesPresentation } from "./heroes-presentation.mjs";
 import { projectProceduralJuicePresentation } from "./procedural-juice-presentation.mjs";
 import { projectEnemyComponentsPresentation } from "./enemy-components-presentation.mjs";
+import { projectEnemyFormationsPresentation } from "./enemy-formations-presentation.mjs";
 import {
   createProceduralJuicePresentationRuntime,
   createProceduralJuiceWorldSnapshotBuffer
@@ -39,6 +40,7 @@ export * from "./quest-presentation.mjs";
 export * from "./procedural-juice-presentation.mjs";
 export * from "./procedural-juice-runtime.mjs";
 export * from "./enemy-components-presentation.mjs";
+export * from "./enemy-formations-presentation.mjs";
 export { projectLogisticsPresentation } from "./logistics-power-presentation.mjs";
 
 function ownDataValue(record, key) {
@@ -76,6 +78,7 @@ export class TowerForgeCanvasRenderer {
     this.prevTowerPos = new Map();
     this.prevCombat = null;
     this.enemyComponentsByEnemyId = new Map();
+    this.enemyFormationsByEnemyId = new Map();
     this.prevJuiceSnapshot = null;
     this.proceduralJuiceRuntime = null;
     this.proceduralJuiceWorldSnapshots = null;
@@ -159,6 +162,9 @@ export class TowerForgeCanvasRenderer {
       if (existing) existing.push(row);
       else this.enemyComponentsByEnemyId.set(row.enemyId, [row]);
     }
+    this.enemyFormationsByEnemyId = new Map(
+      projectEnemyFormationsPresentation(snapshot).rows.map((row) => [row.enemyId, row])
+    );
 
     this.spawnEffects(presentationSnapshot, geom, positions, towerPositions);
     this.advanceEffects(dt);
@@ -928,6 +934,16 @@ export class TowerForgeCanvasRenderer {
     this.ctx.fillRect(p.x - geom.r * 0.45, p.y - geom.r * 0.62, geom.r * 0.9 * hpRatio, 4);
     const shield = resolveShieldPresentation(snapshot, "enemy", enemy.id);
     if (shield) this.drawShieldRing(p, geom.r * 0.52, shield);
+    const formation = this.enemyFormationsByEnemyId.get(enemy.id);
+    if (formation) {
+      const color = formation.role === "vanguard" ? "#f0b45b"
+        : formation.role === "support" ? "#73bfe8" : "#a79bdc";
+      this.ctx.beginPath();
+      this.ctx.arc(p.x, p.y, geom.r * 0.46, 0, Math.PI * 2);
+      this.ctx.strokeStyle = color;
+      this.ctx.lineWidth = Math.max(1, geom.r * 0.07);
+      this.ctx.stroke();
+    }
     const components = this.enemyComponentsByEnemyId.get(enemy.id) ?? [];
     if (components.length > 0) {
       const width = geom.r * 0.9;

@@ -55,6 +55,7 @@ service. Нет соответствующего выбора или локал�
 | R11 — Procedural Juice Engine | Завершён; ADR Accepted | Opt-in visuals v3: deterministic particle/audio/camera plans, shared Canvas/Phaser surfaces, Studio/MCP authoring и неизменный gameplay/legacy path |
 | R12.1 — targetable boss components | В работе; ADR Proposed | Opt-in `enemyBehaviors` v1, component damage/state, guarded Studio/MCP authoring, shared presentation и absent/disabled legacy path |
 | R12.2 — component-driven boss phases | В работе; ADR Proposed | Schema-v7 component events, exact read-only HFSM context, unchanged Graph/Trace v2 grammar и guarded AI authoring |
+| R12.3 — bounded formation steering | В работе; engine GREEN, ADR Proposed | Dynamic-flow-only cohorts, three roles, bounded shared-field steering, active-only snapshot/checkpoint и isolated constructor surfaces |
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Поставленные версии `combat`, `reactions`, `navigation` и `elevation` уже прошли полные вертикальные срезы. Остальные модули Mechanics Hub остаются planned, а preview/apply отклоняют их включение без записи.
 
@@ -730,9 +731,13 @@ combat resolver и HFSM. Модуль остаётся полностью opt-in
    во время этих events. HFSM сохраняет R9 semantics и common budgets. Graph v2
    и Trace v2 используют существующие handler/transition nodes и event -> transition
    provenance без нового grammar, layout version или write-tool.
-3. **R12.3 — formation steering.** Shared flow field остаётся авторитетным; deterministic
-   spatial buckets дают не более 16 neighbours на enemy без per-enemy A* и O(n²)
-   full scan.
+3. **R12.3 — formation steering.** Authored cohorts назначают enemy types роли
+   `vanguard | body | support` и активны только вместе с выбранным для той
+   же mission Navigation v1 `dynamic_flow`. Shared flow field остаётся авторитетным;
+   deterministic spatial buckets дают не более 16 binary-ordered neighbours на
+   enemy без per-enemy A* и O(n²) full scan. Результат публикуется только в
+   active `snapshot.enemyBehaviors.formations`/checkpoint state; renderer не считает
+   steering.
 4. **R12.4 — vanguard protection.** Authored cohort/radius и существующие combat shields
    защищают formation, не подменяя armor/resistances и exact-once settlement.
 
@@ -747,6 +752,12 @@ R12.2 AI authoring начинается с `describe_schema(scripts).controllerR
 `component_driven_boss_phase`. После подстановки точных authored enemy/component
 IDs агент использует только прежний `get_tower_script -> upsert_tower_script(dryRun)
 -> guarded upsert(ifRevision) -> validate_project -> preview_tower_script_trace` flow.
+
+R12.3 authoring идёт только через общий guarded mechanics flow:
+`describe_schema(enemyBehaviors) -> get_capabilities -> get_recipe(basic_formation_steering)
+-> preview_mechanics_module -> apply_mechanics_module(ifRevision) -> validate_project`. Recipe
+ничего не включает и не создаёт Navigation; `dynamic_flow` нужно явно выбрать
+для той же mission. См. `docs/examples/opt-in-formation-steering/`.
 
 ## TDD и роли
 

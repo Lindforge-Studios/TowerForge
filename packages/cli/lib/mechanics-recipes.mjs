@@ -28,6 +28,7 @@ const BASIC_FACTORY_AMMUNITION_SUPPLY_ID = "basic_factory_ammunition_supply";
 const BASIC_ADAPTIVE_WAVE_DIRECTOR_ID = "basic_adaptive_wave_director";
 const BASIC_PROCEDURAL_QUESTS_ID = "basic_procedural_quests";
 const BASIC_TARGETABLE_BOSS_COMPONENTS_ID = "basic_targetable_boss_components";
+const BASIC_FORMATION_STEERING_ID = "basic_formation_steering";
 const BASIC_LOCAL_COOP_ID = "basic_local_coop";
 const BASIC_PARTITIONED_LOCAL_COOP_ID = "basic_partitioned_local_coop";
 const BASIC_ASYMMETRIC_SEND_VS_BUILD_ID = "basic_asymmetric_send_vs_build";
@@ -385,6 +386,17 @@ const RECIPES = Object.freeze([
     moduleSchemaVersion: 1
   }),
   Object.freeze({
+    id: BASIC_FORMATION_STEERING_ID,
+    moduleId: "enemyBehaviors",
+    label: "Basic Formation Steering",
+    description: "Inert enemyBehaviors v1 cohort with bounded deterministic vanguard, body, and support steering.",
+    suggestedId: BASIC_FORMATION_STEERING_ID,
+    moduleSchemaVersion: 1,
+    prerequisites: Object.freeze({
+      navigation: Object.freeze({ moduleSchemaVersion: 1, mode: "dynamic_flow" })
+    })
+  }),
+  Object.freeze({
     id: BASIC_LOCAL_COOP_ID,
     moduleId: "multiplayer",
     label: "Basic Local Co-op",
@@ -615,6 +627,40 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
         missionId: missionId ?? "",
         profileId: recipe.suggestedId,
         profile
+      }
+    };
+  }
+  if (recipeId === BASIC_FORMATION_STEERING_ID) {
+    const enemyTypeIds = sortedSafeIds(ownDataValue(context, "enemyIds"));
+    if (enemyTypeIds.length === 0) {
+      throw new MechanicsRecipeParameterError(
+        "enemy_behaviors_formation_recipe_context_required",
+        "Basic formation steering requires at least one authored enemy in the project."
+      );
+    }
+    const members = safeRecord();
+    const roles = ["vanguard", "body", "support"];
+    for (const [index, enemyTypeId] of enemyTypeIds.slice(0, 3).entries()) {
+      defineOwn(members, enemyTypeId, roles[index]);
+    }
+    const cohorts = safeRecord();
+    defineOwn(cohorts, "main", {
+      members,
+      steering: {
+        neighborRadius: 2,
+        cohesionWeight: 600,
+        separationWeight: 800,
+        roleWeight: 400
+      }
+    });
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "enemyBehaviors",
+        moduleSchemaVersion: 1,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: { formations: { cohorts } }
       }
     };
   }

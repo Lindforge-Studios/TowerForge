@@ -3253,7 +3253,7 @@ export function validateGameContentRegistry(content) {
             const active = module.enabled === true && (selectedByProfile.get(profileId)?.length ?? 0) > 0;
             const semantic = active ? err : warn;
             const componentTags = new Set();
-            for (const [enemyTypeId, boss] of Object.entries(profile.bosses)) {
+            for (const [enemyTypeId, boss] of Object.entries(profile.bosses ?? {})) {
                 const enemy = content.enemies[enemyTypeId];
                 if (!enemy) {
                     semantic("mechanics", profileId, `${root}.bosses.${enemyTypeId}`, `Enemy behaviors boss references unknown enemy "${enemyTypeId}".`);
@@ -3280,6 +3280,31 @@ export function validateGameContentRegistry(content) {
                 for (const tag of binding.priorityTags) {
                     if (!componentTags.has(tag)) {
                         semantic("mechanics", profileId, `${root}.targeting.towers.${towerId}.priorityTags`, `Enemy behaviors targeting references unknown component tag "${tag}".`);
+                    }
+                }
+            }
+            if (profile.formations) {
+                for (const [cohortId, cohort] of Object.entries(profile.formations.cohorts)) {
+                    for (const enemyTypeId of Object.keys(cohort.members)) {
+                        if (!content.enemies[enemyTypeId]) {
+                            semantic("mechanics", profileId, `${root}.formations.cohorts.${cohortId}.members.${enemyTypeId}`, `Enemy behaviors formation references unknown enemy "${enemyTypeId}".`);
+                        }
+                    }
+                }
+                const selectedMissions = selectedByProfile.get(profileId) ?? [];
+                if (selectedMissions.length === 0) {
+                    warn("mechanics", profileId, `${root}.formations`, "Enemy behaviors formations require an active dynamic_flow navigation profile when selected.");
+                }
+                for (const missionId of selectedMissions) {
+                    let navigation;
+                    try {
+                        navigation = resolveActiveNavigationMechanics(content, missionId);
+                    }
+                    catch {
+                        navigation = undefined;
+                    }
+                    if (module.enabled !== true || navigation?.mode !== "dynamic_flow") {
+                        semantic("mechanics", profileId, `${root}.formations`, `Enemy behaviors formations require active dynamic_flow navigation for mission "${missionId}".`);
                     }
                 }
             }

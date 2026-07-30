@@ -2000,6 +2000,7 @@ import {
   projectElevationCues,
   projectEnemyNavigationPoint,
   projectEnemyComponentsPresentation,
+  projectEnemyFormationsPresentation,
   projectLegacyPresentationEvents,
   projectExposurePresentationCues,
   projectMarkPresentationCues,
@@ -2928,6 +2929,9 @@ class PlayScene extends Phaser.Scene {
       if (existing) existing.push(row);
       else componentRowsByEnemyId.set(row.enemyId, [row]);
     }
+    const enemyFormationsByEnemyId = new Map(
+      projectEnemyFormationsPresentation(snap).rows.map((row) => [row.enemyId, row])
+    );
     for (const en of snap.enemies) {
       const p = this.enemyPos(en, snap, g);
       if (!p) continue;
@@ -2938,6 +2942,13 @@ class PlayScene extends Phaser.Scene {
       this.entG.fillStyle(0x1b1d18, 1); this.entG.fillRect(p.x - g.r * 0.45, p.y - g.r * 0.62, g.r * 0.9, 4);
       this.entG.fillStyle(ratio > 0.35 ? 0x8ac783 : 0xdf6a59, 1); this.entG.fillRect(p.x - g.r * 0.45, p.y - g.r * 0.62, g.r * 0.9 * ratio, 4);
       this.shieldRing(this.entG, p.x, p.y, g.r * 0.52, resolveShieldPresentation(snap, "enemy", en.id));
+      const formation = enemyFormationsByEnemyId.get(en.id);
+      if (formation) {
+        const formationColor = formation.role === "vanguard" ? 0xf0b45b
+          : formation.role === "support" ? 0x73bfe8 : 0xa79bdc;
+        this.entG.lineStyle(Math.max(1, g.r * 0.07), formationColor, 1);
+        this.entG.strokeCircle(p.x, p.y, g.r * 0.46);
+      }
       const components = componentRowsByEnemyId.get(en.id) ?? [];
       if (components.length > 0) {
         const width = g.r * 0.9, cellWidth = width / components.length;

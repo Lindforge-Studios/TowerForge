@@ -93,7 +93,7 @@ const MECHANICS_MODULES = [
   { id: "logistics", title: "Logistics", description: "Power grids, inventories, ammunition, and production." },
   { id: "director", title: "AI Wave Director", description: "Optional opt-in deterministic adaptation from an authored counter pool with explicit threat budgets and fairness caps." },
   { id: "quests", title: "Challenges / Procedural Quests", description: "Opt-in deterministic battle-local objectives selected from an authored weighted pool." },
-  { id: "enemyBehaviors", title: "Targetable Boss Components", description: "Opt-in component HP, shields, authored tower priorities, and typed boss ability suppression." },
+  { id: "enemyBehaviors", title: "Advanced Enemy Behaviors", description: "Opt-in targetable boss components and bounded dynamic-flow formations." },
   { id: "scriptingDx", title: "TowerScript DX", description: "Visual graphs, structured traces, and step debugging." },
   { id: "multiplayer", title: "Multiplayer", description: "Deterministic matches, replay, and local transport." }
 ];
@@ -110,7 +110,10 @@ const TERRAFORMING_RECIPE_IDS = new Set(["tagged_flood", "tagged_moat", "tagged_
 const ROGUELITE_RECIPE_IDS = new Set(["basic_elemental_synergy", "basic_boss_artifact_loot"]);
 const DIRECTOR_RECIPE_IDS = new Set(["basic_adaptive_wave_director"]);
 const QUEST_RECIPE_IDS = new Set(["basic_procedural_quests"]);
-const ENEMY_BEHAVIORS_RECIPE_IDS = new Set(["basic_targetable_boss_components"]);
+const ENEMY_BEHAVIORS_RECIPE_IDS = new Set([
+  "basic_targetable_boss_components",
+  "basic_formation_steering"
+]);
 const MULTIPLAYER_RECIPE_IDS = new Set([
   "basic_local_coop", "basic_partitioned_local_coop", "basic_asymmetric_send_vs_build"
 ]);
@@ -839,6 +842,31 @@ function normalizeEnemyBehaviorsMechanicsDraft(profile) {
       binding.priorityTags = Array.isArray(binding.priorityTags)
         ? binding.priorityTags.filter((tag) => typeof tag === "string")
         : [];
+    }
+  }
+  if (draft.formations !== undefined) {
+    if (!draft.formations || typeof draft.formations !== "object" || Array.isArray(draft.formations)) {
+      draft.formations = { cohorts: {} };
+    }
+    if (!draft.formations.cohorts || typeof draft.formations.cohorts !== "object"
+      || Array.isArray(draft.formations.cohorts)) draft.formations.cohorts = {};
+    const formationRoles = new Set(["vanguard", "body", "support"]);
+    for (const cohort of Object.values(draft.formations.cohorts)) {
+      if (!cohort || typeof cohort !== "object" || Array.isArray(cohort)) continue;
+      if (!cohort.members || typeof cohort.members !== "object" || Array.isArray(cohort.members)) {
+        cohort.members = {};
+      }
+      for (const [enemyTypeId, role] of Object.entries(cohort.members)) {
+        if (!formationRoles.has(role)) delete cohort.members[enemyTypeId];
+      }
+      if (!cohort.steering || typeof cohort.steering !== "object" || Array.isArray(cohort.steering)) {
+        cohort.steering = {
+          neighborRadius: 2,
+          cohesionWeight: 600,
+          separationWeight: 800,
+          roleWeight: 400
+        };
+      }
     }
   }
   return draft;
@@ -5634,6 +5662,40 @@ function updateEnemyBehaviorsMechanicsDraft() {
   }
 }
 
+function updateEnemyFormationsMechanicsDraft() {
+  const input = $("mechanics-enemy-formations-profile-json");
+  if (!input) return false;
+  try {
+    const parsed = JSON.parse(input.value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Use one JSON object.");
+    const next = deep(MechanicsUI.draft ?? { bosses: {} });
+    next.formations = parsed;
+    MechanicsUI.draft = normalizeEnemyBehaviorsMechanicsDraft(next);
+    input.setCustomValidity("");
+    MechanicsUI.preview = null;
+    return true;
+  } catch {
+    input.setCustomValidity("Formations must be valid JSON with cohorts, members, and bounded steering fields.");
+    input.reportValidity();
+    return false;
+  }
+}
+
+function renderEnemyFormationsMechanicsEditor() {
+  if (MechanicsUI.selectedModuleId !== "enemyBehaviors") return;
+  const input = $("mechanics-enemy-formations-profile-json");
+  if (!input) return;
+  const supportedVersion = mechanicsProjectModuleVersion() === 1;
+  input.value = JSON.stringify(MechanicsUI.draft?.formations ?? { cohorts: {} }, null, 2);
+  input.disabled = !supportedVersion;
+  input.onchange = () => {
+    if (updateEnemyFormationsMechanicsDraft()) {
+      renderEnemyBehaviorsMechanicsEditor();
+      renderMechanicsPreviewResult();
+    }
+  };
+}
+
 function renderEnemyBehaviorsMechanicsEditor() {
   if (MechanicsUI.selectedModuleId !== "enemyBehaviors") return;
   const capability = MechanicsUI.capabilities?.enemyBehaviors;
@@ -5655,6 +5717,7 @@ function renderEnemyBehaviorsMechanicsEditor() {
   input.onchange = () => {
     if (updateEnemyBehaviorsMechanicsDraft()) renderMechanicsPreviewResult();
   };
+  renderEnemyFormationsMechanicsEditor();
 }
 
 function mechanicsRequest(enabled) {

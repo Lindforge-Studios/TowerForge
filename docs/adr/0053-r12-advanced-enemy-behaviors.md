@@ -63,10 +63,21 @@ binary-first authored IDs and still requires an explicit mission/profile selecti
 generated players consume the active snapshot projection and never perform component routing or
 hit-testing themselves. Future module versions are preserved read-only.
 
-R12.3 keeps the shared flow field authoritative and adds only bounded deterministic local formation
-steering through spatial buckets, at most 16 neighbours per enemy, stable tie-breaks, and no
-renderer-owned movement. R12.4 composes vanguard protection from the existing shield/damage
-pipeline rather than replacing armor or resistances.
+R12.3 adds optional `formations.cohorts` to the same v1 profile. Each enemy type belongs to at most
+one authored cohort and has one role from `vanguard | body | support`. Formation execution requires
+an enabled Navigation v1 `dynamic_flow` profile selected by the same mission. The reverse flow field
+remains the primary direction; a pure local chooser may select only among equal-optimal flow
+candidates. Deterministic spatial buckets inspect at most 16 binary-ordered same-cohort neighbours
+inside authored radius 1–2. Per-enemy A*, an O(n²) full scan, renderer-owned movement, and hidden
+randomness remain forbidden.
+
+Only the active module publishes optional `snapshot.enemyBehaviors.formations` inner schema v1 as
+`enemies[enemyId] = { cohortId, role }`; matching checkpoint state preserves deterministic restore
+and journal replay. The shared renderer projector exposes only those authoritative labels and owns
+no steering weights or navigation rules. The inert `basic_formation_steering` recipe does not enable
+or select either dependency, edit enemies, or bypass the existing mechanics preview/apply writer.
+R12.4 composes vanguard protection from the existing shield/damage pipeline rather than replacing
+armor or resistances.
 
 ## TDD delivery
 
@@ -81,6 +92,11 @@ active/error versus inactive/warning cross-reference semantics, capability disco
 fail-closed active resolver. The next RED separately covers DamagePacket routing, active-only
 snapshot/checkpoint state, deterministic restore/replay, and exact-once settlement.
 
+R12.3 acceptance separately freezes formation-only content, the explicit same-mission dynamic-flow
+dependency, pure bounded equal-cost selection, 16-neighbour and tick budgets, input-order
+invariance, active-only snapshot/checkpoint restore, shared Canvas/Phaser projection, and the
+existing guarded Studio/MCP transaction. It introduces no command, event, RNG domain, or new writer.
+
 ## Consequences
 
 - Legacy projects and ordinary enemies retain their exact path.
@@ -92,3 +108,5 @@ snapshot/checkpoint state, deterministic restore/replay, and exact-once settleme
   authority are outside R12.
 - The copyable R12.1 authoring reference lives in
   `docs/examples/opt-in-targetable-boss-components/`; it is never part of the ordinary starter.
+- The copyable R12.3 reference lives in `docs/examples/opt-in-formation-steering/` and keeps the
+  required Navigation selection explicit rather than auto-enabling it.
