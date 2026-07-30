@@ -343,3 +343,16 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - Focused runtime is GREEN at 8/8. Checkpoint/replay/damage/formation compatibility is GREEN at
   127/127; `npm run typecheck` and `npm run build:engine` pass. Constructor surfaces remain a
   separate RED/GREEN slice.
+
+### R12.4b independent audit regression — target attribution and runtime cleanup
+
+- The pre-freeze architecture audit identified three production risks. An independent test designer
+  captured them in a six-test regression contract before production changes: all 6/6 tests failed for
+  post-interception hit/status attribution, armor-block attribution, stale reset diagnostics/cache,
+  spawn-time cache invalidation, and interception occurring before exact target/component validation.
+- GREEN keeps `towerFired` attached to the tower's acquired target but attaches `enemyHit`,
+  `enemyArmorBlocked`, and legacy on-hit status to the actual vanguard that received the packet.
+  Damage target identity and authored component existence are now validated before interception.
+- Reset, TowerScript spawn, phase spawn, and death/replacement paths invalidate the lazy protection
+  index; reset also clears all protection counters. Focused regression plus original runtime contracts
+  pass 14/14 and `npm run typecheck` passes.

@@ -941,6 +941,10 @@ interface VanguardProtectionIndexV1 {
   readonly buckets: ReadonlyMap<string, readonly EnemyState[]>;
 }
 
+interface RuntimeDamageApplicationResult extends DamageApplicationResult {
+  readonly enemyTarget?: EnemyState;
+}
+
 type MutableFormationSteeringRuntimeStatsV1 = {
   -readonly [Key in keyof FormationSteeringRuntimeStatsV1]: FormationSteeringRuntimeStatsV1[Key];
 };
@@ -1453,6 +1457,10 @@ export class TowerDefenseGame {
     this.towerShields = {};
     this.enemyMarks = {};
     this.enemyComponentStates = {};
+    this.vanguardProtectionIndex = undefined;
+    this.vanguardProtectionTransactionsThisTick = 0;
+    this.vanguardProtectionCandidatesInspected = 0;
+    this.vanguardProtectionMaximumCandidateCount = 0;
     this.directorDecisions = Object.freeze([]);
     this.initializeQuestEntries();
     this.lastEvents = [];
@@ -9348,6 +9356,7 @@ export class TowerDefenseGame {
         if (!enemy) throw new Error(`Unknown enemy type "${action.enemyTypeId}".`);
         this.enemies.push(enemy);
       }
+      this.vanguardProtectionIndex = undefined;
       return;
     }
     if (action.action === "setTileTerrain" || action.action === "restoreTileTerrain") {
@@ -13762,7 +13771,7 @@ export class TowerDefenseGame {
     amount: number,
     source: DamageSourceRef,
     options: ResolvedEnemyDamageOptions = {}
-  ): DamageApplicationResult {
+  ): RuntimeDamageApplicationResult {
     const componentDefinition = options.componentId === undefined
       ? undefined
       : this.activeEnemyBehaviors?.bosses?.[enemy.typeId]?.components[options.componentId];
@@ -13855,7 +13864,21 @@ export class TowerDefenseGame {
     context: DamageResolutionContext | undefined,
     mutableTarget: MutableDamageTarget,
     reactionRuntime?: ReactionRuntimeContext
-  ): DamageApplicationResult {
+  ): RuntimeDamageApplicationResult {
+    if (mutableTarget.kind === "enemy") {
+      const initialComponentId = packet.target.kind === "enemy" ? packet.target.componentId : undefined;
+      const initialComponentState = initialComponentId === undefined
+        ? undefined
+        : this.enemyComponentStates[mutableTarget.enemy.id]?.[initialComponentId];
+      if (
+        packet.target.kind !== "enemy"
+        || packet.target.enemyId !== mutableTarget.enemy.id
+        || packet.target.enemyTypeId !== mutableTarget.enemy.typeId
+        || (initialComponentId !== undefined && initialComponentState === undefined)
+      ) {
+        throw new Error("Damage packet target does not match mutable target or authored component.");
+      }
+    }
     if (mutableTarget.kind === "enemy") {
       const interception = this.planVanguardDamageInterception(packet, mutableTarget.enemy);
       if (interception) {
@@ -14066,7 +14089,12 @@ export class TowerDefenseGame {
         this.planAndApplyReactions(packet, mutableTarget.enemy, resolvedDamage, capturedReactionState, reactionRuntime);
       }
     }
-    return { resolution: resolvedDamage, shieldAbsorbed, hpDamage };
+    return {
+      resolution: resolvedDamage,
+      shieldAbsorbed,
+      hpDamage,
+      ...(mutableTarget.kind === "enemy" ? { enemyTarget: mutableTarget.enemy } : {})
+    };
   }
 
   private planAndApplyReactions(
@@ -14263,14 +14291,15 @@ export class TowerDefenseGame {
     options: DamageResolutionOptions = {}
   ): number {
     const application = this.applyResolvedTowerDamage(tower.typeId, enemy, rawDamage, options, tower.id);
+    const appliedEnemy = application.enemyTarget ?? enemy;
     const damage = application.resolution.finalAmount;
     if (damage > 0) {
-      if (options.applyLegacyStatus !== false) this.applyStatusOnHit(tower.typeId, enemy);
+      if (options.applyLegacyStatus !== false) this.applyStatusOnHit(tower.typeId, appliedEnemy);
       this.lastEvents.push({
         type: "enemyHit",
         towerId: tower.id,
-        enemyId: enemy.id,
-        enemyTypeId: enemy.typeId,
+        enemyId: appliedEnemy.id,
+        enemyTypeId: appliedEnemy.typeId,
         damage
       });
       return damage;
@@ -14280,8 +14309,8 @@ export class TowerDefenseGame {
       this.lastEvents.push({
         type: "enemyArmorBlocked",
         towerId: tower.id,
-        enemyId: enemy.id,
-        enemyTypeId: enemy.typeId,
+        enemyId: appliedEnemy.id,
+        enemyTypeId: appliedEnemy.typeId,
         rawDamage
       });
     }
@@ -14294,7 +14323,7 @@ export class TowerDefenseGame {
     rawDamage: number,
     options: DamageResolutionOptions = {},
     towerId?: string
-  ): DamageApplicationResult {
+  ): RuntimeDamageApplicationResult {
     const modifiers: ModifierSpec[] = [];
     if (this.towerDamageMultiplier !== 1) {
       modifiers.push({
@@ -14507,6 +14536,7 @@ export class TowerDefenseGame {
     }
     if (spawned.length > 0) {
       this.enemies.push(...spawned);
+      this.vanguardProtectionIndex = undefined;
     }
   }
 
@@ -15211,6 +15241,7 @@ export class TowerDefenseGame {
     }
 
     this.enemies = [...survivors, ...spawned];
+    this.vanguardProtectionIndex = undefined;
   }
 
   private settleArtifactLoot(enemy: EnemyState): void {
