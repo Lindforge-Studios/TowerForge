@@ -5275,7 +5275,7 @@ export class TowerDefenseGame {
         "Game checkpoint enemyBehaviors components"
       );
       const expectedEnemyIds = [...enemyTypeByInstance.entries()]
-        .filter(([, typeId]) => checkpointEnemyBehaviors.bosses[typeId] !== undefined)
+        .filter(([, typeId]) => checkpointEnemyBehaviors.bosses?.[typeId] !== undefined)
         .map(([enemyId]) => enemyId)
         .sort(compareBinary);
       const actualEnemyIds = Object.keys(componentEnemies);
@@ -5284,7 +5284,9 @@ export class TowerDefenseGame {
       }
       for (const enemyId of actualEnemyIds) {
         const typeId = enemyTypeByInstance.get(enemyId)!;
-        const authored = checkpointEnemyBehaviors.bosses[typeId]!.components;
+        const authoredBoss = checkpointEnemyBehaviors.bosses?.[typeId];
+        if (!authoredBoss) throw new Error("Game checkpoint enemyBehaviors state references a non-component enemy.");
+        const authored = authoredBoss.components;
         const componentRecord = checkpointObjectDescriptors(
           checkpointDataField(componentEnemies, enemyId, "enemyBehaviors components"),
           `Game checkpoint enemyBehaviors components for ${enemyId}`
@@ -6265,7 +6267,7 @@ export class TowerDefenseGame {
         }
         const enemyTypeId = stringValue(checkpointDataField(event, "enemyTypeId", type), `${type}.enemyTypeId`);
         const componentId = stringValue(checkpointDataField(event, "componentId", type), `${type}.componentId`);
-        const definition = checkpointEnemyBehaviors.bosses[enemyTypeId]?.components[componentId];
+        const definition = checkpointEnemyBehaviors.bosses?.[enemyTypeId]?.components[componentId];
         if (!definition) throw new Error("Game checkpoint boss component event references an unknown component.");
         const sourceKind = checkpointDataField(event, "sourceKind", type);
         if (!["tower", "ability", "tower_script", "status", "reaction", "enemy", "leak"].includes(String(sourceKind))) {
@@ -8860,7 +8862,7 @@ export class TowerDefenseGame {
     const enemyTypeId = event.enemyTypeId;
     const componentId = event.componentId;
     if (typeof enemyTypeId !== "string" || typeof componentId !== "string") return undefined;
-    const authored = this.activeEnemyBehaviors?.bosses[enemyTypeId]?.components[componentId];
+    const authored = this.activeEnemyBehaviors?.bosses?.[enemyTypeId]?.components[componentId];
     if (!authored) return undefined;
     const hp = Number(event.currentHp);
     const maxHp = Number(event.maxHp);
@@ -10976,7 +10978,7 @@ export class TowerDefenseGame {
   }
 
   private initializeEnemyComponents(enemy: EnemyState): void {
-    const authored = this.activeEnemyBehaviors?.bosses[enemy.typeId]?.components;
+    const authored = this.activeEnemyBehaviors?.bosses?.[enemy.typeId]?.components;
     if (!authored) return;
     const multiplier = this.difficulty.enemyHpMultiplier ?? 1;
     this.enemyComponentStates[enemy.id] = Object.fromEntries(Object.keys(authored).sort(compareBinary).map((componentId) => {
@@ -11000,7 +11002,7 @@ export class TowerDefenseGame {
     enemy: EnemyState,
     abilityId: "towerAttack" | "towerDisrupt" | "healAura"
   ): boolean {
-    const definitions = this.activeEnemyBehaviors?.bosses[enemy.typeId]?.components;
+    const definitions = this.activeEnemyBehaviors?.bosses?.[enemy.typeId]?.components;
     const states = this.enemyComponentStates[enemy.id];
     if (!definitions || !states) return true;
     for (const componentId of Object.keys(definitions).sort(compareBinary)) {
@@ -11013,7 +11015,7 @@ export class TowerDefenseGame {
 
   private towerComponentTargetId(enemy: EnemyState, towerTypeId: string): string | undefined {
     const binding = this.activeEnemyBehaviors?.targeting?.towers[towerTypeId];
-    const definitions = this.activeEnemyBehaviors?.bosses[enemy.typeId]?.components;
+    const definitions = this.activeEnemyBehaviors?.bosses?.[enemy.typeId]?.components;
     const states = this.enemyComponentStates[enemy.id];
     if (!binding || !definitions || !states) return undefined;
     const componentIds = Object.keys(definitions).sort(compareBinary);
@@ -11238,7 +11240,7 @@ export class TowerDefenseGame {
       });
     }
     for (const enemy of this.enemies) {
-      const definitions = this.activeEnemyBehaviors?.bosses[enemy.typeId]?.components;
+      const definitions = this.activeEnemyBehaviors?.bosses?.[enemy.typeId]?.components;
       const states = this.enemyComponentStates[enemy.id];
       if (!definitions || !states) continue;
       for (const componentId of Object.keys(definitions).sort(compareBinary)) {
@@ -13194,7 +13196,7 @@ export class TowerDefenseGame {
   ): DamageApplicationResult {
     const componentDefinition = options.componentId === undefined
       ? undefined
-      : this.activeEnemyBehaviors?.bosses[enemy.typeId]?.components[options.componentId];
+      : this.activeEnemyBehaviors?.bosses?.[enemy.typeId]?.components[options.componentId];
     const componentArmor = componentDefinition?.armorTypeId === undefined
       ? undefined
       : this.activeCombatMechanics?.armorTypes[componentDefinition.armorTypeId];
@@ -13308,7 +13310,7 @@ export class TowerDefenseGame {
     }
     const componentDefinition = componentId === undefined || mutableTarget.kind !== "enemy"
       ? undefined
-      : this.activeEnemyBehaviors?.bosses[mutableTarget.enemy.typeId]?.components[componentId];
+      : this.activeEnemyBehaviors?.bosses?.[mutableTarget.enemy.typeId]?.components[componentId];
     const previousComponentHp = componentState?.hp;
     const previousComponentShield = componentState?.shield?.current ?? 0;
     const componentShieldCapacity = componentState?.shield?.capacity ?? 0;

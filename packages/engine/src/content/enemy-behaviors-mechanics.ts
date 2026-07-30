@@ -5,6 +5,11 @@ export const ENEMY_BEHAVIORS_LIMITS = Object.freeze({
   bossesPerProfile: 256,
   componentsPerRoot: 32,
   towerBindingsPerProfile: 256,
+  cohortsPerProfile: 64,
+  membersPerCohort: 256,
+  formationAssignmentsPerProfile: 4_096,
+  neighborRadius: 2,
+  steeringWeight: 1_000,
   tagsPerComponent: 32,
   priorityTagsPerBinding: 32,
   idOrTagUtf8Bytes: 128,
@@ -45,11 +50,32 @@ export interface BossComponentTowerTargetingV1 {
   readonly priorityTags: readonly string[];
 }
 
+export const FORMATION_ROLES = Object.freeze(["vanguard", "body", "support"] as const);
+
+export type FormationRoleV1 = (typeof FORMATION_ROLES)[number];
+
+export interface FormationSteeringDefinitionV1 {
+  readonly neighborRadius: 1 | 2;
+  readonly cohesionWeight: number;
+  readonly separationWeight: number;
+  readonly roleWeight: number;
+}
+
+export interface FormationCohortDefinitionV1 {
+  readonly members: Readonly<Record<string, FormationRoleV1>>;
+  readonly steering: FormationSteeringDefinitionV1;
+}
+
+export interface EnemyFormationsDefinitionV1 {
+  readonly cohorts: Readonly<Record<string, FormationCohortDefinitionV1>>;
+}
+
 export interface EnemyBehaviorsProfileV1 {
-  readonly bosses: Readonly<Record<string, BossComponentsDefinitionV1>>;
+  readonly bosses?: Readonly<Record<string, BossComponentsDefinitionV1>>;
   readonly targeting?: {
     readonly towers: Readonly<Record<string, BossComponentTowerTargetingV1>>;
   };
+  readonly formations?: EnemyFormationsDefinitionV1;
 }
 
 export interface ActiveEnemyBehaviorsV1 extends EnemyBehaviorsProfileV1 {
@@ -63,7 +89,11 @@ function utf8Bytes(value: string): number {
   return new TextEncoder().encode(value).length;
 }
 
-function record(value: unknown, path: string, maximumEntries?: number): Record<string, unknown> {
+function recordDescriptors(
+  value: unknown,
+  path: string,
+  maximumEntries?: number
+): { readonly keys: readonly string[]; readonly descriptors: Readonly<Record<PropertyKey, PropertyDescriptor>> } {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new EnemyBehaviorsProfileValidationError(`${path} must be a plain object.`);
   }
@@ -85,6 +115,11 @@ function record(value: unknown, path: string, maximumEntries?: number): Record<s
   if (maximumEntries !== undefined && keys.length > maximumEntries) {
     throw new EnemyBehaviorsProfileValidationError(`${path} exceeds the maximum limit of ${maximumEntries} entries.`);
   }
+  return { keys, descriptors };
+}
+
+function record(value: unknown, path: string, maximumEntries?: number): Record<string, unknown> {
+  const { keys, descriptors } = recordDescriptors(value, path, maximumEntries);
   const detached = Object.create(null) as Record<string, unknown>;
   for (const key of keys) {
     const descriptor = descriptors[key];
@@ -124,6 +159,14 @@ function finite(value: unknown, path: string, minimum: number, maximum: number, 
     throw new EnemyBehaviorsProfileValidationError(`${path} must be finite and in the supported range.`);
   }
   return value;
+}
+
+function integer(value: unknown, path: string, minimum: number, maximum: number): number {
+  const normalized = finite(value, path, minimum, maximum);
+  if (!Number.isSafeInteger(normalized)) {
+    throw new EnemyBehaviorsProfileValidationError(`${path} must be an integer in ${minimum}..${maximum}.`);
+  }
+  return normalized;
 }
 
 function denseStringSet(
@@ -258,39 +301,50 @@ function normalizeComponent(value: unknown, path: string): BossComponentDefiniti
 /** Closed hostile-data-safe parser that returns detached, binary-ordered, deeply frozen own data. */
 export function normalizeEnemyBehaviorsProfileV1(value: unknown): EnemyBehaviorsProfileV1 {
   const profile = record(value, "enemyBehaviors profile");
-  closed(profile, ["bosses"], ["targeting"], "enemyBehaviors profile");
-  const bossesInput = record(profile.bosses, "enemyBehaviors profile.bosses", ENEMY_BEHAVIORS_LIMITS.bossesPerProfile);
-  const bossIds = Object.keys(bossesInput).sort();
-  if (bossIds.length === 0) {
-    throw new EnemyBehaviorsProfileValidationError("enemyBehaviors profile.bosses must contain at least one boss.");
+  closed(profile, [], ["bosses", "targeting", "formations"], "enemyBehaviors profile");
+  if (profile.bosses === undefined && profile.formations === undefined) {
+    throw new EnemyBehaviorsProfileValidationError("enemyBehaviors profile requires at least one of bosses or formations.");
   }
-  const bosses = Object.create(null) as Record<string, BossComponentsDefinitionV1>;
-  for (const bossId of bossIds) {
-    boundedString(bossId, "enemyBehaviors boss id", ENEMY_BEHAVIORS_LIMITS.idOrTagUtf8Bytes);
-    const bossPath = `enemyBehaviors profile.bosses.${bossId}`;
-    const boss = record(bossesInput[bossId], bossPath);
-    closed(boss, ["components"], [], bossPath);
-    const componentsInput = record(
-      boss.components,
-      `${bossPath}.components`,
-      ENEMY_BEHAVIORS_LIMITS.componentsPerRoot
-    );
-    const componentIds = Object.keys(componentsInput).sort();
-    if (componentIds.length === 0) {
-      throw new EnemyBehaviorsProfileValidationError(`${bossPath}.components must contain at least one component.`);
+  if (profile.targeting !== undefined && profile.bosses === undefined) {
+    throw new EnemyBehaviorsProfileValidationError("enemyBehaviors profile.targeting requires bosses.");
+  }
+
+  let bosses: Readonly<Record<string, BossComponentsDefinitionV1>> | undefined;
+  if (profile.bosses !== undefined) {
+    const bossesInput = record(profile.bosses, "enemyBehaviors profile.bosses", ENEMY_BEHAVIORS_LIMITS.bossesPerProfile);
+    const bossIds = Object.keys(bossesInput).sort();
+    if (bossIds.length === 0) {
+      throw new EnemyBehaviorsProfileValidationError("enemyBehaviors profile.bosses must contain at least one boss.");
     }
-    const components = Object.create(null) as Record<string, BossComponentDefinitionV1>;
-    for (const componentId of componentIds) {
-      boundedString(componentId, `${bossPath} component id`, ENEMY_BEHAVIORS_LIMITS.idOrTagUtf8Bytes);
-      Object.defineProperty(components, componentId, {
-        value: normalizeComponent(componentsInput[componentId], `${bossPath}.components.${componentId}`),
+    const normalizedBosses = Object.create(null) as Record<string, BossComponentsDefinitionV1>;
+    for (const bossId of bossIds) {
+      boundedString(bossId, "enemyBehaviors boss id", ENEMY_BEHAVIORS_LIMITS.idOrTagUtf8Bytes);
+      const bossPath = `enemyBehaviors profile.bosses.${bossId}`;
+      const boss = record(bossesInput[bossId], bossPath);
+      closed(boss, ["components"], [], bossPath);
+      const componentsInput = record(
+        boss.components,
+        `${bossPath}.components`,
+        ENEMY_BEHAVIORS_LIMITS.componentsPerRoot
+      );
+      const componentIds = Object.keys(componentsInput).sort();
+      if (componentIds.length === 0) {
+        throw new EnemyBehaviorsProfileValidationError(`${bossPath}.components must contain at least one component.`);
+      }
+      const components = Object.create(null) as Record<string, BossComponentDefinitionV1>;
+      for (const componentId of componentIds) {
+        boundedString(componentId, `${bossPath} component id`, ENEMY_BEHAVIORS_LIMITS.idOrTagUtf8Bytes);
+        Object.defineProperty(components, componentId, {
+          value: normalizeComponent(componentsInput[componentId], `${bossPath}.components.${componentId}`),
+          enumerable: true
+        });
+      }
+      Object.defineProperty(normalizedBosses, bossId, {
+        value: Object.freeze({ components: Object.freeze(components) }),
         enumerable: true
       });
     }
-    Object.defineProperty(bosses, bossId, {
-      value: Object.freeze({ components: Object.freeze(components) }),
-      enumerable: true
-    });
+    bosses = Object.freeze(normalizedBosses);
   }
 
   let targeting: EnemyBehaviorsProfileV1["targeting"];
@@ -323,7 +377,116 @@ export function normalizeEnemyBehaviorsProfileV1(value: unknown): EnemyBehaviors
     }
     targeting = Object.freeze({ towers: Object.freeze(towers) });
   }
-  return Object.freeze({ bosses: Object.freeze(bosses), ...(targeting === undefined ? {} : { targeting }) });
+
+  let formations: EnemyFormationsDefinitionV1 | undefined;
+  if (profile.formations !== undefined) {
+    const formationsInput = record(profile.formations, "enemyBehaviors profile.formations");
+    closed(formationsInput, ["cohorts"], [], "enemyBehaviors profile.formations");
+    const cohortsInput = record(
+      formationsInput.cohorts,
+      "enemyBehaviors profile.formations.cohorts",
+      ENEMY_BEHAVIORS_LIMITS.cohortsPerProfile
+    );
+    const cohortIds = Object.keys(cohortsInput).sort();
+    if (cohortIds.length === 0) {
+      throw new EnemyBehaviorsProfileValidationError("enemyBehaviors profile.formations.cohorts must contain at least one cohort.");
+    }
+    const normalizedCohorts = Object.create(null) as Record<string, FormationCohortDefinitionV1>;
+    const assignedEnemyIds = new Set<string>();
+    let assignmentCount = 0;
+    for (const cohortId of cohortIds) {
+      boundedString(cohortId, "enemyBehaviors formation cohort id", ENEMY_BEHAVIORS_LIMITS.idOrTagUtf8Bytes);
+      const cohortPath = `enemyBehaviors profile.formations.cohorts.${cohortId}`;
+      const cohort = record(cohortsInput[cohortId], cohortPath);
+      closed(cohort, ["members", "steering"], [], cohortPath);
+      const membersInspection = recordDescriptors(
+        cohort.members,
+        `${cohortPath}.members`,
+        ENEMY_BEHAVIORS_LIMITS.membersPerCohort
+      );
+      const memberIds = [...membersInspection.keys].sort();
+      if (memberIds.length === 0) {
+        throw new EnemyBehaviorsProfileValidationError(`${cohortPath}.members must contain at least one member.`);
+      }
+      assignmentCount += memberIds.length;
+      if (assignmentCount > ENEMY_BEHAVIORS_LIMITS.formationAssignmentsPerProfile) {
+        throw new EnemyBehaviorsProfileValidationError(
+          `enemyBehaviors formation assignments exceed the maximum limit of ${ENEMY_BEHAVIORS_LIMITS.formationAssignmentsPerProfile}.`
+        );
+      }
+      const membersInput = Object.create(null) as Record<string, unknown>;
+      for (const enemyTypeId of memberIds) {
+        const descriptor = membersInspection.descriptors[enemyTypeId];
+        if (!descriptor?.enumerable || !("value" in descriptor)) {
+          throw new EnemyBehaviorsProfileValidationError(
+            `${cohortPath}.members.${enemyTypeId} must be an enumerable own data property; accessors are forbidden.`
+          );
+        }
+        Object.defineProperty(membersInput, enemyTypeId, { value: descriptor.value, enumerable: true });
+      }
+      const members = Object.create(null) as Record<string, FormationRoleV1>;
+      for (const enemyTypeId of memberIds) {
+        boundedString(enemyTypeId, `${cohortPath} member enemy id`, ENEMY_BEHAVIORS_LIMITS.idOrTagUtf8Bytes);
+        if (assignedEnemyIds.has(enemyTypeId)) {
+          throw new EnemyBehaviorsProfileValidationError(`enemyBehaviors formations contain duplicate enemy assignment "${enemyTypeId}".`);
+        }
+        assignedEnemyIds.add(enemyTypeId);
+        const role = membersInput[enemyTypeId];
+        if (typeof role !== "string" || !(FORMATION_ROLES as readonly string[]).includes(role)) {
+          throw new EnemyBehaviorsProfileValidationError(`${cohortPath}.members.${enemyTypeId} has an unsupported formation role.`);
+        }
+        Object.defineProperty(members, enemyTypeId, { value: role as FormationRoleV1, enumerable: true });
+      }
+      const steeringPath = `${cohortPath}.steering`;
+      const steeringInput = record(cohort.steering, steeringPath);
+      closed(
+        steeringInput,
+        ["neighborRadius", "cohesionWeight", "separationWeight", "roleWeight"],
+        [],
+        steeringPath
+      );
+      const neighborRadius = integer(
+        steeringInput.neighborRadius,
+        `${steeringPath}.neighborRadius`,
+        1,
+        ENEMY_BEHAVIORS_LIMITS.neighborRadius
+      ) as 1 | 2;
+      const cohesionWeight = integer(
+        steeringInput.cohesionWeight,
+        `${steeringPath}.cohesionWeight`,
+        0,
+        ENEMY_BEHAVIORS_LIMITS.steeringWeight
+      );
+      const separationWeight = integer(
+        steeringInput.separationWeight,
+        `${steeringPath}.separationWeight`,
+        0,
+        ENEMY_BEHAVIORS_LIMITS.steeringWeight
+      );
+      const roleWeight = integer(
+        steeringInput.roleWeight,
+        `${steeringPath}.roleWeight`,
+        0,
+        ENEMY_BEHAVIORS_LIMITS.steeringWeight
+      );
+      if (cohesionWeight === 0 && separationWeight === 0 && roleWeight === 0) {
+        throw new EnemyBehaviorsProfileValidationError(`${steeringPath} requires at least one positive steering weight.`);
+      }
+      Object.defineProperty(normalizedCohorts, cohortId, {
+        value: Object.freeze({
+          members: Object.freeze(members),
+          steering: Object.freeze({ neighborRadius, cohesionWeight, separationWeight, roleWeight })
+        }),
+        enumerable: true
+      });
+    }
+    formations = Object.freeze({ cohorts: Object.freeze(normalizedCohorts) });
+  }
+  return Object.freeze({
+    ...(bosses === undefined ? {} : { bosses }),
+    ...(targeting === undefined ? {} : { targeting }),
+    ...(formations === undefined ? {} : { formations })
+  });
 }
 
 export function resolveActiveEnemyBehaviorsV1(

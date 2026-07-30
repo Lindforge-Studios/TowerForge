@@ -274,3 +274,12 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - A follow-up regression RED proved that the generated Studio node catalog dropped `minimumSchemaVersion`; the catalog now carries the engine completion entries losslessly, so actual UI filtering and descriptor discovery use the same metadata.
 - Independent docs/AI RED was 2/2 expected failures for the missing component-phase recipe and guide v38. GREEN adds the inert `component_driven_boss_phase` descriptor and guide v39 without a write tool or Graph grammar change; its focused docs/agent suite passed 38/38.
 - Exact slice gates: typecheck, engine build, project validation, tutorial simulation, web build, plugin build/validate/smoke, and the combined R12.1/R12.2 focused suite pass. The first parallel full-unit run passed 3,234/3,236 and exposed two unrelated MCP concurrency flakes; their immediate serial rerun passed 97/97. A clean full-unit rerun remains required on the frozen commit.
+
+## 2026-07-31 — R12.3 formation steering
+
+### R12.3a contract freeze / RED / GREEN — formation content
+
+- Formation steering extends the same opt-in `enemyBehaviors` v1 profile; it does not add a module or version bump. A profile may contain bosses, formations, or both, while targeting still requires bosses. Formation-only activation requires mission-selected dynamic-flow Navigation.
+- Authored cohorts bind each enemy type to one role (`vanguard | body | support`) and one closed steering tuple. Bounds are 64 cohorts, 256 members per cohort, 4,096 assignments, radius 1..2, integer weights 0..1,000 with at least one positive weight. Vanguard protection remains outside this slice.
+- Independent content RED added 28 tests: 9 expected failures / 19 negative controls passed. Missing contracts were descriptor/profile support, formation-only normalization, canonical freezing, early budgets, dynamic-flow dependency and enemy references.
+- GREEN accepts detached binary-canonical formation-only or mixed profiles, preserves the exact boss-only normalized byte shape, rejects hostile/accessor/sparse/cyclic and over-budget data before reading a tail value, and reports active semantic errors versus inactive warnings. Focused content/component compatibility is 55/55; typecheck and engine build pass.

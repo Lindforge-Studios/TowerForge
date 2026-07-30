@@ -273,8 +273,10 @@ describe("R12.1 enemyBehaviors v1 boss-component content contract (RED)", () => 
       moduleId: "enemyBehaviors",
       supportedModuleSchemaVersions: [1],
       profile: {
-        requiredFields: ["bosses"],
-        optionalFields: ["targeting"],
+        requiredFields: [],
+        optionalFields: ["bosses", "targeting", "formations"],
+        atLeastOneFields: ["bosses", "formations"],
+        dependencies: { targeting: ["bosses"] },
         additionalProperties: false
       },
       boss: {

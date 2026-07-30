@@ -65,8 +65,10 @@ export const ENEMY_BEHAVIORS_MECHANICS_SCHEMA = Object.freeze({
   moduleId: "enemyBehaviors",
   supportedModuleSchemaVersions: [1] as const,
   profile: {
-    requiredFields: ["bosses"] as const,
-    optionalFields: ["targeting"] as const,
+    requiredFields: [] as const,
+    optionalFields: ["bosses", "targeting", "formations"] as const,
+    atLeastOneFields: ["bosses", "formations"] as const,
+    dependencies: { targeting: ["bosses"] as const },
     additionalProperties: false
   },
   boss: {
@@ -96,6 +98,22 @@ export const ENEMY_BEHAVIORS_MECHANICS_SCHEMA = Object.freeze({
       additionalProperties: false
     }
   },
+  formations: {
+    requiredFields: ["cohorts"] as const,
+    optionalFields: [] as const,
+    additionalProperties: false
+  },
+  formationCohort: {
+    requiredFields: ["members", "steering"] as const,
+    optionalFields: [] as const,
+    additionalProperties: false
+  },
+  formationSteering: {
+    requiredFields: ["neighborRadius", "cohesionWeight", "separationWeight", "roleWeight"] as const,
+    optionalFields: [] as const,
+    additionalProperties: false
+  },
+  formationRoles: ["vanguard", "body", "support"] as const,
   limits: ENEMY_BEHAVIORS_LIMITS
 });
 
