@@ -446,3 +446,20 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   checkpoint/navigation/journal/replay/damage/R12 compatibility set is GREEN at 1,196/1,196;
   `npm run typecheck` passes. Another exact-commit freeze, full gates, and two new independent
   sign-offs remain mandatory.
+
+### R12 third verifier repair — nested recipe ID catalogs
+
+- Frozen commit `926bfff` passed the complete local gates, but the next Code Verifier correctly
+  withheld sign-off: top-level context fields were descriptor-safe while nested ID arrays still
+  reached `Array.prototype.filter`, executing index accessors and Proxy traps.
+- Independent RED covers `missionIds`, `enemyIds`, and `towerIds` across accessor-backed index zero,
+  throwing Proxy, revoked Proxy, and sparse arrays. It failed 12/21: accessors/traps ran, revoked
+  proxies leaked a raw `TypeError`, and sparse arrays were silently accepted. Normal and top-level
+  own-data controls remained GREEN.
+- GREEN adds a Node-side, bounded dense own-data ID-catalog inspector. It rejects Proxy arrays before
+  reading elements, inspects ordinary arrays only through descriptors, rejects symbols, extra keys,
+  accessors, holes, non-string/empty entries, and lengths above 100,000, then sorts a detached copy.
+  R12 formation/protection and existing parameterized recipes now consume the same safe catalog.
+- The focused hostile matrix is GREEN at 21/21; the complete CLI library suite is GREEN at 359/359;
+  typecheck, engine build, plugin build/validate/smoke, generated runtime sync, and diff checks pass.
+  The source is not publishable until one more exact-commit full gate cycle and two fresh sign-offs.

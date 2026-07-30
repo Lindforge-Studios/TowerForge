@@ -134,6 +134,69 @@ describe("R12.1 targetable boss components recipe contract (RED)", () => {
     }
   );
 
+  it.each([
+    ["missionIds", "accessor index"],
+    ["missionIds", "throwing proxy"],
+    ["missionIds", "revoked proxy"],
+    ["missionIds", "sparse array"],
+    ["enemyIds", "accessor index"],
+    ["enemyIds", "throwing proxy"],
+    ["enemyIds", "revoked proxy"],
+    ["enemyIds", "sparse array"],
+    ["towerIds", "accessor index"],
+    ["towerIds", "throwing proxy"],
+    ["towerIds", "revoked proxy"],
+    ["towerIds", "sparse array"]
+  ])("rejects hostile nested %s data (%s) without executing authored code", (field, kind) => {
+    const canonical = materializeMechanicsRecipe(RECIPE_ID, context());
+    const authored = [...context()[field]];
+    let getterCalls = 0;
+    let hostile;
+
+    if (kind === "accessor index") {
+      hostile = [...authored];
+      Object.defineProperty(hostile, "0", {
+        enumerable: true,
+        configurable: true,
+        get() {
+          getterCalls += 1;
+          return authored[0];
+        }
+      });
+    } else if (kind === "throwing proxy") {
+      hostile = new Proxy([...authored], {
+        get(target, key, receiver) {
+          if (key === "0") {
+            getterCalls += 1;
+            throw new Error("SECRET_R12_RECIPE_ARRAY_TRAP");
+          }
+          return Reflect.get(target, key, receiver);
+        }
+      });
+    } else if (kind === "revoked proxy") {
+      const revocable = Proxy.revocable([...authored], {});
+      hostile = revocable.proxy;
+      revocable.revoke();
+    } else {
+      hostile = new Array(authored.length + 1);
+      hostile[1] = authored[0];
+    }
+
+    let thrown;
+    try {
+      materializeMechanicsRecipe(RECIPE_ID, context({ [field]: hostile }));
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(getterCalls).toBe(0);
+    expect(thrown).toBeInstanceOf(MechanicsRecipeParameterError);
+    expect(thrown).toMatchObject({ code: "mechanics_recipe_context_invalid" });
+    expect(thrown.message).toMatch(new RegExp(`${field}.*(?:own data|accessor|dense|array|inspect|context)|(?:own data|accessor|dense|array|inspect|context).*${field}`, "i"));
+    expect(thrown.message).not.toContain("SECRET_R12_RECIPE_ARRAY_TRAP");
+    expect(materializeMechanicsRecipe(RECIPE_ID, context())).toEqual(canonical);
+  });
+
   it("keeps the canonical starter fixture equal to the project-bound recipe", () => {
     const fixtureDir = path.resolve("docs/examples/opt-in-targetable-boss-components");
     const mechanics = JSON.parse(fs.readFileSync(path.join(fixtureDir, "mechanics.json"), "utf8"));

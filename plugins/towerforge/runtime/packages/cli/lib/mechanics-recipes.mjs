@@ -1,3 +1,5 @@
+import { types as nodeUtilTypes } from "node:util";
+
 const BASIC_REGENERATING_SHIELDS_ID = "basic_regenerating_shields";
 const BASIC_ELEMENTAL_ARMOR_MATRIX_ID = "basic_elemental_armor_matrix";
 const BASIC_VULNERABILITY_MARKS_ID = "basic_vulnerability_marks";
@@ -33,6 +35,7 @@ const BASIC_VANGUARD_PROTECTION_ID = "basic_vanguard_protection";
 const BASIC_LOCAL_COOP_ID = "basic_local_coop";
 const BASIC_PARTITIONED_LOCAL_COOP_ID = "basic_partitioned_local_coop";
 const BASIC_ASYMMETRIC_SEND_VS_BUILD_ID = "basic_asymmetric_send_vs_build";
+const MECHANICS_RECIPE_CONTEXT_ID_LIMIT = 100_000;
 const TERRAFORMING_RECIPE_IDS = Object.freeze([
   TAGGED_FLOOD_ID,
   TAGGED_MOAT_ID,
@@ -449,9 +452,9 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
   const recipe = RECIPES.find((candidate) => candidate.id === recipeId);
   if (!recipe) throw new Error(`Unknown mechanics recipe "${recipeId}".`);
   const defaultMissionId = mechanicsRecipeContextDataValue(context, "defaultMissionId");
-  const missionIds = mechanicsRecipeContextDataValue(context, "missionIds");
-  const enemyIds = mechanicsRecipeContextDataValue(context, "enemyIds");
-  const towerIds = mechanicsRecipeContextDataValue(context, "towerIds");
+  const missionIds = mechanicsRecipeContextIdCatalog(context, "missionIds");
+  const enemyIds = mechanicsRecipeContextIdCatalog(context, "enemyIds");
+  const towerIds = mechanicsRecipeContextIdCatalog(context, "towerIds");
 
   const parameterField = inspectParameterField(context);
   if (recipeId === BASIC_ELEMENTAL_SYNERGY_ID) {
@@ -649,7 +652,7 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
     };
   }
   if (recipeId === BASIC_FORMATION_STEERING_ID) {
-    const enemyTypeIds = sortedSafeIds(ownDataValue(context, "enemyIds"));
+    const enemyTypeIds = sortedSafeIds(enemyIds);
     if (enemyTypeIds.length === 0) {
       throw new MechanicsRecipeParameterError(
         "enemy_behaviors_formation_recipe_context_required",
@@ -683,8 +686,8 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
     };
   }
   if (recipeId === BASIC_VANGUARD_PROTECTION_ID) {
-    const enemyTypeIds = sortedSafeIds(ownDataValue(context, "enemyIds"));
-    const authoredShieldIdsValue = ownDataValue(context, "shieldedEnemyIds");
+    const enemyTypeIds = sortedSafeIds(enemyIds);
+    const authoredShieldIdsValue = mechanicsRecipeContextIdCatalog(context, "shieldedEnemyIds");
     const shieldedEnemyTypeIds = authoredShieldIdsValue === undefined
       ? enemyTypeIds
       : sortedSafeIds(authoredShieldIdsValue).filter((enemyTypeId) => enemyTypeIds.includes(enemyTypeId));
@@ -1160,7 +1163,7 @@ function materializePowerGridRecipe(recipe, context, parameterValue) {
   if (new Set([generatorTowerTypeId, relayTowerTypeId, consumerTowerTypeId]).size !== 3) {
     throw invalidLogisticsRecipeParameter("Logistics generator, relay, and consumer roles must use three distinct tower IDs.");
   }
-  const towerIds = new Set(sortedSafeIds(ownDataValue(context, "towerIds")));
+  const towerIds = new Set(sortedSafeIds(mechanicsRecipeContextIdCatalog(context, "towerIds")));
   for (const towerTypeId of [generatorTowerTypeId, relayTowerTypeId, consumerTowerTypeId]) {
     if (!towerIds.has(towerTypeId)) {
       throw invalidLogisticsRecipeParameter(`Logistics recipe references unknown authored tower "${towerTypeId}".`);
@@ -1199,7 +1202,7 @@ function materializeLocalAmmunitionRecipe(recipe, context, parameterValue) {
   const consumerTowerTypeId = boundedLogisticsRecipeId(parameters.consumerTowerTypeId, "consumerTowerTypeId");
   const ammoTypeId = boundedLogisticsRecipeId(parameters.ammoTypeId, "ammoTypeId");
   const ammoLabel = boundedLogisticsRecipeId(parameters.ammoLabel, "ammoLabel");
-  const towerIds = new Set(sortedSafeIds(ownDataValue(context, "towerIds")));
+  const towerIds = new Set(sortedSafeIds(mechanicsRecipeContextIdCatalog(context, "towerIds")));
   if (!towerIds.has(consumerTowerTypeId)) {
     throw invalidLogisticsRecipeParameter(
       `Local ammunition recipe references unknown authored tower "${consumerTowerTypeId}".`
@@ -1249,7 +1252,7 @@ function materializeFactoryAmmunitionSupplyRecipe(recipe, context, parameterValu
       "Factory ammunition supply producer, storage, and consumer roles must use three distinct tower IDs."
     );
   }
-  const towerIds = new Set(sortedSafeIds(ownDataValue(context, "towerIds")));
+  const towerIds = new Set(sortedSafeIds(mechanicsRecipeContextIdCatalog(context, "towerIds")));
   for (const towerTypeId of [producerTowerTypeId, storageTowerTypeId, consumerTowerTypeId]) {
     if (!towerIds.has(towerTypeId)) {
       throw invalidLogisticsRecipeParameter(
@@ -1474,7 +1477,7 @@ function invalidLogisticsRecipeParameter(message) {
 function materializeElementalSynergyRecipe(recipe, context, parameterValue) {
   const parameters = inspectRogueliteParameters(parameterValue);
   const towerTypeIds = inspectTowerTypeIds(parameters.towerTypeIds);
-  const authoredTowerIds = new Set(sortedSafeIds(ownDataValue(context, "towerIds")));
+  const authoredTowerIds = new Set(sortedSafeIds(mechanicsRecipeContextIdCatalog(context, "towerIds")));
   for (const towerTypeId of towerTypeIds) {
     if (!authoredTowerIds.has(towerTypeId)) {
       throw new MechanicsRecipeParameterError(
@@ -1516,7 +1519,7 @@ function materializeBossArtifactRecipe(recipe, context, parameterValue) {
   const parameters = inspectArtifactParameters(parameterValue);
   const towerTypeIds = inspectTowerTypeIds(parameters.towerTypeIds);
   const bossEnemyTypeId = boundedRogueliteRecipeId(parameters.bossEnemyTypeId, "bossEnemyTypeId");
-  const authoredTowerIds = new Set(sortedSafeIds(ownDataValue(context, "towerIds")));
+  const authoredTowerIds = new Set(sortedSafeIds(mechanicsRecipeContextIdCatalog(context, "towerIds")));
   for (const towerTypeId of towerTypeIds) {
     if (!authoredTowerIds.has(towerTypeId)) {
       throw new MechanicsRecipeParameterError(
@@ -1525,7 +1528,7 @@ function materializeBossArtifactRecipe(recipe, context, parameterValue) {
       );
     }
   }
-  const authoredEnemyIds = new Set(sortedSafeIds(ownDataValue(context, "enemyIds")));
+  const authoredEnemyIds = new Set(sortedSafeIds(mechanicsRecipeContextIdCatalog(context, "enemyIds")));
   if (!authoredEnemyIds.has(bossEnemyTypeId)) {
     throw new MechanicsRecipeParameterError(
       "roguelite_recipe_enemy_missing",
@@ -2148,6 +2151,69 @@ function mechanicsRecipeContextDataValue(context, key) {
     );
   }
   return descriptor.value;
+}
+
+function mechanicsRecipeContextIdCatalog(context, key) {
+  const value = mechanicsRecipeContextDataValue(context, key);
+  if (value === undefined) return undefined;
+  let array;
+  let proxy;
+  let prototype;
+  let descriptors;
+  try {
+    proxy = nodeUtilTypes.isProxy(value);
+    array = Array.isArray(value);
+    prototype = proxy || !array ? undefined : Object.getPrototypeOf(value);
+    descriptors = proxy || !array ? undefined : Object.getOwnPropertyDescriptors(value);
+  } catch {
+    throw new MechanicsRecipeParameterError(
+      "mechanics_recipe_context_invalid",
+      `Mechanics recipe context ID array "${key}" could not be inspected safely.`
+    );
+  }
+  if (proxy || !array || prototype !== Array.prototype || descriptors === undefined) {
+    throw new MechanicsRecipeParameterError(
+      "mechanics_recipe_context_invalid",
+      `Mechanics recipe context field "${key}" must be a dense ordinary own-data array.`
+    );
+  }
+  const lengthDescriptor = descriptors.length;
+  const length = lengthDescriptor && "value" in lengthDescriptor ? lengthDescriptor.value : undefined;
+  if (!Number.isSafeInteger(length) || length < 0 || length > MECHANICS_RECIPE_CONTEXT_ID_LIMIT) {
+    throw new MechanicsRecipeParameterError(
+      "mechanics_recipe_context_invalid",
+      `Mechanics recipe context field "${key}" exceeds the dense ID array budget.`
+    );
+  }
+  const descriptorKeys = Reflect.ownKeys(descriptors);
+  if (descriptorKeys.some((descriptorKey) => {
+    if (descriptorKey === "length") return false;
+    return typeof descriptorKey !== "string"
+      || !/^(0|[1-9][0-9]*)$/.test(descriptorKey)
+      || Number(descriptorKey) >= length;
+  })) {
+    throw new MechanicsRecipeParameterError(
+      "mechanics_recipe_context_invalid",
+      `Mechanics recipe context field "${key}" must contain only dense own-data indexes.`
+    );
+  }
+  const result = [];
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = descriptors[String(index)];
+    if (
+      !descriptor?.enumerable
+      || !("value" in descriptor)
+      || typeof descriptor.value !== "string"
+      || descriptor.value.length === 0
+    ) {
+      throw new MechanicsRecipeParameterError(
+        "mechanics_recipe_context_invalid",
+        `Mechanics recipe context field "${key}" index ${index} must be a non-empty enumerable own string value.`
+      );
+    }
+    result.push(descriptor.value);
+  }
+  return result.sort(compareBinary);
 }
 
 function defineOwn(record, key, value) {
