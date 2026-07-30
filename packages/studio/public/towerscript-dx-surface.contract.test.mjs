@@ -20,7 +20,7 @@ function functionSource(source, name) {
   throw new Error(`Unclosed function ${name}`);
 }
 
-describe("R6 TowerScript DX Studio surface RED", () => {
+describe("R9 TowerScript DX 3.0 Studio surface", () => {
   it("keeps one canonical script workbench with an explicit JSON/Graph projection toggle", () => {
     const scriptsStart = html.indexOf('<section id="tab-scripts"');
     const scriptsEnd = html.indexOf('<section id="tab-assets"', scriptsStart);
@@ -104,11 +104,12 @@ describe("R6 TowerScript DX Studio surface RED", () => {
     expect(fields).toMatch(/data-graph-field/);
     expect(fields).toMatch(/createElement\(\s*["'](?:input|select|fieldset)["']/);
     expect(fields).toMatch(/script|binding|handler|action|condition/);
+    expect(fields).toMatch(/behavior_(?:tree|selector|sequence|condition|action)|state_machine|transition/);
     expect(render).toMatch(/if\s*\(\s*isRaw\s*\)[\s\S]*createElement\(\s*["']textarea["']/);
     expect(render).not.toMatch(/JSON\.parse\(\s*source\.value|source\.addEventListener/);
   });
 
-  it("exposes trace cursor, all four step modes, resume, and bounded tick rewind in Playtest", () => {
+  it("exposes trace cursor, all six step modes, resume, and bounded tick rewind in Playtest", () => {
     const playtestStart = html.indexOf('<section id="tab-playtest"');
     const playtestEnd = html.indexOf('<section id="tab-balance"', playtestStart);
     const playtest = html.slice(playtestStart, playtestEnd);
@@ -123,7 +124,7 @@ describe("R6 TowerScript DX Studio surface RED", () => {
       "script-debug-trace",
       "script-debug-state"
     ]) expect(playtest).toContain(`id="${id}"`);
-    for (const mode of ["tick", "event", "handler", "action"]) {
+    for (const mode of ["tick", "event", "handler", "action", "behavior", "transition"]) {
       expect(playtest).toMatch(new RegExp(`<option[^>]+value=["']${mode}["']`));
     }
     expect(playtest).toMatch(/min=["']1["']/);
@@ -139,9 +140,53 @@ describe("R6 TowerScript DX Studio surface RED", () => {
     expect(step).toMatch(/cursor|traceEntry|snapshot/);
     expect(rewind).toMatch(/\.rewindTicks\s*\(/);
     expect(rewind).toMatch(/script-debug-rewind-ticks/);
-    expect(render).toMatch(/event|binding|handler|condition|action|state_diff|diagnostic/);
+    expect(render).toMatch(/event|binding|handler|condition|behavior|transition|action|state_diff|diagnostic/);
     expect(render).toMatch(/changes|before|after|diagnostic/);
     expect(app).toMatch(/\.resume\s*\(/);
+  });
+
+  it("offers descriptor-driven Behavior Tree and HFSM controller creation without changing layout v1", () => {
+    const palette = functionSource(app, "renderTowerScriptNodePalette");
+    const add = functionSource(app, "addTowerScriptGraphNode");
+    const render = functionSource(app, "renderTowerScriptGraph");
+
+    expect(palette).toMatch(/Controllers|behavior_tree|state_machine/);
+    expect(add).toMatch(/schemaVersion\s*=\s*7/);
+    expect(add).toMatch(/behaviorTrees|stateMachines/);
+    expect(render).toMatch(/transition_target|transition-target/);
+    expect(app).toMatch(/schemaVersion:\s*1,[\s\S]{0,160}(?:nodes|viewport)/);
+  });
+
+  it("authors Behavior Tree primitives and nested HFSM structure from the descriptor palette without raw JSON", () => {
+    const palette = functionSource(app, "renderTowerScriptNodePalette");
+    const add = functionSource(app, "addTowerScriptGraphNode");
+    const remove = functionSource(app, "deleteTowerScriptGraphNode");
+
+    expect(palette).toMatch(/behaviorTrees\?*\.nodes/);
+    expect(palette).toMatch(/stateMachines\?*\.nodes/);
+    expect(palette).toMatch(/selector|sequence|condition|action/);
+    expect(palette).toMatch(/state|transition/);
+
+    expect(add).toMatch(/behavior_selector|behavior_sequence|behavior_condition|behavior_action/);
+    expect(add).toMatch(/towerScriptGraphValueAtPath/);
+    expect(add).toMatch(/children\.push\s*\(/);
+    expect(add).toMatch(/(?:name\s*===\s*["']state["']|state_machine_state)/);
+    expect(add).toMatch(/(?:name\s*===\s*["']transition["']|state_machine_transition)/);
+    expect(add).toMatch(/states\.push\s*\(/);
+    expect(add).toMatch(/transitions\.push\s*\(/);
+
+    expect(remove).toMatch(/behavior_selector|behavior_sequence|behavior_condition|behavior_action/);
+    expect(remove).toMatch(/children\.splice\s*\(/);
+    expect(remove).toMatch(/node\.kind\s*===\s*["']state["']/);
+    expect(remove).toMatch(/states\.splice\s*\(/);
+    expect(remove).toMatch(/node\.kind\s*===\s*["']transition["']/);
+    expect(remove).toMatch(/transitions\.splice\s*\(/);
+
+    for (const source of [add, remove]) {
+      expect(source).toMatch(/towerScriptGraphCanonicalAst/);
+      expect(source).toMatch(/rebuildTowerScriptGraph/);
+      expect(source).not.toMatch(/JSON\.parse|JSON\.stringify|\.raw\s*=/);
+    }
   });
 
   it("pins debugger history while stepping and resumes only through the explicit resume control", () => {

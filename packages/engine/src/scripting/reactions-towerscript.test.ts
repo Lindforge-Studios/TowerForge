@@ -62,7 +62,7 @@ describe("TowerScript v5 reaction contract", () => {
     }>;
     const eventFields = TOWER_SCRIPT_SCHEMA.eventFields as unknown as Record<string, readonly string[]>;
 
-    expect(TOWER_SCRIPT_SCHEMA.schemaVersion).toBe(6);
+    expect(TOWER_SCRIPT_SCHEMA.schemaVersion).toBe(7);
     expect(TOWER_SCRIPT_EVENTS).toContain("enemyExposureChanged");
     expect(TOWER_SCRIPT_EVENTS).toContain("enemyReactionTriggered");
     expect(TOWER_SCRIPT_EVENTS).not.toContain("reactionBudgetExceeded");

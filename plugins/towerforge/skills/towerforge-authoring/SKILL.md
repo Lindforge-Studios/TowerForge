@@ -34,14 +34,22 @@ shared workspace roots. In a workspace-bound session, never supply or request an
 - TowerScript DX is an opt-in authoring/debug surface, not a mission mechanics module. Start with
   `describe_schema(domain: "scripts")`. For canonical JSON, use `get_tower_script`, preview with
   `upsert_tower_script(dryRun: true)`, apply with the returned revision, then `validate_project`.
+  TowerScript schema v7 alone opts a script into Behavior Tree v1 and HFSM v1 controllers; do not
+  create or edit `content/mechanics.json`. Behavior Trees use tower-only bindings and bounded
+  synchronous `selector`, `sequence`, `condition`, and `select_targets` nodes. HFSM transitions use
+  absolute state paths, ordered leaf-to-parent resolution, and existing typed actions. Scripts
+  v1-v6 keep their legacy behavior, and removing or disabling a v7 controller restores the saved
+  tower target mode and ordinary snapshot/UI path.
   For Visual Graph, use `get_tower_script_graph` -> `preview_tower_script_graph` ->
   `apply_tower_script_graph` with exactly the preview `ifRevision` -> `validate_project`. Preserve
-  unknown future nodes as raw; never normalize, downgrade, or delete them. Optional graph layout is
-  local editor state under `.towerforge/towerscript-layouts`, is guarded with the source, and never
-  belongs in gameplay packages. Inspect behavior through compute-only `preview_tower_script_trace`
-  with at most 128 exact versioned `GameCommand` values and a `tick`, `event`, `handler`, or `action`
-  cursor. Trace/step/rewind state is session-local debug data and never project content, a normal
-  snapshot field, or a reason to create `content/mechanics.json`.
+  unknown future nodes as raw; never normalize, downgrade, or delete them. Reads emit Graph v2,
+  while preview/apply also accept legacy Graph v1. Optional graph layout remains v1 local editor
+  state under `.towerforge/towerscript-layouts`, is guarded with the source, and never belongs in
+  gameplay packages. Inspect behavior through compute-only `preview_tower_script_trace` with at
+  most 128 exact versioned `GameCommand` values and a `tick`, `event`, `handler`, `action`,
+  `behavior`, or `transition` cursor. Trace v2/debugger v2 step/rewind state is session-local debug
+  data and never project content or normal gameplay state; only an active HFSM adds checkpoint
+  `scriptMachines` and snapshot `scriptState.machines`.
 - Use dry-run and preview tools first for balance, progression, map compilation, themes, tilesets,
   and imports.
 - Use the guarded mechanics flow: `get_capabilities`, `get_recipe` with collection `mechanics`

@@ -7,6 +7,7 @@ import type {
   TerraformOperationV1,
   TowerScriptScope
 } from "./types.js";
+import { TOWER_TARGET_MODES } from "../simulation/types.js";
 import {
   TOWER_SCRIPT_ACTION_SCHEMA,
   TOWER_SCRIPT_EVENTS,
@@ -81,14 +82,27 @@ function validateScript(
     report(key, "root", "TowerScript must be an object.");
     return;
   }
-  if (script.schemaVersion !== 1 && script.schemaVersion !== 2 && script.schemaVersion !== 3 && script.schemaVersion !== 4 && script.schemaVersion !== 5 && script.schemaVersion !== 6) {
-    report(scriptId, "schemaVersion", "TowerScript schemaVersion must be 1, 2, 3, 4, 5, or 6.");
+  if (script.schemaVersion !== 1 && script.schemaVersion !== 2 && script.schemaVersion !== 3 && script.schemaVersion !== 4 && script.schemaVersion !== 5 && script.schemaVersion !== 6 && script.schemaVersion !== 7) {
+    report(scriptId, "schemaVersion", "TowerScript schemaVersion must be 1, 2, 3, 4, 5, 6, or 7.");
   }
   if (!ID_RE.test(scriptId)) report(scriptId, "id", "Script id must use letters, digits, underscore, dot, or hyphen.");
   if (script.id !== key) report(scriptId, "id", `Script key "${key}" must match id "${script.id}".`);
   if (script.enabled !== undefined && typeof script.enabled !== "boolean") report(scriptId, "enabled", "enabled must be boolean.");
-  if (!Array.isArray(script.bindings) || script.bindings.length === 0) report(scriptId, "bindings", "At least one binding is required.");
-  else script.bindings.forEach((binding, index) => validateBinding(scriptId, binding, index, refs, report));
+  const behaviorTrees = readOwnDataField(script, "behaviorTrees", scriptId, "behaviorTrees", report);
+  const stateMachines = readOwnDataField(script, "stateMachines", scriptId, "stateMachines", report);
+  const controllerOnly = script.schemaVersion === 7
+    && ((safeOwnArrayLength(behaviorTrees) ?? 0) > 0 || (safeOwnArrayLength(stateMachines) ?? 0) > 0);
+  if (!Array.isArray(script.bindings) || (script.bindings.length === 0 && !controllerOnly)) {
+    report(scriptId, "bindings", "At least one binding is required unless a TowerScript v7 controller owns its bindings.");
+  } else script.bindings.forEach((binding, index) => validateBinding(scriptId, binding, index, refs, report));
+  if (behaviorTrees !== undefined) {
+    if (script.schemaVersion !== 7) report(scriptId, "behaviorTrees", "behaviorTrees require TowerScript schemaVersion 7.");
+    validateBehaviorTrees(scriptId, behaviorTrees, refs, report);
+  }
+  if (stateMachines !== undefined && script.schemaVersion !== 7) {
+    report(scriptId, "stateMachines", "stateMachines require TowerScript schemaVersion 7.");
+  }
+  if (stateMachines !== undefined) validateStateMachines(scriptId, stateMachines, refs, report);
   if (script.initialState !== undefined) {
     if (!script.initialState || typeof script.initialState !== "object" || Array.isArray(script.initialState)) report(scriptId, "initialState", "initialState must be an object.");
     else {
@@ -112,17 +126,21 @@ function validateScript(
       && script.schemaVersion !== 4
       && script.schemaVersion !== 5
       && script.schemaVersion !== 6
+      && script.schemaVersion !== 7
     ) {
       report(scriptId, `handlers.${event}`, `TowerScript event "${event}" requires schemaVersion 3.`);
     }
-    if (event === "enemyMarkChanged" && script.schemaVersion !== 4 && script.schemaVersion !== 5 && script.schemaVersion !== 6) {
+    if (event === "enemyMarkChanged" && script.schemaVersion !== 4 && script.schemaVersion !== 5 && script.schemaVersion !== 6 && script.schemaVersion !== 7) {
       report(scriptId, `handlers.${event}`, `TowerScript event "${event}" requires schemaVersion 4.`);
     }
-    if ((event === "enemyExposureChanged" || event === "enemyReactionTriggered") && script.schemaVersion !== 5 && script.schemaVersion !== 6) {
+    if ((event === "enemyExposureChanged" || event === "enemyReactionTriggered") && script.schemaVersion !== 5 && script.schemaVersion !== 6 && script.schemaVersion !== 7) {
       report(scriptId, `handlers.${event}`, `TowerScript event "${event}" requires schemaVersion 5.`);
     }
-    if (event === "elevationChanged" && script.schemaVersion !== 6) {
+    if (event === "elevationChanged" && script.schemaVersion !== 6 && script.schemaVersion !== 7) {
       report(scriptId, `handlers.${event}`, `TowerScript event "${event}" requires schemaVersion 6.`);
+    }
+    if (event === "stateMachineTransitioned" && script.schemaVersion !== 7) {
+      report(scriptId, `handlers.${event}`, `TowerScript event "${event}" requires schemaVersion 7.`);
     }
     if (!Array.isArray(handlers) || handlers.length === 0) {
       report(scriptId, `handlers.${event}`, "An event needs at least one handler.");
@@ -145,7 +163,7 @@ function validateScript(
         if (handler.actions.length > TOWER_SCRIPT_LIMITS.actionsPerHandler) report(scriptId, `${base}.actions`, `A handler may define at most ${TOWER_SCRIPT_LIMITS.actionsPerHandler} actions.`);
         // The v5 reaction event already rejects the whole handler on older schemas. Avoid a
         // redundant nested version diagnostic while retaining all shape/reference checks.
-        const actionSchemaVersion = event === "enemyReactionTriggered" && script.schemaVersion !== 5 && script.schemaVersion !== 6
+        const actionSchemaVersion = event === "enemyReactionTriggered" && script.schemaVersion !== 5 && script.schemaVersion !== 6 && script.schemaVersion !== 7
           ? 5
           : script.schemaVersion;
         handler.actions.forEach((action, actionIndex) => validateAction(
@@ -182,6 +200,409 @@ function validateBinding(scriptId: string, binding: TowerScriptBinding, index: n
     terrain: refs.terrainIds
   };
   for (const id of binding.ids ?? []) if (sets[binding.scope] && !sets[binding.scope]!.has(id)) report(scriptId, `${base}.ids`, `Unknown ${binding.scope} id "${id}".`);
+}
+
+function readOwnDataField(
+  owner: object,
+  key: string,
+  scriptId: string,
+  path: string,
+  report: (scriptId: string, fieldPath: string, message: string) => void
+): unknown {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(owner, key);
+  } catch {
+    report(scriptId, path, `${path} could not be inspected safely as own data.`);
+    return undefined;
+  }
+  if (!descriptor) return undefined;
+  if (!descriptor.enumerable || !("value" in descriptor)) {
+    report(scriptId, path, `${path} must be an enumerable own data field; accessors are not allowed.`);
+    return undefined;
+  }
+  return descriptor.value;
+}
+
+function safeOwnArrayLength(value: unknown): number | undefined {
+  try {
+    if (!Array.isArray(value)) return undefined;
+    const descriptor = Object.getOwnPropertyDescriptor(value, "length");
+    return descriptor && "value" in descriptor && Number.isSafeInteger(descriptor.value)
+      ? descriptor.value as number
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function ownDataRecord(
+  value: unknown,
+  scriptId: string,
+  path: string,
+  report: (scriptId: string, fieldPath: string, message: string) => void
+): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    report(scriptId, path, `${path} must be a plain own-data object.`);
+    return undefined;
+  }
+  let prototype: object | null;
+  let descriptors: Record<PropertyKey, PropertyDescriptor>;
+  try {
+    prototype = Object.getPrototypeOf(value);
+    descriptors = Object.getOwnPropertyDescriptors(value) as unknown as Record<PropertyKey, PropertyDescriptor>;
+  } catch {
+    report(scriptId, path, `${path} could not be inspected safely as own data.`);
+    return undefined;
+  }
+  if (prototype !== Object.prototype && prototype !== null) {
+    report(scriptId, path, `${path} must be a plain own-data object.`);
+    return undefined;
+  }
+  const record: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+  for (const field of Reflect.ownKeys(descriptors)) {
+    if (typeof field !== "string") {
+      report(scriptId, path, `${path} must not contain symbol fields.`);
+      continue;
+    }
+    const descriptor = descriptors[field];
+    if (!descriptor?.enumerable || !("value" in descriptor)) {
+      report(scriptId, `${path}.${field}`, `${path}.${field} must be an enumerable own data field; accessors are not allowed.`);
+      continue;
+    }
+    Object.defineProperty(record, field, { value: descriptor.value, enumerable: true });
+  }
+  return record;
+}
+
+function denseOwnDataArray(
+  value: unknown,
+  scriptId: string,
+  path: string,
+  report: (scriptId: string, fieldPath: string, message: string) => void,
+  limit?: Readonly<{ max: number; message: string }>
+): readonly unknown[] | undefined {
+  let isArray: boolean;
+  try {
+    isArray = Array.isArray(value);
+  } catch {
+    report(scriptId, path, `${path} could not be inspected safely as own data.`);
+    return undefined;
+  }
+  if (!isArray) {
+    report(scriptId, path, `${path} must be a dense own-data array.`);
+    return undefined;
+  }
+  let prototype: object | null;
+  let lengthDescriptor: PropertyDescriptor | undefined;
+  try {
+    prototype = Object.getPrototypeOf(value);
+    lengthDescriptor = Object.getOwnPropertyDescriptor(value as object, "length");
+  } catch {
+    report(scriptId, path, `${path} could not be inspected safely as own data.`);
+    return undefined;
+  }
+  const length = lengthDescriptor && "value" in lengthDescriptor ? lengthDescriptor.value : undefined;
+  if (prototype !== Array.prototype || !Number.isSafeInteger(length) || length < 0) {
+    report(scriptId, path, `${path} must be an ordinary dense own-data array.`);
+    return undefined;
+  }
+  if (limit && length > limit.max) {
+    report(scriptId, path, limit.message);
+    return undefined;
+  }
+  let descriptors: Record<PropertyKey, PropertyDescriptor>;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value) as unknown as Record<PropertyKey, PropertyDescriptor>;
+  } catch {
+    report(scriptId, path, `${path} could not be inspected safely as own data.`);
+    return undefined;
+  }
+  const output: unknown[] = [];
+  const keys = Reflect.ownKeys(descriptors);
+  if (keys.some((key) => key !== "length" && (typeof key !== "string" || !/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= length))) {
+    report(scriptId, path, `${path} must not contain extra or symbol fields.`);
+    return undefined;
+  }
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = descriptors[String(index)];
+    if (!descriptor?.enumerable || !("value" in descriptor)) {
+      report(scriptId, `${path}[${index}]`, `${path} entries must be dense enumerable own data; accessors are not allowed.`);
+      return undefined;
+    }
+    output.push(descriptor.value);
+  }
+  return output;
+}
+
+function reportUnknownBehaviorFields(
+  record: Record<string, unknown>,
+  allowed: readonly string[],
+  scriptId: string,
+  path: string,
+  report: (scriptId: string, fieldPath: string, message: string) => void
+): void {
+  const allow = new Set(allowed);
+  for (const key of Object.keys(record)) {
+    if (!allow.has(key)) report(scriptId, `${path}.${key}`, `Behavior Tree field "${key}" is not supported.`);
+  }
+}
+
+function validateBehaviorTrees(
+  scriptId: string,
+  rawTrees: unknown,
+  refs: TowerScriptReferenceSets,
+  report: (scriptId: string, fieldPath: string, message: string) => void
+): void {
+  const trees = denseOwnDataArray(rawTrees, scriptId, "behaviorTrees", report, {
+    max: TOWER_SCRIPT_LIMITS.behaviorTreesPerScript,
+    message: `A script may define at most ${TOWER_SCRIPT_LIMITS.behaviorTreesPerScript} behavior trees.`
+  });
+  if (!trees) return;
+  if (trees.length === 0) report(scriptId, "behaviorTrees", "behaviorTrees must be omitted or contain at least one tree.");
+  const treeIds = new Set<string>();
+  trees.forEach((rawTree, treeIndex) => {
+    const base = `behaviorTrees[${treeIndex}]`;
+    const tree = ownDataRecord(rawTree, scriptId, base, report);
+    if (!tree) return;
+    reportUnknownBehaviorFields(tree, ["schemaVersion", "id", "bindings", "root"], scriptId, base, report);
+    if (tree.schemaVersion !== 1) report(scriptId, `${base}.schemaVersion`, "Behavior Tree schemaVersion must be 1.");
+    if (typeof tree.id !== "string" || !ID_RE.test(tree.id)) report(scriptId, `${base}.id`, "Behavior Tree id must be a safe identifier.");
+    else if (treeIds.has(tree.id)) report(scriptId, `${base}.id`, `Duplicate Behavior Tree id "${tree.id}".`);
+    else treeIds.add(tree.id);
+    const bindings = denseOwnDataArray(tree.bindings, scriptId, `${base}.bindings`, report);
+    if (!bindings || bindings.length === 0) report(scriptId, `${base}.bindings`, "A Behavior Tree requires at least one tower binding.");
+    else bindings.forEach((rawBinding, bindingIndex) => {
+      const path = `${base}.bindings[${bindingIndex}]`;
+      const binding = ownDataRecord(rawBinding, scriptId, path, report);
+      if (!binding) return;
+      if (binding.scope !== "tower") report(scriptId, `${path}.scope`, "Behavior Tree bindings require tower scope.");
+      validateBinding(scriptId, binding as unknown as TowerScriptBinding, bindingIndex, refs, (id, field, message) => {
+        const suffix = field.replace(/^bindings\[[^\]]+\]/, "");
+        report(id, `${path}${suffix}`, message);
+      });
+    });
+    const nodeIds = new Set<string>();
+    let nodeCount = 0;
+    const ancestors = new Set<object>();
+    const validateNode = (rawNode: unknown, path: string, depth: number): void => {
+      if (depth > TOWER_SCRIPT_LIMITS.behaviorTreeDepth) {
+        report(scriptId, path, `Behavior Tree depth exceeds ${TOWER_SCRIPT_LIMITS.behaviorTreeDepth}.`);
+        return;
+      }
+      if (rawNode && typeof rawNode === "object") {
+        if (ancestors.has(rawNode)) {
+          report(scriptId, path, "Behavior Tree must not contain cycles.");
+          return;
+        }
+        ancestors.add(rawNode);
+      }
+      const node = ownDataRecord(rawNode, scriptId, path, report);
+      if (!node) {
+        if (rawNode && typeof rawNode === "object") ancestors.delete(rawNode);
+        return;
+      }
+      nodeCount += 1;
+      if (nodeCount > TOWER_SCRIPT_LIMITS.behaviorTreeNodes) {
+        report(scriptId, path, `Behavior Tree node count exceeds ${TOWER_SCRIPT_LIMITS.behaviorTreeNodes}.`);
+        ancestors.delete(rawNode as object);
+        return;
+      }
+      if (typeof node.id !== "string" || !ID_RE.test(node.id)) report(scriptId, `${path}.id`, "Behavior Tree node id must be a safe identifier.");
+      else if (nodeIds.has(node.id)) report(scriptId, `${path}.id`, `Duplicate Behavior Tree node id "${node.id}".`);
+      else nodeIds.add(node.id);
+      if (node.type === "selector" || node.type === "sequence") {
+        reportUnknownBehaviorFields(node, ["id", "type", "children"], scriptId, path, report);
+        const children = denseOwnDataArray(node.children, scriptId, `${path}.children`, report, {
+          max: TOWER_SCRIPT_LIMITS.behaviorChildrenPerComposite,
+          message: `${node.type} has too many children.`
+        });
+        if (!children || children.length === 0) report(scriptId, `${path}.children`, `${node.type} requires at least one child.`);
+        else {
+          children.forEach((child, index) => validateNode(child, `${path}.children[${index}]`, depth + 1));
+        }
+      } else if (node.type === "condition") {
+        reportUnknownBehaviorFields(node, ["id", "type", "mode", "expression"], scriptId, path, report);
+        if (node.mode !== "context" && node.mode !== "any_candidate") {
+          report(scriptId, `${path}.mode`, "Behavior Tree condition mode must be context or any_candidate.");
+        }
+        if (!Object.hasOwn(node, "expression")) report(scriptId, `${path}.expression`, "Behavior Tree condition requires an expression.");
+        else validateExpression(scriptId, `${path}.expression`, node.expression as TowerScriptExpression, 0, report);
+      } else if (node.type === "action") {
+        reportUnknownBehaviorFields(node, ["id", "type", "action", "filter", "mode"], scriptId, path, report);
+        if (node.action !== "select_targets") report(scriptId, `${path}.action`, "Behavior Tree v1 supports only select_targets.");
+        if (typeof node.mode !== "string" || !(TOWER_TARGET_MODES as readonly string[]).includes(node.mode)) {
+          report(scriptId, `${path}.mode`, "Behavior Tree select_targets requires a supported target mode.");
+        }
+        if (Object.hasOwn(node, "filter")) validateExpression(scriptId, `${path}.filter`, node.filter as TowerScriptExpression, 0, report);
+      } else {
+        report(scriptId, `${path}.type`, "Behavior Tree node type must be selector, sequence, condition, or action.");
+      }
+      ancestors.delete(rawNode as object);
+    };
+    validateNode(tree.root, `${base}.root`, 0);
+  });
+}
+
+function validateStateMachines(
+  scriptId: string,
+  rawMachines: unknown,
+  refs: TowerScriptReferenceSets,
+  report: (scriptId: string, fieldPath: string, message: string) => void
+): void {
+  const machines = denseOwnDataArray(rawMachines, scriptId, "stateMachines", report, {
+    max: TOWER_SCRIPT_LIMITS.stateMachinesPerScript,
+    message: `A script may define at most ${TOWER_SCRIPT_LIMITS.stateMachinesPerScript} state machines.`
+  });
+  if (!machines) return;
+  if (machines.length === 0) report(scriptId, "stateMachines", "stateMachines must be omitted or contain at least one machine.");
+  const machineIds = new Set<string>();
+  machines.forEach((rawMachine, machineIndex) => {
+    const base = `stateMachines[${machineIndex}]`;
+    const machine = ownDataRecord(rawMachine, scriptId, base, report);
+    if (!machine) return;
+    reportUnknownBehaviorFields(machine, ["schemaVersion", "id", "bindings", "initial", "states"], scriptId, base, report);
+    if (machine.schemaVersion !== 1) report(scriptId, `${base}.schemaVersion`, "State Machine schemaVersion must be 1.");
+    if (typeof machine.id !== "string" || !ID_RE.test(machine.id)) report(scriptId, `${base}.id`, "State Machine id must be a safe identifier.");
+    else if (machineIds.has(machine.id)) report(scriptId, `${base}.id`, `Duplicate State Machine id "${machine.id}".`);
+    else machineIds.add(machine.id);
+    if (typeof machine.initial !== "string" || !ID_RE.test(machine.initial)) {
+      report(scriptId, `${base}.initial`, "State Machine initial must reference a safe top-level state id.");
+    }
+    const bindings = denseOwnDataArray(machine.bindings, scriptId, `${base}.bindings`, report);
+    if (!bindings || bindings.length === 0) report(scriptId, `${base}.bindings`, "A State Machine requires at least one binding.");
+    else bindings.forEach((rawBinding, bindingIndex) => {
+      const path = `${base}.bindings[${bindingIndex}]`;
+      const binding = ownDataRecord(rawBinding, scriptId, path, report);
+      if (!binding) return;
+      validateBinding(scriptId, binding as unknown as TowerScriptBinding, bindingIndex, refs, (id, field, message) => {
+        const suffix = field.replace(/^bindings\[[^\]]+\]/, "");
+        report(id, `${path}${suffix}`, message);
+      });
+    });
+    const paths = new Set<string>();
+    const targets: Array<{ path: string; target: string }> = [];
+    const transitionIds = new Set<string>();
+    const stateAncestors = new Set<object>();
+    let stateCount = 0;
+    const validateActions = (raw: unknown, path: string): void => {
+      if (raw === undefined) return;
+      const actions = denseOwnDataArray(raw, scriptId, path, report, {
+        max: TOWER_SCRIPT_LIMITS.actionsPerHandler,
+        message: `State Machine action list exceeds ${TOWER_SCRIPT_LIMITS.actionsPerHandler}.`
+      });
+      if (!actions) return;
+      actions.forEach((action, index) => validateAction(
+        scriptId,
+        `${path}[${index}]`,
+        action as TowerScriptAction,
+        7,
+        refs,
+        report
+      ));
+    };
+    const validateStates = (raw: unknown, parentPath: string, fieldPath: string, depth: number): void => {
+      if (depth > TOWER_SCRIPT_LIMITS.stateMachineDepth) {
+        report(scriptId, fieldPath, `State Machine depth exceeds ${TOWER_SCRIPT_LIMITS.stateMachineDepth}.`);
+        return;
+      }
+      const states = denseOwnDataArray(raw, scriptId, fieldPath, report, {
+        max: Math.max(0, TOWER_SCRIPT_LIMITS.stateMachineStates - stateCount),
+        message: `State Machine state count exceeds ${TOWER_SCRIPT_LIMITS.stateMachineStates}.`
+      });
+      if (!states || states.length === 0) {
+        report(scriptId, fieldPath, "State Machine states must be a non-empty array.");
+        return;
+      }
+      const siblingIds = new Set<string>();
+      states.forEach((rawState, stateIndex) => {
+        const path = `${fieldPath}[${stateIndex}]`;
+        if (rawState && typeof rawState === "object") {
+          if (stateAncestors.has(rawState)) {
+            report(scriptId, path, "State Machine hierarchy must not contain cycles.");
+            return;
+          }
+          stateAncestors.add(rawState);
+        }
+        const state = ownDataRecord(rawState, scriptId, path, report);
+        if (!state) {
+          if (rawState && typeof rawState === "object") stateAncestors.delete(rawState);
+          return;
+        }
+        stateCount += 1;
+        if (stateCount > TOWER_SCRIPT_LIMITS.stateMachineStates) {
+          report(scriptId, path, `State Machine state count exceeds ${TOWER_SCRIPT_LIMITS.stateMachineStates}.`);
+          stateAncestors.delete(rawState as object);
+          return;
+        }
+        reportUnknownBehaviorFields(
+          state,
+          ["id", "initial", "states", "entryActions", "exitActions", "transitions"],
+          scriptId,
+          path,
+          report
+        );
+        const stateId = typeof state.id === "string" ? state.id : "";
+        if (!ID_RE.test(stateId)) report(scriptId, `${path}.id`, "State id must be a safe identifier.");
+        else if (siblingIds.has(stateId)) report(scriptId, `${path}.id`, `Duplicate sibling state id "${stateId}".`);
+        else siblingIds.add(stateId);
+        const absolute = `${parentPath}/${stateId}`;
+        paths.add(absolute);
+        validateActions(state.entryActions, `${path}.entryActions`);
+        validateActions(state.exitActions, `${path}.exitActions`);
+        if (state.states !== undefined) {
+          if (typeof state.initial !== "string" || !ID_RE.test(state.initial)) {
+            report(scriptId, `${path}.initial`, "Compound state requires a safe initial child id.");
+          }
+          const children = denseOwnDataArray(state.states, scriptId, `${path}.states`, report, {
+            max: Math.max(0, TOWER_SCRIPT_LIMITS.stateMachineStates - stateCount),
+            message: `State Machine state count exceeds ${TOWER_SCRIPT_LIMITS.stateMachineStates}.`
+          });
+          if (children && typeof state.initial === "string") {
+            const childIds = children.map((child) => {
+              const record = ownDataRecord(child, scriptId, `${path}.states`, () => {});
+              return typeof record?.id === "string" ? record.id : "";
+            });
+            if (!childIds.includes(state.initial)) report(scriptId, `${path}.initial`, `Unknown initial child state "${state.initial}".`);
+          }
+          validateStates(state.states, absolute, `${path}.states`, depth + 1);
+        } else if (state.initial !== undefined) {
+          report(scriptId, `${path}.initial`, "Leaf state must not declare initial.");
+        }
+        if (state.transitions !== undefined) {
+          const transitions = denseOwnDataArray(state.transitions, scriptId, `${path}.transitions`, report, {
+            max: TOWER_SCRIPT_LIMITS.stateTransitionsPerState,
+            message: `State transitions exceed ${TOWER_SCRIPT_LIMITS.stateTransitionsPerState}.`
+          });
+          transitions?.forEach((rawTransition, transitionIndex) => {
+            const transitionPath = `${path}.transitions[${transitionIndex}]`;
+            const transition = ownDataRecord(rawTransition, scriptId, transitionPath, report);
+            if (!transition) return;
+            reportUnknownBehaviorFields(transition, ["id", "event", "target", "when", "actions"], scriptId, transitionPath, report);
+            if (typeof transition.id !== "string" || !ID_RE.test(transition.id)) {
+              report(scriptId, `${transitionPath}.id`, "Transition id must be a safe identifier.");
+            } else if (transitionIds.has(transition.id)) {
+              report(scriptId, `${transitionPath}.id`, `Duplicate transition id "${transition.id}".`);
+            } else transitionIds.add(transition.id);
+            if (typeof transition.event !== "string" || !EVENTS.has(transition.event as TowerScriptEventName)) {
+              report(scriptId, `${transitionPath}.event`, "Transition event must be a supported TowerScript event.");
+            }
+            if (typeof transition.target !== "string" || !transition.target.startsWith("/")) {
+              report(scriptId, `${transitionPath}.target`, "Transition target must be an absolute state path.");
+            } else targets.push({ path: `${transitionPath}.target`, target: transition.target });
+            if (transition.when !== undefined) validateExpression(scriptId, `${transitionPath}.when`, transition.when as TowerScriptExpression, 0, report);
+            validateActions(transition.actions, `${transitionPath}.actions`);
+          });
+        }
+        stateAncestors.delete(rawState as object);
+      });
+    };
+    validateStates(machine.states, "", `${base}.states`, 0);
+    if (typeof machine.initial === "string" && !paths.has(`/${machine.initial}`)) {
+      report(scriptId, `${base}.initial`, `Unknown top-level initial state "${machine.initial}".`);
+    }
+    for (const target of targets) if (!paths.has(target.target)) report(scriptId, target.path, `Unknown transition target "${target.target}".`);
+  });
 }
 
 function validateAction(
@@ -237,16 +658,17 @@ function validateAction(
     && schemaVersion !== 4
     && schemaVersion !== 5
     && schemaVersion !== 6
+    && schemaVersion !== 7
   ) {
     report(scriptId, `${path}.action`, `TowerScript action "${action.action}" requires schemaVersion 3.`);
   }
-  if ((action.action === "applyEnemyMark" || action.action === "clearEnemyMark") && schemaVersion !== 4 && schemaVersion !== 5 && schemaVersion !== 6) {
+  if ((action.action === "applyEnemyMark" || action.action === "clearEnemyMark") && schemaVersion !== 4 && schemaVersion !== 5 && schemaVersion !== 6 && schemaVersion !== 7) {
     report(scriptId, `${path}.action`, `TowerScript action "${action.action}" requires schemaVersion 4.`);
   }
-  if ((action.action === "applyEnemyExposure" || action.action === "clearEnemyExposure") && schemaVersion !== 5 && schemaVersion !== 6) {
+  if ((action.action === "applyEnemyExposure" || action.action === "clearEnemyExposure") && schemaVersion !== 5 && schemaVersion !== 6 && schemaVersion !== 7) {
     report(scriptId, `${path}.action`, `TowerScript action "${action.action}" requires schemaVersion 5.`);
   }
-  if (action.action === "terraformTiles" && schemaVersion !== 6) {
+  if (action.action === "terraformTiles" && schemaVersion !== 6 && schemaVersion !== 7) {
     report(scriptId, `${path}.action`, "TowerScript action \"terraformTiles\" requires schemaVersion 6.");
   }
   if (

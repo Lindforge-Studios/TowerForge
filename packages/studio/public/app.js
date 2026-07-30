@@ -1,6 +1,7 @@
 import { createCanvasRenderer, projectElevationCues } from "/renderer/index.mjs";
 import { AUDIO_EVENTS } from "/renderer/audio.mjs";
 import { LANGUAGES, getLanguage, initI18n, setLanguage } from "/i18n.js";
+import { layoutTowerScriptGraph } from "/towerscript-layout.mjs";
 
 initI18n();
 
@@ -9351,13 +9352,25 @@ function safeScriptDefinition(source) {
 }
 
 function towerScriptGraphPosition(nodeId, index) {
-  const layout = TowerScriptGraphUI.layout?.nodes?.[nodeId]
+  let layout = TowerScriptGraphUI.layout?.nodes?.[nodeId]
     ?? TowerScriptGraphUI.layout?.positions?.[nodeId];
+  if ((!Number.isFinite(Number(layout?.x)) || !Number.isFinite(Number(layout?.y))) && TowerScriptGraphUI.graph) {
+    const nodes = layoutTowerScriptGraph(
+      TowerScriptGraphUI.graph,
+      TowerScriptGraphUI.layout?.nodes ?? TowerScriptGraphUI.layout?.positions ?? {}
+    );
+    TowerScriptGraphUI.layout = {
+      schemaVersion: 1,
+      nodes,
+      viewport: TowerScriptGraphUI.layout?.viewport ?? { x: 0, y: 0, zoom: 1 }
+    };
+    layout = nodes[nodeId];
+  }
   const x = Number(layout?.x);
   const y = Number(layout?.y);
   return {
-    x: Number.isFinite(x) ? Math.max(12, x) : 24 + (index % 3) * 294,
-    y: Number.isFinite(y) ? Math.max(12, y) : 24 + Math.floor(index / 3) * 154
+    x: Number.isFinite(x) ? Math.max(12, x) : 24 + (index % 3) * 320,
+    y: Number.isFinite(y) ? Math.max(12, y) : 24 + Math.floor(index / 3) * 318
   };
 }
 
@@ -9402,15 +9415,22 @@ async function rebuildTowerScriptGraph(ast, { selectedPath = null, addedPosition
   const projector = TowerScriptGraphUI.engineModule?.towerScriptAstToGraph;
   if (typeof projector !== "function") throw new Error("TowerScript graph projector is unavailable.");
   const previous = TowerScriptGraphUI.graph;
-  const previousPositions = new Map((previous?.nodes ?? []).map((node, index) => [node.astPath, towerScriptGraphPosition(node.id, index)]));
+  const previousPositions = new Map((previous?.nodes ?? []).flatMap((node) => {
+    const position = TowerScriptGraphUI.layout?.nodes?.[node.id]
+      ?? TowerScriptGraphUI.layout?.positions?.[node.id];
+    return Number.isFinite(Number(position?.x)) && Number.isFinite(Number(position?.y))
+      ? [[node.id, { ...position, x: Number(position.x), y: Number(position.y) }]]
+      : [];
+  }));
   const next = deep(projector(ast));
-  const nextLayoutNodes = {};
-  next.nodes.forEach((node, index) => {
-    const prior = previousPositions.get(node.astPath);
-    nextLayoutNodes[node.id] = prior ?? (node.astPath === selectedPath && addedPosition
-      ? addedPosition
-      : towerScriptGraphPosition(node.id, index));
+  const retainedPositions = {};
+  const preferredPositions = {};
+  next.nodes.forEach((node) => {
+    const prior = previousPositions.get(node.id);
+    if (prior) retainedPositions[node.id] = prior;
+    else if (node.astPath === selectedPath && addedPosition) preferredPositions[node.id] = addedPosition;
   });
+  const nextLayoutNodes = layoutTowerScriptGraph(next, retainedPositions, preferredPositions);
   TowerScriptGraphUI.graph = next;
   TowerScriptGraphUI.layout = {
     schemaVersion: 1,
@@ -9427,7 +9447,13 @@ async function rebuildTowerScriptGraph(ast, { selectedPath = null, addedPosition
 }
 
 function towerScriptGraphCatalogEntry(group, name) {
-  const entries = TowerScriptGraphUI.nodeCatalog?.[group];
+  const entries = group === "behavior"
+    ? Object.entries(TowerScriptGraphUI.nodeCatalog?.controllers?.behaviorTrees?.nodes ?? {})
+      .map(([nodeName, descriptor]) => ({ name: `behavior_${nodeName}`, descriptor }))
+    : group === "stateMachines"
+      ? Object.entries(TowerScriptGraphUI.nodeCatalog?.controllers?.stateMachines?.nodes ?? {})
+        .map(([nodeName, descriptor]) => ({ name: nodeName, descriptor }))
+      : TowerScriptGraphUI.nodeCatalog?.[group];
   return (Array.isArray(entries) ? entries : []).find((entry) => (typeof entry === "string" ? entry : entry?.name) === name) ?? null;
 }
 
@@ -9460,14 +9486,137 @@ function towerScriptGraphActionDefault(name, descriptor) {
 }
 
 async function addTowerScriptGraphNode(group, name) {
-  const descriptor = towerScriptGraphCatalogEntry(group, name);
+  const descriptor = group === "controllers" ? { name } : towerScriptGraphCatalogEntry(group, name);
   if (!descriptor) return false;
   const ast = await towerScriptGraphCanonicalAst();
   if (!ast) return false;
   ast.bindings ??= [];
   ast.handlers ??= {};
   let selectedPath = null;
-  if (group === "events") {
+  if (group === "controllers") {
+    ast.schemaVersion = 7;
+    if (name === "behavior_tree") {
+      ast.behaviorTrees ??= [];
+      const id = `targeting_${ast.behaviorTrees.length + 1}`;
+      const towerTypeId = Object.keys(S.project?.towers ?? {}).sort()[0];
+      ast.behaviorTrees.push({
+        schemaVersion: 1,
+        id,
+        bindings: [{ scope: "tower", ...(towerTypeId ? { ids: [towerTypeId] } : {}) }],
+        root: {
+          id: "target_selector",
+          type: "selector",
+          children: [{ id: "select_weakest", type: "action", action: "select_targets", mode: "weakest" }]
+        }
+      });
+      selectedPath = `/behaviorTrees/${ast.behaviorTrees.length - 1}`;
+    } else if (name === "state_machine") {
+      ast.stateMachines ??= [];
+      const id = `machine_${ast.stateMachines.length + 1}`;
+      ast.stateMachines.push({
+        schemaVersion: 1,
+        id,
+        bindings: [{ scope: "global" }],
+        initial: "idle",
+        states: [{ id: "idle" }]
+      });
+      selectedPath = `/stateMachines/${ast.stateMachines.length - 1}`;
+    } else return false;
+  } else if (group === "behavior") {
+    const selected = TowerScriptGraphUI.graph?.nodes?.find((node) => node.id === TowerScriptGraphUI.selectedNodeId);
+    if (!selected) return false;
+    const ids = new Set((TowerScriptGraphUI.graph?.nodes ?? [])
+      .filter((node) => String(node.kind).startsWith("behavior_"))
+      .map((node) => node.raw?.id)
+      .filter(Boolean));
+    const uniqueId = (prefix) => {
+      let sequence = 1;
+      while (ids.has(`${prefix}_${sequence}`)) sequence += 1;
+      return `${prefix}_${sequence}`;
+    };
+    const behaviorNode = name === "behavior_selector"
+      ? { id: uniqueId("selector"), type: "selector", children: [{ id: uniqueId("select"), type: "action", action: "select_targets", mode: "weakest" }] }
+      : name === "behavior_sequence"
+        ? { id: uniqueId("sequence"), type: "sequence", children: [{ id: uniqueId("select"), type: "action", action: "select_targets", mode: "weakest" }] }
+        : name === "behavior_condition"
+          ? { id: uniqueId("condition"), type: "condition", mode: "context", expression: true }
+          : name === "behavior_action"
+            ? { id: uniqueId("select"), type: "action", action: "select_targets", mode: "weakest" }
+            : null;
+    if (!behaviorNode) return false;
+    if (selected.kind === "behavior_tree") {
+      if (name !== "behavior_selector" && name !== "behavior_sequence") {
+        toast("Select a Behavior Tree composite before adding a condition or action.", "warn");
+        return false;
+      }
+      const tree = towerScriptGraphValueAtPath(ast, selected.astPath);
+      if (!tree?.root) return false;
+      behaviorNode.children = [tree.root];
+      tree.root = behaviorNode;
+      selectedPath = `${selected.astPath}/root`;
+    } else if (selected.kind === "behavior_selector" || selected.kind === "behavior_sequence") {
+      const parent = towerScriptGraphValueAtPath(ast, selected.astPath);
+      if (!parent || !Array.isArray(parent.children)) return false;
+      parent.children.push(behaviorNode);
+      selectedPath = `${selected.astPath}/children/${parent.children.length - 1}`;
+    } else {
+      toast("Select a Behavior Tree controller or composite node first.", "warn");
+      return false;
+    }
+  } else if (group === "stateMachines") {
+    const selected = TowerScriptGraphUI.graph?.nodes?.find((node) => node.id === TowerScriptGraphUI.selectedNodeId);
+    if (!selected) return false;
+    const ids = new Set((TowerScriptGraphUI.graph?.nodes ?? [])
+      .filter((node) => node.kind === "state" || node.kind === "transition")
+      .map((node) => node.raw?.id)
+      .filter(Boolean));
+    const uniqueId = (prefix) => {
+      let sequence = 1;
+      while (ids.has(`${prefix}_${sequence}`)) sequence += 1;
+      return `${prefix}_${sequence}`;
+    };
+    if (name === "state") {
+      const state = { id: uniqueId("state") };
+      const owner = towerScriptGraphValueAtPath(ast, selected.astPath);
+      if (selected.kind === "state_machine") {
+        if (!owner || !Array.isArray(owner.states)) return false;
+        owner.states.push(state);
+        owner.initial ||= state.id;
+        selectedPath = `${selected.astPath}/states/${owner.states.length - 1}`;
+      } else if (selected.kind === "state") {
+        if (!owner) return false;
+        owner.states ??= [];
+        owner.states.push(state);
+        owner.initial ||= state.id;
+        selectedPath = `${selected.astPath}/states/${owner.states.length - 1}`;
+      } else {
+        toast("Select a State Machine or state before adding a nested state.", "warn");
+        return false;
+      }
+    } else if (name === "transition") {
+      if (selected.kind !== "state") {
+        toast("Select a source state before adding a transition.", "warn");
+        return false;
+      }
+      const state = towerScriptGraphValueAtPath(ast, selected.astPath);
+      if (!state) return false;
+      const tokens = towerScriptGraphPathTokens(selected.astPath);
+      const stateNames = [];
+      for (let index = 0; index < tokens.length - 1; index += 1) {
+        if (tokens[index] !== "states") continue;
+        const statePath = `/${tokens.slice(0, index + 2).map((token) => String(token).replaceAll("~", "~0").replaceAll("/", "~1")).join("/")}`;
+        const ancestor = towerScriptGraphValueAtPath(ast, statePath);
+        if (ancestor?.id) stateNames.push(ancestor.id);
+      }
+      state.transitions ??= [];
+      state.transitions.push({
+        id: uniqueId("transition"),
+        event: "tick",
+        target: `/${stateNames.join("/")}`
+      });
+      selectedPath = `${selected.astPath}/transitions/${state.transitions.length - 1}`;
+    } else return false;
+  } else if (group === "events") {
     const handlers = Array.isArray(ast.handlers[name]) ? ast.handlers[name] : (ast.handlers[name] = []);
     const defaultActionDescriptor = towerScriptGraphCatalogEntry("actions", "emitSignal");
     handlers.push({
@@ -9554,11 +9703,49 @@ async function deleteTowerScriptGraphNode(nodeId) {
   if (!node || !ast || node.kind === "script" || node.kind === "raw") return false;
   const tokens = towerScriptGraphPathTokens(node.astPath);
   if (node.kind === "binding") {
-    if (!Array.isArray(ast.bindings) || ast.bindings.length <= 1) {
-      toast("A TowerScript must retain at least one binding.", "warn");
+    const ownerPath = node.astPath.slice(0, node.astPath.lastIndexOf("/bindings/"));
+    const owner = ownerPath ? towerScriptGraphValueAtPath(ast, ownerPath) : ast;
+    if (!Array.isArray(owner?.bindings) || owner.bindings.length <= 1) {
+      toast("A controller or legacy TowerScript must retain at least one binding.", "warn");
       return false;
     }
-    ast.bindings.splice(Number(tokens[1]), 1);
+    owner.bindings.splice(Number(tokens.at(-1)), 1);
+  } else if (node.kind === "behavior_tree") {
+    if (!Array.isArray(ast.behaviorTrees)) return false;
+    ast.behaviorTrees.splice(Number(tokens[1]), 1);
+    if (!ast.behaviorTrees.length) delete ast.behaviorTrees;
+  } else if (node.kind === "state_machine") {
+    if (!Array.isArray(ast.stateMachines)) return false;
+    ast.stateMachines.splice(Number(tokens[1]), 1);
+    if (!ast.stateMachines.length) delete ast.stateMachines;
+  } else if (["behavior_selector", "behavior_sequence", "behavior_condition", "behavior_action"].includes(node.kind)) {
+    if (node.astPath.endsWith("/root")) {
+      toast("A Behavior Tree must retain one root node.", "warn");
+      return false;
+    }
+    const parentPath = node.astPath.replace(/\/children\/\d+$/, "");
+    const parent = towerScriptGraphValueAtPath(ast, parentPath);
+    if (!Array.isArray(parent?.children) || parent.children.length <= 1) {
+      toast("A Behavior Tree composite must retain at least one child.", "warn");
+      return false;
+    }
+    parent.children.splice(Number(tokens.at(-1)), 1);
+  } else if (node.kind === "state") {
+    const parentPath = node.astPath.replace(/\/states\/\d+$/, "");
+    const parent = towerScriptGraphValueAtPath(ast, parentPath);
+    if (!Array.isArray(parent?.states) || parent.states.length <= 1) {
+      toast("A State Machine or compound state must retain at least one state.", "warn");
+      return false;
+    }
+    const removed = parent.states[Number(tokens.at(-1))];
+    parent.states.splice(Number(tokens.at(-1)), 1);
+    if (parent.initial === removed?.id) parent.initial = parent.states[0]?.id;
+  } else if (node.kind === "transition") {
+    const parentPath = node.astPath.replace(/\/transitions\/\d+$/, "");
+    const parent = towerScriptGraphValueAtPath(ast, parentPath);
+    if (!Array.isArray(parent?.transitions)) return false;
+    parent.transitions.splice(Number(tokens.at(-1)), 1);
+    if (!parent.transitions.length) delete parent.transitions;
   } else if (node.kind === "handler") {
     const handlers = ast.handlers?.[tokens[1]];
     if (!Array.isArray(handlers)) return false;
@@ -9595,6 +9782,22 @@ function towerScriptGraphFieldOptions(node, field, hint) {
   const schemaDescriptor = TowerScriptGraphUI.schemaDescriptor ?? {};
   if (field === "scope") return towerScriptGraphCatalogNames("scopes");
   if (field === "action") return towerScriptGraphCatalogNames("actions");
+  if (field === "event" && node.kind === "transition") return towerScriptGraphCatalogNames("events");
+  if (field === "mode" && node.kind === "behavior_condition") return ["context", "any_candidate"];
+  if (field === "mode" && node.kind === "behavior_action") {
+    return schemaDescriptor.behaviorTrees?.nodes?.action?.targetModes ?? [];
+  }
+  if (field === "target" && node.kind === "transition") {
+    const machinePrefix = node.astPath?.split("/states/")[0];
+    const states = (TowerScriptGraphUI.graph?.nodes ?? [])
+      .filter((candidate) => candidate.kind === "state" && candidate.astPath?.startsWith(`${machinePrefix}/states/`));
+    return states.map((state) => {
+      const ancestors = states
+        .filter((candidate) => state.astPath === candidate.astPath || state.astPath.startsWith(`${candidate.astPath}/states/`))
+        .sort((left, right) => left.astPath.length - right.astPath.length);
+      return `/${ancestors.map((candidate) => candidate.raw?.id).filter(Boolean).join("/")}`;
+    });
+  }
   if (field === "$op") return towerScriptGraphCatalogNames("operators");
   if (field === "target" && typeof hint === "string") {
     const group = hint.includes("enemy target") ? "enemy" : hint.includes("tower target") ? "tower" : "entity";
@@ -9678,7 +9881,30 @@ function renderGraphNodeFields(node) {
     binding: { required: { scope: "scope enum" }, optional: { ids: "bound id list" }, excluded: new Set() },
     handler: { required: {}, optional: { id: "safe identifier", every: "number > 0" }, excluded: new Set(["actions", "when"]) },
     action: { required: {}, optional: {}, excluded: new Set() },
-    condition: { required: {}, optional: {}, excluded: new Set() }
+    condition: { required: {}, optional: {}, excluded: new Set() },
+    behavior_tree: {
+      required: { schemaVersion: "Behavior Tree schema version", id: "safe identifier" },
+      optional: {}, excluded: new Set(["bindings", "root"])
+    },
+    behavior_selector: { required: { id: "safe identifier", type: "selector" }, optional: {}, excluded: new Set(["children"]) },
+    behavior_sequence: { required: { id: "safe identifier", type: "sequence" }, optional: {}, excluded: new Set(["children"]) },
+    behavior_condition: {
+      required: { id: "safe identifier", type: "condition", mode: "context or any_candidate", expression: "bounded expression" },
+      optional: {}, excluded: new Set()
+    },
+    behavior_action: {
+      required: { id: "safe identifier", type: "action", action: "select_targets", mode: "target mode" },
+      optional: { filter: "bounded candidate expression" }, excluded: new Set()
+    },
+    state_machine: {
+      required: { schemaVersion: "HFSM schema version", id: "safe identifier", initial: "top-level initial state" },
+      optional: {}, excluded: new Set(["bindings", "states"])
+    },
+    state: { required: { id: "safe identifier" }, optional: { initial: "initial child state" }, excluded: new Set(["states", "entryActions", "exitActions", "transitions"]) },
+    transition: {
+      required: { id: "safe identifier", event: "TowerScript event", target: "absolute state path" },
+      optional: { when: "bounded expression" }, excluded: new Set(["actions"])
+    }
   };
   const structural = structuralDescriptors[node.kind] ?? structuralDescriptors.condition;
   const actionName = node.kind === "action" && typeof node.raw?.action === "string" ? node.raw.action : null;
@@ -9850,6 +10076,14 @@ async function loadTowerScriptGraph() {
     const result = await apiGet(`/api/project/script/graph?path=${encodeURIComponent(S.selectedProjectPath)}`); // get_tower_script_graph
     TowerScriptGraphUI.graph = deep(result.graph);
     TowerScriptGraphUI.layout = deep(result.layout ?? { schemaVersion: 1, nodes: {}, viewport: { x: 0, y: 0, zoom: 1 } });
+    TowerScriptGraphUI.layout = {
+      schemaVersion: 1,
+      nodes: layoutTowerScriptGraph(
+        TowerScriptGraphUI.graph,
+        TowerScriptGraphUI.layout?.nodes ?? TowerScriptGraphUI.layout?.positions ?? {}
+      ),
+      viewport: TowerScriptGraphUI.layout?.viewport ?? { x: 0, y: 0, zoom: 1 }
+    };
     TowerScriptGraphUI.revision = result.revision ?? result.compositeRevision ?? S.scriptFileRevision;
     TowerScriptGraphUI.schemaDescriptor = deep(result.descriptor ?? TowerScriptGraphUI.schemaDescriptor);
     TowerScriptGraphUI.nodeCatalog = deep(result.nodeCatalog
@@ -9905,7 +10139,7 @@ function renderTowerScriptGraph() {
     const x2 = to.x + 130;
     const y2 = to.y + 45;
     const line = document.createElement("span");
-    line.className = "script-graph-edge";
+    line.className = `script-graph-edge${edge.kind === "transition_target" ? " transition-target" : ""}`;
     line.style.left = `${x1}px`;
     line.style.top = `${y1}px`;
     line.style.width = `${Math.hypot(x2 - x1, y2 - y1)}px`;
@@ -9916,7 +10150,7 @@ function renderTowerScriptGraph() {
     const position = positions.get(node.id);
     const isRaw = node.kind === "raw";
     const card = document.createElement("article");
-    card.className = `script-graph-node ${isRaw ? "raw" : ""}${TowerScriptGraphUI.selectedNodeId === node.id ? " selected" : ""}`;
+    card.className = `script-graph-node ${String(node.kind).replaceAll("_", "-")} ${isRaw ? "raw" : ""}${TowerScriptGraphUI.selectedNodeId === node.id ? " selected" : ""}`;
     card.setAttribute("data-graph-node", node.id);
     card.style.left = `${position.x}px`;
     card.style.top = `${position.y}px`;
@@ -10003,7 +10237,13 @@ function beginTowerScriptNodeDrag(event, card, nodeId) {
       schemaVersion: 1,
       nodes: {
         ...(TowerScriptGraphUI.layout?.nodes ?? TowerScriptGraphUI.layout?.positions ?? {}),
-        [nodeId]: { x: card.offsetLeft, y: card.offsetTop }
+        [nodeId]: {
+          ...(TowerScriptGraphUI.layout?.nodes?.[nodeId]
+            ?? TowerScriptGraphUI.layout?.positions?.[nodeId]
+            ?? {}),
+          x: card.offsetLeft,
+          y: card.offsetTop
+        }
       },
       viewport: TowerScriptGraphUI.layout?.viewport ?? { x: 0, y: 0, zoom: 1 }
     };
@@ -10021,7 +10261,21 @@ function renderTowerScriptNodePalette() {
   const panel = $("script-graph-node-palette");
   if (!panel) return;
   const nodeCatalog = TowerScriptGraphUI.nodeCatalog ?? {};
+  const behaviorNodes = Object.entries(nodeCatalog.controllers?.behaviorTrees?.nodes ?? {}).map(([name, descriptor]) => ({
+    name: `behavior_${name}`,
+    descriptor
+  }));
+  const stateMachineNodes = Object.entries(nodeCatalog.controllers?.stateMachines?.nodes ?? {}).map(([name, descriptor]) => ({
+    name,
+    descriptor
+  }));
   const groups = [
+    ["Controllers", "controllers", [
+      { name: "behavior_tree", descriptor: nodeCatalog.controllers?.behaviorTrees },
+      { name: "state_machine", descriptor: nodeCatalog.controllers?.stateMachines }
+    ]],
+    ["Behavior", "behavior", behaviorNodes],
+    ["HFSM", "stateMachines", stateMachineNodes],
     ["Events", "events", nodeCatalog.events],
     ["Actions", "actions", nodeCatalog.actions],
     ["Operators", "operators", nodeCatalog.operators],
@@ -10045,7 +10299,16 @@ function renderTowerScriptNodeHelp(catalogName) {
   if (!panel) return;
   const nodeCatalog = TowerScriptGraphUI.nodeCatalog ?? {};
   const selected = TowerScriptGraphUI.graph?.nodes?.find((node) => node.id === TowerScriptGraphUI.selectedNodeId);
-  const all = [nodeCatalog.events, nodeCatalog.actions, nodeCatalog.operators, nodeCatalog.scopes]
+  const all = [
+    nodeCatalog.events,
+    nodeCatalog.actions,
+    nodeCatalog.operators,
+    nodeCatalog.scopes,
+    [
+      { name: "behavior_tree", descriptor: nodeCatalog.controllers?.behaviorTrees },
+      { name: "state_machine", descriptor: nodeCatalog.controllers?.stateMachines }
+    ]
+  ]
     .flatMap((entries) => Array.isArray(entries) ? entries : []);
   const descriptor = all.find((entry) => (typeof entry === "string" ? entry : entry?.name) === catalogName)
     ?? (selected ? { name: selected.kind, descriptor: selected.raw } : null);
@@ -11931,7 +12194,7 @@ function renderTowerScriptDebugger(frame) {
     panel.replaceChildren();
     return;
   }
-  const phaseLabels = ["event", "binding", "handler", "condition", "action", "state_diff", "diagnostic"];
+  const phaseLabels = ["event", "binding", "handler", "condition", "behavior", "transition", "action", "state_diff", "diagnostic"];
   const trace = PT.debugSession.getTrace();
   const ring = PT.debugSession.getCheckpointRing();
   const cursor = frame?.cursor ?? PT.debugCursor?.cursor;
@@ -11944,7 +12207,12 @@ function renderTowerScriptDebugger(frame) {
     const changes = (entry.changes ?? []).map((change) => `${change.op} ${change.path}: before=${JSON.stringify(change.before)} after=${JSON.stringify(change.after)}`).join("; ");
     const diagnostic = entry.diagnostic ? `${entry.diagnostic.code ?? "diagnostic"}: ${entry.diagnostic.message ?? JSON.stringify(entry.diagnostic)}` : "";
     const action = entry.action ? JSON.stringify(entry.action) : "";
-    const detail = diagnostic || changes || action || entry.handlerId || entry.eventName || entry.scope || "";
+    const controller = entry.phase === "behavior"
+      ? `${entry.controllerId ?? "behavior"}/${entry.nodeId ?? "node"} → ${entry.status ?? ""}${entry.selectedTargetIds?.length ? ` [${entry.selectedTargetIds.join(", ")}]` : ""}`
+      : entry.phase === "transition"
+        ? `${entry.machineId ?? entry.controllerId ?? "machine"}/${entry.transitionId ?? "transition"}: ${entry.fromStatePath ?? "?"} → ${entry.toStatePath ?? "?"}`
+        : "";
+    const detail = diagnostic || changes || action || controller || entry.handlerId || entry.eventName || entry.scope || "";
     const phase = phaseLabels.includes(entry.phase) ? entry.phase : "diagnostic";
     const active = cursor?.traceSequence === entry.sequence ? " selected" : "";
     return `<div class="script-debug-trace-entry ${esc(phase)}${active}"><span>#${entry.sequence}</span><span class="script-debug-trace-phase">${esc(phase)}</span><span class="script-debug-trace-detail" title="${esc(detail)}">${esc(detail)}</span></div>`;
@@ -12266,12 +12534,13 @@ function renderPlaytestDebugger(snapshot = PT.game?.getSnapshot()) {
     const type = tower && PT.content?.towers?.[tower.typeId];
     const refund = tower ? PT.game?.getTowerSellRefund(tower) : null;
     const targetMode = tower?.targetMode;
+    const scriptedTargeting = tower?.scriptedTargeting;
     const targetOptions = targetMode
       ? [...PT_TARGET_MODES, ...(!PT_TARGET_MODES.some(([mode]) => mode === targetMode) ? [[targetMode, targetMode]] : [])]
         .map(([mode, label]) => `<option value="${esc(mode)}"${mode === targetMode ? " selected" : ""}>${esc(label)}</option>`).join("")
       : "";
     inspector.innerHTML = tower
-      ? `<div class="pt-inspector-head"><span><strong>${esc(type?.label || tower.typeId)}</strong> <code>${esc(tower.id)}</code></span><button class="btn btn-danger" type="button" data-pt-sell>Sell ${esc(Object.entries(refund ?? {}).filter(([, value]) => value > 0).map(([resourceId, value]) => `${value} ${resourceId}`).join(" + ") || "tower")}</button></div><div>level ${tower.level} · cooldown ${tower.cooldown.toFixed(2)}${tower.hp != null ? ` · HP ${Math.ceil(tower.hp)}/${type?.maxHp ?? "?"}` : ""}${tower.disabledFor ? ` · disabled ${tower.disabledFor.toFixed(1)}` : ""}</div>${targetMode ? `<label class="pt-target-mode">Target priority<select data-pt-target-mode>${targetOptions}</select></label>` : ""}`
+      ? `<div class="pt-inspector-head"><span><strong>${esc(type?.label || tower.typeId)}</strong> <code>${esc(tower.id)}</code></span><button class="btn btn-danger" type="button" data-pt-sell>Sell ${esc(Object.entries(refund ?? {}).filter(([, value]) => value > 0).map(([resourceId, value]) => `${value} ${resourceId}`).join(" + ") || "tower")}</button></div><div>level ${tower.level} · cooldown ${tower.cooldown.toFixed(2)}${tower.hp != null ? ` · HP ${Math.ceil(tower.hp)}/${type?.maxHp ?? "?"}` : ""}${tower.disabledFor ? ` · disabled ${tower.disabledFor.toFixed(1)}` : ""}</div>${scriptedTargeting ? `<div class="pt-target-mode" data-pt-scripted-targeting>Target priority: <strong>Scripted</strong> · ${esc(scriptedTargeting.scriptId)}/${esc(scriptedTargeting.behaviorTreeId)} · fallback ${esc(scriptedTargeting.fallbackMode)}</div>` : targetMode ? `<label class="pt-target-mode">Target priority<select data-pt-target-mode>${targetOptions}</select></label>` : ""}`
       : `<code>${esc(selected.id)}</code> is no longer active.`;
     inspector.querySelector("[data-pt-sell]")?.addEventListener("click", () => {
       const command = { schemaVersion: 1, type: "sellTower", towerId: selected.id };

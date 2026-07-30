@@ -259,7 +259,7 @@ describe("TowerScript v4 mark contract", () => {
     }>;
     const eventFields = TOWER_SCRIPT_SCHEMA.eventFields as unknown as Record<string, readonly string[]>;
 
-    expect(TOWER_SCRIPT_SCHEMA.schemaVersion).toBe(6);
+    expect(TOWER_SCRIPT_SCHEMA.schemaVersion).toBe(7);
     expect(TOWER_SCRIPT_EVENTS).toContain("enemyMarkChanged");
     expect(actions.applyEnemyMark?.required).toEqual({ target: "enemy target", markId: "existing mark id" });
     expect(actions.applyEnemyMark?.optional?.stacks).toMatch(/expression|default.*1/i);
