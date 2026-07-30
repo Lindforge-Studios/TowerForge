@@ -189,6 +189,7 @@ import {
   type GameCheckpointIdentityV1,
   type ArtifactCheckpointState,
   type DraftCheckpointState,
+  type EnemyBehaviorsCheckpointStateV1,
   type RuntimeElevationOverrideV1,
   type TerraformingCheckpointStateV2,
   type GameCheckpointStateV1,
@@ -3883,6 +3884,22 @@ export class TowerDefenseGame {
     };
   }
 
+  private buildEnemyBehaviorsCheckpointState(): EnemyBehaviorsCheckpointStateV1 | undefined {
+    const state = this.buildEnemyBehaviorsState();
+    if (state === undefined) return undefined;
+    const hasProtection = Object.values(this.activeEnemyBehaviors?.formations?.cohorts ?? {})
+      .some((cohort) => cohort.protection !== undefined);
+    return {
+      ...state,
+      ...(hasProtection ? {
+        protectionRuntime: {
+          schemaVersion: 1,
+          transactionsThisTick: this.vanguardProtectionTransactionsThisTick
+        }
+      } : {})
+    };
+  }
+
   getFormationSteeringStats(): FormationSteeringRuntimeStatsV1 {
     return Object.freeze({ ...this.formationSteeringStats });
   }
@@ -4160,7 +4177,7 @@ export class TowerDefenseGame {
     }));
     const combat = this.buildCombatState();
     const reactions = this.buildReactionState();
-    const enemyBehaviors = this.buildEnemyBehaviorsState();
+    const enemyBehaviors = this.buildEnemyBehaviorsCheckpointState();
     const artifacts = this.buildArtifactCheckpointState();
     const draft = this.buildDraftCheckpointState();
     const heroes = this.heroStateV2 === undefined
@@ -5397,15 +5414,63 @@ export class TowerDefenseGame {
     }
     if (enemyCounter < maxEnemyId) throw new Error("Game checkpoint enemy counter is below a live enemy id.");
     if (checkpointEnemyBehaviors) {
+      const protectionCohortIds = Object.keys(checkpointFormationProtection);
+      const hasProtectionRuntime = protectionCohortIds.length > 0;
+      const enemyBehaviorsValue = checkpointDataField(descriptors, "enemyBehaviors", "Game checkpoint state");
+      const enemyBehaviorsDescriptors = checkpointObjectDescriptors(
+        enemyBehaviorsValue,
+        "Game checkpoint state enemyBehaviors state"
+      );
+      if (!hasProtectionRuntime && own(enemyBehaviorsDescriptors, "protectionRuntime")) {
+        throw new Error(
+          "Game checkpoint enemyBehaviors protectionRuntime is unsupported when formation protection is inactive."
+        );
+      }
       const section = closed(
-        checkpointDataField(descriptors, "enemyBehaviors", "Game checkpoint state"),
+        enemyBehaviorsValue,
         "enemyBehaviors state",
-        checkpointFormationAssignments
-          ? ["schemaVersion", "components", "formations"]
-          : ["schemaVersion", "components"]
+        [
+          "schemaVersion",
+          "components",
+          ...(checkpointFormationAssignments ? ["formations"] : []),
+          ...(hasProtectionRuntime ? ["protectionRuntime"] : [])
+        ]
       );
       if (checkpointDataField(section, "schemaVersion", "enemyBehaviors state") !== 1) {
         throw new Error("Game checkpoint enemyBehaviors schema version is unsupported.");
+      }
+      if (hasProtectionRuntime) {
+        const protectionRuntime = checkpointObjectDescriptors(
+          checkpointDataField(section, "protectionRuntime", "enemyBehaviors state"),
+          "Game checkpoint state enemyBehaviors protectionRuntime"
+        );
+        checkpointDataField(protectionRuntime, "schemaVersion", "enemyBehaviors protectionRuntime");
+        checkpointDataField(protectionRuntime, "transactionsThisTick", "enemyBehaviors protectionRuntime");
+        const unsupportedProtectionRuntimeKey = Object.keys(protectionRuntime)
+          .find((key) => key !== "schemaVersion" && key !== "transactionsThisTick");
+        if (unsupportedProtectionRuntimeKey !== undefined) {
+          throw new Error(
+            `Game checkpoint enemyBehaviors protectionRuntime closed schema contains unknown field "${unsupportedProtectionRuntimeKey}".`
+          );
+        }
+        if (checkpointDataField(protectionRuntime, "schemaVersion", "enemyBehaviors protectionRuntime") !== 1) {
+          throw new Error("Game checkpoint enemyBehaviors protectionRuntime schema version is unsupported.");
+        }
+        const transactionsThisTick = checkpointDataField(
+          protectionRuntime,
+          "transactionsThisTick",
+          "enemyBehaviors protectionRuntime"
+        );
+        if (
+          typeof transactionsThisTick !== "number"
+          || !Number.isSafeInteger(transactionsThisTick)
+          || transactionsThisTick < 0
+          || transactionsThisTick > ENEMY_BEHAVIORS_LIMITS.protectionTransactionsPerTick
+        ) {
+          throw new Error(
+            `Game checkpoint enemyBehaviors protectionRuntime.transactionsThisTick must be an integer in range 0..${ENEMY_BEHAVIORS_LIMITS.protectionTransactionsPerTick}.`
+          );
+        }
       }
       const componentEnemies = checkpointObjectDescriptors(
         checkpointDataField(section, "components", "enemyBehaviors state"),
@@ -5470,7 +5535,6 @@ export class TowerDefenseGame {
         }
       }
       if (checkpointFormationAssignments) {
-        const protectionCohortIds = Object.keys(checkpointFormationProtection);
         const formations = closed(
           checkpointDataField(section, "formations", "enemyBehaviors state"),
           "enemyBehaviors formations state",
@@ -7932,6 +7996,7 @@ export class TowerDefenseGame {
         }
       ]))
     ]));
+    this.vanguardProtectionTransactionsThisTick = state.enemyBehaviors?.protectionRuntime?.transactionsThisTick ?? 0;
     this.initialRngState = cloneCheckpointJson(initialRng);
     this.rng = SeededRng.fromState(currentRng);
 

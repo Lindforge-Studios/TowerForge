@@ -401,3 +401,26 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   read-only non-TowerScript `vanguardDamageIntercepted` GameEvent.
 - Focused docs/fixture contract is GREEN at 3/3. The combined agent-guide/docs check is GREEN at
   7/7; both fixture JSON documents parse successfully and the scoped diff check passes.
+
+### R12 final verifier repair — mission-scoped armor and checkpointed protection budget
+
+- The first frozen R12 commit `b65dc7c` did not receive Code Verifier sign-off. The independent
+  review found two P1 defects: component armor validation accepted an armor type from an unrelated
+  unselected Combat profile, and the gameplay-affecting 512-interception public-tick counter was
+  not restored from checkpoints. The earlier freeze, gates, and integration sign-off were therefore
+  invalidated before the branch was published.
+- Independent RED added mission-selected active/disabled/unselected armor reference cases and a
+  checkpoint-only closed `protectionRuntime` v1 contract. The initial focused command
+  `npx vitest run packages/engine/src/content/enemy-behaviors-mechanics.contract.test.ts packages/engine/src/simulation/r12-vanguard-protection-runtime.contract.test.ts --maxWorkers=1`
+  failed 10/24 for the missing checks and state. A first GREEN attempt left 4/24 failures: two
+  diagnostic contracts, one inactive-field rejection, and a test-only navigation fixture whose
+  manually placed enemy lacked a valid `nextCoord` for restore.
+- GREEN validates component armor against every mission-selected Combat profile that can activate
+  the Enemy Behaviors profile. Inactive references remain warnings. Checkpoints now preserve only
+  `{ schemaVersion: 1, transactionsThisTick }` when authored protection is active; snapshots and
+  inactive checkpoints remain unchanged. The independent test designer repaired only the invalid
+  navigation fixture and did not alter production or the 511 -> restore -> 2 packet boundary.
+- Focused repair is GREEN at 24/24. The linked R12 content, components, HFSM, formation, protection,
+  checkpoint, navigation, journal, replay, and damage set is GREEN at 332/332; `npm run typecheck`
+  and `npm run build:engine` pass. A new exact-commit freeze, complete gates, and two new independent
+  sign-offs remain required.

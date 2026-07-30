@@ -170,7 +170,13 @@ function byType(game: TowerDefenseGame, typeId: string): EnemyState[] {
 function move(enemy: EnemyState, coord: GridCoord): void {
   const navigation = (enemy as any).navigation;
   navigation.currentCoord = { ...coord };
-  navigation.nextCoord = undefined;
+  navigation.nextCoord = coord.q < 8
+    ? { q: coord.q + 1, r: coord.r }
+    : coord.r < 2
+      ? { q: coord.q, r: coord.r + 1 }
+      : coord.r > 2
+        ? { q: coord.q, r: coord.r - 1 }
+        : undefined;
   navigation.edgeProgress = 0;
 }
 
@@ -384,6 +390,89 @@ describe("R12.4 vanguard protection TowerDefenseGame contract (RED)", () => {
     expect(target.hp).toBe(99);
     game.tick(0);
     expect(stats(game).transactionsThisTick).toBe(0);
+  });
+
+  it("checkpoints only the active gameplay transaction counter in a closed v1 field", () => {
+    const { game } = fixture({ shieldCapacity: 1_000_000 });
+    const { target } = arrange(game);
+    for (let index = 0; index < 17; index += 1) apply(game, target, SOURCES.tower, 1, undefined);
+
+    const checkpoint = jsonClone(game.createCheckpoint());
+    expect((checkpoint.state as any).enemyBehaviors.protectionRuntime).toEqual({
+      schemaVersion: 1,
+      transactionsThisTick: 17
+    });
+    expect(Object.keys((checkpoint.state as any).enemyBehaviors.protectionRuntime)).toEqual([
+      "schemaVersion", "transactionsThisTick"
+    ]);
+    expect((checkpoint.state as any).enemyBehaviors.protectionRuntime).not.toHaveProperty("candidatesInspected");
+    expect((checkpoint.state as any).enemyBehaviors.protectionRuntime).not.toHaveProperty("maximumCandidateCount");
+    expect((game.getSnapshot().enemyBehaviors as any)).not.toHaveProperty("protectionRuntime");
+  });
+
+  it.each([
+    ["future schema", { schemaVersion: 2, transactionsThisTick: 1 }, /protectionRuntime.*schema|schema.*protectionRuntime/i],
+    ["negative counter", { schemaVersion: 1, transactionsThisTick: -1 }, /transactionsThisTick.*(?:0|negative|range)/i],
+    ["over-limit counter", { schemaVersion: 1, transactionsThisTick: 513 }, /transactionsThisTick.*512/i],
+    ["extra diagnostic", {
+      schemaVersion: 1, transactionsThisTick: 1, candidatesInspected: 1
+    }, /protectionRuntime.*(?:closed|unknown).*candidatesInspected|candidatesInspected.*(?:closed|unknown)/i]
+  ] as const)("rejects malformed protectionRuntime checkpoint state: %s", (_label, runtime, message) => {
+    const { content, game } = fixture({ shieldCapacity: 1_000_000 });
+    const checkpoint = jsonClone(game.createCheckpoint());
+    (checkpoint.state as any).enemyBehaviors.protectionRuntime = runtime;
+    (checkpoint as any).stateDigest = computeCheckpointStateDigest(
+      checkpoint.contentDigest, checkpoint.identity, checkpoint.rng, checkpoint.state
+    );
+    expect(() => TowerDefenseGame.fromCheckpoint({ content, checkpoint })).toThrow(message);
+  });
+
+  it("restores the 511/512 transaction boundary before accepting more packets without a tick", () => {
+    const { content, game: continuous } = fixture({ shieldCapacity: 1_000_000 });
+    const continuousTargets = arrange(continuous);
+    for (let index = 0; index < 511; index += 1) {
+      apply(continuous, continuousTargets.target, SOURCES.tower, 1, undefined);
+    }
+    const checkpoint = jsonClone(continuous.createCheckpoint());
+    expect((checkpoint.state as any).enemyBehaviors.protectionRuntime).toEqual({
+      schemaVersion: 1,
+      transactionsThisTick: 511
+    });
+
+    const restored = TowerDefenseGame.fromCheckpoint({ content, checkpoint });
+    const restoredTarget = restored.enemies.find((enemy) => enemy.id === continuousTargets.target.id)!;
+    const restoredGuard = restored.enemies.find((enemy) => enemy.id === continuousTargets.guard.id)!;
+    expect(restoredTarget).toBeTruthy();
+    expect(restoredGuard).toBeTruthy();
+
+    for (let packetIndex = 0; packetIndex < 2; packetIndex += 1) {
+      apply(continuous, continuousTargets.target, SOURCES.tower, 1, undefined);
+      apply(restored, restoredTarget, SOURCES.tower, 1, undefined);
+      expect(restored.getSnapshot()).toEqual(continuous.getSnapshot());
+      expect(restored.getStateDigest()).toBe(continuous.getStateDigest());
+      expect(shield(restored, restoredGuard.id)).toBe(shield(continuous, continuousTargets.guard.id));
+      expect(componentHp(restored, restoredTarget.id)).toBe(componentHp(continuous, continuousTargets.target.id));
+    }
+    expect(stats(continuous).transactionsThisTick).toBe(512);
+    expect(stats(restored).transactionsThisTick).toBe(512);
+  });
+
+  it("forbids protectionRuntime when authored protection is inactive and preserves legacy shape", () => {
+    const { content, game } = fixture({ protected: false });
+    const checkpoint = jsonClone(game.createCheckpoint());
+    expect((checkpoint.state as any).enemyBehaviors?.protectionRuntime).toBeUndefined();
+    expect((game.getSnapshot().enemyBehaviors as any)?.protectionRuntime).toBeUndefined();
+
+    const forged = jsonClone(checkpoint);
+    (forged.state as any).enemyBehaviors.protectionRuntime = {
+      schemaVersion: 1,
+      transactionsThisTick: 0
+    };
+    (forged as any).stateDigest = computeCheckpointStateDigest(
+      forged.contentDigest, forged.identity, forged.rng, forged.state
+    );
+    expect(() => TowerDefenseGame.fromCheckpoint({ content, checkpoint: forged }))
+      .toThrow(/protectionRuntime|inactive|unexpected|closed|unknown/i);
   });
 
   it("keeps old/inactive formation snapshots, checkpoints, digests and TowerScript grammar free of protection", () => {

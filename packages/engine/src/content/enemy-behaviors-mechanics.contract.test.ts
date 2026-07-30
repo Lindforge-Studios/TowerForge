@@ -506,4 +506,37 @@ describe("R12.1 enemyBehaviors v1 boss-component content contract (RED)", () => 
       expect(resolve(registry({ activation }), "boss_lab")).toBeUndefined();
     }
   });
+
+  it.each(["active", "disabled", "unselected"] as const)(
+    "validates component armor against only the mission-selected Combat profile (%s)",
+    (activation) => {
+      const input = enemyBehaviorsInput({ activation });
+      const mechanics = input.mechanics as any;
+      mechanics.modules.combat.profiles = {
+        selected_without_plate: {
+          damageTypes: { physical: { label: "Physical" } },
+          armorTypes: {}
+        },
+        unrelated_with_plate: {
+          damageTypes: { physical: { label: "Physical" } },
+          armorTypes: {
+            plate: { label: "Plate", defaultMultiplier: 1, multipliers: { physical: 0.75 } }
+          }
+        }
+      };
+      (input.balance.missions.boss_lab as any).mechanics.profiles.combat = "selected_without_plate";
+
+      const result = validateGameContentRegistry(createGameContentRegistry(input));
+      const expectedSeverity = activation === "active" ? "error" : "warning";
+      const armorIssues = result.issues.filter((entry) => (
+        entry.fieldPath
+          === "modules.enemyBehaviors.profiles.bosses.bosses.citadel_boss.components.left_cannon.armorTypeId"
+        && /plate|armor|selected|combat/i.test(entry.message)
+      ));
+      expect(armorIssues).toEqual([
+        expect.objectContaining({ severity: expectedSeverity })
+      ]);
+      expect(result.ok).toBe(activation !== "active");
+    }
+  );
 });

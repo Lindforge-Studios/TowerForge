@@ -247,6 +247,14 @@ export interface TowerScriptMachinesCheckpointStateV1 {
   readonly values: Readonly<Record<string, Record<string, Record<string, TowerScriptMachineRuntimeStateV1>>>>;
 }
 
+export interface EnemyBehaviorsCheckpointStateV1 extends EnemyBehaviorsStateV1 {
+  /** Gameplay-affecting per-public-tick budget; presentation-only diagnostics remain excluded. */
+  readonly protectionRuntime?: {
+    readonly schemaVersion: 1;
+    readonly transactionsThisTick: number;
+  };
+}
+
 /** Authoritative mutable simulation state. Map occupancy and water cues are rebuilt derivatives. */
 export interface GameCheckpointStateV1 {
   readonly coreHp: number;
@@ -294,7 +302,7 @@ export interface GameCheckpointStateV1 {
   readonly logistics?: LogisticsCheckpointStateV1 | LogisticsCheckpointStateV2;
   readonly director?: DirectorSnapshotV1;
   readonly quests?: QuestSnapshotV1;
-  readonly enemyBehaviors?: EnemyBehaviorsStateV1;
+  readonly enemyBehaviors?: EnemyBehaviorsCheckpointStateV1;
 }
 
 export interface GameCheckpointV1 {

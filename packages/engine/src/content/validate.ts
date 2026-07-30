@@ -4292,14 +4292,24 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
       }
     }
 
-    const authoredArmorTypeIds = new Set<string>();
+    const selectedCombatArmorTypeIdsByMission = new Map<string, Set<string>>();
+    const selectedCombatArmorTypeIds = new Set<string>();
+    let combatModuleEnabled = false;
     try {
       const combat = content.mechanics.modules.combat;
-      for (const profile of Object.values(combat?.profiles ?? {})) {
-        const armorTypes = (profile as { armorTypes?: unknown }).armorTypes;
+      combatModuleEnabled = combat?.enabled === true;
+      for (const [missionId, mission] of Object.entries(content.missions)) {
+        const combatProfileId = (mission.mechanics?.profiles as Record<string, string> | undefined)?.combat;
+        const profile = typeof combatProfileId === "string" ? combat?.profiles?.[combatProfileId] : undefined;
+        const armorTypes = (profile as { armorTypes?: unknown } | undefined)?.armorTypes;
+        const missionArmorTypeIds = new Set<string>();
         if (armorTypes && typeof armorTypes === "object" && !Array.isArray(armorTypes)) {
-          for (const armorTypeId of Object.keys(armorTypes)) authoredArmorTypeIds.add(armorTypeId);
+          for (const armorTypeId of Object.keys(armorTypes)) {
+            missionArmorTypeIds.add(armorTypeId);
+            selectedCombatArmorTypeIds.add(armorTypeId);
+          }
         }
+        selectedCombatArmorTypeIdsByMission.set(missionId, missionArmorTypeIds);
       }
     } catch {
       // Combat validation reports hostile catalog data; semantic references below then fail closed.
@@ -4327,6 +4337,7 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
       }
       const active = module.enabled === true && (selectedByProfile.get(profileId)?.length ?? 0) > 0;
       const semantic = active ? err : warn;
+      const selectedMissionIds = selectedByProfile.get(profileId) ?? [];
       const componentTags = new Set<string>();
       for (const [enemyTypeId, boss] of Object.entries(profile.bosses ?? {})) {
         const enemy = content.enemies[enemyTypeId];
@@ -4340,12 +4351,19 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
         }
         for (const [componentId, component] of Object.entries(boss.components)) {
           for (const tag of component.tags ?? []) componentTags.add(tag);
-          if (component.armorTypeId && !authoredArmorTypeIds.has(component.armorTypeId)) {
+          const armorTypeAvailable = component.armorTypeId === undefined
+            || (selectedMissionIds.length > 0
+              ? selectedMissionIds.every((missionId) => (
+                  (!active || combatModuleEnabled)
+                  && selectedCombatArmorTypeIdsByMission.get(missionId)?.has(component.armorTypeId!) === true
+                ))
+              : selectedCombatArmorTypeIds.has(component.armorTypeId));
+          if (component.armorTypeId && !armorTypeAvailable) {
             semantic(
               "mechanics",
               profileId,
               `${root}.bosses.${enemyTypeId}.components.${componentId}.armorTypeId`,
-              `Boss component references unknown armor type "${component.armorTypeId}".`
+              `Boss component references armor type "${component.armorTypeId}" that is unavailable in the mission-selected Combat profile.`
             );
           }
           for (const abilityId of component.disablesAbilities ?? []) {

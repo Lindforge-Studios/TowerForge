@@ -297,6 +297,7 @@ export declare class TowerDefenseGame {
     private buildCombatState;
     private buildReactionState;
     private buildEnemyBehaviorsState;
+    private buildEnemyBehaviorsCheckpointState;
     getFormationSteeringStats(): FormationSteeringRuntimeStatsV1;
     getVanguardProtectionStats(): VanguardProtectionRuntimeStatsV1;
     private consumeNavigationAnalysisField;

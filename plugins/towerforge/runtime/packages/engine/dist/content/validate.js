@@ -3215,15 +3215,24 @@ export function validateGameContentRegistry(content) {
                 (module.enabled === true ? err : warn)("mission", missionId, `missions.${missionId}.mechanics.profiles.enemyBehaviors`, `Mission "${missionId}" selects unknown enemyBehaviors profile "${profileId}".`);
             }
         }
-        const authoredArmorTypeIds = new Set();
+        const selectedCombatArmorTypeIdsByMission = new Map();
+        const selectedCombatArmorTypeIds = new Set();
+        let combatModuleEnabled = false;
         try {
             const combat = content.mechanics.modules.combat;
-            for (const profile of Object.values(combat?.profiles ?? {})) {
-                const armorTypes = profile.armorTypes;
+            combatModuleEnabled = combat?.enabled === true;
+            for (const [missionId, mission] of Object.entries(content.missions)) {
+                const combatProfileId = mission.mechanics?.profiles?.combat;
+                const profile = typeof combatProfileId === "string" ? combat?.profiles?.[combatProfileId] : undefined;
+                const armorTypes = profile?.armorTypes;
+                const missionArmorTypeIds = new Set();
                 if (armorTypes && typeof armorTypes === "object" && !Array.isArray(armorTypes)) {
-                    for (const armorTypeId of Object.keys(armorTypes))
-                        authoredArmorTypeIds.add(armorTypeId);
+                    for (const armorTypeId of Object.keys(armorTypes)) {
+                        missionArmorTypeIds.add(armorTypeId);
+                        selectedCombatArmorTypeIds.add(armorTypeId);
+                    }
                 }
+                selectedCombatArmorTypeIdsByMission.set(missionId, missionArmorTypeIds);
             }
         }
         catch {
@@ -3252,6 +3261,7 @@ export function validateGameContentRegistry(content) {
             }
             const active = module.enabled === true && (selectedByProfile.get(profileId)?.length ?? 0) > 0;
             const semantic = active ? err : warn;
+            const selectedMissionIds = selectedByProfile.get(profileId) ?? [];
             const componentTags = new Set();
             for (const [enemyTypeId, boss] of Object.entries(profile.bosses ?? {})) {
                 const enemy = content.enemies[enemyTypeId];
@@ -3261,8 +3271,13 @@ export function validateGameContentRegistry(content) {
                 for (const [componentId, component] of Object.entries(boss.components)) {
                     for (const tag of component.tags ?? [])
                         componentTags.add(tag);
-                    if (component.armorTypeId && !authoredArmorTypeIds.has(component.armorTypeId)) {
-                        semantic("mechanics", profileId, `${root}.bosses.${enemyTypeId}.components.${componentId}.armorTypeId`, `Boss component references unknown armor type "${component.armorTypeId}".`);
+                    const armorTypeAvailable = component.armorTypeId === undefined
+                        || (selectedMissionIds.length > 0
+                            ? selectedMissionIds.every((missionId) => ((!active || combatModuleEnabled)
+                                && selectedCombatArmorTypeIdsByMission.get(missionId)?.has(component.armorTypeId) === true))
+                            : selectedCombatArmorTypeIds.has(component.armorTypeId));
+                    if (component.armorTypeId && !armorTypeAvailable) {
+                        semantic("mechanics", profileId, `${root}.bosses.${enemyTypeId}.components.${componentId}.armorTypeId`, `Boss component references armor type "${component.armorTypeId}" that is unavailable in the mission-selected Combat profile.`);
                     }
                     for (const abilityId of component.disablesAbilities ?? []) {
                         const field = abilityId;
