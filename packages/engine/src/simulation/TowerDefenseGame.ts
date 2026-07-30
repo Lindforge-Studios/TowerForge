@@ -10886,6 +10886,37 @@ export class TowerDefenseGame {
     }));
   }
 
+  private enemyAbilityEnabled(
+    enemy: EnemyState,
+    abilityId: "towerAttack" | "towerDisrupt" | "healAura"
+  ): boolean {
+    const definitions = this.activeEnemyBehaviors?.bosses[enemy.typeId]?.components;
+    const states = this.enemyComponentStates[enemy.id];
+    if (!definitions || !states) return true;
+    for (const componentId of Object.keys(definitions).sort(compareBinary)) {
+      if ((states[componentId]?.hp ?? 0) <= 0 && definitions[componentId]?.disablesAbilities?.includes(abilityId)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private towerComponentTargetId(enemy: EnemyState, towerTypeId: string): string | undefined {
+    const binding = this.activeEnemyBehaviors?.targeting?.towers[towerTypeId];
+    const definitions = this.activeEnemyBehaviors?.bosses[enemy.typeId]?.components;
+    const states = this.enemyComponentStates[enemy.id];
+    if (!binding || !definitions || !states) return undefined;
+    const componentIds = Object.keys(definitions).sort(compareBinary);
+    for (const tag of binding.priorityTags) {
+      const componentId = componentIds.find((candidateId) => (
+        (states[candidateId]?.hp ?? 0) > 0
+        && definitions[candidateId]?.tags?.includes(tag)
+      ));
+      if (componentId !== undefined) return componentId;
+    }
+    return undefined;
+  }
+
   private initializeEnemyShield(enemy: EnemyState): void {
     const definition = this.combatShieldDefinitions?.enemies[enemy.typeId];
     if (!definition) return;
@@ -11543,7 +11574,7 @@ export class TowerDefenseGame {
         continue;
       }
       const aura = this.enemyTypes[healer.typeId]?.healAura;
-      if (!aura || aura.radius <= 0 || aura.healPerUnit <= 0) {
+      if (!aura || !this.enemyAbilityEnabled(healer, "healAura") || aura.radius <= 0 || aura.healPerUnit <= 0) {
         continue;
       }
       const healerCoord = this.enemyCoord(healer);
@@ -11597,7 +11628,8 @@ export class TowerDefenseGame {
         continue;
       }
       const disrupt = this.enemyTypes[enemy.typeId]?.towerDisrupt;
-      if (!disrupt || disrupt.interval <= 0 || disrupt.duration <= 0) {
+      if (!disrupt || !this.enemyAbilityEnabled(enemy, "towerDisrupt") || disrupt.interval <= 0 || disrupt.duration <= 0) {
+        if (!this.enemyAbilityEnabled(enemy, "towerDisrupt")) delete enemy.disruptTargetTowerIds;
         continue;
       }
       enemy.disruptCooldown = (enemy.disruptCooldown ?? disrupt.interval) - delta;
@@ -11662,7 +11694,7 @@ export class TowerDefenseGame {
         continue;
       }
       const attack = this.enemyTypes[enemy.typeId]?.towerAttack;
-      if (!attack || attack.interval <= 0 || attack.damage <= 0) {
+      if (!attack || !this.enemyAbilityEnabled(enemy, "towerAttack") || attack.interval <= 0 || attack.damage <= 0) {
         continue;
       }
       enemy.towerAttackCooldown = (enemy.towerAttackCooldown ?? attack.interval) - delta;
@@ -13606,6 +13638,7 @@ export class TowerDefenseGame {
     };
     return this.applyResolvedEnemyDamage(enemy, rawDamage, source, {
       damageType: options.damageType ?? this.damageTypeOf(towerTypeId),
+      componentId: this.towerComponentTargetId(enemy, towerTypeId),
       ...(tags.length ? { tags } : {}),
       ...(modifiers.length ? { modifiers } : {}),
       context: {

@@ -49,10 +49,16 @@ function input(activation: Activation = "active"): GameContentInput {
           reward: { coins: 10 },
           coinReward: 10,
           coreDamage: 5,
-          color: 0x884444
+          color: 0x884444,
+          towerAttack: { interval: 0.5, damage: 3, range: 4 }
         }
       },
-      towers: {},
+      towers: {
+        pelter: {
+          id: "pelter", label: "Pelter", cost: { coins: 5 }, footprintRadius: 0, range: 6, maxHp: 30,
+          attack: { kind: "single", fireRate: 1, damagePerStack: 1, startingStacks: 1, maxStacks: 1, upgradeCost: 1 }
+        }
+      },
       waveSets: {
         boss_wave: [{
           id: "boss_wave_1",
@@ -70,7 +76,7 @@ function input(activation: Activation = "active"): GameContentInput {
           prepTimeUnits: 0,
           mapId: "lane",
           waveSetId: "boss_wave",
-          buildTowerIds: [],
+          buildTowerIds: ["pelter"],
           abilityIds: [],
           ...(selected ? { mechanics: { profiles: { combat: "shielded", enemyBehaviors: "bosses" } } } : {
             mechanics: { profiles: { combat: "shielded" } }
@@ -109,6 +115,12 @@ function input(activation: Activation = "active"): GameContentInput {
                 bosses: {
                   citadel_boss: {
                     components: {
+                      alpha_core: {
+                        maxHp: 10,
+                        hitRegion: { kind: "circle", offsetX: 0.25, offsetY: 0, radius: 0.2 },
+                        tags: ["weapon"],
+                        disablesAbilities: ["towerAttack"]
+                      },
                       left_cannon: {
                         maxHp: 20,
                         hitRegion: { kind: "circle", offsetX: -0.25, offsetY: 0, radius: 0.2 },
@@ -117,7 +129,8 @@ function input(activation: Activation = "active"): GameContentInput {
                       }
                     }
                   }
-                }
+                },
+                targeting: { towers: { pelter: { priorityTags: ["weapon"] } } }
               }
             }
           }
@@ -180,6 +193,7 @@ describe("R12.1b boss-component runtime contract (RED)", () => {
         schemaVersion: 1,
         components: {
           enemy_1: {
+            alpha_core: { hp: 10, maxHp: 10 },
             left_cannon: {
               hp: 20,
               maxHp: 20,
@@ -266,6 +280,54 @@ describe("R12.1b boss-component runtime contract (RED)", () => {
       checkpoint.contentDigest, checkpoint.identity, checkpoint.rng, checkpoint.state
     );
     expect(() => TowerDefenseGame.fromCheckpoint({ content, checkpoint })).toThrow(/enemyBehaviors.*inactive/i);
+  });
+
+  it("routes tower damage by authored tag and binary component id, then skips destroyed components", () => {
+    const { game } = spawn();
+    const enemy = game.enemies[0]!;
+    const boundary = game as unknown as {
+      applyResolvedTowerDamage(towerTypeId: string, enemy: TowerDefenseGame["enemies"][number], amount: number): unknown;
+    };
+    const coinsBefore = game.coins;
+
+    boundary.applyResolvedTowerDamage("pelter", enemy, 20);
+    let section = (game.getSnapshot() as any).enemyBehaviors.components.enemy_1;
+    expect(section.alpha_core.hp).toBe(0);
+    expect(section.left_cannon.hp).toBe(20);
+    expect(enemy.hp).toBe(100);
+    expect(game.coins).toBe(coinsBefore);
+    expect(game.getSnapshot().killCount).toBe(0);
+
+    boundary.applyResolvedTowerDamage("pelter", enemy, 8);
+    section = (game.getSnapshot() as any).enemyBehaviors.components.enemy_1;
+    expect(section.left_cannon.shield.current).toBe(0);
+    expect(section.left_cannon.hp).toBe(19);
+  });
+
+  it("falls back to root targeting after all matching components are destroyed", () => {
+    const { game } = spawn();
+    const enemy = game.enemies[0]!;
+    const boundary = game as unknown as {
+      applyResolvedTowerDamage(towerTypeId: string, enemy: TowerDefenseGame["enemies"][number], amount: number): unknown;
+    };
+    boundary.applyResolvedTowerDamage("pelter", enemy, 20);
+    boundary.applyResolvedTowerDamage("pelter", enemy, 100);
+    expect(enemy.hp).toBe(100);
+    boundary.applyResolvedTowerDamage("pelter", enemy, 5);
+    expect(enemy.hp).toBe(95);
+  });
+
+  it("suppresses an authored boss ability after its owning component is destroyed", () => {
+    const { game } = spawn();
+    const enemy = game.enemies[0]!;
+    const boundary = game as unknown as {
+      applyResolvedTowerDamage(towerTypeId: string, enemy: TowerDefenseGame["enemies"][number], amount: number): unknown;
+    };
+    boundary.applyResolvedTowerDamage("pelter", enemy, 20);
+    expect(game.placeTower("pelter", { q: 1, r: 0 })).toEqual({ ok: true });
+    game.tick(1);
+    expect(game.lastEvents.some((event) => event.type === "towerAttacked")).toBe(false);
+    expect(game.towers[0]?.hp).toBe(30);
   });
 
   it.each(["absent", "disabled", "unselected"] as const)(

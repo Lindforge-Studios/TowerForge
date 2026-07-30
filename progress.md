@@ -225,3 +225,14 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - Checkpoint validation is closed and authored-state aware; restore preserves the state digest. DamagePacket descriptor v2 exposes optional enemy `componentId` without changing command/journal versions.
 - Descriptor RED: `packages/engine/src/content/schema-descriptor.test.ts` failed 1/34 before the v2 metadata was added.
 - GREEN: focused runtime 9/9; focused engine/content 171/171; `npm run typecheck` PASS; `npm run build:engine` PASS; full `npm run test` 3172/3172 across 285 files.
+
+### R12.1c RED evidence — tower routing and ability suppression
+
+- Focused command: `npx vitest run packages/engine/src/simulation/r12-boss-components-runtime.contract.test.ts --maxWorkers=1`.
+- Expected RED: 12 tests total; 2 failed / 10 passed. Tower-origin damage still hit root HP instead of the binary-first live component selected by authored `priorityTags`; therefore component skip/fallback behavior was absent.
+
+### R12.1c GREEN evidence — tower routing and ability suppression
+
+- Tower-origin packets now select the first live component by authored tag order and binary component id; destroyed matches are skipped and exhausted bindings fall back to root HP.
+- Destroyed components suppress only the allowlisted authored boss abilities (`towerAttack`, `towerDisrupt`, `healAura`); component destruction itself grants no kill, reward, or root damage.
+- GREEN: R12 runtime/routing 12/12; focused TowerDefenseGame compatibility 66/66; `npm run typecheck` PASS; `npm run build:engine` PASS.
