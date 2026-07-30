@@ -2,6 +2,17 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 
 ## Current milestone
 
+- S0 integration is in progress: R9 PR #20 is merged into `main`; R10 is being reconciled on top
+  before R11 is retargeted. The shared engine merge preserves both active-only `scriptMachines` and
+  `quests` checkpoint sections plus both event-field sets.
+- S0 regression RED: `npx vitest run packages/engine/src/simulation/r10-quests-runtime.contract.test.ts --maxWorkers=1`
+  initially failed the new combined R9+R10 checkpoint assertion because the test assumed a flat
+  `entries` form instead of the canonical nested `values` contract. After correcting the contract
+  assertion, the focused suite is GREEN at 10/10 and restore digest/snapshot parity is proven with
+  both optional sections active.
+- ADR numbering collision was resolved without changing feature version domains: R9 remains ADR
+  0050 and R10 moved to ADR 0051. R11 will move from 0051 to 0052 during its integration.
+
 - R0–R2 and R3.1–R3.4a are complete with independent code and constructor-integration sign-off.
 - R3.4a opt-in physics v1 is complete through engine, validation, Studio Mechanics Hub, MCP/AI, recipes, shared renderer projection, Canvas/Phaser × hex/square builds, packages, plugin runtime, reference fixture, and documentation.
 - R3.4a final evidence is green: focused physics/build/package 75/75, full Vitest 1512/1512 across 120 files, Playwright 17/17, typecheck/build/validate/sim/balance/maps, plugin build/validate/smoke, harness audit, and diff checks.
@@ -35,9 +46,10 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 ## 2026-07-29 — R10 completed
 
 - R10 is split into two independent tracks: compute-only Persona QA and the mission-selected
-  `quests` v1 gameplay module. It intentionally has no dependency on the open R9 PR #20.
+  `quests` v1 gameplay module. Its runtime contract is independent from R9 and both are now
+  integrated on the shared mainline.
 - Accepted architecture, version domains, delivery slices, limits and acceptance criteria are
-  recorded in `docs/adr/0050-r10-persona-qa-and-procedural-quests.md`; the canonical architecture
+  recorded in `docs/adr/0051-r10-persona-qa-and-procedural-quests.md`; the canonical architecture
   and runbook document the completed implementation.
 - R10.1 began RED on the missing fixed-persona runner/report, `quests` capability/closed descriptor
   and deterministic weighted selector exports.
@@ -89,3 +101,15 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   same-user derived-cache authenticity; strict audits can use `--no-cache`.
 - R10 is accepted. Full evidence is Vitest 3,070/3,070 across 271 files, Playwright 133/133,
   Studio 17/17, surface contracts 6/6, all required repository gates and exact plugin parity.
+## R9 — TowerScript DX 3.0 (2026-07-29)
+
+- User-approved scope: one opt-in PR on `codex/r9-towerscript-dx3`; TowerScript v7 only; Behavior Tree/HFSM internal v1; Graph, Trace, and Debugger v2; layout v1; optional checkpoint `scriptMachines` v1. R10/R11, release, tag, merge, and auto-merge are excluded.
+- R9.1 implements strict closed-own-data validation, descriptor catalogs, bounded deterministic synchronous Behavior Trees (`selector`, `sequence`, `condition`, `select_targets`) and hostile sparse/accessor/proxy/cyclic/future/budget contracts.
+- R9.2 integrates scripted targeting at the shared engine acquisition boundary after alive/class/range/LoS filtering, binary-stable bounded candidate ordering, fallback target modes, support/overlap rejection, stable manual-mode rejection, and active-only `Scripted` snapshot/player/Studio metadata.
+- R9.3 implements hierarchical state resolution, leaf-to-root authored transitions, self-transition exit/entry, shared typed action execution, diagnostics after committed-state action failures, nested-signal transition budgets, `stateMachineTransitioned`, optional checkpoint/replay state, digest parity, and entity-state cleanup.
+- R9.4 implements lossless Graph v2 projection and primitive authoring, behavior/transition Trace and Debugger v2 records, descriptor-driven controller recipes, guarded Studio/MCP preview/apply, updated agent guidance, and `docs/examples/opt-in-towerscript-dx3/`.
+- TDD evidence includes independent RED for hostile runtime validation and Studio primitive authoring, plus an E2E RED that exposed the nested descriptor palette lookup before the production fix. Focused engine, graph, Studio, MCP, compatibility, and isolated legacy-heroes checks are green. Full final gates, browser screenshot inspection, two independent sign-offs, commit, push, and PR remain pending.
+- Visual inspection exposed overlapping auto-positioned Graph cards after the functional suite was green. A separate RED layout contract now covers containment depth/order, input-order invariance, stable-ID pinned positions, idempotence, and collision avoidance. The Studio-only helper is GREEN at 2/2; R9 browser lifecycle is GREEN at 4/4 with pairwise DOM overlap assertions. The required skill client rendered the generated hex player without console errors, and a separate 1600×1000 Studio screenshot confirmed 11 Graph cards, zero overlaps, and zero console/page errors.
+- The first independent code audit reproduced one selection-rollback P1 and two hostile-validation P2 findings. A separate seven-test RED repair slice now proves transactional failed-branch selection, fail-fast controller/child/transition budgets, and revoked-Proxy diagnostics. Focused repair is 20/20 GREEN; the verifier's 10,000-tree probe now emits one bounded issue in 1 ms without inspecting the tail.
+- Final post-repair Vitest is GREEN at 3,028/3,028 across 263 files with constrained worker scheduling; sequential Playwright is GREEN at 133/133. Typecheck, engine/build, validate, 60-unit sim, balance, maps compile, plugin build/validate/smoke, desktop runtime preparation, Rust/Tauri 7/7, unsigned arm64 macOS app/DMG build, and macOS bundle/DMG verification are GREEN.
+- Final independent Code Verifier and Constructor Integration Verifier re-sign-offs are PASS with no open P0-P2. ADR 0050 is Accepted. PR #20 was merged into `main` as the first S0 integration step.

@@ -1,15 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createGameContentRegistry, type GameContentInput } from "../content/registry.js";
+import { validateGameContentRegistry } from "../content/validate.js";
 import { DamageResolver, type DamagePacket } from "./damage.js";
 import { runHeadlessMission } from "./headless.js";
 import { TowerDefenseGame } from "./TowerDefenseGame.js";
+import { JournaledGameSession } from "./journal.js";
+import { replayGameCommandJournal } from "./replay.js";
+import { TowerScriptDebugSession } from "./towerscript-debugger.js";
 import type { GameEvent, SingleAttackModel } from "./types.js";
+import type { TowerScriptDefinition } from "../scripting/types.js";
+import { createTowerScriptTraceCollector } from "../scripting/trace.js";
 
 // A compact registry whose tower/enemy ids deliberately do NOT match attack kinds, so the tests
 // double as regressions against hardcoded-id behavior in the engine.
 interface BuildContentOptions {
   mechanics?: GameContentInput["mechanics"];
   basicMechanics?: NonNullable<GameContentInput["balance"]["missions"][string]["mechanics"]>;
+  scripts?: Record<string, TowerScriptDefinition>;
 }
 
 function buildContent(options: BuildContentOptions = {}): ReturnType<typeof createGameContentRegistry> {
@@ -138,6 +145,7 @@ function buildContent(options: BuildContentOptions = {}): ReturnType<typeof crea
         terrainOverrides: []
       }
     },
+    ...(options.scripts === undefined ? {} : { scripts: options.scripts }),
     ...(options.mechanics === undefined ? {} : { mechanics: options.mechanics }),
     worldMap: {
       width: 100,
@@ -944,6 +952,128 @@ describe("TowerDefenseGame", () => {
     expect(firstHit("weakest")).toBe("grunt");
   });
 
+  it("uses an opt-in TowerScript v7 tree for target acquisition and rejects manual override (R9 RED)", () => {
+    const content = buildContent();
+    content.scripts.smart_targeting = {
+      schemaVersion: 7,
+      id: "smart_targeting",
+      bindings: [],
+      handlers: {},
+      behaviorTrees: [{
+        schemaVersion: 1,
+        id: "prefer_tank",
+        bindings: [{ scope: "tower", ids: ["pelter"] }],
+        root: {
+          id: "prefer_tank",
+          type: "action",
+          action: "select_targets",
+          filter: { $op: "eq", args: [{ $get: "candidate.typeId" }, "tank"] },
+          mode: "weakest"
+        }
+      }]
+    };
+
+    const collector = createTowerScriptTraceCollector({ maxEntries: 64 });
+    const game = new TowerDefenseGame({ missionId: "targeting", content, towerScriptTrace: collector });
+    const plain = new TowerDefenseGame({ missionId: "targeting", content });
+    expect(game.placeTower("pelter", { q: 2, r: 0 }).ok).toBe(true);
+    expect(plain.placeTower("pelter", { q: 2, r: 0 }).ok).toBe(true);
+    const tower = game.getSnapshot().towers[0]!;
+    expect(tower).toMatchObject({
+      scriptedTargeting: {
+        schemaVersion: 1,
+        scriptId: "smart_targeting",
+        behaviorTreeId: "prefer_tank",
+        fallbackMode: "first"
+      }
+    });
+    expect(game.setTowerTargetMode(tower.id, "weakest")).toMatchObject({
+      ok: false,
+      reasonKey: "reason.targetModeScripted"
+    });
+    expect(game.startNextWave().ok).toBe(true);
+    expect(plain.startNextWave().ok).toBe(true);
+    game.tick(0.05);
+    plain.tick(0.05);
+    expect(game.getSnapshot().lastEvents.find((event) => event.type === "enemyHit"))
+      .toMatchObject({ enemyTypeId: "tank" });
+    expect(collector.getSnapshot()).toMatchObject({
+      schemaVersion: 2,
+      entries: expect.arrayContaining([expect.objectContaining({
+        phase: "behavior",
+        controllerId: "prefer_tank",
+        nodeId: "prefer_tank",
+        status: "success",
+        selectedTargetIds: ["enemy_2"]
+      })])
+    });
+    expect(game.getStateDigest()).toBe(plain.getStateDigest());
+    expect(game.getSnapshot()).toEqual(plain.getSnapshot());
+  });
+
+  it("rejects overlapping Behavior Tree ownership and target-less support tower bindings", () => {
+    const tree = (id: string, towerId: string): TowerScriptDefinition => ({
+      schemaVersion: 7,
+      id,
+      bindings: [],
+      handlers: {},
+      behaviorTrees: [{
+        schemaVersion: 1,
+        id: `${id}_tree`,
+        bindings: [{ scope: "tower", ids: [towerId] }],
+        root: { id: "select", type: "action", action: "select_targets", mode: "first" }
+      }]
+    });
+    const overlapping = buildContent();
+    overlapping.scripts.owner_one = tree("owner_one", "pelter");
+    overlapping.scripts.owner_two = tree("owner_two", "pelter");
+    expect(validateGameContentRegistry(overlapping).issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ message: expect.stringMatching(/overlapping Behavior Tree targeting owners/i) })
+    ]));
+
+    const support = buildContent();
+    support.scripts.support_targeting = tree("support_targeting", "sprayer");
+    expect(validateGameContentRegistry(support).issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ message: expect.stringMatching(/Behavior Tree targeting is not supported/i) })
+    ]));
+  });
+
+  it("keeps absent and disabled R9 snapshots, checkpoints, and target-mode paths unchanged", () => {
+    const assertLegacyPath = (content: ReturnType<typeof buildContent>) => {
+      const game = new TowerDefenseGame({ missionId: "targeting", content });
+      expect(game.placeTower("pelter", { q: 2, r: 0 }).ok).toBe(true);
+      const tower = game.getSnapshot().towers[0]!;
+      expect(tower).not.toHaveProperty("scriptedTargeting");
+      expect(game.getSnapshot().scriptState).not.toHaveProperty("machines");
+      expect(game.createCheckpoint().state).not.toHaveProperty("scriptMachines");
+      expect(game.setTowerTargetMode(tower.id, "weakest")).toEqual({ ok: true });
+    };
+
+    assertLegacyPath(buildContent());
+    const disabled = buildContent();
+    disabled.scripts.disabled_r9 = {
+      schemaVersion: 7,
+      id: "disabled_r9",
+      enabled: false,
+      bindings: [],
+      handlers: {},
+      behaviorTrees: [{
+        schemaVersion: 1,
+        id: "disabled_targeting",
+        bindings: [{ scope: "tower", ids: ["pelter"] }],
+        root: { id: "select", type: "action", action: "select_targets", mode: "strongest" }
+      }],
+      stateMachines: [{
+        schemaVersion: 1,
+        id: "disabled_machine",
+        bindings: [{ scope: "global" }],
+        initial: "idle",
+        states: [{ id: "idle" }]
+      }]
+    };
+    assertLegacyPath(disabled);
+  });
+
   // Regression for #2: dots from a renamed pulse tower keep ticking after the enemy leaves the aura.
   it("applies lingering dot damage from a pulse-kind tower with a custom id", () => {
     const resolveSpy = vi.spyOn(DamageResolver, "resolve");
@@ -1382,6 +1512,105 @@ describe("TowerDefenseGame", () => {
     expect(game.getSnapshot().scriptState.diagnostics).toContainEqual(expect.objectContaining({
       scriptId: "terrain_rules", code: "runtime_error", message: expect.stringContaining("active route")
     }));
+  });
+
+  it("persists active HFSM state through checkpoint restore without changing the digest", () => {
+    const content = buildContent({
+      scripts: {
+        boss_flow: {
+          schemaVersion: 7,
+          id: "boss_flow",
+          bindings: [],
+          handlers: {},
+          stateMachines: [{
+            schemaVersion: 1,
+            id: "mission_phase",
+            bindings: [{ scope: "global" }],
+            initial: "preparing",
+            states: [
+              {
+                id: "preparing",
+                entryActions: [{ action: "setState", key: "phase", value: "preparing" }],
+                transitions: [{
+                  id: "wave_begins",
+                  event: "waveStarted",
+                  target: "/combat",
+                  actions: [{ action: "incrementState", key: "transitionActions" }]
+                }]
+              },
+              {
+                id: "combat",
+                entryActions: [{ action: "setState", key: "phase", value: "combat" }]
+              }
+            ]
+          }]
+        }
+      }
+    });
+    const collector = createTowerScriptTraceCollector({ maxEntries: 128 });
+    const game = new TowerDefenseGame({ missionId: "basic", content, seed: "r9-hfsm", towerScriptTrace: collector });
+    collector.clear();
+    expect(game.startNextWave().ok).toBe(true);
+
+    expect(game.getSnapshot().scriptState).toMatchObject({
+      values: { boss_flow: { "global:global": { phase: "combat", transitionActions: 1 } } },
+      machines: {
+        boss_flow: {
+          mission_phase: {
+            "global:global": { schemaVersion: 1, activeStatePath: "/combat", transitionCount: 1 }
+          }
+        }
+      }
+    });
+    expect(game.lastEvents).toContainEqual(expect.objectContaining({
+      type: "stateMachineTransitioned",
+      scriptId: "boss_flow",
+      machineId: "mission_phase",
+      transitionId: "wave_begins",
+      fromStatePath: "/preparing",
+      toStatePath: "/combat"
+    }));
+    expect(collector.getSnapshot().entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        phase: "transition",
+        machineId: "mission_phase",
+        transitionId: "wave_begins",
+        fromStatePath: "/preparing",
+        toStatePath: "/combat"
+      }),
+      expect.objectContaining({ phase: "action", actionPhase: "transition" }),
+      expect.objectContaining({ phase: "action", actionPhase: "entry" })
+    ]));
+
+    const checkpoint = game.createCheckpoint();
+    expect(checkpoint.state.scriptMachines?.schemaVersion).toBe(1);
+    const restored = TowerDefenseGame.fromCheckpoint({ content, checkpoint });
+    expect(restored.getStateDigest()).toBe(game.getStateDigest());
+    expect(restored.getSnapshot().scriptState.machines).toEqual(game.getSnapshot().scriptState.machines);
+
+    const journaled = new JournaledGameSession(new TowerDefenseGame({ missionId: "basic", content, seed: "r9-hfsm" }));
+    expect(journaled.dispatch({ schemaVersion: 1, type: "startWave" }).ok).toBe(true);
+    const replayed = replayGameCommandJournal({ content, journal: journaled.exportJournal() });
+    expect(replayed.stateDigest).toBe(journaled.game.getStateDigest());
+    expect(replayed.game.getSnapshot().scriptState.machines).toEqual(journaled.game.getSnapshot().scriptState.machines);
+
+    const debug = new TowerScriptDebugSession({
+      content,
+      initial: new TowerDefenseGame({ missionId: "basic", content, seed: "r9-hfsm" }),
+      checkpointRingCapacity: 8,
+      trace: { maxEntries: 128 }
+    });
+    expect(debug.dispatch({ schemaVersion: 1, type: "startWave" }).ok).toBe(true);
+    expect(debug.step("transition")).toMatchObject({
+      schemaVersion: 2,
+      mode: "transition",
+      traceEntry: { phase: "transition", transitionId: "wave_begins" },
+      snapshot: {
+        scriptState: {
+          machines: { boss_flow: { mission_phase: { "global:global": { activeStatePath: "/combat" } } } }
+        }
+      }
+    });
   });
 });
 

@@ -90,6 +90,7 @@ export declare class TowerDefenseGame {
     private readonly activeDirectorMechanics;
     private readonly activeQuestMechanics;
     private questEntries;
+    private readonly scriptedTargetingByTowerType;
     private directorDecisions;
     private readonly activeHeroPassiveAura;
     private readonly activeHeroBlocking;
@@ -170,6 +171,9 @@ export declare class TowerDefenseGame {
     private scriptActionsRemaining;
     private scriptTerrainChangesRemaining;
     private scriptSignalDepth;
+    private scriptStateTransitionsRemaining;
+    private scriptMachines;
+    private hasScriptStateMachines;
     private readonly towerScriptTrace;
     private displacementStepAttemptsThisTick;
     private initialRngState;
@@ -297,10 +301,15 @@ export declare class TowerDefenseGame {
     private restoreCheckpointState;
     private buildSnapshot;
     private initializeScripts;
+    private initializeScriptedTargeting;
     private beginScriptTransaction;
     private finishScriptedAction;
     private processScriptEvents;
     private runScriptEvent;
+    private runScriptStateMachines;
+    private runScriptMachineActions;
+    private recordScriptMachineDiagnostic;
+    private cleanupScriptMachineContexts;
     private runScriptHandler;
     private scriptContexts;
     private scriptStateFor;
@@ -329,6 +338,7 @@ export declare class TowerDefenseGame {
     private recordScriptDiagnostic;
     private cloneScriptJsonObject;
     private cloneScriptValues;
+    private cloneScriptMachines;
     enemyCoord(enemy: EnemyState): HexCoord;
     private coordEquals;
     /** Resolve one opt-in displacement effect without adding persistent physics state. */
@@ -433,6 +443,8 @@ export declare class TowerDefenseGame {
     private findSplashTarget;
     private towerSupportsTargetMode;
     private selectTargets;
+    private legacyOrderTowerTargetCandidates;
+    private orderTowerTargetCandidates;
     private towerHasLineOfSight;
     private compareTargets;
     private compareDynamicTargets;

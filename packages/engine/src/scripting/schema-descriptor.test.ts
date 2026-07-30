@@ -9,13 +9,15 @@ import {
 import { validateTowerScriptDefinitions } from "./validate.js";
 
 describe("TowerScript schema descriptor", () => {
-  it("keeps v1-v5 vocabularies accepted and gates versioned events through v6", () => {
+  it("keeps v1-v6 vocabularies accepted and gates versioned events through v7", () => {
     const v3OnlyEvents = new Set<string>(["enemyShieldChanged", "towerShieldChanged"]);
     const v4OnlyEvents = new Set<string>(["enemyMarkChanged"]);
     const v5OnlyEvents = new Set<string>(["enemyExposureChanged", "enemyReactionTriggered"]);
     const v6OnlyEvents = new Set<string>(["elevationChanged"]);
+    const v7OnlyEvents = new Set<string>(["stateMachineTransitioned"]);
     const legacyHandlers = Object.fromEntries(TOWER_SCRIPT_EVENTS.filter((event) => (
-      !v3OnlyEvents.has(event) && !v4OnlyEvents.has(event) && !v5OnlyEvents.has(event) && !v6OnlyEvents.has(event)
+      !v3OnlyEvents.has(event) && !v4OnlyEvents.has(event) && !v5OnlyEvents.has(event)
+      && !v6OnlyEvents.has(event) && !v7OnlyEvents.has(event)
     )).map((event) => [
       event,
       [{ actions: [{ action: "incrementState", key: "count" }] }]
@@ -32,7 +34,7 @@ describe("TowerScript schema descriptor", () => {
     }
 
     const v3Handlers = Object.fromEntries(TOWER_SCRIPT_EVENTS.filter((event) => (
-      !v4OnlyEvents.has(event) && !v5OnlyEvents.has(event) && !v6OnlyEvents.has(event)
+      !v4OnlyEvents.has(event) && !v5OnlyEvents.has(event) && !v6OnlyEvents.has(event) && !v7OnlyEvents.has(event)
     )).map((event) => [
       event,
       [{ actions: [{ action: "incrementState", key: "count" }] }]
@@ -47,7 +49,7 @@ describe("TowerScript schema descriptor", () => {
     } as never)).toEqual([]);
 
     const v4Handlers = Object.fromEntries(TOWER_SCRIPT_EVENTS.filter((event) => (
-      !v5OnlyEvents.has(event) && !v6OnlyEvents.has(event)
+      !v5OnlyEvents.has(event) && !v6OnlyEvents.has(event) && !v7OnlyEvents.has(event)
     )).map((event) => [
       event,
       [{ actions: [{ action: "incrementState", key: "count" }] }]
@@ -62,7 +64,7 @@ describe("TowerScript schema descriptor", () => {
     } as never)).toEqual([]);
 
     const v5Handlers = Object.fromEntries(TOWER_SCRIPT_EVENTS.filter((event) => (
-      !v6OnlyEvents.has(event)
+      !v6OnlyEvents.has(event) && !v7OnlyEvents.has(event)
     )).map((event) => [
       event,
       [{ actions: [{ action: "incrementState", key: "count" }] }]
@@ -76,7 +78,9 @@ describe("TowerScript schema descriptor", () => {
       }
     } as never)).toEqual([]);
 
-    const v6Handlers = Object.fromEntries(TOWER_SCRIPT_EVENTS.map((event) => [
+    const v6Handlers = Object.fromEntries(TOWER_SCRIPT_EVENTS.filter((event) => (
+      !v7OnlyEvents.has(event)
+    )).map((event) => [
       event,
       [{ actions: [{ action: "incrementState", key: "count" }] }]
     ]));
@@ -86,6 +90,33 @@ describe("TowerScript schema descriptor", () => {
         id: "descriptor_contract_v6",
         bindings: [{ scope: "global" }],
         handlers: v6Handlers
+      }
+    } as never)).toEqual([]);
+
+    expect(validateTowerScriptDefinitions({
+      descriptor_contract_v6: {
+        schemaVersion: 6,
+        id: "descriptor_contract_v6",
+        bindings: [{ scope: "global" }],
+        handlers: { stateMachineTransitioned: [{ actions: [{ action: "incrementState", key: "count" }] }] }
+      }
+    } as never)).toEqual([
+      expect.objectContaining({
+        fieldPath: "handlers.stateMachineTransitioned",
+        message: expect.stringMatching(/schemaVersion 7|version 7/i)
+      })
+    ]);
+
+    const v7Handlers = Object.fromEntries(TOWER_SCRIPT_EVENTS.map((event) => [
+      event,
+      [{ actions: [{ action: "incrementState", key: "count" }] }]
+    ]));
+    expect(validateTowerScriptDefinitions({
+      descriptor_contract_v7: {
+        schemaVersion: 7,
+        id: "descriptor_contract_v7",
+        bindings: [{ scope: "global" }],
+        handlers: v7Handlers
       }
     } as never)).toEqual([]);
   });
@@ -129,10 +160,10 @@ describe("TowerScript schema descriptor", () => {
       required: Record<string, string>;
     }>;
     expect(TOWER_SCRIPT_SCOPES).toContain("ability");
-    expect(TOWER_SCRIPT_SCHEMA.schemaVersion).toBe(6);
+    expect(TOWER_SCRIPT_SCHEMA.schemaVersion).toBe(7);
     expect(TOWER_SCRIPT_EVENTS).toEqual(expect.arrayContaining([
       "enemyShieldChanged", "towerShieldChanged", "enemyMarkChanged",
-      "enemyExposureChanged", "enemyReactionTriggered", "elevationChanged"
+      "enemyExposureChanged", "enemyReactionTriggered", "elevationChanged", "stateMachineTransitioned"
     ]));
     expect(actions.restoreEnemyShield?.required).toEqual({ target: "enemy target", amount: "expression >= 0" });
     expect(actions.restoreTowerShield?.required).toEqual({ target: "tower target", amount: "expression >= 0" });

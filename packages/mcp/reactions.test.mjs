@@ -108,7 +108,7 @@ describe("R1.5 reactions MCP/AI surface", () => {
     });
     expect(reactions.requestedDomain).toBe("reactions");
     expect(reactions.reactions).toEqual(mechanics.mechanics.modules.reactions);
-    expect(reactions.towerScript.schemaVersion).toBe(6);
+    expect(reactions.towerScript.schemaVersion).toBe(7);
     expect(reactions.towerScript.actions.applyEnemyExposure).toBeTruthy();
     expect(reactions.towerScript.actions.clearEnemyExposure).toBeTruthy();
     expect(reactions.towerScript.events).toEqual(expect.arrayContaining([

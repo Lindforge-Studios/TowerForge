@@ -37,14 +37,14 @@ describe("R6 TowerScript DX MCP/AI authoring contract", () => {
     const schema = await callTool("describe_schema", { domain: "scripts" }, {});
 
     expect(schema.towerScript.graph).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       canonicalAst: true,
       unknownNodes: "raw_lossless",
       layoutStorage: ".towerforge/towerscript-layouts"
     });
     expect(schema.towerScript.debug).toMatchObject({
-      schemaVersion: 1,
-      stepModes: ["tick", "event", "handler", "action"],
+      schemaVersion: 2,
+      stepModes: ["tick", "event", "handler", "action", "behavior", "transition"],
       actionStepping: "checkpoint_replay_to_cursor",
       rewind: { bounded: true }
     });
@@ -62,6 +62,20 @@ describe("R6 TowerScript DX MCP/AI authoring contract", () => {
         scopes: expect.arrayContaining([expect.objectContaining({ name: "global" })])
       }
     });
+    expect(schema.towerScript.controllerRecipes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "boss_finisher_targeting",
+        controller: "behavior_tree",
+        schemaVersion: 1,
+        parameters: { towerTypeId: "existing attacking tower type id" }
+      }),
+      expect.objectContaining({
+        id: "multi_phase_boss",
+        controller: "state_machine",
+        schemaVersion: 1,
+        parameters: { enemyTypeId: "existing enemy type id" }
+      })
+    ]));
   });
 
   it("advertises granular read/preview/apply tools with mandatory guarded write metadata", () => {
@@ -96,7 +110,7 @@ describe("R6 TowerScript DX MCP/AI authoring contract", () => {
       path: SCRIPT_PATH,
       scriptId: "starter_gameplay",
       script: { id: "starter_gameplay" },
-      graph: { schemaVersion: 1, scriptId: "starter_gameplay" },
+      graph: { schemaVersion: 2, scriptId: "starter_gameplay" },
       layout: null,
       revision: expect.stringMatching(/^[a-f0-9]{20}$/)
     });
@@ -124,7 +138,7 @@ describe("R6 TowerScript DX MCP/AI authoring contract", () => {
       missionId: "tutorial_01",
       commandCount: 1,
       trace: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         entries: expect.arrayContaining([expect.objectContaining({
           phase: "action",
           scriptId: "starter_gameplay"
@@ -443,5 +457,100 @@ describe("R6 TowerScript DX MCP/AI authoring contract", () => {
       }
     });
     expect(fs.existsSync(path.join(projectDir, ".towerforge"))).toBe(false);
+  });
+
+  it("supports the complete AI describe/read/preview/guarded-apply/validate/trace flow for schema v7", async () => {
+    const described = await callTool("describe_schema", { domain: "scripts" }, {});
+    expect(described.towerScript).toMatchObject({
+      schemaVersion: 7,
+      behaviorTrees: { schemaVersion: 1 },
+      stateMachines: { schemaVersion: 1 },
+      graph: { schemaVersion: 2 },
+      debug: { schemaVersion: 2 }
+    });
+    const summary = await callTool("get_project_summary", { projectDir }, {});
+    const scriptPath = "scripts/gameplay/r9-dx3.tower.json";
+    const script = {
+      schemaVersion: 7,
+      id: "r9_dx3",
+      bindings: [],
+      handlers: {},
+      behaviorTrees: [{
+        schemaVersion: 1,
+        id: "weakest",
+        bindings: [{ scope: "tower", ids: ["arrow_tower"] }],
+        root: { id: "select", type: "action", action: "select_targets", mode: "weakest" }
+      }],
+      stateMachines: [{
+        schemaVersion: 1,
+        id: "encounter",
+        bindings: [{ scope: "global" }],
+        initial: "waiting",
+        states: [
+          { id: "waiting", transitions: [{ id: "begin", event: "waveStarted", target: "/combat" }] },
+          { id: "combat", entryActions: [{ action: "setState", key: "phase", value: "combat" }] }
+        ]
+      }]
+    };
+    const upsertPreview = await callTool("upsert_tower_script", {
+      projectDir,
+      path: scriptPath,
+      script,
+      dryRun: true,
+      ifRevision: summary.revisions.scripts
+    }, {});
+    expect(upsertPreview).toMatchObject({ ok: true, dryRun: true, written: false });
+    const upsert = await callTool("upsert_tower_script", {
+      projectDir,
+      path: scriptPath,
+      script,
+      ifRevision: upsertPreview.revision
+    }, {});
+    expect(upsert).toMatchObject({ ok: true, written: true });
+
+    const read = await callTool("get_tower_script_graph", { projectDir, scriptId: "r9_dx3" }, {});
+    expect(read).toMatchObject({
+      graph: {
+        schemaVersion: 2,
+        nodes: expect.arrayContaining([
+          expect.objectContaining({ kind: "behavior_tree" }),
+          expect.objectContaining({ kind: "state_machine" }),
+          expect.objectContaining({ kind: "transition" })
+        ])
+      },
+      nodeCatalog: { schemaVersion: 2 }
+    });
+    const graphPreview = await callTool("preview_tower_script_graph", {
+      projectDir,
+      path: scriptPath,
+      graph: read.graph,
+      ifRevision: read.revision
+    }, {});
+    expect(graphPreview).toMatchObject({ ok: true, dryRun: true, written: false });
+    const applied = await callTool("apply_tower_script_graph", {
+      projectDir,
+      path: scriptPath,
+      graph: read.graph,
+      ifRevision: graphPreview.revision
+    }, {});
+    expect(applied).toMatchObject({ ok: true, written: true });
+    expect(await callTool("validate_project", { projectDir }, {})).toMatchObject({ ok: true });
+
+    const traced = await callTool("preview_tower_script_trace", {
+      projectDir,
+      missionId: "tutorial_01",
+      seed: "r9-mcp",
+      commands: [{ schemaVersion: 1, type: "startWave" }],
+      stepMode: "transition",
+      stepSequence: 0
+    }, {});
+    expect(traced).toMatchObject({
+      trace: { schemaVersion: 2, entries: expect.arrayContaining([expect.objectContaining({ phase: "transition" })]) },
+      frame: {
+        schemaVersion: 2,
+        mode: "transition",
+        traceEntry: { transitionId: "begin", toStatePath: "/combat" }
+      }
+    });
   });
 });

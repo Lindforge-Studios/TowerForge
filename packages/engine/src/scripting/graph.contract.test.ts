@@ -11,6 +11,7 @@ import {
   createTowerScriptNodeCatalog,
   towerScriptAstToGraph,
   towerScriptGraphToAst,
+  type TowerScriptGraph,
   type TowerScriptGraphV1
 } from "./graph.js";
 
@@ -75,7 +76,7 @@ describe("R6C lossless TowerScript Visual Graph contract", () => {
     const restored = towerScriptGraphToAst(graph);
 
     expect(graph).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       scriptId: "lossless_v6",
       nodes: expect.any(Array),
       edges: expect.any(Array)
@@ -147,7 +148,7 @@ describe("R6C lossless TowerScript Visual Graph contract", () => {
     const catalog = createTowerScriptNodeCatalog(TOWER_SCRIPT_SCHEMA);
 
     expect(catalog).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       towerScriptSchemaVersion: TOWER_SCRIPT_SCHEMA.schemaVersion
     });
     expect(catalog.events.map((entry) => entry.name)).toEqual([...TOWER_SCRIPT_EVENTS]);
@@ -177,5 +178,77 @@ describe("R6C lossless TowerScript Visual Graph contract", () => {
       name: "futureTeleport",
       descriptor: descriptorWithFutureAction.actions.futureTeleport
     });
+  });
+
+  it("projects v7 Behavior Trees and nested HFSMs with stable authored ids and checked transition edges", () => {
+    const source: TowerScriptDefinition = {
+      schemaVersion: 7,
+      id: "dx3",
+      bindings: [],
+      handlers: {},
+      behaviorTrees: [{
+        schemaVersion: 1,
+        id: "boss_priority",
+        bindings: [{ scope: "tower", ids: ["pelter"] }],
+        root: {
+          id: "choose",
+          type: "selector",
+          children: [
+            {
+              id: "finish_boss",
+              type: "sequence",
+              children: [
+                { id: "boss_low", type: "condition", mode: "any_candidate", expression: { $get: "candidate.tags.boss" } },
+                { id: "boss", type: "action", action: "select_targets", filter: { $get: "candidate.tags.boss" }, mode: "weakest" }
+              ]
+            },
+            { id: "fallback", type: "action", action: "select_targets", mode: "weakest" }
+          ]
+        }
+      }],
+      stateMachines: [{
+        schemaVersion: 1,
+        id: "boss_phase",
+        bindings: [{ scope: "global" }],
+        initial: "combat",
+        states: [{
+          id: "combat",
+          initial: "phase_one",
+          states: [
+            { id: "phase_one", transitions: [{ id: "enrage", event: "signal", target: "/combat/phase_two" }] },
+            { id: "phase_two" }
+          ]
+        }]
+      }]
+    };
+    const graph = towerScriptAstToGraph(source);
+
+    expect(towerScriptGraphToAst(graph)).toEqual(source);
+    expect(graph.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "bt:boss_priority:choose", kind: "behavior_selector" }),
+      expect.objectContaining({ id: "hfsm:boss_phase:state:%2Fcombat%2Fphase_two", kind: "state" }),
+      expect.objectContaining({ id: "hfsm:boss_phase:transition:enrage", kind: "transition" })
+    ]));
+    expect(graph.edges).toContainEqual(expect.objectContaining({
+      kind: "transition_target",
+      from: "hfsm:boss_phase:transition:enrage",
+      to: "hfsm:boss_phase:state:%2Fcombat%2Fphase_two"
+    }));
+
+    const malformed = jsonClone(graph);
+    const transitionEdge = malformed.edges.find((edge) => edge.kind === "transition_target")!;
+    (transitionEdge as { to: string }).to = "hfsm:boss_phase:state:%2Fcombat%2Fphase_one";
+    expect(() => towerScriptGraphToAst(malformed)).toThrow(/transition.*target|authored target/i);
+  });
+
+  it("continues to accept legacy Graph v1 projections", () => {
+    const v2 = towerScriptAstToGraph(fullV6Script());
+    const legacy: TowerScriptGraphV1 = {
+      schemaVersion: 1,
+      scriptId: v2.scriptId,
+      nodes: v2.nodes as unknown as TowerScriptGraphV1["nodes"],
+      edges: v2.edges.map(({ id, from, to, order }) => ({ id, from, to, order }))
+    };
+    expect(towerScriptGraphToAst(jsonClone(legacy) as TowerScriptGraph)).toEqual(fullV6Script());
   });
 });

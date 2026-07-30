@@ -1301,7 +1301,7 @@ export const TOOLS = [
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory." },
         path: { type: "string", description: "Existing project-relative scripts/**/*.tower.json path." },
-        graph: { type: "object", description: "Lossless TowerScript graph schema v1." },
+        graph: { type: "object", description: "Lossless TowerScript graph schema v1 or v2; reads emit v2." },
         layout: { type: "object", description: "Optional local graph layout schema v1." },
         ifRevision: IF_REVISION_PROPERTY
       },
@@ -1323,7 +1323,7 @@ export const TOOLS = [
           maxItems: 128,
           items: { type: "object", description: "One exact versioned GameCommand." }
         },
-        stepMode: { type: "string", enum: ["tick", "event", "handler", "action"] },
+        stepMode: { type: "string", enum: ["tick", "event", "handler", "action", "behavior", "transition"] },
         stepSequence: { type: "integer", minimum: 0, maximum: 16383 }
       },
       required: ["commands"],
@@ -1338,7 +1338,7 @@ export const TOOLS = [
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory." },
         path: { type: "string", description: "Existing project-relative scripts/**/*.tower.json path." },
-        graph: { type: "object", description: "Lossless TowerScript graph schema v1." },
+        graph: { type: "object", description: "Lossless TowerScript graph schema v1 or v2; reads emit v2." },
         layout: { type: "object", description: "Optional local graph layout schema v1." },
         ifRevision: { ...IF_REVISION_PROPERTY, description: "Required revision returned by preview_tower_script_graph." }
       },
@@ -3355,7 +3355,7 @@ async function getTowerScriptGraph(projectDir, args) {
     layout: local.layout,
     layoutRevision: local.layoutRevision,
     revision: local.revision,
-    nodeCatalog: engine.TOWER_SCRIPT_SCHEMA.completion.catalog,
+    nodeCatalog: engine.createTowerScriptNodeCatalog(engine.TOWER_SCRIPT_SCHEMA),
     descriptor: engine.TOWER_SCRIPT_SCHEMA
   };
 }
@@ -3363,7 +3363,7 @@ async function getTowerScriptGraph(projectDir, args) {
 const TOWER_SCRIPT_TRACE_COMMAND_LIMIT = 128;
 const TOWER_SCRIPT_TRACE_COMMAND_BYTES = 256 * 1024;
 const TOWER_SCRIPT_TRACE_ENTRY_LIMIT = 512;
-const TOWER_SCRIPT_TRACE_STEP_MODES = new Set(["tick", "event", "handler", "action"]);
+const TOWER_SCRIPT_TRACE_STEP_MODES = new Set(["tick", "event", "handler", "action", "behavior", "transition"]);
 
 async function previewTowerScriptTrace(projectDir, args) {
   if (!Array.isArray(args.commands)) throw new Error("preview_tower_script_trace requires a commands array.");
@@ -3376,7 +3376,7 @@ async function previewTowerScriptTrace(projectDir, args) {
   }
   const stepMode = args.stepMode ?? "action";
   if (!TOWER_SCRIPT_TRACE_STEP_MODES.has(stepMode)) {
-    throw new Error("preview_tower_script_trace stepMode must be tick, event, handler, or action.");
+    throw new Error("preview_tower_script_trace stepMode must be tick, event, handler, action, behavior, or transition.");
   }
   const stepSequence = args.stepSequence ?? 0;
   if (!Number.isSafeInteger(stepSequence) || stepSequence < 0 || stepSequence >= 16_384) {
@@ -3452,7 +3452,8 @@ async function previewTowerScriptGraph(projectDir, args) {
       .map((node) => [node.astPath, node.raw]));
     for (const baselineNode of baselineRawNodes) {
       const candidateRaw = candidateRawByPath.get(baselineNode.astPath);
-      if (candidateRaw === undefined || JSON.stringify(candidateRaw) !== JSON.stringify(baselineNode.raw)) {
+      if (candidateRaw === undefined
+        || engine.canonicalStringify(candidateRaw) !== engine.canonicalStringify(baselineNode.raw)) {
         return {
           projectDir,
           ...towerScriptGraphValidationFailure(

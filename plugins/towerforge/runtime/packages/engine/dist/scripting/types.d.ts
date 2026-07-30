@@ -8,7 +8,7 @@ export interface TowerScriptBinding {
     /** Omit ids to bind every object in this scope. global never accepts ids. */
     ids?: string[];
 }
-export type TowerScriptEventName = "gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "towerShieldChanged" | "enemyHit" | "enemyShieldChanged" | "enemyMarkChanged" | "enemyExposureChanged" | "enemyReactionTriggered" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "elevationChanged" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal";
+export type TowerScriptEventName = "gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "towerShieldChanged" | "enemyHit" | "enemyShieldChanged" | "enemyMarkChanged" | "enemyExposureChanged" | "enemyReactionTriggered" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "elevationChanged" | "stateMachineTransitioned" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal";
 export type TowerScriptOperator = "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "and" | "or" | "not" | "add" | "sub" | "mul" | "div" | "min" | "max" | "coalesce";
 export type TowerScriptExpression = TowerScriptJson | {
     $get: string;
@@ -134,8 +134,65 @@ export interface TowerScriptHandler {
     every?: number;
     actions: TowerScriptAction[];
 }
+export type TowerScriptBehaviorTreeStatus = "success" | "failure";
+export interface TowerScriptBehaviorCompositeNodeV1 {
+    readonly id: string;
+    readonly type: "selector" | "sequence";
+    readonly children: readonly TowerScriptBehaviorNodeV1[];
+}
+export interface TowerScriptBehaviorConditionNodeV1 {
+    readonly id: string;
+    readonly type: "condition";
+    readonly mode: "context" | "any_candidate";
+    readonly expression: TowerScriptExpression;
+}
+export interface TowerScriptBehaviorActionNodeV1 {
+    readonly id: string;
+    readonly type: "action";
+    readonly action: "select_targets";
+    readonly filter?: TowerScriptExpression;
+    readonly mode: import("../simulation/types.js").TowerTargetMode;
+}
+export type TowerScriptBehaviorNodeV1 = TowerScriptBehaviorCompositeNodeV1 | TowerScriptBehaviorConditionNodeV1 | TowerScriptBehaviorActionNodeV1;
+export interface TowerScriptBehaviorTreeV1 {
+    readonly schemaVersion: 1;
+    readonly id: string;
+    readonly bindings: readonly (TowerScriptBinding & {
+        readonly scope: "tower";
+    })[];
+    readonly root: TowerScriptBehaviorNodeV1;
+}
+export interface TowerScriptStateTransitionV1 {
+    readonly id: string;
+    readonly event: TowerScriptEventName;
+    /** Absolute state path, using `/` between nested state ids. */
+    readonly target: string;
+    readonly when?: TowerScriptExpression;
+    readonly actions?: readonly TowerScriptAction[];
+}
+export interface TowerScriptStateNodeV1 {
+    readonly id: string;
+    readonly initial?: string;
+    readonly states?: readonly TowerScriptStateNodeV1[];
+    readonly entryActions?: readonly TowerScriptAction[];
+    readonly exitActions?: readonly TowerScriptAction[];
+    readonly transitions?: readonly TowerScriptStateTransitionV1[];
+}
+export interface TowerScriptStateMachineV1 {
+    readonly schemaVersion: 1;
+    readonly id: string;
+    readonly bindings: readonly TowerScriptBinding[];
+    readonly initial: string;
+    readonly states: readonly TowerScriptStateNodeV1[];
+}
+export interface TowerScriptMachineRuntimeStateV1 {
+    readonly schemaVersion: 1;
+    readonly activeStatePath: string;
+    readonly enteredAt: number;
+    readonly transitionCount: number;
+}
 export interface TowerScriptDefinition {
-    schemaVersion: 1 | 2 | 3 | 4 | 5 | 6;
+    schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7;
     id: string;
     label?: string;
     description?: string;
@@ -143,6 +200,10 @@ export interface TowerScriptDefinition {
     bindings: TowerScriptBinding[];
     initialState?: Record<string, TowerScriptJson>;
     handlers: Partial<Record<TowerScriptEventName, TowerScriptHandler[]>>;
+    /** TowerScript v7 opt-in deterministic target decision controllers. */
+    behaviorTrees?: readonly TowerScriptBehaviorTreeV1[];
+    /** TowerScript v7 opt-in hierarchical state controllers. */
+    stateMachines?: readonly TowerScriptStateMachineV1[];
 }
 export interface TowerScriptDiagnostic {
     scriptId: string;
@@ -157,4 +218,6 @@ export interface TowerScriptStateSnapshot {
     /** script id -> bound object key -> state object */
     values: Record<string, Record<string, Record<string, TowerScriptJson>>>;
     diagnostics: TowerScriptDiagnostic[];
+    /** Present only when an enabled TowerScript v7 HFSM exists. */
+    machines?: Readonly<Record<string, Record<string, Record<string, TowerScriptMachineRuntimeStateV1>>>>;
 }

@@ -3,6 +3,7 @@ import { TOWER_TARGET_MODES } from "../simulation/types.js";
 import { coordKey } from "../simulation/hex.js";
 import { createGridTopology, normalizeGridDefinition } from "../simulation/topology.js";
 import { validateTowerScriptDefinitions } from "../scripting/validate.js";
+import { TOWER_SCRIPT_LIMITS } from "../scripting/schema-descriptor.js";
 import { TOWER_SCRIPT_EVENT_FIELDS } from "../scripting/schema-descriptor.js";
 import { ARMOR_MATRIX_LIMITS, MARK_LIMITS, MECHANICS_MODULE_IDS, REACTION_LIMITS, SHIELD_LIMITS } from "./mechanics.js";
 import { NAVIGATION_LIMITS, NavigationProfileValidationError, normalizeNavigationProfileV1, resolveActiveNavigationMechanics } from "./navigation-mechanics.js";
@@ -3548,6 +3549,73 @@ export function validateGameContentRegistry(content) {
             err("script", issue.scriptId, issue.fieldPath, issue.message);
         }
     }
+    const scriptedTargetingOwners = new Map();
+    const allTowerIds = Object.keys(content.towers).sort();
+    for (const script of Object.values(content.scripts).sort((left, right) => left.id.localeCompare(right.id))) {
+        if (!script || script.enabled === false || script.schemaVersion !== 7)
+            continue;
+        let rawTrees;
+        try {
+            const descriptor = Object.getOwnPropertyDescriptor(script, "behaviorTrees");
+            rawTrees = descriptor?.enumerable && "value" in descriptor && Array.isArray(descriptor.value)
+                ? descriptor.value
+                : undefined;
+        }
+        catch {
+            rawTrees = undefined;
+        }
+        rawTrees?.forEach((rawTree, treeIndex) => {
+            try {
+                if (!rawTree || typeof rawTree !== "object" || Array.isArray(rawTree))
+                    return;
+                const fields = Object.getOwnPropertyDescriptors(rawTree);
+                const idDescriptor = fields.id;
+                const bindingsDescriptor = fields.bindings;
+                const treeId = idDescriptor?.enumerable && "value" in idDescriptor && typeof idDescriptor.value === "string"
+                    ? idDescriptor.value
+                    : String(treeIndex);
+                const bindings = bindingsDescriptor?.enumerable && "value" in bindingsDescriptor && Array.isArray(bindingsDescriptor.value)
+                    ? bindingsDescriptor.value
+                    : undefined;
+                bindings?.forEach((rawBinding, bindingIndex) => {
+                    if (!rawBinding || typeof rawBinding !== "object" || Array.isArray(rawBinding))
+                        return;
+                    const bindingFields = Object.getOwnPropertyDescriptors(rawBinding);
+                    const scope = bindingFields.scope;
+                    if (!scope?.enumerable || !("value" in scope) || scope.value !== "tower")
+                        return;
+                    const idsDescriptor = bindingFields.ids;
+                    const selectedTowerIds = idsDescriptor?.enumerable && "value" in idsDescriptor && Array.isArray(idsDescriptor.value)
+                        ? idsDescriptor.value.filter((id) => typeof id === "string")
+                        : allTowerIds;
+                    for (const towerId of selectedTowerIds) {
+                        const tower = content.towers[towerId];
+                        if (!tower)
+                            continue;
+                        const unsupported = tower.attack.kind === "support"
+                            || tower.attack.kind === "support_buff"
+                            || tower.attack.kind === "pulse"
+                            || (tower.attack.kind === "pipeline" && tower.attack.delivery.kind === "aura");
+                        const path = `behaviorTrees[${treeIndex}].bindings[${bindingIndex}]`;
+                        if (unsupported) {
+                            err("script", script.id, path, `Behavior Tree targeting is not supported by tower "${towerId}" attack kind/delivery.`);
+                            continue;
+                        }
+                        const owner = scriptedTargetingOwners.get(towerId);
+                        const nextOwner = `${script.id}:${treeId}`;
+                        if (owner && owner !== nextOwner) {
+                            err("script", script.id, path, `Tower "${towerId}" has overlapping Behavior Tree targeting owners "${owner}" and "${nextOwner}".`);
+                        }
+                        else
+                            scriptedTargetingOwners.set(towerId, nextOwner);
+                    }
+                });
+            }
+            catch {
+                // The descriptor-safe scripting validator above owns hostile-shape diagnostics.
+            }
+        });
+    }
     const transitionIdUtf8Bytes = (value) => {
         let bytes = 0;
         for (const character of value) {
@@ -4275,6 +4343,15 @@ export function validateGameContentRegistry(content) {
         requireFinite(enemy.speed, "enemy", enemyId, "speed", { positive: true });
         requireFinite(enemy.coreDamage, "enemy", enemyId, "coreDamage", { positive: true });
         requireFinite(enemy.coinReward, "enemy", enemyId, "coinReward");
+        if (enemy.tags !== undefined) {
+            if (!Array.isArray(enemy.tags)
+                || Object.getPrototypeOf(enemy.tags) !== Array.prototype
+                || enemy.tags.length > TOWER_SCRIPT_LIMITS.enemyTagsPerDefinition
+                || enemy.tags.some((tag) => typeof tag !== "string" || !/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(tag))
+                || new Set(enemy.tags).size !== enemy.tags.length) {
+                err("enemy", enemyId, "tags", `Enemy tags must be a dense unique safe-id array with at most ${TOWER_SCRIPT_LIMITS.enemyTagsPerDefinition} entries.`);
+            }
+        }
         inspectEnemyResistances(enemyId, enemy.resistances);
         if (enemy.towerDisrupt) {
             requireFinite(enemy.towerDisrupt.interval, "enemy", enemyId, "towerDisrupt.interval", { positive: true });

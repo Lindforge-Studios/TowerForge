@@ -1464,7 +1464,7 @@ const server = http.createServer(async (req, res) => {
       return jsonResp(res, 200, {
         schemaVersion: 1,
         towerScript: engine.TOWER_SCRIPT_SCHEMA,
-        nodeCatalog: engine.TOWER_SCRIPT_SCHEMA.completion?.catalog ?? null
+        nodeCatalog: engine.createTowerScriptNodeCatalog(engine.TOWER_SCRIPT_SCHEMA)
       });
     } catch (e) {
       return jsonResp(res, 500, { error: e.message });

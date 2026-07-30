@@ -205,7 +205,7 @@ describe("mcp tool registry", () => {
 
     const scripts = await callTool("describe_schema", { domain: "scripts" }, {});
     expect(scripts.requestedDomain).toBe("scripts");
-    expect(scripts.towerScript.schemaVersion).toBe(6);
+    expect(scripts.towerScript.schemaVersion).toBe(7);
     expect(scripts.towerScript.events).toEqual(expect.arrayContaining([
       "enemyShieldChanged", "towerShieldChanged", "enemyMarkChanged"
     ]));

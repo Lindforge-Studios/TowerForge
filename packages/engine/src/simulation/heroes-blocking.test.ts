@@ -566,10 +566,10 @@ describe("R5.6A deterministic dynamic hero blocking runtime (RED)", () => {
       .toThrow(/unknown|closed|field|blockedEnemyIds/i);
   });
 
-  it("does not bump commands, journals, TowerScript, profile, campaign, or checkpoint version domains", () => {
+  it("keeps commands, journals, profile, campaign, and checkpoint stable while TowerScript advances to v7", () => {
     expect((Engine as any).GAME_COMMAND_SCHEMA_VERSION).toBe(6);
     expect((Engine as any).GAME_COMMAND_JOURNAL_SCHEMA_VERSION).toBe(6);
-    expect((Engine as any).TOWER_SCRIPT_SCHEMA.schemaVersion).toBe(6);
+    expect((Engine as any).TOWER_SCRIPT_SCHEMA.schemaVersion).toBe(7);
     expect((Engine as any).GAME_CHECKPOINT_SCHEMA_VERSION).toBe(1);
     expect((Engine as any).PLAYER_PROFILE_SCHEMA_VERSION).toBe(3);
     expect((Engine as any).CAMPAIGN_RUN_SCHEMA_VERSION).toBe(1);

@@ -1,5 +1,5 @@
 import { canonicalStringify } from "../simulation/stable-digest.js";
-export const TOWER_SCRIPT_TRACE_SCHEMA_VERSION = 1;
+export const TOWER_SCRIPT_TRACE_SCHEMA_VERSION = 2;
 const MIN_TRACE_ENTRIES = 1;
 const MAX_TRACE_ENTRIES = 16_384;
 const MIN_TRACE_BYTES = 1_024;
@@ -50,12 +50,15 @@ export function createTowerScriptTraceCollector(options) {
         binding: 0,
         handler: 0,
         condition: 0,
+        behavior: 0,
+        transition: 0,
         action: 0,
         state_diff: 0,
         diagnostic: 0
     };
     let pauseSequence;
     let pauseBeforeSequence;
+    let pauseAfterSequence;
     if (options.pauseAfterAction !== undefined
         && (!Number.isInteger(options.pauseAfterAction) || options.pauseAfterAction < 0 || options.pauseAfterAction >= MAX_TRACE_ENTRIES)) {
         throw new Error("TowerScript trace pauseAfterAction is outside the trace budget.");
@@ -65,6 +68,12 @@ export function createTowerScriptTraceCollector(options) {
             || options.pauseBefore.occurrence < 0
             || options.pauseBefore.occurrence >= MAX_TRACE_ENTRIES)) {
         throw new Error("TowerScript trace pauseBefore occurrence is outside the trace budget.");
+    }
+    if (options.pauseAfter !== undefined
+        && (!Number.isInteger(options.pauseAfter.occurrence)
+            || options.pauseAfter.occurrence < 0
+            || options.pauseAfter.occurrence >= MAX_TRACE_ENTRIES)) {
+        throw new Error("TowerScript trace pauseAfter occurrence is outside the trace budget.");
     }
     return Object.freeze({
         maxEntries,
@@ -91,6 +100,10 @@ export function createTowerScriptTraceCollector(options) {
                 && options.pauseBefore.occurrence === phaseOrdinal) {
                 pauseBeforeSequence = entry.sequence;
             }
+            if (options.pauseAfter?.phase === input.phase
+                && options.pauseAfter.occurrence === phaseOrdinal) {
+                pauseAfterSequence = entry.sequence;
+            }
             if (entry.phase === "action") {
                 if (options.pauseAfterAction === nextActionOccurrence)
                     pauseSequence = entry.sequence;
@@ -113,12 +126,15 @@ export function createTowerScriptTraceCollector(options) {
                 binding: 0,
                 handler: 0,
                 condition: 0,
+                behavior: 0,
+                transition: 0,
                 action: 0,
                 state_diff: 0,
                 diagnostic: 0
             };
             pauseSequence = undefined;
             pauseBeforeSequence = undefined;
+            pauseAfterSequence = undefined;
         },
         getSnapshot() {
             const detached = jsonClone(entries);
@@ -139,17 +155,23 @@ export function createTowerScriptTraceCollector(options) {
         },
         shouldPauseBeforeEntry(sequence) {
             return pauseBeforeSequence === sequence;
+        },
+        shouldPauseAfterEntry(sequence) {
+            return pauseAfterSequence === sequence;
         }
     });
 }
 /** Debugger-only control flow. The runtime must never convert it to a gameplay diagnostic. */
 export class TowerScriptTracePauseError extends Error {
     code = "TOWER_SCRIPT_TRACE_PAUSE";
+    traceSequence;
+    /** @deprecated Use traceSequence. */
     actionSequence;
-    constructor(actionSequence) {
-        super(`TowerScript debug replay paused after action trace ${actionSequence}.`);
+    constructor(traceSequence) {
+        super(`TowerScript debug replay paused at trace ${traceSequence}.`);
         this.name = "TowerScriptTracePauseError";
-        this.actionSequence = actionSequence;
+        this.traceSequence = traceSequence;
+        this.actionSequence = traceSequence;
     }
 }
 function pointerToken(value) {

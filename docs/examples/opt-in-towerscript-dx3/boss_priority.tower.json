@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 7,
+  "id": "boss_priority_and_phases",
+  "label": "Boss priority and phases",
+  "bindings": [],
+  "handlers": {},
+  "behaviorTrees": [
+    {
+      "schemaVersion": 1,
+      "id": "boss_finisher",
+      "bindings": [
+        { "scope": "tower", "ids": ["pelter"] }
+      ],
+      "root": {
+        "id": "choose_priority",
+        "type": "selector",
+        "children": [
+          {
+            "id": "finish_low_boss",
+            "type": "sequence",
+            "children": [
+              {
+                "id": "boss_below_twenty_percent",
+                "type": "condition",
+                "mode": "any_candidate",
+                "expression": {
+                  "$op": "and",
+                  "args": [
+                    { "$get": "candidate.tags.boss" },
+                    { "$op": "lt", "args": [{ "$get": "candidate.hpRatio" }, 0.2] }
+                  ]
+                }
+              },
+              {
+                "id": "select_boss_only",
+                "type": "action",
+                "action": "select_targets",
+                "filter": { "$get": "candidate.tags.boss" },
+                "mode": "weakest"
+              }
+            ]
+          },
+          {
+            "id": "ordinary_weakest",
+            "type": "action",
+            "action": "select_targets",
+            "mode": "weakest"
+          }
+        ]
+      }
+    }
+  ],
+  "stateMachines": [
+    {
+      "schemaVersion": 1,
+      "id": "boss_phase",
+      "bindings": [
+        { "scope": "enemy", "ids": ["boss"] }
+      ],
+      "initial": "alive",
+      "states": [
+        {
+          "id": "alive",
+          "initial": "phase_one",
+          "states": [
+            {
+              "id": "phase_one",
+              "transitions": [
+                {
+                  "id": "enrage_below_twenty",
+                  "event": "tick",
+                  "target": "/alive/enraged",
+                  "when": {
+                    "$op": "lt",
+                    "args": [
+                      { "$op": "div", "args": [{ "$get": "self.hp" }, { "$get": "self.maxHp" }] },
+                      0.2
+                    ]
+                  },
+                  "actions": [
+                    { "action": "emitSignal", "signal": "boss_enraged" }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "enraged",
+              "entryActions": [
+                { "action": "setState", "key": "phase", "value": "enraged" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "id": "map_encounter",
+      "bindings": [
+        { "scope": "map" }
+      ],
+      "initial": "waiting",
+      "states": [
+        {
+          "id": "waiting",
+          "transitions": [
+            { "id": "begin", "event": "waveStarted", "target": "/combat" }
+          ]
+        },
+        { "id": "combat" }
+      ]
+    }
+  ]
+}

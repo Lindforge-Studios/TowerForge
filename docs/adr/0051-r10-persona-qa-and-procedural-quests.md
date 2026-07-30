@@ -1,4 +1,4 @@
-# ADR 0050: Multi-Agent Persona QA and opt-in Procedural Quests
+# ADR 0051: Multi-Agent Persona QA and opt-in Procedural Quests
 
 - Status: Accepted
 - Date: 2026-07-29
@@ -17,9 +17,9 @@ an authoring analysis service that cannot modify a project. Quests are gameplay 
 the same explicit mission-level opt-in, checkpoint/replay guarantees, guarded authoring and
 inactive compatibility path as the existing mechanics modules.
 
-R10 must not depend on TowerScript v7, Behavior Trees, HFSM or `EnemyType.tags` from the still-open
-R9 pull request. It may be merged before or after R9 after ordinary conflict resolution in shared
-schema files.
+R10 does not depend on TowerScript v7, Behavior Trees, HFSM or `EnemyType.tags` from the
+independently delivered R9 milestone. Their optional checkpoint sections and event fields coexist
+without coupling the two runtime contracts.
 
 ## Decision
 

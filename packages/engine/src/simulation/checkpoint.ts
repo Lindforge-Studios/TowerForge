@@ -1,4 +1,8 @@
-import type { TowerScriptDiagnostic, TowerScriptJson } from "../scripting/types.js";
+import type {
+  TowerScriptDiagnostic,
+  TowerScriptJson,
+  TowerScriptMachineRuntimeStateV1
+} from "../scripting/types.js";
 import type {
   EnemyState,
   DirectorSnapshotV1,
@@ -236,6 +240,12 @@ export interface LogisticsCheckpointStateV2 {
   } | null;
 }
 
+export interface TowerScriptMachinesCheckpointStateV1 {
+  readonly schemaVersion: 1;
+  readonly transitionsRemaining: number;
+  readonly values: Readonly<Record<string, Record<string, Record<string, TowerScriptMachineRuntimeStateV1>>>>;
+}
+
 /** Authoritative mutable simulation state. Map occupancy and water cues are rebuilt derivatives. */
 export interface GameCheckpointStateV1 {
   readonly coreHp: number;
@@ -269,6 +279,7 @@ export interface GameCheckpointStateV1 {
   readonly scriptActionsRemaining: number;
   readonly scriptTerrainChangesRemaining: number;
   readonly scriptSignalDepth: number;
+  readonly scriptMachines?: TowerScriptMachinesCheckpointStateV1;
   readonly combat?: CombatState;
   readonly reactions?: ReactionStateV1;
   readonly artifacts?: ArtifactCheckpointState;
