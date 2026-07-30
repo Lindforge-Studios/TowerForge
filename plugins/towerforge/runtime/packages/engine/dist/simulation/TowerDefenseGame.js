@@ -203,7 +203,7 @@ function assertPinnedGridMapSurface(map) {
 }
 const SCRIPT_GAME_EVENT_NAMES = new Set([
     "towerPlaced", "towerSold", "towerMoved", "towerUpgraded", "towerDestroyed", "towerTargetModeChanged",
-    "towerFired", "towerResourcesGranted", "towerShieldChanged", "enemyHit", "enemyShieldChanged", "enemyMarkChanged", "enemyKilled", "enemyLeaked", "enemySpawnedOnDeath",
+    "towerFired", "towerResourcesGranted", "towerShieldChanged", "enemyHit", "enemyShieldChanged", "bossComponentDamaged", "bossComponentDestroyed", "enemyMarkChanged", "enemyKilled", "enemyLeaked", "enemySpawnedOnDeath",
     "enemyExposureChanged", "enemyReactionTriggered",
     "enemyPhaseSpawned", "waveStarted", "waveCleared", "resourcesGranted", "abilityUsed", "objectiveCompleted",
     "enemyEnteredTile", "terrainChanged", "elevationChanged", "objectiveFailed", "starEarned", "victory", "defeat",
@@ -4770,6 +4770,18 @@ export class TowerDefenseGame {
                 required: ["type", "enemyId", "enemyTypeId", "previous", "current", "capacity", "cause", "amount"],
                 optional: ["overflowDamage"]
             },
+            bossComponentDamaged: {
+                required: [
+                    "type", "enemyId", "enemyTypeId", "componentId", "sourceKind", "previousHp", "currentHp",
+                    "maxHp", "hpDamage", "previousShield", "currentShield", "shieldCapacity", "shieldAbsorbed"
+                ]
+            },
+            bossComponentDestroyed: {
+                required: [
+                    "type", "enemyId", "enemyTypeId", "componentId", "sourceKind", "previousHp", "currentHp",
+                    "maxHp", "hpDamage", "previousShield", "currentShield", "shieldCapacity", "shieldAbsorbed"
+                ]
+            },
             enemyMarkChanged: {
                 required: [
                     "type", "enemyId", "enemyTypeId", "markId", "previousStacks", "currentStacks",
@@ -4818,7 +4830,7 @@ export class TowerDefenseGame {
             "depth", "limit", "dropped", "requestedDistance", "movedDistance", "fromElevation", "toElevation",
             "rollIndex", "shieldAbsorbed", "hpDamage", "previousMana", "currentMana", "manaSpent",
             "cooldownApplied", "requestedDamage", "resolvedDamage", "cost", "previousPoints", "currentPoints",
-            "threatCost"
+            "threatCost", "previousHp", "currentHp", "maxHp", "previousShield", "currentShield", "shieldCapacity"
         ]);
         const stringEventFields = new Set([
             "towerId", "towerTypeId", "enemyId", "enemyTypeId", "parentEnemyId", "parentEnemyTypeId", "healerEnemyId",
@@ -4827,7 +4839,8 @@ export class TowerDefenseGame {
             "exposureId", "reactionId", "originEnemyId", "originEnemyTypeId", "rootEnemyId", "rootEnemyTypeId",
             "triggerDamageType", "budget", "sourceKind", "sourceId", "stopReason", "terrainTag",
             "artifactInstanceId", "artifactId", "slotId", "heroId", "heroDefinitionId", "skillId",
-            "counterId", "questId", "machineId", "contextId", "transitionId", "fromStatePath", "toStatePath"
+            "counterId", "questId", "machineId", "contextId", "transitionId", "fromStatePath", "toStatePath",
+            "componentId"
         ]);
         const coordEventFields = new Set(["coord", "from", "to", "center", "originCoord", "sourceCoord"]);
         const bagEventFields = new Set(["refund", "cost", "resources", "income", "interest"]);
@@ -4951,6 +4964,41 @@ export class TowerDefenseGame {
                     fromStatePath: stringValue(checkpointDataField(event, "fromStatePath", type), `${type}.fromStatePath`),
                     toStatePath: stringValue(checkpointDataField(event, "toStatePath", type), `${type}.toStatePath`)
                 });
+            }
+            if (type === "bossComponentDamaged" || type === "bossComponentDestroyed") {
+                if (!checkpointEnemyBehaviors) {
+                    throw new Error("Game checkpoint boss component event requires active enemyBehaviors.");
+                }
+                const enemyTypeId = stringValue(checkpointDataField(event, "enemyTypeId", type), `${type}.enemyTypeId`);
+                const componentId = stringValue(checkpointDataField(event, "componentId", type), `${type}.componentId`);
+                const definition = checkpointEnemyBehaviors.bosses[enemyTypeId]?.components[componentId];
+                if (!definition)
+                    throw new Error("Game checkpoint boss component event references an unknown component.");
+                const sourceKind = checkpointDataField(event, "sourceKind", type);
+                if (!["tower", "ability", "tower_script", "status", "reaction", "enemy", "leak"].includes(String(sourceKind))) {
+                    throw new Error("Game checkpoint boss component event sourceKind is invalid.");
+                }
+                const expectedMaxHp = definition.maxHp * (difficulty.enemyHpMultiplier ?? 1);
+                const maxHp = finite(checkpointDataField(event, "maxHp", type), `${type}.maxHp`, Number.MIN_VALUE, expectedMaxHp);
+                const previousHp = finite(checkpointDataField(event, "previousHp", type), `${type}.previousHp`, 0, expectedMaxHp);
+                const currentHp = finite(checkpointDataField(event, "currentHp", type), `${type}.currentHp`, 0, expectedMaxHp);
+                const hpDamage = finite(checkpointDataField(event, "hpDamage", type), `${type}.hpDamage`, 0, expectedMaxHp);
+                const expectedShieldCapacity = definition.shield?.capacity ?? 0;
+                const shieldCapacity = finite(checkpointDataField(event, "shieldCapacity", type), `${type}.shieldCapacity`, 0, expectedShieldCapacity);
+                const previousShield = finite(checkpointDataField(event, "previousShield", type), `${type}.previousShield`, 0, expectedShieldCapacity);
+                const currentShield = finite(checkpointDataField(event, "currentShield", type), `${type}.currentShield`, 0, expectedShieldCapacity);
+                const componentShieldAbsorbed = finite(checkpointDataField(event, "shieldAbsorbed", type), `${type}.shieldAbsorbed`, 0, expectedShieldCapacity);
+                const nearlyEqual = (left, right) => (Math.abs(left - right) <= 1e-9 * Math.max(1, Math.abs(left), Math.abs(right)));
+                if (maxHp !== expectedMaxHp || shieldCapacity !== expectedShieldCapacity
+                    || currentHp > previousHp || currentShield > previousShield
+                    || !nearlyEqual(previousHp - currentHp, hpDamage)
+                    || !nearlyEqual(previousShield - currentShield, componentShieldAbsorbed)
+                    || (hpDamage <= 0 && componentShieldAbsorbed <= 0)) {
+                    throw new Error("Game checkpoint boss component event arithmetic is invalid.");
+                }
+                if (type === "bossComponentDestroyed" && !(previousHp > 0 && currentHp === 0)) {
+                    throw new Error("Game checkpoint boss component destruction event crossing is invalid.");
+                }
             }
             if (own(event, "towerTypeId")) {
                 const typeId = stringValue(checkpointDataField(event, "towerTypeId", type), `${type}.towerTypeId`);
@@ -6721,6 +6769,7 @@ export class TowerDefenseGame {
         }
     }
     runScriptStateMachines(script, eventName, event, parentTraceSequence) {
+        const machineComponent = this.scriptMachineComponentContext(eventName, event);
         for (const machine of script.stateMachines ?? []) {
             const machineContexts = new Set();
             for (const binding of machine.bindings) {
@@ -6737,7 +6786,8 @@ export class TowerDefenseGame {
                         state,
                         stateKey: contextId,
                         event,
-                        eventName
+                        eventName,
+                        ...(machineComponent === undefined ? {} : { machineComponent })
                     };
                     const machineStates = (this.scriptMachines[script.id] ??= {});
                     const contexts = (machineStates[machine.id] ??= {});
@@ -6759,7 +6809,11 @@ export class TowerDefenseGame {
                     }
                     try {
                         const root = this.scriptExpressionContext(context);
-                        const plan = planTowerScriptStateTransition(machine, runtime, eventName, { ...root, machine: { ...runtime } }, this.missionElapsed);
+                        const plan = planTowerScriptStateTransition(machine, runtime, eventName, {
+                            ...root,
+                            ...(context.machineComponent === undefined ? {} : { component: context.machineComponent }),
+                            machine: { ...runtime }
+                        }, this.missionElapsed);
                         if (!plan)
                             continue;
                         if (this.scriptStateTransitionsRemaining <= 0) {
@@ -6825,6 +6879,7 @@ export class TowerDefenseGame {
         const runtime = this.scriptMachines[context.script.id]?.[machine.id]?.[context.stateKey];
         const root = {
             ...this.scriptExpressionContext(context),
+            ...(context.machineComponent === undefined ? {} : { component: context.machineComponent }),
             ...(runtime ? { machine: { ...runtime } } : {})
         };
         for (const [actionIndex, action] of actions.entries()) {
@@ -7165,6 +7220,38 @@ export class TowerDefenseGame {
                 outcome: this.outcome
             }
         };
+    }
+    scriptMachineComponentContext(eventName, event) {
+        if (eventName !== "bossComponentDamaged" && eventName !== "bossComponentDestroyed")
+            return undefined;
+        const enemyTypeId = event.enemyTypeId;
+        const componentId = event.componentId;
+        if (typeof enemyTypeId !== "string" || typeof componentId !== "string")
+            return undefined;
+        const authored = this.activeEnemyBehaviors?.bosses[enemyTypeId]?.components[componentId];
+        if (!authored)
+            return undefined;
+        const hp = Number(event.currentHp);
+        const maxHp = Number(event.maxHp);
+        const currentShield = Number(event.currentShield);
+        const shieldCapacity = Number(event.shieldCapacity);
+        const shield = shieldCapacity > 0
+            ? Object.freeze({ current: currentShield, capacity: shieldCapacity, ratio: currentShield / shieldCapacity })
+            : null;
+        return Object.freeze({
+            schemaVersion: 1,
+            enemyId: String(event.enemyId),
+            enemyTypeId,
+            id: componentId,
+            label: authored.label ?? null,
+            hp,
+            maxHp,
+            hpRatio: hp / maxHp,
+            destroyed: hp === 0,
+            tags: Object.freeze([...(authored.tags ?? [])].sort(compareBinary)),
+            disablesAbilities: Object.freeze([...(authored.disablesAbilities ?? [])].sort(compareBinary)),
+            shield
+        });
     }
     applyScriptAction(action, context, root, budget) {
         const evaluate = (expression) => evaluateTowerScriptExpression(expression, root, budget);
@@ -11129,6 +11216,9 @@ export class TowerDefenseGame {
         const componentDefinition = componentId === undefined || mutableTarget.kind !== "enemy"
             ? undefined
             : this.activeEnemyBehaviors?.bosses[mutableTarget.enemy.typeId]?.components[componentId];
+        const previousComponentHp = componentState?.hp;
+        const previousComponentShield = componentState?.shield?.current ?? 0;
+        const componentShieldCapacity = componentState?.shield?.capacity ?? 0;
         const componentArmor = componentDefinition?.armorTypeId === undefined
             ? undefined
             : this.activeCombatMechanics?.armorTypes[componentDefinition.armorTypeId];
@@ -11270,6 +11360,34 @@ export class TowerDefenseGame {
         }
         else {
             mutableTarget.hero.hp = Math.max(0, (mutableTarget.hero.hp ?? 0) - resolution.finalAmount);
+        }
+        if (mutableTarget.kind === "enemy"
+            && componentId !== undefined
+            && componentState
+            && previousComponentHp !== undefined) {
+            const currentComponentShield = componentState.shield?.current ?? 0;
+            const componentHpDamage = previousComponentHp - componentState.hp;
+            const componentShieldAbsorbed = previousComponentShield - currentComponentShield;
+            if (componentHpDamage > 0 || componentShieldAbsorbed > 0) {
+                const payload = {
+                    enemyId: mutableTarget.enemy.id,
+                    enemyTypeId: mutableTarget.enemy.typeId,
+                    componentId,
+                    sourceKind: packet.source.kind,
+                    previousHp: previousComponentHp,
+                    currentHp: componentState.hp,
+                    maxHp: componentState.maxHp,
+                    hpDamage: componentHpDamage,
+                    previousShield: previousComponentShield,
+                    currentShield: currentComponentShield,
+                    shieldCapacity: componentShieldCapacity,
+                    shieldAbsorbed: componentShieldAbsorbed
+                };
+                this.lastEvents.push({ type: "bossComponentDamaged", ...payload });
+                if (previousComponentHp > 0 && componentState.hp === 0) {
+                    this.lastEvents.push({ type: "bossComponentDestroyed", ...payload });
+                }
+            }
         }
         if (mutableTarget.kind === "enemy") {
             this.consumeResolvedMarks(mutableTarget.enemy, resolvedDamage);

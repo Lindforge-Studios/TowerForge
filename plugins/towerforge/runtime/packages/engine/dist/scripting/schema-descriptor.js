@@ -4,12 +4,23 @@ export const TOWER_SCRIPT_SCOPES = Object.freeze([
 ]);
 export const TOWER_SCRIPT_EVENTS = Object.freeze([
     "gameStarted", "tick", "towerPlaced", "towerSold", "towerMoved", "towerUpgraded", "towerDestroyed",
-    "towerTargetModeChanged", "towerFired", "towerResourcesGranted", "towerShieldChanged", "enemyHit", "enemyShieldChanged", "enemyKilled", "enemyLeaked",
+    "towerTargetModeChanged", "towerFired", "towerResourcesGranted", "towerShieldChanged", "enemyHit", "enemyShieldChanged", "bossComponentDamaged", "bossComponentDestroyed", "enemyKilled", "enemyLeaked",
     "enemyMarkChanged",
     "enemyExposureChanged", "enemyReactionTriggered",
     "enemySpawnedOnDeath", "enemyPhaseSpawned", "waveStarted", "waveCleared", "resourcesGranted", "abilityUsed",
     "enemyEnteredTile", "terrainChanged", "elevationChanged", "stateMachineTransitioned", "objectiveCompleted", "objectiveFailed", "starEarned", "victory", "defeat", "signal"
 ]);
+export const TOWER_SCRIPT_EVENT_MINIMUM_SCHEMA_VERSION = Object.freeze({
+    enemyShieldChanged: 3,
+    towerShieldChanged: 3,
+    enemyMarkChanged: 4,
+    enemyExposureChanged: 5,
+    enemyReactionTriggered: 5,
+    elevationChanged: 6,
+    stateMachineTransitioned: 7,
+    bossComponentDamaged: 7,
+    bossComponentDestroyed: 7
+});
 export const TOWER_SCRIPT_OPERATORS = Object.freeze([
     "eq", "ne", "gt", "gte", "lt", "lte", "and", "or", "not", "add", "sub", "mul", "div", "min", "max", "coalesce"
 ]);
@@ -73,6 +84,14 @@ export const TOWER_SCRIPT_EVENT_FIELDS = Object.freeze({
     towerShieldChanged: ["type", "towerId", "towerTypeId", "previous", "current", "capacity", "cause", "amount", "overflowDamage"],
     enemyHit: ["type", "towerId", "enemyId", "enemyTypeId", "damage"],
     enemyShieldChanged: ["type", "enemyId", "enemyTypeId", "previous", "current", "capacity", "cause", "amount", "overflowDamage"],
+    bossComponentDamaged: [
+        "type", "enemyId", "enemyTypeId", "componentId", "sourceKind", "previousHp", "currentHp",
+        "maxHp", "hpDamage", "previousShield", "currentShield", "shieldCapacity", "shieldAbsorbed"
+    ],
+    bossComponentDestroyed: [
+        "type", "enemyId", "enemyTypeId", "componentId", "sourceKind", "previousHp", "currentHp",
+        "maxHp", "hpDamage", "previousShield", "currentShield", "shieldCapacity", "shieldAbsorbed"
+    ],
     enemyMarkChanged: [
         "type", "enemyId", "enemyTypeId", "markId", "previousStacks", "currentStacks",
         "previousRemaining", "remaining", "cause"
@@ -176,6 +195,17 @@ export const TOWER_SCRIPT_STATE_MACHINE_DESCRIPTOR = Object.freeze({
     transitionLimit: "one_per_machine_context_event",
     selfTransition: "full_exit_entry",
     actionPhases: Object.freeze(["exit", "transition", "entry"]),
+    contextRoots: Object.freeze(["event", "self", "state", "game", "machine", "component"]),
+    componentContext: Object.freeze({
+        schemaVersion: 1,
+        availableForEvents: Object.freeze(["bossComponentDamaged", "bossComponentDestroyed"]),
+        source: "captured_post_resolution_event",
+        fields: Object.freeze([
+            "schemaVersion", "enemyId", "enemyTypeId", "id", "label", "hp", "maxHp", "hpRatio",
+            "destroyed", "tags", "disablesAbilities", "shield"
+        ]),
+        shieldFields: Object.freeze(["current", "capacity", "ratio"])
+    }),
     features: Object.freeze({
         parallelRegions: false,
         historyStates: false,
@@ -272,6 +302,37 @@ export const TOWER_SCRIPT_CONTROLLER_RECIPES = Object.freeze([
                 })
             ])
         })
+    }),
+    Object.freeze({
+        id: "component_driven_boss_phase",
+        controller: "state_machine",
+        schemaVersion: 1,
+        minimumTowerScriptSchemaVersion: 7,
+        parameters: Object.freeze({
+            enemyTypeId: "existing composite enemy type id",
+            componentId: "existing component id from the mission-selected enemyBehaviors profile"
+        }),
+        template: Object.freeze({
+            schemaVersion: 1,
+            id: "component_phase",
+            bindings: Object.freeze([{ scope: "enemy", ids: Object.freeze(["$enemyTypeId"]) }]),
+            initial: "intact",
+            states: Object.freeze([
+                Object.freeze({
+                    id: "intact",
+                    transitions: Object.freeze([Object.freeze({
+                            id: "component_destroyed",
+                            event: "bossComponentDestroyed",
+                            target: "/exposed",
+                            when: Object.freeze({
+                                $op: "eq",
+                                args: Object.freeze([Object.freeze({ $get: "component.id" }), "$componentId"])
+                            })
+                        })])
+                }),
+                Object.freeze({ id: "exposed" })
+            ])
+        })
     })
 ]);
 export const TOWER_SCRIPT_GRAPH_DESCRIPTOR = Object.freeze({
@@ -312,7 +373,10 @@ export const TOWER_SCRIPT_COMPLETION_DESCRIPTOR = Object.freeze({
     catalog: Object.freeze({
         events: Object.freeze(TOWER_SCRIPT_EVENTS.map((name) => Object.freeze({
             name,
-            fields: TOWER_SCRIPT_EVENT_FIELDS[name]
+            fields: TOWER_SCRIPT_EVENT_FIELDS[name],
+            ...(TOWER_SCRIPT_EVENT_MINIMUM_SCHEMA_VERSION[name] === undefined
+                ? {}
+                : { minimumSchemaVersion: TOWER_SCRIPT_EVENT_MINIMUM_SCHEMA_VERSION[name] })
         }))),
         actions: Object.freeze(Object.keys(TOWER_SCRIPT_ACTION_SCHEMA).sort().map((name) => Object.freeze({
             name,

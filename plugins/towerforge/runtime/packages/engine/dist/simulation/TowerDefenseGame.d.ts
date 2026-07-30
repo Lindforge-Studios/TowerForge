@@ -317,6 +317,7 @@ export declare class TowerDefenseGame {
     private scriptContexts;
     private scriptStateFor;
     private scriptExpressionContext;
+    private scriptMachineComponentContext;
     private applyScriptAction;
     private applyActiveLegacyTerrainAction;
     private resolveScriptTileTarget;

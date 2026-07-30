@@ -6,6 +6,7 @@ export interface TowerScriptMachineExpressionContextV1 {
     readonly state: Readonly<Record<string, unknown>>;
     readonly game: Readonly<Record<string, unknown>>;
     readonly machine?: Readonly<Record<string, unknown>>;
+    readonly component?: Readonly<Record<string, unknown>>;
 }
 export interface TowerScriptMachineInitializationV1 {
     readonly state: TowerScriptMachineRuntimeStateV1;
