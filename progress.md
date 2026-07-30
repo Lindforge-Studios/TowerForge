@@ -212,3 +212,16 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   the complete engine suite is 2,039/2,039 across 118 files. Typecheck is GREEN. Runtime component
   HP/shields, DamagePacket targeting, snapshots, and checkpoint state remain intentionally absent
   until the next independent RED.
+### R12.1b RED evidence — boss component runtime
+
+- Contract/Test Designer added `packages/engine/src/simulation/r12-boss-components-runtime.contract.test.ts` against `4c29f6c`.
+- Command: `npx vitest run packages/engine/src/simulation/r12-boss-components-runtime.contract.test.ts --maxWorkers=1`.
+- Expected RED: 1 file failed; 6 tests total; 3 failed / 3 passed. Missing active `enemyBehaviors` snapshot/checkpoint sections and component-target damage incorrectly mutated root HP. Absent, disabled, and unselected compatibility controls passed.
+
+### R12.1b GREEN evidence — boss component runtime
+
+- Runtime state is active-only and detached in snapshots/checkpoints; inactive shapes remain byte-free of `enemyBehaviors`.
+- Component packets use the shared `DamageResolver`, preserve root HP, consume root shield before component shield, discard component HP overflow, and reject incoherent component ids before resolution.
+- Checkpoint validation is closed and authored-state aware; restore preserves the state digest. DamagePacket descriptor v2 exposes optional enemy `componentId` without changing command/journal versions.
+- Descriptor RED: `packages/engine/src/content/schema-descriptor.test.ts` failed 1/34 before the v2 metadata was added.
+- GREEN: focused runtime 9/9; focused engine/content 171/171; `npm run typecheck` PASS; `npm run build:engine` PASS; full `npm run test` 3172/3172 across 285 files.

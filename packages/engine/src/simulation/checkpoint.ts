@@ -6,6 +6,7 @@ import type {
 import type {
   EnemyState,
   DirectorSnapshotV1,
+  EnemyBehaviorsStateV1,
   GameEvent,
   GameSnapshot,
   ResourceBag,
@@ -293,6 +294,7 @@ export interface GameCheckpointStateV1 {
   readonly logistics?: LogisticsCheckpointStateV1 | LogisticsCheckpointStateV2;
   readonly director?: DirectorSnapshotV1;
   readonly quests?: QuestSnapshotV1;
+  readonly enemyBehaviors?: EnemyBehaviorsStateV1;
 }
 
 export interface GameCheckpointV1 {

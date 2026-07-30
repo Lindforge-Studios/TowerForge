@@ -19,12 +19,13 @@ const R0A_MODULE_IDS = [
   "logistics",
   "director",
   "quests",
+  "enemyBehaviors",
   "scriptingDx",
   "multiplayer"
 ];
 const IMPLEMENTED_MODULE_IDS = [
   "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes",
-  "logistics", "director", "quests", "multiplayer"
+  "logistics", "director", "quests", "enemyBehaviors", "multiplayer"
 ];
 const UNAVAILABLE_MODULE_IDS = R0A_MODULE_IDS.filter(
   (moduleId) => !IMPLEMENTED_MODULE_IDS.includes(moduleId)
@@ -391,7 +392,7 @@ describe("R1 combat mechanics MCP contract", () => {
       commands: [],
       events: []
     });
-    expect(mechanics.mechanics.moduleIds).toHaveLength(13);
+    expect(mechanics.mechanics.moduleIds).toHaveLength(14);
     expect(mechanics.towerScript.actions.restoreEnemyShield.required).toEqual({
       target: "enemy target", amount: "expression >= 0"
     });
@@ -426,7 +427,7 @@ describe("R1 combat mechanics MCP contract", () => {
 
       expect(result.missionId).toBe("tutorial_01");
       expect(Object.keys(result.capabilities)).toEqual(R0A_MODULE_IDS);
-      expect(Object.values(result.capabilities)).toHaveLength(13);
+      expect(Object.values(result.capabilities)).toHaveLength(14);
       expect(result.capabilities.combat).toMatchObject({
         available: true,
         moduleEnabled: false,

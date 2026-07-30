@@ -156,11 +156,12 @@ describe("mcp tool registry", () => {
       withinStageOrder: ["flat", "additive_ratio", "multiplier", "id_binary_ascending"]
     });
     expect(result.damagePacket).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       requiredFields: ["amount", "source", "target"],
       optionalFields: ["damageType", "tags", "modifiers"],
       sourceKinds: ["tower", "ability", "tower_script", "status", "enemy", "leak", "reaction"],
       targetKinds: ["enemy", "tower", "hero", "core"],
+      enemyTargetOptionalFields: ["componentId"],
       tags: ["area", "over_time", "armor_piercing", "reaction"],
       pipelineOrder: ["modifiers", "marks", "armor_matrix", "entity_resistance", "legacy_pierce_only", "shield", "entity_hp", "reactions"]
     });

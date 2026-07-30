@@ -164,11 +164,12 @@ export const MODIFIER_SPEC_SCHEMA = Object.freeze({
  * resistances; shields and HP remain at the entity mutation boundary.
  */
 export const DAMAGE_PACKET_SCHEMA = Object.freeze({
-  schemaVersion: 1,
+  schemaVersion: 2,
   requiredFields: ["amount", "source", "target"] as const,
   optionalFields: ["damageType", "tags", "modifiers"] as const,
   sourceKinds: ["tower", "ability", "tower_script", "status", "enemy", "leak", "reaction"] as const,
   targetKinds: ["enemy", "tower", "hero", "core"] as const,
+  enemyTargetOptionalFields: ["componentId"] as const,
   tags: [...DAMAGE_TAGS],
   pipelineOrder: [
     "modifiers",
