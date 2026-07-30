@@ -13,7 +13,7 @@ export const TOWER_SCRIPT_SCOPES = Object.freeze([
 
 export const TOWER_SCRIPT_EVENTS = Object.freeze([
   "gameStarted", "tick", "towerPlaced", "towerSold", "towerMoved", "towerUpgraded", "towerDestroyed",
-  "towerTargetModeChanged", "towerFired", "towerResourcesGranted", "towerShieldChanged", "enemyHit", "enemyShieldChanged", "enemyKilled", "enemyLeaked",
+  "towerTargetModeChanged", "towerFired", "towerResourcesGranted", "towerShieldChanged", "enemyHit", "enemyShieldChanged", "bossComponentDamaged", "bossComponentDestroyed", "enemyKilled", "enemyLeaked",
   "enemyMarkChanged",
   "enemyExposureChanged", "enemyReactionTriggered",
   "enemySpawnedOnDeath", "enemyPhaseSpawned", "waveStarted", "waveCleared", "resourcesGranted", "abilityUsed",
@@ -96,6 +96,14 @@ export const TOWER_SCRIPT_EVENT_FIELDS = Object.freeze({
   towerShieldChanged: ["type", "towerId", "towerTypeId", "previous", "current", "capacity", "cause", "amount", "overflowDamage"],
   enemyHit: ["type", "towerId", "enemyId", "enemyTypeId", "damage"],
   enemyShieldChanged: ["type", "enemyId", "enemyTypeId", "previous", "current", "capacity", "cause", "amount", "overflowDamage"],
+  bossComponentDamaged: [
+    "type", "enemyId", "enemyTypeId", "componentId", "sourceKind", "previousHp", "currentHp",
+    "maxHp", "hpDamage", "previousShield", "currentShield", "shieldCapacity", "shieldAbsorbed"
+  ],
+  bossComponentDestroyed: [
+    "type", "enemyId", "enemyTypeId", "componentId", "sourceKind", "previousHp", "currentHp",
+    "maxHp", "hpDamage", "previousShield", "currentShield", "shieldCapacity", "shieldAbsorbed"
+  ],
   enemyMarkChanged: [
     "type", "enemyId", "enemyTypeId", "markId", "previousStacks", "currentStacks",
     "previousRemaining", "remaining", "cause"
@@ -202,6 +210,12 @@ export const TOWER_SCRIPT_STATE_MACHINE_DESCRIPTOR = Object.freeze({
   transitionLimit: "one_per_machine_context_event",
   selfTransition: "full_exit_entry",
   actionPhases: Object.freeze(["exit", "transition", "entry"] as const),
+  contextRoots: Object.freeze(["event", "self", "state", "game", "machine", "component"] as const),
+  componentContext: Object.freeze({
+    schemaVersion: 1,
+    availableForEvents: Object.freeze(["bossComponentDamaged", "bossComponentDestroyed"] as const),
+    source: "captured_post_resolution_event"
+  }),
   features: Object.freeze({
     parallelRegions: false,
     historyStates: false,

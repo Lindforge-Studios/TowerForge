@@ -790,6 +790,21 @@ export type GameEvent =
   | { type: "towerFired"; towerId: string; enemyId: string; damage: number }
   | { type: "enemyHit"; towerId: string; enemyId: string; enemyTypeId: string; damage: number }
   | EnemyShieldChangedEvent
+  | {
+      type: "bossComponentDamaged" | "bossComponentDestroyed";
+      enemyId: string;
+      enemyTypeId: string;
+      componentId: string;
+      sourceKind: import("./damage.js").DamageSourceRef["kind"];
+      previousHp: number;
+      currentHp: number;
+      maxHp: number;
+      hpDamage: number;
+      previousShield: number;
+      currentShield: number;
+      shieldCapacity: number;
+      shieldAbsorbed: number;
+    }
   | EnemyMarkChangedEvent
   | EnemyExposureChangedEvent
   | EnemyReactionTriggeredEvent

@@ -139,7 +139,7 @@ function validateScript(
     if (event === "elevationChanged" && script.schemaVersion !== 6 && script.schemaVersion !== 7) {
       report(scriptId, `handlers.${event}`, `TowerScript event "${event}" requires schemaVersion 6.`);
     }
-    if (event === "stateMachineTransitioned" && script.schemaVersion !== 7) {
+    if ((event === "stateMachineTransitioned" || event === "bossComponentDamaged" || event === "bossComponentDestroyed") && script.schemaVersion !== 7) {
       report(scriptId, `handlers.${event}`, `TowerScript event "${event}" requires schemaVersion 7.`);
     }
     if (!Array.isArray(handlers) || handlers.length === 0) {

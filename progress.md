@@ -251,3 +251,18 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - `basic_targetable_boss_components` materializes a deterministic binary-first authored enemy/tower candidate and remains inert until explicit guarded enablement.
 - Canvas and Phaser consume one bounded fail-closed projection of the authoritative optional snapshot; they only draw component bars while the module is active and do not own targeting or damage rules.
 - Focused GREEN command covering engine routing, recipe, CLI/MCP, Studio, and renderer/player contracts: 6 files, 23/23 tests passed.
+
+### R12.2 contract freeze and RED evidence — component events / HFSM
+
+- Public v7-only events `bossComponentDamaged` and `bossComponentDestroyed` carry the same closed captured post-resolution payload: enemy/type/component/source, previous/current/max HP, HP delta, previous/current/capacity component shield, and component-local absorbed delta. Root-shield absorption is excluded.
+- A packet emits damage only for an effective component-local decrease and destruction only for the first positive-to-zero crossing. Stable order is root `enemyShieldChanged` (when applicable) -> component damaged -> component destroyed -> caller legacy `enemyHit`. Regeneration and dead-component repeats emit neither lifecycle event.
+- HFSM alone receives an optional detached/frozen `component` expression root built from the captured event payload plus authored metadata. Ordinary handlers and non-component events do not gain that root. Existing leaf-to-ancestor resolution, target-before-actions, action/event/transition budgets and all version domains remain unchanged.
+- Independent schema/runtime RED command: `npx vitest run packages/engine/src/scripting/r12-boss-component-events-schema.contract.test.ts packages/engine/src/simulation/r12-boss-component-events.contract.test.ts --maxWorkers=1` -> 2 files failed, 13 expected failures / 1 negative control passed. Events, exact fields, v7 gate, runtime ordering, all seven source kinds and handler dispatch were absent.
+- Independent HFSM/checkpoint RED command: `npx vitest run packages/engine/src/simulation/r12-boss-component-hfsm.contract.test.ts packages/engine/src/simulation/r12-boss-component-checkpoint.contract.test.ts --maxWorkers=1` -> 2 files failed, 11 expected failures / 4 inactive compatibility controls passed. Machines remained in their initial state and no component lifecycle events existed to validate or replay.
+
+### R12.2 GREEN engine evidence — component events / HFSM
+
+- The engine emits the two schema-v7 lifecycle events from resolved component-local HP/shield deltas, before the legacy `enemyHit` caller event, and never emits them for root-only absorption, regeneration, or repeated damage to an already destroyed component.
+- HFSM transition planning and exit/transition/entry actions receive one detached frozen component snapshot captured from the triggering event; ordinary handlers retain their previous expression roots.
+- Checkpoint restore validates the closed event shape, authored enemy/component references, source kind, scaled capacities, arithmetic deltas, and destruction crossing without requiring a historical event to match the latest live component state.
+- Focused GREEN: the four new contracts plus existing scripting validation, HFSM, checkpoint and replay coverage passed 110/110. `npm run typecheck` and `npm run build:engine` are the next exact engine gates before surface integration.
