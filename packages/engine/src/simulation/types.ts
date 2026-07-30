@@ -805,6 +805,17 @@ export type GameEvent =
       shieldCapacity: number;
       shieldAbsorbed: number;
     }
+  | {
+      type: "vanguardDamageIntercepted";
+      cohortId: string;
+      protectedEnemyId: string;
+      protectedEnemyTypeId: string;
+      vanguardEnemyId: string;
+      vanguardEnemyTypeId: string;
+      sourceKind: "tower" | "ability" | "tower_script" | "status" | "reaction" | "enemy";
+      requestedAmount: number;
+      originalComponentId: string | null;
+    }
   | EnemyMarkChangedEvent
   | EnemyExposureChangedEvent
   | EnemyReactionTriggeredEvent
@@ -1294,6 +1305,13 @@ export interface EnemyBehaviorsStateV1 {
       readonly cohortId: string;
       readonly role: "vanguard" | "body" | "support";
     }>>;
+    readonly protection?: {
+      readonly schemaVersion: 1;
+      readonly cohorts: Readonly<Record<string, {
+        readonly radius: number;
+        readonly sourceKinds: readonly ("tower" | "ability" | "tower_script" | "status" | "reaction" | "enemy")[];
+      }>>;
+    };
   };
 }
 

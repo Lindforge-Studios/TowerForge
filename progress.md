@@ -324,3 +324,22 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   validation, including accessor/proxy/sparse/cyclic/duplicate/future-source/over-budget cases.
   Focused content contract is GREEN at 16/16; the R12.3 content compatibility contract remains
   GREEN. Runtime interception and its event/snapshot/checkpoint state remain a separate RED slice.
+
+### R12.4b RED/GREEN — bounded runtime interception
+
+- Independent runtime RED command:
+  `npx vitest run packages/engine/src/simulation/r12-vanguard-protection-runtime.contract.test.ts --maxWorkers=1`
+  produced 8/8 expected failures against the missing redirect, event, metadata, checkpoint validator,
+  diagnostics and budgets. A test-only follow-up corrected the fixture's distinction between an
+  omitted component argument and explicit root targeting; production was not changed for that fix.
+- GREEN redirects one complete eligible packet to the nearest then binary-first live same-cohort
+  vanguard with a positive root Combat shield. The component target is cleared, overflow remains on
+  that vanguard, no second interception is possible, and the shared DamageResolver recomputes the
+  chosen vanguard's armor, resistance, marks and legacy pierce adapter before shield/HP mutation.
+- A lazy spatial index avoids a per-packet live-enemy scan. Candidate collection is topology-bounded
+  and capped at 16; successful transactions are capped at 512 per public tick. Read-only cumulative
+  diagnostics are detached from snapshot/checkpoint/digest state, while only active authored
+  protection metadata and the exact interception event enter snapshot/checkpoint state.
+- Focused runtime is GREEN at 8/8. Checkpoint/replay/damage/formation compatibility is GREEN at
+  127/127; `npm run typecheck` and `npm run build:engine` pass. Constructor surfaces remain a
+  separate RED/GREEN slice.

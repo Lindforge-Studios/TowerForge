@@ -69,6 +69,12 @@ export interface VanguardProtectionDefinitionV1 {
   readonly sourceKinds: readonly VanguardProtectionSourceKindV1[];
 }
 
+export interface VanguardProtectionRuntimeStatsV1 {
+  readonly transactionsThisTick: number;
+  readonly candidatesInspected: number;
+  readonly maximumCandidateCount: number;
+}
+
 export interface FormationSteeringDefinitionV1 {
   readonly neighborRadius: 1 | 2;
   readonly cohesionWeight: number;
