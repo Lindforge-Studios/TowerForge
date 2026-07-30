@@ -1,4 +1,5 @@
 import { type GameContentRegistry } from "../content/registry.js";
+import { type VanguardProtectionRuntimeStatsV1 } from "../content/enemy-behaviors-mechanics.js";
 import { type TowerScriptTraceCollector } from "../scripting/trace.js";
 import type { TowerScriptJson } from "../scripting/types.js";
 import { GridMap } from "./map.js";
@@ -93,6 +94,10 @@ export declare class TowerDefenseGame {
     private readonly activeEnemyBehaviors;
     private readonly activeFormationAssignments;
     private formationSteeringStats;
+    private vanguardProtectionIndex;
+    private vanguardProtectionTransactionsThisTick;
+    private vanguardProtectionCandidatesInspected;
+    private vanguardProtectionMaximumCandidateCount;
     private questEntries;
     private readonly scriptedTargetingByTowerType;
     private directorDecisions;
@@ -293,6 +298,7 @@ export declare class TowerDefenseGame {
     private buildReactionState;
     private buildEnemyBehaviorsState;
     getFormationSteeringStats(): FormationSteeringRuntimeStatsV1;
+    getVanguardProtectionStats(): VanguardProtectionRuntimeStatsV1;
     private consumeNavigationAnalysisField;
     private buildNavigationAnalysisFields;
     private navigationDiagnosticPairs;
@@ -479,6 +485,10 @@ export declare class TowerDefenseGame {
     private enemyTerrainSpeedFactor;
     private enemyStatusSpeedFactor;
     private isEnemyInSunlight;
+    private buildVanguardProtectionIndex;
+    private collectVanguardProtectionCandidates;
+    private planVanguardDamageInterception;
+    private enemyDamageResolutionContext;
     private applyResolvedEnemyDamage;
     private applyResolvedCoreDamage;
     private applyResolvedTowerEntityDamage;

@@ -3290,6 +3290,40 @@ export function validateGameContentRegistry(content) {
                             semantic("mechanics", profileId, `${root}.formations.cohorts.${cohortId}.members.${enemyTypeId}`, `Enemy behaviors formation references unknown enemy "${enemyTypeId}".`);
                         }
                     }
+                    if (cohort.protection) {
+                        const vanguardEnemyTypeIds = Object.entries(cohort.members)
+                            .filter(([, role]) => role === "vanguard")
+                            .map(([enemyTypeId]) => enemyTypeId)
+                            .sort();
+                        const protectedEnemyTypeIds = Object.entries(cohort.members)
+                            .filter(([, role]) => role === "body" || role === "support")
+                            .map(([enemyTypeId]) => enemyTypeId)
+                            .sort();
+                        const protectionPath = `${root}.formations.cohorts.${cohortId}.protection`;
+                        if (vanguardEnemyTypeIds.length === 0 || protectedEnemyTypeIds.length === 0) {
+                            semantic("mechanics", profileId, protectionPath, "Vanguard protection requires at least one vanguard and one body or support member.");
+                        }
+                        const selectedMissionsForProtection = selectedByProfile.get(profileId) ?? [];
+                        if (selectedMissionsForProtection.length === 0) {
+                            for (const enemyTypeId of vanguardEnemyTypeIds) {
+                                semantic("mechanics", profileId, `${root}.formations.cohorts.${cohortId}.members.${enemyTypeId}`, `Vanguard enemy "${enemyTypeId}" requires an active root Combat shield when protection is selected.`);
+                            }
+                        }
+                        for (const missionId of selectedMissionsForProtection) {
+                            let combat;
+                            try {
+                                combat = resolveActiveCombatMechanics(content, missionId);
+                            }
+                            catch {
+                                combat = undefined;
+                            }
+                            for (const enemyTypeId of vanguardEnemyTypeIds) {
+                                if (!Object.prototype.hasOwnProperty.call(combat?.shields.enemies ?? {}, enemyTypeId)) {
+                                    semantic("mechanics", profileId, `${root}.formations.cohorts.${cohortId}.members.${enemyTypeId}`, `Vanguard enemy "${enemyTypeId}" requires an active root Combat shield for mission "${missionId}".`);
+                                }
+                            }
+                        }
+                    }
                 }
                 const selectedMissions = selectedByProfile.get(profileId) ?? [];
                 if (selectedMissions.length === 0) {

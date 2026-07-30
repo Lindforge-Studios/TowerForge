@@ -2238,12 +2238,18 @@ export async function callTool(name, args = {}, ctx = {}) {
           field: "enemyBehaviors.formations",
           optional: true,
           schemaVersion: 1,
-          roles: ["vanguard", "body", "support"]
+          roles: ["vanguard", "body", "support"],
+          protection: {
+            field: "enemyBehaviors.formations.protection",
+            optional: true,
+            schemaVersion: 1
+          }
         }
       },
       checkpoint: { field: "state.enemyBehaviors", optional: true, supportedSchemaVersions: [1] },
       commands: [],
       events: ["bossComponentDamaged", "bossComponentDestroyed"],
+      gameEvents: [{ name: "vanguardDamageIntercepted", readOnly: true, towerScript: false }],
       targeting: "Authored tower priorityTags select live boss components; no manual component command exists in R12.1."
     };
     const personaQa = {

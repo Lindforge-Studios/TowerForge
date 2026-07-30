@@ -111,8 +111,14 @@ export declare const ENEMY_BEHAVIORS_MECHANICS_SCHEMA: Readonly<{
     };
     formationCohort: {
         requiredFields: readonly ["members", "steering"];
+        optionalFields: readonly ["protection"];
+        additionalProperties: boolean;
+    };
+    formationProtection: {
+        requiredFields: readonly ["radius", "sourceKinds"];
         optionalFields: readonly [];
         additionalProperties: boolean;
+        sourceKinds: readonly ["tower", "ability", "tower_script", "status", "reaction", "enemy"];
     };
     formationSteering: {
         requiredFields: readonly ["neighborRadius", "cohesionWeight", "separationWeight", "roleWeight"];
@@ -129,6 +135,10 @@ export declare const ENEMY_BEHAVIORS_MECHANICS_SCHEMA: Readonly<{
         formationAssignmentsPerProfile: 4096;
         neighborRadius: 2;
         steeringWeight: 1000;
+        protectionRadius: 4;
+        protectionSourceKinds: 6;
+        protectionCandidatesPerPacket: 16;
+        protectionTransactionsPerTick: 512;
         tagsPerComponent: 32;
         priorityTagsPerBinding: 32;
         idOrTagUtf8Bytes: 128;

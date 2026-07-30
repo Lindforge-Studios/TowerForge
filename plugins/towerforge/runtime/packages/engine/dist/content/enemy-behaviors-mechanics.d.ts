@@ -9,6 +9,10 @@ export declare const ENEMY_BEHAVIORS_LIMITS: Readonly<{
     formationAssignmentsPerProfile: 4096;
     neighborRadius: 2;
     steeringWeight: 1000;
+    protectionRadius: 4;
+    protectionSourceKinds: 6;
+    protectionCandidatesPerPacket: 16;
+    protectionTransactionsPerTick: 512;
     tagsPerComponent: 32;
     priorityTagsPerBinding: 32;
     idOrTagUtf8Bytes: 128;
@@ -42,6 +46,17 @@ export interface BossComponentTowerTargetingV1 {
 }
 export declare const FORMATION_ROLES: readonly ["vanguard", "body", "support"];
 export type FormationRoleV1 = (typeof FORMATION_ROLES)[number];
+export declare const VANGUARD_PROTECTION_SOURCE_KINDS: readonly ["tower", "ability", "tower_script", "status", "reaction", "enemy"];
+export type VanguardProtectionSourceKindV1 = (typeof VANGUARD_PROTECTION_SOURCE_KINDS)[number];
+export interface VanguardProtectionDefinitionV1 {
+    readonly radius: number;
+    readonly sourceKinds: readonly VanguardProtectionSourceKindV1[];
+}
+export interface VanguardProtectionRuntimeStatsV1 {
+    readonly transactionsThisTick: number;
+    readonly candidatesInspected: number;
+    readonly maximumCandidateCount: number;
+}
 export interface FormationSteeringDefinitionV1 {
     readonly neighborRadius: 1 | 2;
     readonly cohesionWeight: number;
@@ -51,6 +66,7 @@ export interface FormationSteeringDefinitionV1 {
 export interface FormationCohortDefinitionV1 {
     readonly members: Readonly<Record<string, FormationRoleV1>>;
     readonly steering: FormationSteeringDefinitionV1;
+    readonly protection?: VanguardProtectionDefinitionV1;
 }
 export interface EnemyFormationsDefinitionV1 {
     readonly cohorts: Readonly<Record<string, FormationCohortDefinitionV1>>;
