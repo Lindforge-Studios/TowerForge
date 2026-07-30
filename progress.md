@@ -424,3 +424,25 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   checkpoint, navigation, journal, replay, and damage set is GREEN at 332/332; `npm run typecheck`
   and `npm run build:engine` pass. A new exact-commit freeze, complete gates, and two new independent
   sign-offs remain required.
+
+### R12 second verifier repair — event-bound budget and hostile own-data reads
+
+- The second frozen commit `55e8150` passed the complete local gates and Constructor Integration
+  Verifier, but did not receive Code Verifier sign-off. That audit confirmed one P1 checkpoint
+  budget bypass and two P2 hostile-accessor paths. The integration sign-off and all freeze evidence
+  were invalidated before publication.
+- Independent checkpoint RED added 17 successful interceptions, a pristine restore, then a forged
+  `transactionsThisTick: 0` with a recomputed digest. The focused suite failed 1/16 because restore
+  accepted a state whose retained `vanguardDamageIntercepted` events proved that 17 of the 512
+  transactions had already been consumed. Positive pristine and tick-reset controls passed.
+- Independent hostile-data RED added a sibling Combat-module accessor and accessors for R12 recipe
+  context fields `defaultMissionId`, `missionIds`, `enemyIds`, and `towerIds`. Engine validation
+  failed 1/10 and recipe materialization failed 4/9 because each getter was executed once.
+- GREEN requires the checkpoint transaction counter to equal this public tick's validated
+  interception-event count. Enemy Behaviors cross-reference validation now continues only through
+  descriptor-safe detached Combat/profile/armor records. Recipe context fields use a closed
+  enumerable own-data reader and reject accessors with stable code `mechanics_recipe_context_invalid`.
+- The three repair suites are GREEN at 35/35; the broader CLI recipe, engine content,
+  checkpoint/navigation/journal/replay/damage/R12 compatibility set is GREEN at 1,196/1,196;
+  `npm run typecheck` passes. Another exact-commit freeze, full gates, and two new independent
+  sign-offs remain mandatory.

@@ -4254,6 +4254,7 @@ export class TowerDefenseGame {
         }
         if (enemyCounter < maxEnemyId)
             throw new Error("Game checkpoint enemy counter is below a live enemy id.");
+        let checkpointVanguardProtectionTransactionsThisTick;
         if (checkpointEnemyBehaviors) {
             const protectionCohortIds = Object.keys(checkpointFormationProtection);
             const hasProtectionRuntime = protectionCohortIds.length > 0;
@@ -4290,6 +4291,7 @@ export class TowerDefenseGame {
                     || transactionsThisTick > ENEMY_BEHAVIORS_LIMITS.protectionTransactionsPerTick) {
                     throw new Error(`Game checkpoint enemyBehaviors protectionRuntime.transactionsThisTick must be an integer in range 0..${ENEMY_BEHAVIORS_LIMITS.protectionTransactionsPerTick}.`);
                 }
+                checkpointVanguardProtectionTransactionsThisTick = transactionsThisTick;
             }
             const componentEnemies = checkpointObjectDescriptors(checkpointDataField(section, "components", "enemyBehaviors state"), "Game checkpoint enemyBehaviors components");
             const expectedEnemyIds = [...enemyTypeByInstance.entries()]
@@ -5044,6 +5046,7 @@ export class TowerDefenseGame {
         let retainedHeroSkillPointState;
         const checkpointTransitionEvents = [];
         const checkpointEvents = array(state.lastEvents, "lastEvents");
+        let checkpointVanguardInterceptionEventCount = 0;
         for (const [eventIndex, value] of checkpointEvents.entries()) {
             const base = checkpointObjectDescriptors(value, "Game checkpoint last event");
             const type = stringValue(checkpointDataField(base, "type", "last event"), "last event type");
@@ -5223,6 +5226,7 @@ export class TowerDefenseGame {
                     && !checkpointEnemyBehaviors?.bosses?.[protectedEnemyTypeId]?.components[String(originalComponentId)]) {
                     throw new Error("Game checkpoint vanguard interception event references an unknown original component.");
                 }
+                checkpointVanguardInterceptionEventCount += 1;
             }
             if (own(event, "towerTypeId")) {
                 const typeId = stringValue(checkpointDataField(event, "towerTypeId", type), `${type}.towerTypeId`);
@@ -6133,6 +6137,10 @@ export class TowerDefenseGame {
                     }
                 }
             }
+        }
+        if (checkpointVanguardProtectionTransactionsThisTick !== undefined
+            && checkpointVanguardProtectionTransactionsThisTick !== checkpointVanguardInterceptionEventCount) {
+            throw new Error("Game checkpoint enemyBehaviors protectionRuntime.transactionsThisTick must equal this tick's vanguardDamageIntercepted event count.");
         }
         for (const transitionEvent of checkpointTransitionEvents) {
             if (transitionEvent.index >= eventCursor) {

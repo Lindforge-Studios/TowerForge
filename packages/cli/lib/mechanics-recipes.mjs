@@ -448,6 +448,10 @@ export function listMechanicsRecipes() {
 export function materializeMechanicsRecipe(recipeId, context = {}) {
   const recipe = RECIPES.find((candidate) => candidate.id === recipeId);
   if (!recipe) throw new Error(`Unknown mechanics recipe "${recipeId}".`);
+  const defaultMissionId = mechanicsRecipeContextDataValue(context, "defaultMissionId");
+  const missionIds = mechanicsRecipeContextDataValue(context, "missionIds");
+  const enemyIds = mechanicsRecipeContextDataValue(context, "enemyIds");
+  const towerIds = mechanicsRecipeContextDataValue(context, "towerIds");
 
   const parameterField = inspectParameterField(context);
   if (recipeId === BASIC_ELEMENTAL_SYNERGY_ID) {
@@ -526,7 +530,7 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
     );
   }
 
-  const missionId = chooseId(context.defaultMissionId, context.missionIds);
+  const missionId = chooseId(defaultMissionId, missionIds);
   if ([ELEMENTAL_SHATTER_ID, WET_CHAIN_SHOCK_ID, POISON_COMBUSTION_ID].includes(recipeId)) {
     return materializeReactionRecipe(recipe, missionId, context);
   }
@@ -534,7 +538,7 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
     return materializeDynamicNavigationRecipe(recipe, missionId);
   }
   if (recipeId === BASIC_ADAPTIVE_WAVE_DIRECTOR_ID) {
-    const counterEnemyId = chooseId("armored_brute", context.enemyIds) ?? "";
+    const counterEnemyId = chooseId("armored_brute", enemyIds) ?? "";
     return {
       ...recipe,
       entity: {
@@ -574,8 +578,8 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
     };
   }
   if (recipeId === BASIC_PROCEDURAL_QUESTS_ID) {
-    const towerTypeId = chooseId(undefined, context.missionDamagingTowerIds);
-    const abilityId = chooseId(undefined, context.missionDamagingAbilityIds);
+    const towerTypeId = chooseId(undefined, ownDataValue(context, "missionDamagingTowerIds"));
+    const abilityId = chooseId(undefined, ownDataValue(context, "missionDamagingAbilityIds"));
     if (towerTypeId === undefined && abilityId === undefined) {
       throw new MechanicsRecipeParameterError(
         "quest_recipe_source_unavailable",
@@ -611,14 +615,14 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
     };
   }
   if (recipeId === BASIC_TARGETABLE_BOSS_COMPONENTS_ID) {
-    const bossEnemyTypeId = firstSafeId(context.enemyIds);
+    const bossEnemyTypeId = firstSafeId(enemyIds);
     if (bossEnemyTypeId === undefined) {
       throw new MechanicsRecipeParameterError(
         "enemy_behaviors_recipe_context_required",
         "Basic targetable boss components require at least one authored enemy in the project."
       );
     }
-    const towerTypeId = firstSafeId(context.towerIds);
+    const towerTypeId = firstSafeId(towerIds);
     const bosses = safeRecord();
     const components = safeRecord();
     defineOwn(components, "core", {
@@ -756,7 +760,7 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
     };
   }
   if (recipeId === BASIC_ASYMMETRIC_SEND_VS_BUILD_ID) {
-    const enemyTypeId = chooseId("armored_brute", context.enemyIds) ?? "";
+    const enemyTypeId = chooseId("armored_brute", enemyIds) ?? "";
     return {
       ...recipe,
       entity: {
@@ -1123,13 +1127,13 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
   }
   const moduleSchemaVersion = effectiveCombatModuleSchemaVersion(recipe.moduleSchemaVersion, context);
   if (recipeId === BASIC_ELEMENTAL_ARMOR_MATRIX_ID) {
-    return materializeArmorRecipe(recipe, moduleSchemaVersion, missionId, context.enemyIds);
+    return materializeArmorRecipe(recipe, moduleSchemaVersion, missionId, enemyIds);
   }
   if (recipeId === BASIC_VULNERABILITY_MARKS_ID) {
-    return materializeMarksRecipe(recipe, moduleSchemaVersion, missionId, context.towerIds);
+    return materializeMarksRecipe(recipe, moduleSchemaVersion, missionId, towerIds);
   }
-  const enemyId = firstSafeId(context.enemyIds);
-  const towerId = firstSafeId(context.destructibleTowerIds);
+  const enemyId = firstSafeId(enemyIds);
+  const towerId = firstSafeId(ownDataValue(context, "destructibleTowerIds"));
   const enemies = safeRecord();
   const towers = safeRecord();
   if (enemyId !== undefined) defineOwn(enemies, enemyId, cloneShield());
@@ -1180,7 +1184,10 @@ function materializePowerGridRecipe(recipe, context, parameterValue) {
     entity: {
       moduleId: "logistics",
       moduleSchemaVersion: 1,
-      missionId: chooseId(context.defaultMissionId, context.missionIds) ?? "",
+      missionId: chooseId(
+        mechanicsRecipeContextDataValue(context, "defaultMissionId"),
+        mechanicsRecipeContextDataValue(context, "missionIds")
+      ) ?? "",
       profileId: recipe.suggestedId,
       profile: { power: { generators, relays, consumers } }
     }
@@ -1222,7 +1229,10 @@ function materializeLocalAmmunitionRecipe(recipe, context, parameterValue) {
     entity: {
       moduleId: "logistics",
       moduleSchemaVersion: 2,
-      missionId: chooseId(context.defaultMissionId, context.missionIds) ?? "",
+      missionId: chooseId(
+        mechanicsRecipeContextDataValue(context, "defaultMissionId"),
+        mechanicsRecipeContextDataValue(context, "missionIds")
+      ) ?? "",
       profileId: recipe.suggestedId,
       profile: { power: null, ammunition: { types, towerInventories } }
     }
@@ -1334,7 +1344,10 @@ function materializeFactoryAmmunitionSupplyRecipe(recipe, context, parameterValu
     entity: {
       moduleId: "logistics",
       moduleSchemaVersion: 3,
-      missionId: chooseId(context.defaultMissionId, context.missionIds) ?? "",
+      missionId: chooseId(
+        mechanicsRecipeContextDataValue(context, "defaultMissionId"),
+        mechanicsRecipeContextDataValue(context, "missionIds")
+      ) ?? "",
       profileId: recipe.suggestedId,
       profile: {
         power: null,
@@ -2109,6 +2122,32 @@ function ownDataValue(value, key) {
   } catch {
     return undefined;
   }
+}
+
+function mechanicsRecipeContextDataValue(context, key) {
+  if (!isPlainRecord(context)) {
+    throw new MechanicsRecipeParameterError(
+      "mechanics_recipe_context_invalid",
+      "Mechanics recipe context must be a plain object with enumerable own data fields."
+    );
+  }
+  let descriptor;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(context, key);
+  } catch {
+    throw new MechanicsRecipeParameterError(
+      "mechanics_recipe_context_invalid",
+      `Mechanics recipe context field "${key}" could not be inspected as own data.`
+    );
+  }
+  if (descriptor === undefined) return undefined;
+  if (!descriptor.enumerable || !("value" in descriptor)) {
+    throw new MechanicsRecipeParameterError(
+      "mechanics_recipe_context_invalid",
+      `Mechanics recipe context field "${key}" must be an enumerable own data field, not an accessor.`
+    );
+  }
+  return descriptor.value;
 }
 
 function defineOwn(record, key, value) {

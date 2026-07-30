@@ -410,6 +410,42 @@ describe("R12.4 vanguard protection TowerDefenseGame contract (RED)", () => {
     expect((game.getSnapshot().enemyBehaviors as any)).not.toHaveProperty("protectionRuntime");
   });
 
+  it("rejects a forged transaction counter that disagrees with this tick's interception events", () => {
+    const { content, game } = fixture({ shieldCapacity: 1_000_000 });
+    const { target } = arrange(game);
+    for (let index = 0; index < 17; index += 1) {
+      apply(game, target, SOURCES.tower, 1, undefined);
+    }
+
+    const checkpoint = jsonClone(game.createCheckpoint());
+    expect((checkpoint.state as any).enemyBehaviors.protectionRuntime).toEqual({
+      schemaVersion: 1,
+      transactionsThisTick: 17
+    });
+    expect((checkpoint.state as any).lastEvents.filter(
+      (event: { readonly type?: unknown }) => event.type === "vanguardDamageIntercepted"
+    )).toHaveLength(17);
+    expect(() => TowerDefenseGame.fromCheckpoint({ content, checkpoint })).not.toThrow();
+
+    (checkpoint.state as any).enemyBehaviors.protectionRuntime.transactionsThisTick = 0;
+    (checkpoint as any).stateDigest = computeCheckpointStateDigest(
+      checkpoint.contentDigest, checkpoint.identity, checkpoint.rng, checkpoint.state
+    );
+    expect(() => TowerDefenseGame.fromCheckpoint({ content, checkpoint }))
+      .toThrow(/transactionsThisTick.*vanguardDamageIntercepted|vanguardDamageIntercepted.*transactionsThisTick/i);
+
+    game.tick(0);
+    const resetCheckpoint = jsonClone(game.createCheckpoint());
+    expect((resetCheckpoint.state as any).enemyBehaviors.protectionRuntime).toEqual({
+      schemaVersion: 1,
+      transactionsThisTick: 0
+    });
+    expect((resetCheckpoint.state as any).lastEvents.filter(
+      (event: { readonly type?: unknown }) => event.type === "vanguardDamageIntercepted"
+    )).toHaveLength(0);
+    expect(() => TowerDefenseGame.fromCheckpoint({ content, checkpoint: resetCheckpoint })).not.toThrow();
+  });
+
   it.each([
     ["future schema", { schemaVersion: 2, transactionsThisTick: 1 }, /protectionRuntime.*schema|schema.*protectionRuntime/i],
     ["negative counter", { schemaVersion: 1, transactionsThisTick: -1 }, /transactionsThisTick.*(?:0|negative|range)/i],

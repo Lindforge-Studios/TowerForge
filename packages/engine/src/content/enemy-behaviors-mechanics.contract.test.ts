@@ -539,4 +539,41 @@ describe("R12.1 enemyBehaviors v1 boss-component content contract (RED)", () => 
       expect(result.ok).toBe(activation !== "active");
     }
   );
+
+  it("does not execute a sibling Combat module accessor while failing component armor closed", () => {
+    const input = enemyBehaviorsInput({ activation: "active" });
+    const modules = (input.mechanics as any).modules;
+    const authoredCombat = modules.combat;
+    let getterCalls = 0;
+    Object.defineProperty(modules, "combat", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        getterCalls += 1;
+        return authoredCombat;
+      }
+    });
+
+    let result: ValidationResult | undefined;
+    let thrown: unknown;
+    try {
+      result = validateGameContentRegistry(createGameContentRegistry(input));
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeUndefined();
+    expect(getterCalls).toBe(0);
+    expect(result?.ok).toBe(false);
+    expect(result?.issues).toContainEqual(expect.objectContaining({
+      severity: "error",
+      fieldPath: expect.stringMatching(/modules\.combat/),
+      message: expect.stringMatching(/own data|accessor|enumerable|inspect/i)
+    }));
+    expect(result?.issues).toContainEqual(expect.objectContaining({
+      severity: "error",
+      fieldPath: "modules.enemyBehaviors.profiles.bosses.bosses.citadel_boss.components.left_cannon.armorTypeId",
+      message: expect.stringMatching(/plate|armor|unavailable|mission-selected combat/i)
+    }));
+  });
 });

@@ -3219,14 +3219,29 @@ export function validateGameContentRegistry(content) {
         const selectedCombatArmorTypeIds = new Set();
         let combatModuleEnabled = false;
         try {
-            const combat = content.mechanics.modules.combat;
+            const combatValue = modules?.combat;
+            const combat = combatValue === undefined
+                ? undefined
+                : inspect(combatValue, "enemyBehaviors", "modules.combat", "Combat module used by enemy behaviors");
             combatModuleEnabled = combat?.enabled === true;
+            const combatProfilesValue = combat?.profiles;
+            const combatProfiles = combatProfilesValue === undefined
+                ? undefined
+                : inspect(combatProfilesValue, "enemyBehaviors", "modules.combat.profiles", "Combat profiles used by enemy behaviors");
             for (const [missionId, mission] of Object.entries(content.missions)) {
                 const combatProfileId = mission.mechanics?.profiles?.combat;
-                const profile = typeof combatProfileId === "string" ? combat?.profiles?.[combatProfileId] : undefined;
-                const armorTypes = profile?.armorTypes;
+                const profileValue = typeof combatProfileId === "string" && combatProfiles !== undefined
+                    ? combatProfiles[combatProfileId]
+                    : undefined;
+                const profile = typeof combatProfileId === "string" && profileValue !== undefined
+                    ? inspect(profileValue, "enemyBehaviors", `modules.combat.profiles.${combatProfileId}`, `Combat profile "${combatProfileId}" used by enemy behaviors`)
+                    : undefined;
+                const armorTypesValue = profile?.armorTypes;
+                const armorTypes = armorTypesValue === undefined
+                    ? undefined
+                    : inspect(armorTypesValue, "enemyBehaviors", `modules.combat.profiles.${combatProfileId}.armorTypes`, `Combat armor types for profile "${combatProfileId}"`);
                 const missionArmorTypeIds = new Set();
-                if (armorTypes && typeof armorTypes === "object" && !Array.isArray(armorTypes)) {
+                if (armorTypes) {
                     for (const armorTypeId of Object.keys(armorTypes)) {
                         missionArmorTypeIds.add(armorTypeId);
                         selectedCombatArmorTypeIds.add(armorTypeId);

@@ -103,6 +103,37 @@ describe("R12.1 targetable boss components recipe contract (RED)", () => {
     expect(before).toEqual(context());
   });
 
+  it.each(["defaultMissionId", "missionIds", "enemyIds", "towerIds"])(
+    "rejects an accessor-backed %s context field without executing authored code",
+    (field) => {
+      const canonical = materializeMechanicsRecipe(RECIPE_ID, context());
+      const hostile = context();
+      const authoredValue = hostile[field];
+      let getterCalls = 0;
+      Object.defineProperty(hostile, field, {
+        enumerable: true,
+        configurable: true,
+        get() {
+          getterCalls += 1;
+          return authoredValue;
+        }
+      });
+
+      let thrown;
+      try {
+        materializeMechanicsRecipe(RECIPE_ID, hostile);
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(getterCalls).toBe(0);
+      expect(thrown).toBeInstanceOf(MechanicsRecipeParameterError);
+      expect(thrown).toMatchObject({ code: "mechanics_recipe_context_invalid" });
+      expect(thrown.message).toMatch(new RegExp(`${field}.*own data|own data.*${field}|${field}.*accessor`, "i"));
+      expect(materializeMechanicsRecipe(RECIPE_ID, context())).toEqual(canonical);
+    }
+  );
+
   it("keeps the canonical starter fixture equal to the project-bound recipe", () => {
     const fixtureDir = path.resolve("docs/examples/opt-in-targetable-boss-components");
     const mechanics = JSON.parse(fs.readFileSync(path.join(fixtureDir, "mechanics.json"), "utf8"));
