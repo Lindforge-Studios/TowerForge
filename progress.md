@@ -18,6 +18,13 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   with “expected function to throw”. GREEN adds authored script/machine/state/transition provenance,
   binding-scope and queued runtime-context validation. The first constructor sign-off is invalidated
   by this source change and both roles must re-sign the repaired commit.
+- S0 second verifier RED: Constructor Integration Verifier replayed a legitimate already-consumed
+  `stateMachineTransitioned` event by rolling only `scriptEventCursor` backward; restore succeeded
+  and the next command repeated a TowerScript handler side effect. The final contract therefore
+  requires every public checkpoint to represent a fully drained script event queue
+  (`scriptEventCursor === lastEvents.length`) while still validating persisted historical transition
+  provenance. The authored cursor-rollback regression and the impossible-provenance regression are
+  GREEN in the 136/136 focused checkpoint/HFSM/R10 suite. Both earlier sign-offs are invalidated.
 
 - R0–R2 and R3.1–R3.4a are complete with independent code and constructor-integration sign-off.
 - R3.4a opt-in physics v1 is complete through engine, validation, Studio Mechanics Hub, MCP/AI, recipes, shared renderer projection, Canvas/Phaser × hex/square builds, packages, plugin runtime, reference fixture, and documentation.

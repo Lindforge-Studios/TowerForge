@@ -1668,6 +1668,48 @@ describe("TowerDefenseGame", () => {
     expect(() => TowerDefenseGame.fromCheckpoint({ content, checkpoint }))
       .toThrow(/state machine|transition|event|unknown/i);
   });
+
+  it("rejects replaying an authored state-machine transition by rolling back only the event cursor", () => {
+    const content = buildContent({
+      scripts: {
+        replay_probe: {
+          schemaVersion: 7,
+          id: "replay_probe",
+          bindings: [],
+          handlers: {},
+          stateMachines: [{
+            schemaVersion: 1,
+            id: "probe_machine",
+            bindings: [{ scope: "global" }],
+            initial: "idle",
+            states: [{
+              id: "idle",
+              transitions: [{ id: "arm", event: "waveStarted", target: "/armed" }]
+            }, { id: "armed" }]
+          }]
+        }
+      }
+    });
+    const game = new TowerDefenseGame({ missionId: "basic", content, seed: "replayed-transition-event" });
+    expect(game.startNextWave()).toEqual({ ok: true });
+    const checkpoint = JSON.parse(JSON.stringify(game.createCheckpoint())) as GameCheckpointV1;
+    const transitionIndex = checkpoint.state.lastEvents.findIndex((event) => event.type === "stateMachineTransitioned");
+    expect(transitionIndex).toBeGreaterThanOrEqual(0);
+    const mutable = checkpoint as unknown as {
+      state: GameCheckpointV1["state"] & { scriptEventCursor: number };
+      stateDigest: string;
+    };
+    mutable.state.scriptEventCursor = transitionIndex;
+    mutable.stateDigest = computeCheckpointStateDigest(
+      checkpoint.contentDigest,
+      checkpoint.identity,
+      checkpoint.rng,
+      checkpoint.state
+    );
+
+    expect(() => TowerDefenseGame.fromCheckpoint({ content, checkpoint }))
+      .toThrow(/queued|transition|event cursor/i);
+  });
 });
 
 describe("deferred death near the core (regression)", () => {

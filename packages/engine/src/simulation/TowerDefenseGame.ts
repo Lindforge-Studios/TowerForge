@@ -6002,7 +6002,6 @@ export class TowerDefenseGame {
       unlockedSkillIds: string[];
     } | undefined;
     const checkpointTransitionEvents: Array<{
-      index: number;
       scriptId: string;
       machineId: string;
       contextId: string;
@@ -6011,7 +6010,7 @@ export class TowerDefenseGame {
       toStatePath: string;
     }> = [];
     const checkpointEvents = array(state.lastEvents, "lastEvents");
-    for (const [eventIndex, value] of checkpointEvents.entries()) {
+    for (const value of checkpointEvents) {
       const base = checkpointObjectDescriptors(value, "Game checkpoint last event");
       const type = stringValue(checkpointDataField(base, "type", "last event"), "last event type");
       const schema = eventSchemas[type];
@@ -6119,7 +6118,6 @@ export class TowerDefenseGame {
       }
       if (type === "stateMachineTransitioned") {
         checkpointTransitionEvents.push({
-          index: eventIndex,
           scriptId: stringValue(checkpointDataField(event, "scriptId", type), `${type}.scriptId`),
           machineId: stringValue(checkpointDataField(event, "machineId", type), `${type}.machineId`),
           contextId: stringValue(checkpointDataField(event, "contextId", type), `${type}.contextId`),
@@ -7198,17 +7196,15 @@ export class TowerDefenseGame {
       }
     }
     const eventCursor = integer(state.scriptEventCursor, "scriptEventCursor");
-    if (eventCursor > state.lastEvents.length) throw new Error("Game checkpoint script event cursor is invalid.");
+    if (eventCursor !== state.lastEvents.length) {
+      throw new Error("Game checkpoint script event cursor must point past the fully drained event queue.");
+    }
     integer(state.scriptActionsRemaining, "scriptActionsRemaining", 0);
     if (state.scriptActionsRemaining > TOWER_SCRIPT_LIMITS.actionsPerTransaction) throw new Error("Game checkpoint action budget is invalid.");
     integer(state.scriptTerrainChangesRemaining, "scriptTerrainChangesRemaining", 0);
     if (state.scriptTerrainChangesRemaining > TOWER_SCRIPT_LIMITS.terrainChangesPerTransaction) throw new Error("Game checkpoint terrain budget is invalid.");
     integer(state.scriptSignalDepth, "scriptSignalDepth", 0);
     if (state.scriptSignalDepth > TOWER_SCRIPT_LIMITS.signalRecursionDepth) throw new Error("Game checkpoint signal depth is invalid.");
-    const checkpointMachineRuntimes = new Map<
-      string,
-      Map<string, Map<string, TowerScriptMachineRuntimeStateV1>>
-    >();
     if (requiresScriptMachinesCheckpoint) {
       const machineCheckpoint = closed(
         state.scriptMachines,
@@ -7234,8 +7230,6 @@ export class TowerDefenseGame {
         throw new Error("Game checkpoint TowerScript machine script ids are not canonical.");
       }
       for (const script of checkpointStateMachines) {
-        const scriptRuntime = new Map<string, Map<string, TowerScriptMachineRuntimeStateV1>>();
-        checkpointMachineRuntimes.set(script.id, scriptRuntime);
         const machines = checkpointObjectDescriptors(
           checkpointDataField(scriptValues, script.id, "TowerScript machine values"),
           `Game checkpoint TowerScript machines for ${script.id}`
@@ -7245,8 +7239,6 @@ export class TowerDefenseGame {
           throw new Error(`Game checkpoint TowerScript machine ids for "${script.id}" are not canonical.`);
         }
         for (const machine of definitions) {
-          const machineRuntime = new Map<string, TowerScriptMachineRuntimeStateV1>();
-          scriptRuntime.set(machine.id, machineRuntime);
           const contexts = checkpointObjectDescriptors(
             checkpointDataField(machines, machine.id, "TowerScript machine values"),
             `Game checkpoint TowerScript contexts for ${script.id}/${machine.id}`
@@ -7285,16 +7277,10 @@ export class TowerDefenseGame {
             if (enteredAt > state.missionElapsed) {
               throw new Error("Game checkpoint TowerScript machine enteredAt is in the future.");
             }
-            const transitionCount = integer(
+            integer(
               checkpointDataField(runtime, "transitionCount", "TowerScript machine runtime"),
               "TowerScript machine transitionCount"
             );
-            machineRuntime.set(contextId, {
-              schemaVersion: 1,
-              activeStatePath,
-              enteredAt,
-              transitionCount
-            });
           }
         }
       }
@@ -7314,15 +7300,6 @@ export class TowerDefenseGame {
       const scope = separator < 0 ? "" : transitionEvent.contextId.slice(0, separator);
       if (!machine.bindings.some((binding) => binding.scope === scope)) {
         throw new Error("Game checkpoint state-machine transition event context is outside machine bindings.");
-      }
-      if (transitionEvent.index >= eventCursor) {
-        const runtime = checkpointMachineRuntimes
-          .get(transitionEvent.scriptId)
-          ?.get(transitionEvent.machineId)
-          ?.get(transitionEvent.contextId);
-        if (!runtime || runtime.transitionCount < 1 || runtime.activeStatePath !== transitionEvent.toStatePath) {
-          throw new Error("Game checkpoint queued state-machine transition event has no matching runtime context.");
-        }
       }
     }
   }
