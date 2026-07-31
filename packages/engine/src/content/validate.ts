@@ -112,6 +112,12 @@ import {
   preflightHeroAuraDamageFinite
 } from "../run/campaign-battle-policy.js";
 import { MAX_MODIFIERS_PER_RESOLUTION } from "../simulation/modifiers.js";
+import {
+  ArsenalProfileValidationError,
+  compileArsenalBlueprintV1,
+  normalizeArsenalProfileV1
+} from "./arsenal-mechanics.js";
+import { resolveActiveRogueliteMechanics } from "./roguelite-mechanics.js";
 
 /**
  * `code` is a STABLE, machine-branchable identifier — derived automatically from
@@ -6685,6 +6691,78 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
         error instanceof Error ? error.message : "World campaign is invalid."
       );
     }
+  }
+
+  // R14 arsenal profiles are structurally validated even while disabled. Cross references are
+  // warnings until a mission selects the profile, preserving the opt-in authoring contract.
+  try {
+    const modulesDescriptor = Object.getOwnPropertyDescriptor(content.mechanics, "modules");
+    const modulesValue = modulesDescriptor?.enumerable && "value" in modulesDescriptor ? modulesDescriptor.value : undefined;
+    const arsenalDescriptor = modulesValue && typeof modulesValue === "object"
+      ? Object.getOwnPropertyDescriptor(modulesValue, "arsenal")
+      : undefined;
+    const arsenalValue = arsenalDescriptor?.enumerable && "value" in arsenalDescriptor ? arsenalDescriptor.value : undefined;
+    if (arsenalValue !== undefined) {
+      const root = Object.getOwnPropertyDescriptors(arsenalValue as object);
+      const version = root.schemaVersion?.enumerable && "value" in root.schemaVersion ? root.schemaVersion.value : undefined;
+      const enabled = root.enabled?.enumerable && "value" in root.enabled ? root.enabled.value : undefined;
+      const profilesValue = root.profiles?.enumerable && "value" in root.profiles ? root.profiles.value : undefined;
+      if (version === 1 && profilesValue && typeof profilesValue === "object" && !Array.isArray(profilesValue)) {
+        const profiles = Object.getOwnPropertyDescriptors(profilesValue);
+        for (const profileId of Object.keys(profiles).sort()) {
+          const descriptor = profiles[profileId];
+          if (!descriptor?.enumerable || !("value" in descriptor)) {
+            err("mechanics", "arsenal", `modules.arsenal.profiles.${profileId}`, "Arsenal profiles must be enumerable own data.");
+            continue;
+          }
+          try {
+            const profile = normalizeArsenalProfileV1(descriptor.value);
+            const selectedMissionIds = Object.keys(content.missions).filter((missionId) => (
+              content.missions[missionId]?.mechanics?.profiles?.arsenal === profileId
+            ));
+            const semantic = enabled === true && selectedMissionIds.length > 0 ? err : warn;
+            for (const towerTypeId of Object.keys(profile.blueprints)) {
+              if (!towerIds.has(towerTypeId)) {
+                semantic("mechanics", "arsenal", `modules.arsenal.profiles.${profileId}.blueprints.${towerTypeId}`, `Arsenal blueprint references unknown tower "${towerTypeId}".`);
+                continue;
+              }
+              try {
+                compileArsenalBlueprintV1(profile, towerTypeId);
+              } catch (error) {
+                semantic("mechanics", "arsenal", `modules.arsenal.profiles.${profileId}.blueprints.${towerTypeId}.defaultModules`, error instanceof Error ? error.message : "Arsenal blueprint is incompatible.");
+              }
+            }
+            for (const missionId of selectedMissionIds) {
+              const artifactDefinitions = resolveActiveRogueliteMechanics(content, missionId)?.artifacts?.definitions;
+              for (const [recipeId, recipe] of Object.entries(profile.craftingRecipes)) {
+                const referencedArtifactIds = new Set([
+                  recipe.outputArtifactId,
+                  ...recipe.pattern.map((cell) => cell.artifactId)
+                ]);
+                for (const artifactId of [...referencedArtifactIds].sort()) {
+                  if (artifactDefinitions && Object.prototype.hasOwnProperty.call(artifactDefinitions, artifactId)) continue;
+                  semantic(
+                    "mechanics",
+                    "arsenal",
+                    `modules.arsenal.profiles.${profileId}.craftingRecipes.${recipeId}`,
+                    `Arsenal recipe "${recipeId}" references artifact "${artifactId}" unavailable in mission "${missionId}".`
+                  );
+                }
+              }
+            }
+          } catch (error) {
+            err(
+              "mechanics",
+              "arsenal",
+              `modules.arsenal.profiles.${profileId}`,
+              error instanceof ArsenalProfileValidationError ? error.message : "Arsenal profile is invalid."
+            );
+          }
+        }
+      }
+    }
+  } catch {
+    err("mechanics", "arsenal", "modules.arsenal", "Arsenal module could not be inspected safely.");
   }
 
   return {

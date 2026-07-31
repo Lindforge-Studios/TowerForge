@@ -10,7 +10,7 @@ import {
   recordCampaignBattleVictory,
   serializePlayerProfile,
   validateGameContentRegistry,
-  type CampaignRunV1,
+  type CampaignRunV2,
   type GameContentInput,
   type GameContentRegistry
 } from "../index.js";
@@ -20,14 +20,14 @@ type StructuralChoiceResult = Readonly<{
   code: string;
   nodeId?: string;
   choiceId?: string;
-  run: CampaignRunV1;
+  run: CampaignRunV2;
   newlyAvailableNodeIds?: readonly string[];
 }>;
 
 type StructuralChoiceApi = {
   normalizeAuthoredWorldCampaignV2(value: unknown, content?: GameContentRegistry): unknown;
   resolveCampaignStructuralChoice(
-    run: CampaignRunV1,
+    run: CampaignRunV2,
     content: GameContentRegistry,
     nodeId: string,
     choiceId: string
@@ -269,7 +269,7 @@ function progressedRun(
   nodeId: string,
   runResources: Record<string, number> = {},
   withPortableEntries = false
-): CampaignRunV1 {
+): CampaignRunV2 {
   return decodeCampaignRun({
     ...createCampaignRun("campaign-seed"),
     nodeId,
@@ -296,8 +296,8 @@ function reverseV2SourceOrder(): unknown {
   return graph;
 }
 
-function statefulRunProxy(first: CampaignRunV1, substituted: CampaignRunV1): {
-  readonly proxy: CampaignRunV1;
+function statefulRunProxy(first: CampaignRunV2, substituted: CampaignRunV2): {
+  readonly proxy: CampaignRunV2;
   readonly descriptorPasses: () => number;
   readonly valueReads: () => number;
 } {
@@ -317,7 +317,7 @@ function statefulRunProxy(first: CampaignRunV1, substituted: CampaignRunV1): {
       valueReads += 1;
       throw new Error("ordinary proxy value read");
     }
-  }) as CampaignRunV1;
+  }) as CampaignRunV2;
   return { proxy, descriptorPasses: () => descriptorPasses, valueReads: () => valueReads };
 }
 
@@ -497,7 +497,7 @@ describe("R4.4B structural-node run-resource reducer", () => {
     });
   });
 
-  it("preserves deck/artifact order and returns a canonical portable v1 run", () => {
+  it("preserves deck/artifact order and returns a canonical portable v2 run", () => {
     const resolveChoice = requiredApi("resolveCampaignStructuralChoice");
     const before = progressedRun("battle_start", {}, true);
     const result = resolveChoice(before, content(), "event_offer", "gift");
@@ -505,7 +505,7 @@ describe("R4.4B structural-node run-resource reducer", () => {
     expect(result.run.seed).toBe(before.seed);
     expect(result.run.deck).toEqual(before.deck);
     expect(result.run.artifacts).toEqual(before.artifacts);
-    expect(result.run.version).toBe(1);
+    expect(result.run.version).toBe(2);
     const exported = exportCampaignRun(result.run);
     expect(exportCampaignRun(importCampaignRun(exported).run)).toBe(exported);
     expect(Engine.validateCampaignRunAgainstContent(importCampaignRun(exported).run, content())).toMatchObject({ ok: true });
@@ -555,8 +555,8 @@ describe("R4.4B structural-node run-resource reducer", () => {
     });
     const malformed = {
       ...structuredClone(createCampaignRun("campaign-seed")),
-      version: 2
-    } as unknown as CampaignRunV1;
+      arsenal: { moduleInventory: [], hidden: true }
+    } as unknown as CampaignRunV2;
     expect(resolveChoice(malformed, content(), "event_offer", "gift")).toEqual({
       ok: false,
       code: "invalid_run",

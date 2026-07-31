@@ -5,7 +5,7 @@ import {
   createEmptyPlayerProfile,
   createGameContentRegistry,
   validateGameContentRegistry,
-  type CampaignRunV1,
+  type CampaignRunV2,
   type GameContentInput,
   type GameContentRegistry,
   type PlayerProfileV3,
@@ -15,10 +15,10 @@ import {
 type CampaignApi = {
   normalizeLegacyWorldCampaignV1(worldMap: WorldMapCatalog): unknown;
   resolveWorldCampaign(content: GameContentRegistry): unknown;
-  validateCampaignRunAgainstContent(run: CampaignRunV1, content: GameContentRegistry): unknown;
-  getAvailableCampaignNodeIds(run: CampaignRunV1, content: GameContentRegistry): readonly string[];
+  validateCampaignRunAgainstContent(run: CampaignRunV2, content: GameContentRegistry): unknown;
+  getAvailableCampaignNodeIds(run: CampaignRunV2, content: GameContentRegistry): readonly string[];
   recordCampaignBattleVictory(
-    run: CampaignRunV1,
+    run: CampaignRunV2,
     profile: PlayerProfileV3,
     content: GameContentRegistry,
     nodeId: string,
@@ -206,8 +206,8 @@ function reverseAuthoredOrder(value: GameContentInput): GameContentInput {
   return cloned;
 }
 
-function statefulCampaignRunProxy(first: CampaignRunV1, substituted: object): {
-  readonly proxy: CampaignRunV1;
+function statefulCampaignRunProxy(first: CampaignRunV2, substituted: object): {
+  readonly proxy: CampaignRunV2;
   readonly descriptorPasses: () => number;
   readonly valueReads: () => number;
 } {
@@ -227,7 +227,7 @@ function statefulCampaignRunProxy(first: CampaignRunV1, substituted: object): {
       valueReads += 1;
       throw new Error("ordinary proxy value read");
     }
-  }) as CampaignRunV1;
+  }) as CampaignRunV2;
   return { proxy, descriptorPasses: () => descriptorPasses, valueReads: () => valueReads };
 }
 
@@ -402,10 +402,10 @@ describe("R4.4A campaign authoring and graph contracts", () => {
   });
 });
 
-describe("R4.4A CampaignRunV1 content semantics and reducers", () => {
+describe("R4.4A CampaignRunV2 content semantics and reducers", () => {
   it("captures each hostile CampaignRun once and uses only the detached value", () => {
     const registry = content();
-    const first = structuredClone(createCampaignRun("seed")) as CampaignRunV1;
+    const first = structuredClone(createCampaignRun("seed")) as CampaignRunV2;
     const substituted = { ...first, version: 2, nodeId: "boss_end" };
 
     const validationSubject = statefulCampaignRunProxy(first, substituted);
@@ -463,7 +463,7 @@ describe("R4.4A CampaignRunV1 content semantics and reducers", () => {
       run,
       campaign: { source: "authored", rogueliteProfileId: "run" }
     });
-    const forged = { ...run, nodeId: "unknown_node" } as CampaignRunV1;
+    const forged = { ...run, nodeId: "unknown_node" } as CampaignRunV2;
     expect(api().validateCampaignRunAgainstContent(forged, registry)).toEqual({
       ok: false,
       code: "unknown_node",
@@ -475,7 +475,7 @@ describe("R4.4A CampaignRunV1 content semantics and reducers", () => {
   it("returns binary-sorted entry/direct-successor choices and never mutates the run or authored graph", () => {
     const registry = content();
     const fresh = createCampaignRun("seed");
-    const progressed = { ...fresh, nodeId: "battle_start" } as CampaignRunV1;
+    const progressed = { ...fresh, nodeId: "battle_start" } as CampaignRunV2;
     const before = structuredClone(registry.worldMap);
     expect(api().getAvailableCampaignNodeIds(fresh, registry)).toEqual(["battle_start"]);
     expect(api().getAvailableCampaignNodeIds(progressed, registry)).toEqual(["elite_frost", "event_offer"]);
@@ -533,7 +533,7 @@ describe("R4.4A CampaignRunV1 content semantics and reducers", () => {
       expect(result, label).toEqual({ ok: false, code, run, profile });
     }
 
-    const afterStart = { ...run, nodeId: "battle_start" } as CampaignRunV1;
+    const afterStart = { ...run, nodeId: "battle_start" } as CampaignRunV2;
     expect(api().recordCampaignBattleVictory(afterStart, profile, active, "event_offer", 0)).toEqual({
       ok: false,
       code: "node_type_not_implemented",

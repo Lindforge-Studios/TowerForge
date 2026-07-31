@@ -1,7 +1,7 @@
 import type { GameSeed } from "../simulation/rng.js";
 import { canonicalStringify } from "../simulation/stable-digest.js";
 
-export const CAMPAIGN_RUN_SCHEMA_VERSION = 1 as const;
+export const CAMPAIGN_RUN_SCHEMA_VERSION = 2 as const;
 
 export const CAMPAIGN_RUN_LIMITS = Object.freeze({
   jsonBytes: 1_048_576,
@@ -23,7 +23,7 @@ export interface CampaignRunArtifactEntryV1 {
 }
 
 export interface CampaignRunV1 {
-  readonly version: typeof CAMPAIGN_RUN_SCHEMA_VERSION;
+  readonly version: 1;
   readonly seed: GameSeed;
   readonly nodeId: string | null;
   readonly deck: readonly CampaignRunDeckEntryV1[];
@@ -31,8 +31,27 @@ export interface CampaignRunV1 {
   readonly runResources: Readonly<Record<string, number>>;
 }
 
-export type CampaignRun = CampaignRunV1;
-export type CampaignRunSource = "v1";
+export interface CampaignRunModuleInventoryEntryV2 {
+  readonly instanceId: string;
+  readonly moduleId: string;
+}
+
+export interface CampaignRunArsenalV2 {
+  readonly moduleInventory: readonly CampaignRunModuleInventoryEntryV2[];
+}
+
+export interface CampaignRunV2 {
+  readonly version: typeof CAMPAIGN_RUN_SCHEMA_VERSION;
+  readonly seed: GameSeed;
+  readonly nodeId: string | null;
+  readonly deck: readonly CampaignRunDeckEntryV1[];
+  readonly artifacts: readonly CampaignRunArtifactEntryV1[];
+  readonly runResources: Readonly<Record<string, number>>;
+  readonly arsenal: CampaignRunArsenalV2;
+}
+
+export type CampaignRun = CampaignRunV1 | CampaignRunV2;
+export type CampaignRunSource = "v1" | "v2";
 
 export interface CampaignRunMigration {
   readonly id: string;
@@ -40,7 +59,7 @@ export interface CampaignRunMigration {
 }
 
 export interface DecodedCampaignRun {
-  readonly run: CampaignRunV1;
+  readonly run: CampaignRunV2;
   readonly source: CampaignRunSource;
   readonly migrations: readonly CampaignRunMigration[];
 }
@@ -59,11 +78,19 @@ export class UnsupportedCampaignRunVersionError extends Error {
 type DescriptorMap = Record<PropertyKey, PropertyDescriptor>;
 type Fields = ReadonlyMap<string, unknown>;
 
-const ROOT_KEYS = Object.freeze(["version", "seed", "nodeId", "deck", "artifacts", "runResources"] as const);
-const ROOT_KEY_SET = new Set<string>(ROOT_KEYS);
+const ROOT_V1_KEYS = Object.freeze(["version", "seed", "nodeId", "deck", "artifacts", "runResources"] as const);
+const ROOT_V2_KEYS = Object.freeze([...ROOT_V1_KEYS, "arsenal"] as const);
 const DECK_ENTRY_KEYS = Object.freeze(["instanceId", "cardId"] as const);
 const ARTIFACT_ENTRY_KEYS = Object.freeze(["instanceId", "artifactId"] as const);
+const ARSENAL_KEYS = Object.freeze(["moduleInventory"] as const);
+const MODULE_INVENTORY_ENTRY_KEYS = Object.freeze(["instanceId", "moduleId"] as const);
 const EMPTY_MIGRATIONS: readonly CampaignRunMigration[] = Object.freeze([]);
+const V1_TO_V2_MIGRATIONS: readonly CampaignRunMigration[] = Object.freeze([
+  Object.freeze({
+    id: "campaign-run-v1-to-v2",
+    description: "Add an empty campaign-scoped arsenal module inventory."
+  })
+]);
 
 function utf8ByteLength(value: string): number {
   let bytes = 0;
@@ -281,6 +308,29 @@ function artifactEntries(value: unknown): readonly CampaignRunArtifactEntryV1[] 
   return Object.freeze(entries);
 }
 
+function moduleInventoryEntries(value: unknown): readonly CampaignRunModuleInventoryEntryV2[] {
+  if (!Array.isArray(value)) throw new Error("Campaign run arsenal moduleInventory must be an array.");
+  const seen = new Set<string>();
+  const entries = value.map((entry, index) => {
+    const fields = objectFields(entry, `Campaign run module inventory entry ${index}`);
+    exactFields(fields, MODULE_INVENTORY_ENTRY_KEYS, `Campaign run module inventory entry ${index}`);
+    const instanceId = identifier(fields.get("instanceId"), `Campaign run module instanceId at ${index}`);
+    if (seen.has(instanceId)) throw new Error(`Campaign run module inventory contains duplicate instanceId "${instanceId}".`);
+    seen.add(instanceId);
+    return Object.freeze({
+      instanceId,
+      moduleId: identifier(fields.get("moduleId"), `Campaign run moduleId at ${index}`)
+    });
+  });
+  return Object.freeze(entries);
+}
+
+function arsenalState(value: unknown): CampaignRunArsenalV2 {
+  const fields = objectFields(value, "Campaign run arsenal");
+  exactFields(fields, ARSENAL_KEYS, "Campaign run arsenal");
+  return Object.freeze({ moduleInventory: moduleInventoryEntries(fields.get("moduleInventory")) });
+}
+
 function resourceRecord(value: unknown): Readonly<Record<string, number>> {
   const fields = objectFields(value, "Campaign run runResources");
   const resources: Record<string, number> = {};
@@ -306,59 +356,68 @@ function frozenRun(fields: {
   deck: readonly CampaignRunDeckEntryV1[];
   artifacts: readonly CampaignRunArtifactEntryV1[];
   runResources: Readonly<Record<string, number>>;
-}): CampaignRunV1 {
+  arsenal: CampaignRunArsenalV2;
+}): CampaignRunV2 {
   return Object.freeze({
     version: CAMPAIGN_RUN_SCHEMA_VERSION,
     seed: fields.seed,
     nodeId: fields.nodeId,
     deck: fields.deck,
     artifacts: fields.artifacts,
-    runResources: fields.runResources
+    runResources: fields.runResources,
+    arsenal: fields.arsenal
   });
 }
 
-function validatedRun(value: unknown): CampaignRunV1 {
+function validatedRun(value: unknown): DecodedCampaignRun {
   const captured = captureCampaignRunInput(value, true);
   const fields = objectFields(captured, "Campaign run");
-  exactFields(fields, ROOT_KEYS, "Campaign run");
   const version = fields.get("version");
-  if (version !== CAMPAIGN_RUN_SCHEMA_VERSION) {
+  if (version !== 1 && version !== CAMPAIGN_RUN_SCHEMA_VERSION) {
     throw new Error(`Invalid campaign run version "${String(version)}".`);
   }
+  exactFields(fields, version === 1 ? ROOT_V1_KEYS : ROOT_V2_KEYS, "Campaign run");
   const deck = deckEntries(fields.get("deck"));
   const artifacts = artifactEntries(fields.get("artifacts"));
   const runResources = resourceRecord(fields.get("runResources"));
-  const aggregateEntries = deck.length + artifacts.length + Object.keys(runResources).length;
+  const arsenal = version === 1
+    ? Object.freeze({ moduleInventory: Object.freeze([]) })
+    : arsenalState(fields.get("arsenal"));
+  const aggregateEntries = deck.length + artifacts.length + arsenal.moduleInventory.length
+    + Object.keys(runResources).length;
   if (aggregateEntries > CAMPAIGN_RUN_LIMITS.collectionEntries) {
     throw new Error(`Campaign run collections exceed the aggregate ${CAMPAIGN_RUN_LIMITS.collectionEntries} entry limit.`);
   }
   const rawNodeId = fields.get("nodeId");
   const nodeId = rawNodeId === null ? null : identifier(rawNodeId, "Campaign run nodeId");
-  return frozenRun({
+  const run = frozenRun({
     seed: normalizedSeed(fields.get("seed")),
     nodeId,
     deck,
     artifacts,
-    runResources
+    runResources,
+    arsenal
+  });
+  return Object.freeze({
+    run,
+    source: version === 1 ? "v1" as const : "v2" as const,
+    migrations: version === 1 ? V1_TO_V2_MIGRATIONS : EMPTY_MIGRATIONS
   });
 }
 
-export function createCampaignRun(seed: GameSeed): CampaignRunV1 {
+export function createCampaignRun(seed: GameSeed): CampaignRunV2 {
   return frozenRun({
     seed: normalizedSeed(seed),
     nodeId: null,
     deck: Object.freeze([]),
     artifacts: Object.freeze([]),
-    runResources: Object.freeze({})
+    runResources: Object.freeze({}),
+    arsenal: Object.freeze({ moduleInventory: Object.freeze([]) })
   });
 }
 
 export function decodeCampaignRun(value: unknown): DecodedCampaignRun {
-  return Object.freeze({
-    run: validatedRun(value),
-    source: "v1" as const,
-    migrations: EMPTY_MIGRATIONS
-  });
+  return validatedRun(value);
 }
 
 export function importCampaignRun(source: string): DecodedCampaignRun {
@@ -375,8 +434,8 @@ export function importCampaignRun(source: string): DecodedCampaignRun {
   return decodeCampaignRun(parsed);
 }
 
-export function exportCampaignRun(run: CampaignRunV1): string {
-  const captured = validatedRun(run);
+export function exportCampaignRun(run: CampaignRunV1 | CampaignRunV2): string {
+  const captured = validatedRun(run).run;
   return canonicalStringify(captured, {
     maxDepth: CAMPAIGN_RUN_LIMITS.maxDepth,
     maxNodes: CAMPAIGN_RUN_LIMITS.maxNodes,

@@ -34,7 +34,7 @@ R13 is not accepted yet. GitHub CI on prior head `b3069a4` passed 3,693 unit tes
 pre-browser step, then failed one of 141 Playwright tests. Trace evidence proved a fixture race
 between the completed file write and the pending guarded apply response; RED reproduced 1/12 and
 the repaired contract passed 20/20. The new exact commit still requires full gates and two fresh
-sign-offs. The owner has authorized R14 after R13; later planned items are not implemented APIs.
+sign-offs. R12/R13 are merged and R14 is the current implemented release candidate; later planned items are not implemented APIs.
 
 ## Next Planned Increments
 

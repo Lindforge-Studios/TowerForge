@@ -1074,6 +1074,10 @@ button.workbench-row:hover { background: var(--surface-2); }
 @keyframes pt-quest-cue-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
 .pt-artifact-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; }
 .pt-artifact-row .btn { min-height: 24px; padding: 2px 7px; font-size: 10px; }
+.pt-arsenal-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.pt-arsenal-controls label { display: grid; gap: 3px; color: var(--text-muted); }
+.pt-arsenal-controls select { min-width: 0; }
+.pt-arsenal-controls .btn { grid-column: 1 / -1; }
 .pt-inspector-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
 .pt-inspector-head .btn { min-height: 24px; padding: 2px 7px; font-size: 10px; }
 .pt-target-mode { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px; align-items: center; margin-top: 7px; }

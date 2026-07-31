@@ -42,6 +42,7 @@ export * from "./elevation-presentation.mjs";
 export * from "./physics-presentation.mjs";
 export * from "./terraforming-presentation.mjs";
 export * from "./roguelite-presentation.mjs";
+export * from "./arsenal-presentation.mjs";
 export * from "./campaign-presentation.mjs";
 export * from "./heroes-presentation.mjs";
 export * from "./director-presentation.mjs";

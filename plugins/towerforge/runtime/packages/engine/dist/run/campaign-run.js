@@ -1,5 +1,5 @@
 import { canonicalStringify } from "../simulation/stable-digest.js";
-export const CAMPAIGN_RUN_SCHEMA_VERSION = 1;
+export const CAMPAIGN_RUN_SCHEMA_VERSION = 2;
 export const CAMPAIGN_RUN_LIMITS = Object.freeze({
     jsonBytes: 1_048_576,
     collectionEntries: 10_000,
@@ -17,11 +17,19 @@ export class UnsupportedCampaignRunVersionError extends Error {
         this.version = version;
     }
 }
-const ROOT_KEYS = Object.freeze(["version", "seed", "nodeId", "deck", "artifacts", "runResources"]);
-const ROOT_KEY_SET = new Set(ROOT_KEYS);
+const ROOT_V1_KEYS = Object.freeze(["version", "seed", "nodeId", "deck", "artifacts", "runResources"]);
+const ROOT_V2_KEYS = Object.freeze([...ROOT_V1_KEYS, "arsenal"]);
 const DECK_ENTRY_KEYS = Object.freeze(["instanceId", "cardId"]);
 const ARTIFACT_ENTRY_KEYS = Object.freeze(["instanceId", "artifactId"]);
+const ARSENAL_KEYS = Object.freeze(["moduleInventory"]);
+const MODULE_INVENTORY_ENTRY_KEYS = Object.freeze(["instanceId", "moduleId"]);
 const EMPTY_MIGRATIONS = Object.freeze([]);
+const V1_TO_V2_MIGRATIONS = Object.freeze([
+    Object.freeze({
+        id: "campaign-run-v1-to-v2",
+        description: "Add an empty campaign-scoped arsenal module inventory."
+    })
+]);
 function utf8ByteLength(value) {
     let bytes = 0;
     for (let index = 0; index < value.length; index += 1) {
@@ -237,6 +245,29 @@ function artifactEntries(value) {
     });
     return Object.freeze(entries);
 }
+function moduleInventoryEntries(value) {
+    if (!Array.isArray(value))
+        throw new Error("Campaign run arsenal moduleInventory must be an array.");
+    const seen = new Set();
+    const entries = value.map((entry, index) => {
+        const fields = objectFields(entry, `Campaign run module inventory entry ${index}`);
+        exactFields(fields, MODULE_INVENTORY_ENTRY_KEYS, `Campaign run module inventory entry ${index}`);
+        const instanceId = identifier(fields.get("instanceId"), `Campaign run module instanceId at ${index}`);
+        if (seen.has(instanceId))
+            throw new Error(`Campaign run module inventory contains duplicate instanceId "${instanceId}".`);
+        seen.add(instanceId);
+        return Object.freeze({
+            instanceId,
+            moduleId: identifier(fields.get("moduleId"), `Campaign run moduleId at ${index}`)
+        });
+    });
+    return Object.freeze(entries);
+}
+function arsenalState(value) {
+    const fields = objectFields(value, "Campaign run arsenal");
+    exactFields(fields, ARSENAL_KEYS, "Campaign run arsenal");
+    return Object.freeze({ moduleInventory: moduleInventoryEntries(fields.get("moduleInventory")) });
+}
 function resourceRecord(value) {
     const fields = objectFields(value, "Campaign run runResources");
     const resources = {};
@@ -262,32 +293,43 @@ function frozenRun(fields) {
         nodeId: fields.nodeId,
         deck: fields.deck,
         artifacts: fields.artifacts,
-        runResources: fields.runResources
+        runResources: fields.runResources,
+        arsenal: fields.arsenal
     });
 }
 function validatedRun(value) {
     const captured = captureCampaignRunInput(value, true);
     const fields = objectFields(captured, "Campaign run");
-    exactFields(fields, ROOT_KEYS, "Campaign run");
     const version = fields.get("version");
-    if (version !== CAMPAIGN_RUN_SCHEMA_VERSION) {
+    if (version !== 1 && version !== CAMPAIGN_RUN_SCHEMA_VERSION) {
         throw new Error(`Invalid campaign run version "${String(version)}".`);
     }
+    exactFields(fields, version === 1 ? ROOT_V1_KEYS : ROOT_V2_KEYS, "Campaign run");
     const deck = deckEntries(fields.get("deck"));
     const artifacts = artifactEntries(fields.get("artifacts"));
     const runResources = resourceRecord(fields.get("runResources"));
-    const aggregateEntries = deck.length + artifacts.length + Object.keys(runResources).length;
+    const arsenal = version === 1
+        ? Object.freeze({ moduleInventory: Object.freeze([]) })
+        : arsenalState(fields.get("arsenal"));
+    const aggregateEntries = deck.length + artifacts.length + arsenal.moduleInventory.length
+        + Object.keys(runResources).length;
     if (aggregateEntries > CAMPAIGN_RUN_LIMITS.collectionEntries) {
         throw new Error(`Campaign run collections exceed the aggregate ${CAMPAIGN_RUN_LIMITS.collectionEntries} entry limit.`);
     }
     const rawNodeId = fields.get("nodeId");
     const nodeId = rawNodeId === null ? null : identifier(rawNodeId, "Campaign run nodeId");
-    return frozenRun({
+    const run = frozenRun({
         seed: normalizedSeed(fields.get("seed")),
         nodeId,
         deck,
         artifacts,
-        runResources
+        runResources,
+        arsenal
+    });
+    return Object.freeze({
+        run,
+        source: version === 1 ? "v1" : "v2",
+        migrations: version === 1 ? V1_TO_V2_MIGRATIONS : EMPTY_MIGRATIONS
     });
 }
 export function createCampaignRun(seed) {
@@ -296,15 +338,12 @@ export function createCampaignRun(seed) {
         nodeId: null,
         deck: Object.freeze([]),
         artifacts: Object.freeze([]),
-        runResources: Object.freeze({})
+        runResources: Object.freeze({}),
+        arsenal: Object.freeze({ moduleInventory: Object.freeze([]) })
     });
 }
 export function decodeCampaignRun(value) {
-    return Object.freeze({
-        run: validatedRun(value),
-        source: "v1",
-        migrations: EMPTY_MIGRATIONS
-    });
+    return validatedRun(value);
 }
 export function importCampaignRun(source) {
     if (typeof source !== "string")
@@ -322,7 +361,7 @@ export function importCampaignRun(source) {
     return decodeCampaignRun(parsed);
 }
 export function exportCampaignRun(run) {
-    const captured = validatedRun(run);
+    const captured = validatedRun(run).run;
     return canonicalStringify(captured, {
         maxDepth: CAMPAIGN_RUN_LIMITS.maxDepth,
         maxNodes: CAMPAIGN_RUN_LIMITS.maxNodes,

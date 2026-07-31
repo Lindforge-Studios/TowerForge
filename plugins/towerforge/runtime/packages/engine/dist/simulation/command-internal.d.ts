@@ -1,8 +1,8 @@
 import type { TowerScriptJson } from "../scripting/types.js";
 import type { TowerDefenseGame } from "./TowerDefenseGame.js";
 import { type ActionResult, type GridCoord, type MissionAbilityId, type TowerTargetMode } from "./types.js";
-export declare const GAME_COMMAND_SCHEMA_VERSION: 6;
-export declare const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS: readonly [1, 2, 3, 4, 5, 6];
+export declare const GAME_COMMAND_SCHEMA_VERSION: 7;
+export declare const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS: readonly [1, 2, 3, 4, 5, 6, 7];
 export type GameCommandV1 = {
     readonly schemaVersion: 1;
     readonly type: "tick";
@@ -129,7 +129,26 @@ export type GameCommandV6 = WithCommandSchemaVersion<GameCommandV5, 6> | {
     readonly heroId: string;
     readonly skillId: string;
 };
-export type GameCommand = GameCommandV1 | GameCommandV2 | GameCommandV3 | GameCommandV4 | GameCommandV5 | GameCommandV6;
+export type GameCommandV7 = WithCommandSchemaVersion<GameCommandV6, 7> | {
+    readonly schemaVersion: 7;
+    readonly type: "configureTowerModules";
+    readonly towerId: string;
+    readonly modules: {
+        readonly base: string;
+        readonly barrel: string;
+        readonly core: string;
+    };
+} | {
+    readonly schemaVersion: 7;
+    readonly type: "craftGem";
+    readonly recipeId: string;
+    readonly cells: readonly {
+        readonly x: number;
+        readonly y: number;
+        readonly artifactInstanceId: string;
+    }[];
+};
+export type GameCommand = GameCommandV1 | GameCommandV2 | GameCommandV3 | GameCommandV4 | GameCommandV5 | GameCommandV6 | GameCommandV7;
 export declare function invalidGameCommandResult(): ActionResult;
 /**
  * Strict descriptor-safe parser shared by direct dispatch and command journals.

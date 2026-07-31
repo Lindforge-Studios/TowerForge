@@ -1,6 +1,6 @@
 # TowerForge — Roadmap расширяемых механик
 
-Последняя проверка: 2026-07-31
+Последняя проверка: 2026-08-01
 
 Цель программы — расширить TowerForge от классического TD до набора совместимых жанровых механик,
 не меняя поведение существующих проектов. Gameplay-модули являются opt-in: разработчик добавляет
@@ -53,31 +53,30 @@ service. Нет соответствующего выбора или локал�
 | R9 — TowerScript DX 3.0 | Завершён и слит; code + constructor sign-off; ADR Accepted | TowerScript v7 Behavior Tree/HFSM, Graph/Trace/Debugger v2, guarded Studio/MCP surfaces и неизменный v1–v6 legacy path прошли обязательные gates |
 | R10 — Persona QA и Procedural Quests | Завершён и слит; code + constructor sign-off; ADR Accepted | Pure три-persona QA + opt-in `quests` v1 с CLI/Studio/MCP, renderer/player, packages и fixture |
 | R11 — Procedural Juice Engine | Завершён и слит; code + constructor sign-off; ADR Accepted | Opt-in visuals v3: deterministic particle/audio/camera plans, shared Canvas/Phaser surfaces, Studio/MCP authoring и неизменный gameplay/legacy path |
-| R12 — Advanced Enemy Behaviors | Реализация завершена; PR #23 открыт и CI green; code + constructor sign-off; ADR Proposed | Targetable boss components, schema-v7 component events/HFSM context, bounded formation steering, vanguard protection и unchanged legacy path |
+| R12 — Advanced Enemy Behaviors | Завершён и слит; code + constructor sign-off; ADR Accepted | Targetable boss components, schema-v7 component events/HFSM context, bounded formation steering, vanguard protection и unchanged legacy path |
 | R13.1 — projectile foundation | Реализация завершена; ADR Accepted | Separate opt-in `ballistics` v1, authoritative fixed-tick direct/arc projectiles, active-only state and shared Canvas/Phaser projection |
 | R13.2 — arc clearance | Реализация завершена; ADR Accepted | Optional tag/height blockers, canonical launch-time topology trace, checkpoint inner v2 and authoritative blocked-event projection |
 | R13.3 — bounded ricochet | Реализация завершена; ADR Accepted | Closed terrain/armor surfaces, topology-owned bounded reflection, checkpoint inner v3 and shared authoritative event projection |
 | R13.4 — destructible environment | Реализация завершена; ADR Accepted | Targetable map-object HP/armor, atomic persistent terrain mutation, Ballistics snapshot v2/checkpoint inner v4, guarded five-file authoring and shared Canvas/Phaser projection |
 | R13.5 — deterministic Weather | Реализация завершена; ADR Accepted | Independent opt-in `weather` v1, seeded schedule, bounded effects, active-only state and shared Canvas/Phaser projection |
-| R13 | Ожидает принятия; stacked PR #24 содержит RED/GREEN-исправление browser race | Regression воспроизведён 1/12 и после исправления прошёл 20/20; до merge нужны exact-commit CI и оба повторных sign-off |
-| R14 — Gem Crafting & Modular Arsenal | Разрешён владельцем; начинается после merge R13 | CampaignRunV2 отдельно от arsenal content; затем author-time blueprints, runtime assembly, gem crafting и constructor surfaces |
+| R13 | Завершён и слит; exact-commit CI green; code + constructor sign-off; ADR Accepted | PR #24 merged as `318671c`; browser-race regression прошёл 20/20 и remote CI завершился SUCCESS |
+| R14 — Gem Crafting & Modular Arsenal | Реализован; release-candidate v0.5.0 | CampaignRunV2, opt-in Arsenal v1, GameCommand/Journal v7, runtime assembly, atomic gem crafting и Studio/MCP/Canvas/Phaser surfaces |
 | R15 — Deterministic Macro-Economy | Запланирован; пауза, работа не начата | Independent `macroEconomy` v1 slices: seeded local market, explicit deposits, atomic rituals |
 | R16 — Ghost Replay Lab | Запланирован; пауза, работа не начата | Binary replay archive, detached ghost, immutable What-If branches и отдельный reference relay |
 | R17 — Web Publish, Remix & Monetization | Запланирован; пауза, работа не начата | Reproducible publish manifest, provider adapters, licensed remix provenance и host-only monetization hooks |
 
 ### Delivery snapshot на 2026-07-31
 
-- Последний опубликованный desktop pre-release — [`v0.4.0`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.4.0) на source commit `f07a403`; он включает R0–R8.
-- `main` находится на `e505e4f` и включает слитые R9, R10 и R11.
-- [`PR #23`](https://github.com/Lindforge-Studios/TowerForge/pull/23) (`codex/r12-advanced-enemies`, `2311d64`) основан на `main`, открыт и имеет успешный обязательный CI.
-- [`PR #24`](https://github.com/Lindforge-Studios/TowerForge/pull/24) (`codex/r13-ballistics-weather`) stacked на R12. Предыдущий commit прошёл unit 3,693/3,693 и все CI steps, кроме Playwright 140/141. Трассировка показала гонку фикстуры: внешнее future-version изменение иногда обгоняло завершение предыдущего guarded apply. RED — 1/12, GREEN после ожидания точного response — 20/20. Кандидат ожидает повторный CI/sign-off.
-- 1 августа владелец явно разрешил merge R12/R13, полную реализацию R14 и новый release. R15–R17 остаются вне этой поставки.
+- Последний прежний desktop pre-release — [`v0.4.0`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.4.0) на source commit `f07a403`; он включает R0–R8.
+- R12 PR #23 и R13 PR #24 слиты в `main`; R13 exact-commit CI run `30655702863` завершился SUCCESS.
+- Ветка R14 готовит `v0.5.0`: CampaignRunV2, `arsenal` v1, GameCommand/Journal v7, engine-owned compiler, runtime module management, exact gem crafting и все constructor surfaces.
+- R15–R17 остаются вне `v0.5.0` и не реализуются в этой поставке.
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Сейчас исполнимыми являются только
 версии, перечисленные в [ARCHITECTURE.md](../ARCHITECTURE.md): наличие planned descriptor или
-roadmap-строки не считается capability. R14 `arsenal`, R15 `macroEconomy` и любые R16/R17 contracts
-ещё не существуют; Studio/MCP/player не должны показывать их как доступные и не должны создавать
-их данные.
+roadmap-строки не считается capability. R14 `arsenal` теперь является реализованным opt-in
+capability; R15 `macroEconomy` и любые R16/R17 contracts ещё не существуют и не должны появляться
+в Studio/MCP/player как доступные.
 
 ## Порядок поставки
 
@@ -926,8 +925,8 @@ R17 является distribution-track после gameplay и replay milestones
    placements вне engine. Rewarded gameplay rewards, payment keys, hidden telemetry и real-money
    balance исключены из v1.
 
-R14–R17 сейчас запланированы и остановлены до отдельной команды владельца; ни один их public
-contract ещё не считается реализованным или доступным агентам.
+R14 реализован. R15–R17 остаются запланированными и остановлены до отдельной команды владельца;
+их public contracts ещё не считаются реализованными или доступными агентам.
 
 ## TDD и роли
 

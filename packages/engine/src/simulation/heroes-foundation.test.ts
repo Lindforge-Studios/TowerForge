@@ -209,8 +209,8 @@ describe("R5.1A static hero runtime foundation", () => {
   );
 
   it("keeps checkpoint, events, TowerScript, and RNG stable while hero skills own command v6", () => {
-    expect(Engine.GAME_COMMAND_SCHEMA_VERSION).toBe(6);
-    expect(Engine.GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(Engine.GAME_COMMAND_SCHEMA_VERSION).toBe(7);
+    expect(Engine.GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS).toEqual([1, 2, 3, 4, 5, 6, 7]);
     expect(Engine.GAME_CHECKPOINT_SCHEMA_VERSION).toBe(1);
     expect(Engine.SIMULATION_ENGINE_VERSION).toBe("towerforge-sim-v2");
     expect(Engine.TOWER_SCRIPT_SCHEMA.actions).not.toHaveProperty("moveHero");

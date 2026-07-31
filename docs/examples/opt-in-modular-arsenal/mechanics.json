@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "roguelite": {
+      "schemaVersion": 2,
+      "enabled": true,
+      "profiles": {
+        "arsenal_gems": {
+          "synergies": {},
+          "artifacts": {
+            "definitions": {
+              "ruby_t1": { "label": "Ruby I", "slotType": "gem", "modifiers": [] },
+              "ruby_t2": { "label": "Ruby II", "slotType": "gem", "modifiers": [] }
+            },
+            "towerSlots": {
+              "cannon_tower": [{ "slotId": "gem", "slotType": "gem" }]
+            },
+            "bossLootTables": {}
+          }
+        }
+      }
+    },
+    "arsenal": {
+      "schemaVersion": 1,
+      "enabled": true,
+      "profiles": {
+        "basic_modular_arsenal": {
+          "modules": {
+            "cannon_base": {
+              "label": "Reinforced base",
+              "category": "base",
+              "compatibilityTags": ["cannon"],
+              "modifiers": { "damageMultiplier": 1, "rangeMultiplier": 1, "durabilityMultiplier": 1.25 }
+            },
+            "cannon_barrel": {
+              "label": "Long barrel",
+              "category": "barrel",
+              "compatibilityTags": ["cannon"],
+              "modifiers": { "damageMultiplier": 1.15, "rangeMultiplier": 1.2, "durabilityMultiplier": 1 }
+            },
+            "cannon_core": {
+              "label": "Standard core",
+              "category": "core",
+              "compatibilityTags": ["cannon"],
+              "modifiers": { "damageMultiplier": 1, "rangeMultiplier": 1, "durabilityMultiplier": 1 }
+            }
+          },
+          "blueprints": {
+            "cannon_tower": {
+              "compatibilityTags": ["cannon"],
+              "footprint": [{ "q": 0, "r": 0 }],
+              "defaultModules": { "base": "cannon_base", "barrel": "cannon_barrel", "core": "cannon_core" }
+            }
+          },
+          "craftingRecipes": {
+            "ruby_t2": {
+              "outputArtifactId": "ruby_t2",
+              "allowRotations": true,
+              "pattern": [
+                { "x": 0, "y": 0, "artifactId": "ruby_t1" },
+                { "x": 1, "y": 0, "artifactId": "ruby_t1" }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

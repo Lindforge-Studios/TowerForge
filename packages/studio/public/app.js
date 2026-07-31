@@ -91,6 +91,7 @@ const MECHANICS_MODULES = [
   { id: "weather", title: "Dynamic Weather", description: "Seeded mission weather zones and bounded engine-owned effects." },
   { id: "terraforming", title: "Terraforming", description: "Transactional terrain transitions and bounded elevation edits authored as an independent opt-in profile." },
   { id: "roguelite", title: "Rogue-lite", description: "Synergies, artifacts, draft choices, and campaign runs." },
+  { id: "arsenal", title: "Modular Arsenal", description: "Opt-in bases, barrels, cores, and 3×3 gem crafting recipes." },
   { id: "heroes", title: "Heroes", description: "Optional opt-in hero roster spawning at the core; later versions add movement, durability, an ability, skill tree, aura, and explicit dynamic-navigation blocking." },
   { id: "logistics", title: "Logistics", description: "Power grids, inventories, ammunition, and production." },
   { id: "director", title: "AI Wave Director", description: "Optional opt-in deterministic adaptation from an authored counter pool with explicit threat budgets and fairness caps." },
@@ -118,6 +119,7 @@ const WEATHER_RECIPE_IDS = new Set([
 ]);
 const TERRAFORMING_RECIPE_IDS = new Set(["tagged_flood", "tagged_moat", "tagged_destructible_bridge"]);
 const ROGUELITE_RECIPE_IDS = new Set(["basic_elemental_synergy", "basic_boss_artifact_loot"]);
+const ARSENAL_RECIPE_IDS = new Set(["basic_modular_arsenal"]);
 const DIRECTOR_RECIPE_IDS = new Set(["basic_adaptive_wave_director"]);
 const QUEST_RECIPE_IDS = new Set(["basic_procedural_quests"]);
 const ENEMY_BEHAVIORS_RECIPE_IDS = new Set([
@@ -6400,6 +6402,8 @@ function renderMechanicsHub() {
               ? "Author a deterministic local co-op v1 or asymmetric Send-vs-Build v2 profile without loading multiplayer into legacy single-player projects."
             : MechanicsUI.selectedModuleId === "roguelite"
               ? "Author tower tags, global synergies, optional v2 artifact loot, and independent v3 wave draft choices as one opt-in profile transaction."
+            : MechanicsUI.selectedModuleId === "arsenal"
+              ? "Assemble tower blueprints from compatible base, barrel and core modules, then author exact 3×3 gem recipes."
               : "Author a reusable combat profile, then explicitly select it for this mission.";
   missionSelect.innerHTML = Object.entries(S.project.missions ?? {}).map(([id, mission]) =>
     `<option value="${esc(id)}" ${id === MechanicsUI.missionId ? "selected" : ""}>${esc(mission.label ?? id)}</option>`).join("");
@@ -6451,6 +6455,7 @@ function renderMechanicsHub() {
         && (selectedModuleId !== "weather" || WEATHER_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "terraforming" || TERRAFORMING_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "roguelite" || ROGUELITE_RECIPE_IDS.has(recipe.id))
+        && (selectedModuleId !== "arsenal" || ARSENAL_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "director" || DIRECTOR_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "quests" || QUEST_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "enemyBehaviors" || ENEMY_BEHAVIORS_RECIPE_IDS.has(recipe.id))
@@ -6492,6 +6497,7 @@ function renderMechanicsHub() {
   $("mechanics-destructibles-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "ballistics");
   $("mechanics-terraforming-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "terraforming");
   $("mechanics-roguelite-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "roguelite");
+  $("mechanics-arsenal-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "arsenal");
   $("mechanics-heroes-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "heroes");
   $("mechanics-logistics-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "logistics");
   $("mechanics-director-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "director");
@@ -6569,6 +6575,8 @@ function renderMechanicsHub() {
       renderRogueliteMechanicsEditor();
       renderCampaignAuthoring();
       if (!CampaignUI.loaded && !CampaignUI.loading) void loadCampaignAuthoring();
+    } else if (MechanicsUI.selectedModuleId === "arsenal") {
+      renderArsenalMechanicsEditor();
     } else if (MechanicsUI.selectedModuleId === "heroes") {
       renderHeroesMechanicsEditor();
     } else if (MechanicsUI.selectedModuleId === "logistics") {
@@ -6617,6 +6625,7 @@ function renderMechanicsHub() {
   $("btn-mechanics-new-profile").disabled = busy || !MechanicsUI.recipe
     || ((MechanicsUI.selectedModuleId === "terraforming" || MechanicsUI.selectedModuleId === "roguelite"
       || MechanicsUI.selectedModuleId === "heroes" || MechanicsUI.selectedModuleId === "logistics"
+      || MechanicsUI.selectedModuleId === "arsenal"
       || MechanicsUI.selectedModuleId === "director" || MechanicsUI.selectedModuleId === "quests"
       || MechanicsUI.selectedModuleId === "enemyBehaviors"
       || MechanicsUI.selectedModuleId === "ballistics"
@@ -6650,6 +6659,30 @@ function renderMechanicsHub() {
   renderMechanicsPreviewResult();
 
   if (!MechanicsUI.capabilities && !MechanicsUI.loading && !MechanicsUI.error) void loadMechanicsCapabilities();
+}
+
+function renderArsenalMechanicsEditor() {
+  const input = $("mechanics-arsenal-json");
+  const status = $("mechanics-arsenal-status");
+  if (!input) return;
+  if (document.activeElement !== input) {
+    input.value = JSON.stringify(MechanicsUI.draft ?? { modules: {}, blueprints: {}, craftingRecipes: {} }, null, 2);
+  }
+  input.oninput = () => {
+    try {
+      const value = JSON.parse(input.value);
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Profile must be a JSON object.");
+      MechanicsUI.draft = value;
+      MechanicsUI.preview = null;
+      MechanicsUI.error = null;
+      if (status) status.textContent = "Draft parsed. Preview validates compatibility, references, and budgets.";
+    } catch (error) {
+      MechanicsUI.error = error;
+      MechanicsUI.preview = null;
+      if (status) status.textContent = error.message;
+    }
+    renderMechanicsPreviewResult();
+  };
 }
 
 function homeWorkflowIcon(kind) {
@@ -13492,6 +13525,104 @@ function renderPlaytestArtifacts(snapshot = PT.game?.getSnapshot()) {
   }
 }
 
+function renderPlaytestArsenal(snapshot = PT.game?.getSnapshot()) {
+  const panel = $("pt-arsenal");
+  if (!panel || !snapshot || !PT.rmod?.projectArsenalPresentation) return;
+  const presentation = PT.rmod.projectArsenalPresentation(snapshot);
+  panel.replaceChildren();
+  panel.hidden = !presentation?.active;
+  if (!presentation?.active) return;
+  const title = document.createElement("div");
+  title.className = "form-section-title pt-debug-title";
+  title.textContent = "Modular Arsenal";
+  panel.append(title);
+  const selectedTowerId = PT.selectedDebug?.kind === "tower" ? PT.selectedDebug.id : null;
+  const tower = presentation.towers.find((entry) => entry.towerId === selectedTowerId);
+  if (tower) {
+    const row = document.createElement("div");
+    row.className = "pt-arsenal-controls";
+    const selects = {};
+    for (const category of ["base", "barrel", "core"]) {
+      const label = document.createElement("label");
+      label.textContent = category;
+      const select = document.createElement("select");
+      select.setAttribute("data-pt-arsenal-category", category);
+      for (const option of tower.availableModules[category]) {
+        const element = document.createElement("option");
+        element.value = option.id;
+        element.textContent = option.label;
+        element.selected = option.id === tower.modules[category];
+        select.append(element);
+      }
+      label.append(select);
+      row.append(label);
+      selects[category] = select;
+    }
+    const apply = document.createElement("button");
+    apply.type = "button";
+    apply.className = "btn btn-outline";
+    apply.textContent = "Apply modules";
+    apply.disabled = !presentation.managementAllowed;
+    apply.addEventListener("click", () => {
+      const command = {
+        schemaVersion: 7, type: "configureTowerModules", towerId: tower.towerId,
+        modules: { base: selects.base.value, barrel: selects.barrel.value, core: selects.core.value }
+      };
+      const result = PT.debugSession
+        ? dispatchPlaytestCommand(command, () => PT.mod.dispatchGameCommand(PT.game, command))
+        : PT.mod.dispatchGameCommand(PT.game, command);
+      ptMsg(result, "Tower modules updated.");
+      if (result.ok) renderPlaytestArsenal(PT.game.getSnapshot());
+    });
+    row.append(apply);
+    panel.append(row);
+    const stats = document.createElement("span");
+    stats.className = "text-muted";
+    stats.textContent = `Damage ×${tower.damageMultiplier} · range ×${tower.rangeMultiplier} · durability ×${tower.durabilityMultiplier}`;
+    panel.append(stats);
+  } else if (presentation.towers.length) {
+    const note = document.createElement("span");
+    note.className = "text-muted";
+    note.textContent = "Inspect a tower to configure its base, barrel and core.";
+    panel.append(note);
+  }
+  const roguelite = PT.rmod.projectRoguelitePresentation?.(snapshot);
+  const inventory = roguelite?.artifacts?.inventory ?? [];
+  for (const recipe of presentation.craftingRecipes) {
+    const available = inventory.filter((entry) => !entry.socket);
+    const used = new Set();
+    const cells = recipe.pattern.map((cell) => {
+      const artifact = available.find((entry) => entry.artifactId === cell.artifactId && !used.has(entry.instanceId));
+      if (artifact) used.add(artifact.instanceId);
+      return artifact ? { x: cell.x, y: cell.y, artifactInstanceId: artifact.instanceId } : null;
+    });
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn btn-outline";
+    button.setAttribute("data-pt-craft-recipe", recipe.id);
+    button.textContent = `Craft ${recipe.outputArtifactId}`;
+    button.disabled = !presentation.managementAllowed || cells.some((cell) => cell === null);
+    button.addEventListener("click", () => {
+      const command = { schemaVersion: 7, type: "craftGem", recipeId: recipe.id, cells };
+      const result = PT.debugSession
+        ? dispatchPlaytestCommand(command, () => PT.mod.dispatchGameCommand(PT.game, command))
+        : PT.mod.dispatchGameCommand(PT.game, command);
+      ptMsg(result, "Gem crafted.");
+      if (result.ok) {
+        renderPlaytestArtifacts(PT.game.getSnapshot());
+        renderPlaytestArsenal(PT.game.getSnapshot());
+      }
+    });
+    panel.append(button);
+  }
+  if (!presentation.managementAllowed) {
+    const note = document.createElement("span");
+    note.className = "text-muted";
+    note.textContent = "Arsenal changes are available only during setup or between waves.";
+    panel.append(note);
+  }
+}
+
 function renderPlaytestLogistics(snapshot) {
   const panel = $("pt-logistics-power");
   if (!panel || !PT.rmod?.projectLogisticsPresentation) return;
@@ -13768,6 +13899,7 @@ function updatePlaytestHud(s = PT.game.getSnapshot()) {
   const starCount = stars.filter((item) => item.achieved).length;
   set("pt-objectives", `${objectiveCount}/${objectives.length}${stars.length ? ` | ${starCount}/${stars.length} stars` : ""}`);
   renderPlaytestLogistics(s);
+  renderPlaytestArsenal(s);
   renderPlaytestQuests(s);
   renderPlaytestBallistics(s);
   if (PT.artifactUiDirty) {

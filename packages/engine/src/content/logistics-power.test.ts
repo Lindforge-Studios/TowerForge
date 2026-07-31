@@ -187,7 +187,7 @@ function hasIssue(
 describe("R5.7A Logistics power authoring contract (RED)", () => {
   it("preserves the exact Logistics v1 power contract inside the versioned v3 descriptor", () => {
     expect(Engine.IMPLEMENTED_MECHANICS_MODULE_IDS).toEqual([
-      "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "heroes",
+      "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "arsenal", "heroes",
       "logistics", "director", "quests", "enemyBehaviors", "multiplayer"
     ]);
     const exported = Engine as unknown as {
@@ -249,7 +249,7 @@ describe("R5.7A Logistics power authoring contract (RED)", () => {
       profileId: "grid",
       reason: "active"
     });
-    expect((Engine as any).GAME_COMMAND_SCHEMA_VERSION).toBe(6);
+    expect((Engine as any).GAME_COMMAND_SCHEMA_VERSION).toBe(7);
     expect((Engine as any).GAME_CHECKPOINT_SCHEMA_VERSION).toBe(1);
   });
 

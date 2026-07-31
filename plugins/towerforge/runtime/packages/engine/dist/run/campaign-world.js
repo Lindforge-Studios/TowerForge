@@ -1,4 +1,5 @@
 import { resolveActiveRogueliteMechanics } from "../content/roguelite-mechanics.js";
+import { resolveActiveArsenalMechanics } from "../content/arsenal-mechanics.js";
 import { recordPlayerMissionClear } from "../profile/player-profile.js";
 import { decodeCampaignRun } from "./campaign-run.js";
 export const WORLD_CAMPAIGN_SCHEMA = Object.freeze({
@@ -737,6 +738,21 @@ function validateCapturedCampaignRunAgainstContent(run, content) {
     if (run.artifacts.some((entry) => (!profile.artifacts || !Object.prototype.hasOwnProperty.call(profile.artifacts.definitions, entry.artifactId)))) {
         return Object.freeze({ ok: false, code: "unknown_artifact", run });
     }
+    if (run.arsenal.moduleInventory.length > 0) {
+        const knownModuleIds = new Set();
+        for (const node of campaign.nodes) {
+            if (!("missionId" in node))
+                continue;
+            const arsenal = resolveActiveArsenalMechanics(content, node.missionId);
+            if (!arsenal)
+                continue;
+            for (const moduleId of Object.keys(arsenal.modules))
+                knownModuleIds.add(moduleId);
+        }
+        if (run.arsenal.moduleInventory.some((entry) => !knownModuleIds.has(entry.moduleId))) {
+            return Object.freeze({ ok: false, code: "unknown_module", run });
+        }
+    }
     if (campaign.schemaVersion === 2) {
         for (const resourceId of Object.keys(run.runResources).sort(binaryCompare)) {
             if (!Object.prototype.hasOwnProperty.call(campaign.runResources, resourceId)) {
@@ -763,10 +779,11 @@ function advanceCapturedCampaignRun(run, nodeId) {
         nodeId,
         deck: run.deck,
         artifacts: run.artifacts,
-        runResources: run.runResources
+        runResources: run.runResources,
+        arsenal: run.arsenal
     });
 }
-/** Validate the unchanged CampaignRunV1 codec document against currently active authored content. */
+/** Validate the normalized CampaignRunV2 document against currently active authored content. */
 export function validateCampaignRunAgainstContent(run, content) {
     let captured;
     try {
@@ -875,7 +892,8 @@ function applyStructuralChoiceResources(run, choice) {
             nodeId: run.nodeId,
             deck: run.deck,
             artifacts: run.artifacts,
-            runResources
+            runResources,
+            arsenal: run.arsenal
         }).run;
     }
     catch {

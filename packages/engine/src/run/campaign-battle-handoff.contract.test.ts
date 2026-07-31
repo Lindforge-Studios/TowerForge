@@ -14,7 +14,7 @@ import {
   decodeCampaignRun,
   exportCampaignRun,
   serializePlayerProfile,
-  type CampaignRunV1,
+  type CampaignRunV2,
   type GameContentInput,
   type GameContentRegistry,
   type GameSeed,
@@ -37,8 +37,8 @@ interface CampaignBattleLaunch {
   readonly battleSeed: GameSeed;
   readonly missionId: string;
   readonly loadout: Readonly<{
-    deck: CampaignRunV1["deck"];
-    artifacts: CampaignRunV1["artifacts"];
+    deck: CampaignRunV2["deck"];
+    artifacts: CampaignRunV2["artifacts"];
   }>;
 }
 
@@ -46,7 +46,7 @@ type CampaignBattlePreparationResult = Readonly<
   | {
       ok: false;
       code: CampaignBattleFailureCode;
-      run: CampaignRunV1;
+      run: CampaignRunV2;
     }
   | {
       ok: true;
@@ -55,7 +55,7 @@ type CampaignBattlePreparationResult = Readonly<
       missionId: string;
       launchId: string;
       battleSeed: GameSeed;
-      run: CampaignRunV1;
+      run: CampaignRunV2;
       launch: CampaignBattleLaunch;
       game: TowerDefenseGame;
     }
@@ -65,14 +65,14 @@ type CampaignBattleSettlementResult = Readonly<
   | {
       ok: false;
       code: CampaignBattleFailureCode;
-      run: CampaignRunV1;
+      run: CampaignRunV2;
       profile: PlayerProfileV3;
     }
   | {
       ok: true;
       code: "campaign_battle_settled";
       nodeId: string;
-      run: CampaignRunV1;
+      run: CampaignRunV2;
       profile: PlayerProfileV3;
       newlyAvailableNodeIds: readonly string[];
     }
@@ -80,12 +80,12 @@ type CampaignBattleSettlementResult = Readonly<
 
 type CampaignBattleApi = {
   prepareCampaignBattle(
-    run: CampaignRunV1,
+    run: CampaignRunV2,
     content: GameContentRegistry,
     nodeId: string
   ): CampaignBattlePreparationResult;
   settleCampaignBattleVictory(
-    run: CampaignRunV1,
+    run: CampaignRunV2,
     profile: PlayerProfileV3,
     content: GameContentRegistry,
     nodeId: string,
@@ -335,7 +335,7 @@ function content(options: Parameters<typeof campaignInput>[0] = {}): GameContent
   return createGameContentRegistry(campaignInput(options));
 }
 
-function run(overrides: Partial<CampaignRunV1> = {}): CampaignRunV1 {
+function run(overrides: Partial<CampaignRunV2> = {}): CampaignRunV2 {
   return decodeCampaignRun({
     ...createCampaignRun("campaign-battle-seed"),
     deck: [{ instanceId: "card_1", cardId: "ember" }],
@@ -377,25 +377,25 @@ function finishTwoWaveBattle(subject: TowerDefenseGame): string {
 }
 
 describe("R4.4C campaign-to-battle handoff contract", () => {
-  it("keeps the legacy constructor and all existing version domains unchanged", () => {
+  it("keeps the legacy constructor and unrelated version domains unchanged", () => {
     const legacyContent = content({ active: false });
     const legacy = new TowerDefenseGame({ content: legacyContent, missionId: "battle", seed: "legacy" });
     const checkpoint = legacy.createCheckpoint();
 
-    expect(CAMPAIGN_RUN_SCHEMA_VERSION).toBe(1);
+    expect(CAMPAIGN_RUN_SCHEMA_VERSION).toBe(2);
     expect(GAME_CHECKPOINT_SCHEMA_VERSION).toBe(1);
-    expect(GAME_COMMAND_SCHEMA_VERSION).toBe(6);
+    expect(GAME_COMMAND_SCHEMA_VERSION).toBe(7);
     expect(PLAYER_PROFILE_SCHEMA_VERSION).toBe(3);
     expect(checkpoint.schemaVersion).toBe(1);
     expect(Object.prototype.hasOwnProperty.call(checkpoint.state, "campaignBattle")).toBe(false);
     expect(legacy.getSnapshot().roguelite).toBeUndefined();
   });
 
-  it("publishes separate prepare and settle entry points instead of changing CampaignRunV1", () => {
+  it("publishes separate prepare and settle entry points instead of changing CampaignRunV2", () => {
     expect((Engine as unknown as Partial<CampaignBattleApi>).prepareCampaignBattle).toBeTypeOf("function");
     expect((Engine as unknown as Partial<CampaignBattleApi>).settleCampaignBattleVictory).toBeTypeOf("function");
     expect(Object.keys(createCampaignRun("schema"))).toEqual([
-      "version", "seed", "nodeId", "deck", "artifacts", "runResources"
+      "version", "seed", "nodeId", "deck", "artifacts", "runResources", "arsenal"
     ]);
   });
 
@@ -428,7 +428,7 @@ describe("R4.4C campaign-to-battle handoff contract", () => {
 
     const checkpoint = prepared.game.createCheckpoint() as typeof prepared.game extends never ? never : ReturnType<TowerDefenseGame["createCheckpoint"]> & {
       state: ReturnType<TowerDefenseGame["createCheckpoint"]>["state"] & {
-        campaignBattle?: { schemaVersion: 1; nodeId: string; deck: CampaignRunV1["deck"] };
+        campaignBattle?: { schemaVersion: 1; nodeId: string; deck: CampaignRunV2["deck"] };
       };
     };
     expect(checkpoint.schemaVersion).toBe(1);
@@ -774,7 +774,7 @@ describe("R4.4C campaign-to-battle handoff contract", () => {
         reads += 1;
         throw new Error("hostile getter");
       }
-    } as unknown as CampaignRunV1;
+    } as unknown as CampaignRunV2;
     expect(api().prepareCampaignBattle(hostile, content(), "battle_start")).toMatchObject({
       ok: false,
       code: "invalid_run"

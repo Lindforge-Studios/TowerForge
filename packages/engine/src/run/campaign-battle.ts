@@ -16,7 +16,7 @@ import {
   TowerDefenseGame,
   type CampaignBattleLoadoutV1
 } from "../simulation/TowerDefenseGame.js";
-import { CAMPAIGN_RUN_LIMITS, decodeCampaignRun, type CampaignRunV1 } from "./campaign-run.js";
+import { CAMPAIGN_RUN_LIMITS, decodeCampaignRun, type CampaignRunV2 } from "./campaign-run.js";
 import {
   campaignBattleWorstCaseModifierCount,
   preflightHeroAuraDamageFinite
@@ -34,6 +34,7 @@ export type CampaignBattleFailureCode =
   | "unknown_node"
   | "unknown_card"
   | "unknown_artifact"
+  | "unknown_module"
   | "unknown_run_resource"
   | "invalid_run_resource"
   | "node_not_available"
@@ -53,7 +54,7 @@ export interface CampaignBattleLaunchV1 {
 }
 
 export type CampaignBattlePreparationResult = Readonly<
-  | { ok: false; code: CampaignBattleFailureCode; run: CampaignRunV1 }
+  | { ok: false; code: CampaignBattleFailureCode; run: CampaignRunV2 }
   | {
       ok: true;
       code: "campaign_battle_prepared";
@@ -61,19 +62,19 @@ export type CampaignBattlePreparationResult = Readonly<
       missionId: string;
       launchId: string;
       battleSeed: string;
-      run: CampaignRunV1;
+      run: CampaignRunV2;
       launch: CampaignBattleLaunchV1;
       game: TowerDefenseGame;
     }
 >;
 
 export type CampaignBattleSettlementResult = Readonly<
-  | { ok: false; code: CampaignBattleFailureCode; run: CampaignRunV1; profile: PlayerProfileV3 }
+  | { ok: false; code: CampaignBattleFailureCode; run: CampaignRunV2; profile: PlayerProfileV3 }
   | {
       ok: true;
       code: "campaign_battle_settled";
       nodeId: string;
-      run: CampaignRunV1;
+      run: CampaignRunV2;
       profile: PlayerProfileV3;
       newlyAvailableNodeIds: readonly string[];
     }
@@ -89,7 +90,7 @@ function isBattleNode(node: unknown): node is WorldCampaignBattleNodeV1 {
   );
 }
 
-function battleSeed(run: CampaignRunV1, nodeId: string, missionId: string): string {
+function battleSeed(run: CampaignRunV2, nodeId: string, missionId: string): string {
   const seed = typeof run.seed === "string" ? `s:${run.seed.length}:${run.seed}` : `n:${String(run.seed)}`;
   return `towerforge:campaign-battle:v1|${seed}|n:${nodeId.length}:${nodeId}|m:${missionId.length}:${missionId}`;
 }
@@ -113,7 +114,7 @@ function canonicalCampaignLaunchGraph(campaign: ResolvedWorldCampaign): unknown 
 }
 
 function launchId(
-  run: CampaignRunV1,
+  run: CampaignRunV2,
   content: GameContentRegistry,
   campaign: ResolvedWorldCampaign,
   nodeId: string,
@@ -164,7 +165,7 @@ function maximumRemainingDraftChoices(
   return node.nextNodeIds.reduce((maximum, successorId) => Math.max(maximum, visit(successorId)), 0);
 }
 
-function availableNodeIds(run: CampaignRunV1, campaign: ResolvedWorldCampaign): readonly string[] {
+function availableNodeIds(run: CampaignRunV2, campaign: ResolvedWorldCampaign): readonly string[] {
   const nodeIds = run.nodeId === null
     ? campaign.entryNodeIds
     : campaign.nodes.find((node) => node.id === run.nodeId)?.nextNodeIds ?? [];
@@ -252,7 +253,7 @@ function prepareValidatedCampaignBattle(
 }
 
 export function prepareCampaignBattle(
-  run: CampaignRunV1,
+  run: CampaignRunV2,
   content: GameContentRegistry,
   nodeId: string
 ): CampaignBattlePreparationResult {
@@ -262,7 +263,7 @@ export function prepareCampaignBattle(
 }
 
 export function settleCampaignBattleVictory(
-  run: CampaignRunV1,
+  run: CampaignRunV2,
   profile: PlayerProfileV3,
   content: GameContentRegistry,
   nodeId: string,
@@ -302,7 +303,7 @@ export function settleCampaignBattleVictory(
     || canonicalStringify(settlement.artifacts.slice(0, captured.artifacts.length)) !== canonicalStringify(captured.artifacts)
   ) return fail("battle_context_mismatch");
 
-  let nextRun: CampaignRunV1;
+  let nextRun: CampaignRunV2;
   try {
     nextRun = decodeCampaignRun({
       version: captured.version,
@@ -310,7 +311,8 @@ export function settleCampaignBattleVictory(
       nodeId,
       deck: settlement.deck,
       artifacts: settlement.artifacts,
-      runResources: captured.runResources
+      runResources: captured.runResources,
+      arsenal: captured.arsenal
     }).run;
   } catch {
     return fail("run_capacity_exceeded");

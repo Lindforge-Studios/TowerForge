@@ -1,5 +1,6 @@
 import { type GameContentRegistry } from "../content/registry.js";
 import { type VanguardProtectionRuntimeStatsV1 } from "../content/enemy-behaviors-mechanics.js";
+import { type ArsenalModuleLoadoutV1 } from "../content/arsenal-mechanics.js";
 import { type TowerScriptTraceCollector } from "../scripting/trace.js";
 import type { TowerScriptJson } from "../scripting/types.js";
 import { GridMap } from "./map.js";
@@ -90,6 +91,7 @@ export declare class TowerDefenseGame {
     private weatherRuntime;
     private readonly activeTerraformingMechanics;
     private readonly activeRogueliteMechanics;
+    private readonly activeArsenalMechanics;
     private readonly activeHeroesMechanics;
     private readonly activeLogisticsPower;
     private readonly activeLogisticsAmmunition;
@@ -236,6 +238,14 @@ export declare class TowerDefenseGame {
     canUpgradeTower(towerId: string, branchId?: string): ActionResult;
     getTowerUpgradeCost(towerOrId: TowerState | string, branchId?: string): ResourceCost | null;
     upgradeTower(towerId: string, branchId?: string): ActionResult;
+    private arsenalManagementAllowed;
+    private compiledArsenalTower;
+    configureTowerModules(towerId: string, modules: ArsenalModuleLoadoutV1): ActionResult;
+    craftGem(recipeId: string, cells: readonly {
+        readonly x: number;
+        readonly y: number;
+        readonly artifactInstanceId: string;
+    }[]): ActionResult;
     canSocketArtifact(artifactInstanceId: string, towerId: string, slotId: string): ActionResult;
     socketArtifact(artifactInstanceId: string, towerId: string, slotId: string): ActionResult;
     canUnsocketArtifact(artifactInstanceId: string, towerId: string, slotId: string): ActionResult;

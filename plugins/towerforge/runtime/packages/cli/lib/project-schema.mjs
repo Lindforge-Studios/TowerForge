@@ -24,6 +24,7 @@ const MECHANICS_MODULE_IDS = new Set([
   "weather",
   "terraforming",
   "roguelite",
+  "arsenal",
   "heroes",
   "logistics",
   "director",

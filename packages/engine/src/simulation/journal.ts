@@ -9,7 +9,8 @@ import {
   type GameCommandV3,
   type GameCommandV4,
   type GameCommandV5,
-  type GameCommandV6
+  type GameCommandV6,
+  type GameCommandV7
 } from "./command-internal.js";
 import {
   cloneCheckpointJson,
@@ -27,8 +28,8 @@ import {
 } from "./journal-result-internal.js";
 import type { ActionResult } from "./types.js";
 
-export const GAME_COMMAND_JOURNAL_SCHEMA_VERSION = 6 as const;
-export const GAME_COMMAND_JOURNAL_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4, 5, 6] as const);
+export const GAME_COMMAND_JOURNAL_SCHEMA_VERSION = 7 as const;
+export const GAME_COMMAND_JOURNAL_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4, 5, 6, 7] as const);
 
 export const GAME_COMMAND_JOURNAL_LIMITS = Object.freeze({
   entries: 100_000,
@@ -133,17 +134,33 @@ export interface GameCommandJournalV6 {
   readonly entries: readonly GameCommandJournalEntryV6[];
 }
 
+export interface GameCommandJournalEntryV7 {
+  readonly sequence: number;
+  readonly command: GameCommandV1 | GameCommandV2 | GameCommandV3 | GameCommandV4 | GameCommandV5 | GameCommandV6 | GameCommandV7;
+  readonly result: GameCommandJournalResultV1;
+  readonly postStateDigest: string;
+}
+
+export interface GameCommandJournalV7 {
+  readonly schemaVersion: 7;
+  readonly engineVersion: typeof SIMULATION_ENGINE_VERSION;
+  readonly contentDigest: string;
+  readonly initialCheckpoint: GameCheckpointV1;
+  readonly entries: readonly GameCommandJournalEntryV7[];
+}
+
 export type GameCommandJournal =
   | GameCommandJournalV1
   | GameCommandJournalV2
   | GameCommandJournalV3
   | GameCommandJournalV4
   | GameCommandJournalV5
-  | GameCommandJournalV6;
+  | GameCommandJournalV6
+  | GameCommandJournalV7;
 
 export interface GameCommandJournalAcceptedTail {
   readonly entryCount: number;
-  readonly entry?: GameCommandJournalEntryV6;
+  readonly entry?: GameCommandJournalEntryV7;
 }
 
 const STATE_DIGEST_RE = /^tf-state-v1:[0-9a-f]{16}$/;
@@ -191,7 +208,7 @@ function assertJournalTotalBudget(value: unknown): void {
   journalCanonicalMetrics(value);
 }
 
-function journalEntryCanonicalMetrics(entry: GameCommandJournalEntryV6): Readonly<{ bytes: number; nodes: number }> {
+function journalEntryCanonicalMetrics(entry: GameCommandJournalEntryV7): Readonly<{ bytes: number; nodes: number }> {
   return canonicalJsonMetrics(entry, {
     maxBytes: GAME_COMMAND_JOURNAL_LIMITS.totalBytes,
     maxNodes: GAME_COMMAND_JOURNAL_MAX_NODES
@@ -245,8 +262,8 @@ function decodeResult(value: unknown): GameCommandJournalResultV1 {
 function detachedJournal(
   initialCheckpoint: GameCheckpointV1,
   contentDigest: string,
-  entries: readonly GameCommandJournalEntryV6[],
-  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6
+  entries: readonly GameCommandJournalEntryV7[],
+  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7
 ): GameCommandJournal {
   const common = {
     engineVersion: SIMULATION_ENGINE_VERSION,
@@ -278,7 +295,8 @@ function detachedJournal(
   if (schemaVersion === 5) {
     return { schemaVersion: 5, ...common, entries: common.entries as GameCommandJournalEntryV5[] };
   }
-  return { schemaVersion: 6, ...common };
+  if (schemaVersion === 6) return { schemaVersion: 6, ...common, entries: common.entries as GameCommandJournalEntryV6[] };
+  return { schemaVersion: 7, ...common };
 }
 
 /**
@@ -291,8 +309,8 @@ export class JournaledGameSession {
   private readonly mutableGame: TowerDefenseGame;
   private readonly initialCheckpoint: GameCheckpointV1;
   private readonly contentDigest: string;
-  private readonly entries: GameCommandJournalEntryV6[] = [];
-  private journalSchemaVersion: 1 | 2 | 3 | 4 | 5 | 6 = 1;
+  private readonly entries: GameCommandJournalEntryV7[] = [];
+  private journalSchemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 = 1;
   private journalEnvelopeBytes: number;
   private journalEnvelopeNodes: number;
   private journalEntryBytes = 0;
@@ -342,7 +360,7 @@ export class JournaledGameSession {
     // Reserve the entire per-result allowance before simulation execution. This
     // makes capacity rejection mutation-free even when the eventual result is
     // close to its maximum encoded size.
-    const capacityProbe: GameCommandJournalEntryV6 = {
+    const capacityProbe: GameCommandJournalEntryV7 = {
       sequence: this.entries.length,
       command,
       result: {
@@ -410,7 +428,7 @@ export class JournaledGameSession {
     try {
       postStateDigest = this.mutableGame.getStateDigest();
       durableResult = normalizeGameCommandJournalResult(result);
-      const entry: GameCommandJournalEntryV6 = {
+      const entry: GameCommandJournalEntryV7 = {
         sequence: this.entries.length,
         command,
         result: durableResult,
@@ -474,7 +492,7 @@ export function decodeGameCommandJournal(options: {
   const descriptors = checkpointObjectDescriptors(options.journal, "Game command journal");
   const schemaVersion = checkpointDataField(descriptors, "schemaVersion", "Game command journal");
   if (schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3 && schemaVersion !== 4
-    && schemaVersion !== 5 && schemaVersion !== 6) {
+    && schemaVersion !== 5 && schemaVersion !== 6 && schemaVersion !== 7) {
     throw new Error(`Unsupported game command journal schema version "${String(schemaVersion)}".`);
   }
   const engineVersion = checkpointDataField(descriptors, "engineVersion", "Game command journal");
@@ -510,7 +528,7 @@ export function decodeGameCommandJournal(options: {
     throw new Error("Game command journal and initial checkpoint content digests differ.");
   }
 
-  const entries: GameCommandJournalEntryV6[] = [];
+  const entries: GameCommandJournalEntryV7[] = [];
   for (let index = 0; index < entryValues.length; index += 1) {
     const entryDescriptors = checkpointObjectDescriptors(
       entryValues[index],
@@ -557,6 +575,9 @@ export function decodeGameCommandJournal(options: {
     }
     if (schemaVersion === 5 && command.schemaVersion > 5) {
       throw new Error(`Game command journal v5 entry ${index} cannot contain a later command.`);
+    }
+    if (schemaVersion === 6 && command.schemaVersion > 6) {
+      throw new Error(`Game command journal v6 entry ${index} cannot contain a later command.`);
     }
     const result = decodeResult(checkpointDataField(
       entryDescriptors,
