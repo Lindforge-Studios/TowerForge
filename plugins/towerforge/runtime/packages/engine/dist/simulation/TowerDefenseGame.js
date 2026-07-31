@@ -13,6 +13,7 @@ import { LOGISTICS_AMMUNITION_LIMITS, LOGISTICS_SUPPLY_LIMITS, resolveActiveLogi
 import { DIRECTOR_LIMITS, resolveActiveDirectorMechanics } from "../content/director-mechanics.js";
 import { resolveActiveQuestMechanics, selectProceduralQuestsV1 } from "../content/quest-mechanics.js";
 import { ENEMY_BEHAVIORS_LIMITS, resolveActiveEnemyBehaviorsV1 } from "../content/enemy-behaviors-mechanics.js";
+import { compileArsenalBlueprintV1, craftCampaignGemV1, resolveActiveArsenalMechanics } from "../content/arsenal-mechanics.js";
 import { CAMPAIGN_RUN_LIMITS } from "../run/campaign-run.js";
 import { campaignBattleWorstCaseModifierCount, preflightHeroAuraDamageFinite } from "../run/campaign-battle-policy.js";
 import { evaluateTowerScriptExpression } from "../scripting/expression.js";
@@ -353,6 +354,7 @@ export class TowerDefenseGame {
     weatherRuntime;
     activeTerraformingMechanics;
     activeRogueliteMechanics;
+    activeArsenalMechanics;
     activeHeroesMechanics;
     activeLogisticsPower;
     activeLogisticsAmmunition;
@@ -532,6 +534,7 @@ export class TowerDefenseGame {
         this.activeTerraformingMechanics = resolveActiveTerraformingMechanics(this.content, missionId);
         this.initializeDestructibleObjects();
         this.activeRogueliteMechanics = resolveActiveRogueliteMechanics(this.content, missionId);
+        this.activeArsenalMechanics = resolveActiveArsenalMechanics(this.content, missionId);
         this.activeHeroesMechanics = resolveActiveHeroesMechanics(this.content, missionId);
         this.activeDirectorMechanics = resolveActiveDirectorMechanics(this.content, missionId);
         this.activeQuestMechanics = resolveActiveQuestMechanics(this.content, missionId);
@@ -1224,6 +1227,9 @@ export class TowerDefenseGame {
             ? preflightLogisticsPowerPlacementV1(this.activeLogisticsPower, this.towers, this.towerTypes, this.map, this.logisticsTopologyCounts, { id: towerId, typeId, coord })
             : this.logisticsTopologyCounts;
         const attack = type.attack;
+        const arsenal = this.activeArsenalMechanics?.blueprints[typeId]
+            ? compileArsenalBlueprintV1(this.activeArsenalMechanics, typeId)
+            : undefined;
         const tower = {
             id: towerId,
             typeId,
@@ -1238,7 +1244,10 @@ export class TowerDefenseGame {
             stacks: attack.kind === "single" ? attack.startingStacks : 0,
             cooldown: 0,
             investedResources: this.normalizeCost(type.cost),
-            hp: typeof type.maxHp === "number" && type.maxHp > 0 ? type.maxHp : undefined
+            hp: typeof type.maxHp === "number" && type.maxHp > 0
+                ? type.maxHp * (arsenal?.durabilityMultiplier ?? 1)
+                : undefined,
+            ...(arsenal === undefined ? {} : { arsenalModules: { ...arsenal.modules } })
         };
         this.towerCounter += 1;
         this.spendResources(type.cost);
@@ -1472,6 +1481,19 @@ export class TowerDefenseGame {
             else {
                 tower.hp = Math.min(tower.hp ?? targetType.maxHp, targetType.maxHp);
             }
+            if (this.activeArsenalMechanics) {
+                const targetBlueprint = this.activeArsenalMechanics.blueprints[targetType.id];
+                if (targetBlueprint) {
+                    const compiled = compileArsenalBlueprintV1(this.activeArsenalMechanics, targetType.id);
+                    tower.arsenalModules = { ...compiled.modules };
+                    if (targetType.maxHp !== undefined) {
+                        tower.hp = Math.min(tower.hp ?? targetType.maxHp, targetType.maxHp * compiled.durabilityMultiplier);
+                    }
+                }
+                else {
+                    delete tower.arsenalModules;
+                }
+            }
             this.rebuildRogueliteSynergies();
             if (this.isLogisticsSupplyTopologyParticipant(type.id) || this.isLogisticsSupplyTopologyParticipant(targetType.id)) {
                 this.markLogisticsSupplyDirty();
@@ -1495,6 +1517,88 @@ export class TowerDefenseGame {
                 typeId: targetType.id
             } : {})
         });
+        this.finishScriptedAction();
+        return { ok: true };
+    }
+    arsenalManagementAllowed() {
+        return this.outcome === "playing" && this.enemies.length === 0
+            && (this.waveState === "ready" || this.waveState === "between");
+    }
+    compiledArsenalTower(tower) {
+        if (!this.activeArsenalMechanics || !tower.arsenalModules)
+            return undefined;
+        return compileArsenalBlueprintV1(this.activeArsenalMechanics, tower.typeId, tower.arsenalModules);
+    }
+    configureTowerModules(towerId, modules) {
+        if (!this.activeArsenalMechanics) {
+            return this.fail("Modular arsenal is not available.", "reason.arsenalUnavailable");
+        }
+        if (!this.arsenalManagementAllowed()) {
+            return this.fail("Tower modules can be changed only during setup or between waves.", "reason.arsenalManagementUnavailable");
+        }
+        const tower = this.towers.find((candidate) => candidate.id === towerId && (candidate.hp === undefined || candidate.hp > 0));
+        if (!tower)
+            return this.fail("Tower was not found.", "reason.arsenalTowerNotFound");
+        let previous;
+        let next;
+        try {
+            previous = this.compiledArsenalTower(tower);
+            next = compileArsenalBlueprintV1(this.activeArsenalMechanics, tower.typeId, modules);
+        }
+        catch (error) {
+            return this.fail(error instanceof Error ? error.message : "Invalid module loadout.", "reason.arsenalLoadoutInvalid");
+        }
+        if (next.footprint.length !== tower.footprint.length) {
+            return this.fail("The selected base has an incompatible footprint.", "reason.arsenalFootprintIncompatible");
+        }
+        if (tower.hp !== undefined) {
+            const type = this.towerTypes[tower.typeId];
+            const previousMaximum = (type?.maxHp ?? tower.hp) * (previous?.durabilityMultiplier ?? 1);
+            const nextMaximum = (type?.maxHp ?? tower.hp) * next.durabilityMultiplier;
+            const ratio = previousMaximum > 0 ? tower.hp / previousMaximum : 1;
+            tower.hp = Math.max(0, Math.min(nextMaximum, nextMaximum * ratio));
+        }
+        tower.arsenalModules = { ...next.modules };
+        this.finishScriptedAction();
+        return { ok: true };
+    }
+    craftGem(recipeId, cells) {
+        if (!this.activeArsenalMechanics || !this.activeRogueliteMechanics?.artifacts) {
+            return this.fail("Gem crafting is not available.", "reason.gemCraftingUnavailable");
+        }
+        if (!this.arsenalManagementAllowed()) {
+            return this.fail("Gems can be crafted only during setup or between waves.", "reason.arsenalManagementUnavailable");
+        }
+        const consumedIds = new Set(cells.map((cell) => cell.artifactInstanceId));
+        if (this.artifactInventory.some((entry) => consumedIds.has(entry.instanceId) && entry.socket !== null)) {
+            return this.fail("Socketed artifacts cannot be consumed.", "reason.artifactAlreadySocketed");
+        }
+        const outputInstanceId = this.campaignBattle
+            ? `campaign:${this.campaignBattle.launchId}:artifact:${this.nextArtifactInstanceSequence}`
+            : `artifact_${this.nextArtifactInstanceSequence}`;
+        const run = {
+            version: 2,
+            seed: 0,
+            nodeId: null,
+            deck: [],
+            artifacts: this.artifactInventory.map((entry) => ({ instanceId: entry.instanceId, artifactId: entry.artifactId })),
+            runResources: {},
+            arsenal: { moduleInventory: [] }
+        };
+        const result = craftCampaignGemV1(run, this.activeArsenalMechanics, { recipeId, outputInstanceId, cells });
+        if (!result.ok)
+            return this.fail(`Gem crafting failed: ${result.code}.`, `reason.${result.code}`);
+        const definition = this.activeRogueliteMechanics.artifacts.definitions[result.run.artifacts[result.run.artifacts.length - 1].artifactId];
+        if (!definition)
+            return this.fail("Crafting output artifact is not authored.", "reason.artifactDefinitionMissing");
+        const retainedSockets = new Map(this.artifactInventory.map((entry) => [entry.instanceId, entry.socket]));
+        this.artifactInventory = result.run.artifacts.map((entry) => ({
+            ...entry,
+            socket: retainedSockets.get(entry.instanceId) ?? null
+        }));
+        this.nextArtifactInstanceSequence += 1;
+        this.artifactCheckpointForm = this.campaignBattle ? 3 : 2;
+        this.rebuildRogueliteSynergies();
         this.finishScriptedAction();
         return { ok: true };
     }
@@ -3501,7 +3605,8 @@ export class TowerDefenseGame {
             cooldown: tower.cooldown,
             investedResources: { ...tower.investedResources },
             ...(tower.disabledFor === undefined ? {} : { disabledFor: tower.disabledFor }),
-            ...(tower.hp === undefined ? {} : { hp: tower.hp })
+            ...(tower.hp === undefined ? {} : { hp: tower.hp }),
+            ...(tower.arsenalModules === undefined ? {} : { arsenalModules: { ...tower.arsenalModules } })
         }));
         const combat = this.buildCombatState();
         const reactions = this.buildReactionState();
@@ -3811,6 +3916,7 @@ export class TowerDefenseGame {
             checkpointDataField(descriptors, key, "Game checkpoint state");
         const checkpointTerraforming = resolveActiveTerraformingMechanics(content, identity.missionId);
         const checkpointRoguelite = resolveActiveRogueliteMechanics(content, identity.missionId);
+        const checkpointArsenal = resolveActiveArsenalMechanics(content, identity.missionId);
         const checkpointHeroes = resolveActiveHeroesMechanics(content, identity.missionId);
         const checkpointDirector = resolveActiveDirectorMechanics(content, identity.missionId);
         const checkpointQuests = resolveActiveQuestMechanics(content, identity.missionId);
@@ -5193,7 +5299,7 @@ export class TowerDefenseGame {
         for (const value of array(state.towers, "towers")) {
             const tower = closed(value, "tower", [
                 "id", "typeId", "coord", "footprint", "level", "stacks", "cooldown", "investedResources"
-            ], ["targetMode", "disabledFor", "hp", "baseTypeId", "upgradeBranchId"]);
+            ], ["targetMode", "disabledFor", "hp", "baseTypeId", "upgradeBranchId", "arsenalModules"]);
             const id = checkpointDataField(tower, "id", "Game checkpoint tower");
             const typeId = checkpointDataField(tower, "typeId", "Game checkpoint tower");
             if (typeof id !== "string" || towerIds.has(id) || typeof typeId !== "string" ||
@@ -5232,10 +5338,30 @@ export class TowerDefenseGame {
             recordNumbers(checkpointDataField(tower, "investedResources", "tower"), "tower.investedResources", currencyIds);
             optionalFinite(tower, "disabledFor", "tower");
             const hp = own(tower, "hp")
-                ? finite(checkpointDataField(tower, "hp", "tower"), "tower.hp", 0, type.maxHp ?? Infinity)
+                ? finite(checkpointDataField(tower, "hp", "tower"), "tower.hp", 0, Infinity)
                 : undefined;
             if ((typeof type.maxHp === "number" && type.maxHp > 0) !== own(tower, "hp")) {
                 throw new Error("Game checkpoint tower hp does not match its tower type.");
+            }
+            if (own(tower, "arsenalModules")) {
+                if (!checkpointArsenal)
+                    throw new Error("Game checkpoint tower arsenal state is unsupported for an inactive capability.");
+                const moduleFields = closed(checkpointDataField(tower, "arsenalModules", "Game checkpoint tower"), "tower arsenal modules", ["base", "barrel", "core"]);
+                const modules = {
+                    base: stringValue(checkpointDataField(moduleFields, "base", "tower arsenal modules"), "tower arsenal base"),
+                    barrel: stringValue(checkpointDataField(moduleFields, "barrel", "tower arsenal modules"), "tower arsenal barrel"),
+                    core: stringValue(checkpointDataField(moduleFields, "core", "tower arsenal modules"), "tower arsenal core")
+                };
+                const compiled = compileArsenalBlueprintV1(checkpointArsenal, typeId, modules);
+                if (hp !== undefined && hp > (type.maxHp ?? 0) * compiled.durabilityMultiplier) {
+                    throw new Error("Game checkpoint tower hp exceeds its effective arsenal durability.");
+                }
+            }
+            else if (checkpointArsenal?.blueprints[typeId]) {
+                throw new Error("Game checkpoint tower arsenal state is required for an active blueprint.");
+            }
+            else if (hp !== undefined && hp > (type.maxHp ?? 0)) {
+                throw new Error("Game checkpoint tower hp exceeds its tower type durability.");
             }
             towerStateById.set(id, hp === undefined ? { typeId } : { typeId, hp });
             if (own(tower, "targetMode")) {
@@ -7317,6 +7443,38 @@ export class TowerDefenseGame {
             ? buildTerraformingSnapshot(this.pendingTerraformExpiryGroups)
             : undefined;
         const roguelite = this.currentRogueliteSnapshot();
+        const arsenal = this.activeArsenalMechanics
+            ? Object.freeze({
+                schemaVersion: 1,
+                profileId: this.activeArsenalMechanics.profileId,
+                managementAllowed: this.arsenalManagementAllowed(),
+                towers: Object.freeze(this.towers
+                    .map((tower) => {
+                    const compiled = this.compiledArsenalTower(tower);
+                    const blueprint = this.activeArsenalMechanics.blueprints[tower.typeId];
+                    if (!compiled || !blueprint)
+                        return undefined;
+                    const availableModules = Object.freeze(Object.fromEntries(["base", "barrel", "core"].map((category) => [
+                        category,
+                        Object.freeze(Object.entries(this.activeArsenalMechanics.modules)
+                            .filter(([, definition]) => definition.category === category && (definition.compatibilityTags.length === 0
+                            || definition.compatibilityTags.some((tag) => blueprint.compatibilityTags.includes(tag))))
+                            .sort(([left], [right]) => compareBinary(left, right))
+                            .map(([id, definition]) => Object.freeze({ id, label: definition.label })))
+                    ])));
+                    return Object.freeze({ towerId: tower.id, ...compiled, availableModules });
+                })
+                    .filter((entry) => entry !== undefined)),
+                craftingRecipes: Object.freeze(Object.entries(this.activeArsenalMechanics.craftingRecipes)
+                    .sort(([left], [right]) => compareBinary(left, right))
+                    .map(([id, recipe]) => Object.freeze({
+                    id,
+                    outputArtifactId: recipe.outputArtifactId,
+                    allowRotations: recipe.allowRotations,
+                    pattern: Object.freeze(recipe.pattern.map((cell) => Object.freeze({ ...cell })))
+                })))
+            })
+            : undefined;
         const logistics = this.currentLogisticsPowerSnapshot();
         const heroes = this.activeHeroesMechanics?.schemaVersion === 7
             && this.heroStateV2
@@ -7777,6 +7935,7 @@ export class TowerDefenseGame {
             ...(elevation === undefined ? {} : { elevation }),
             ...(terraforming === undefined ? {} : { terraforming }),
             ...(roguelite === undefined ? {} : { roguelite }),
+            ...(arsenal === undefined ? {} : { arsenal }),
             ...(heroes === undefined ? {} : { heroes }),
             ...(logistics === undefined ? {} : { logistics }),
             ...(director === undefined ? {} : { director }),
@@ -12978,19 +13137,16 @@ export class TowerDefenseGame {
         }
         const attack = type.attack;
         const levelIndex = Math.max(0, tower.level - 1);
-        if (attack.kind === "sniper") {
-            return attack.rangeByLevel?.[Math.min(levelIndex, attack.rangeByLevel.length - 1)] ?? type.range;
-        }
-        if (attack.kind === "support") {
-            return attack.auraRadiusByLevel?.[Math.min(levelIndex, attack.auraRadiusByLevel.length - 1)] ?? attack.auraRadius;
-        }
-        if (attack.kind === "support_buff") {
-            return attack.auraRadius;
-        }
-        if (attack.kind === "pipeline") {
-            return attack.rangeByLevel?.[Math.min(levelIndex, attack.rangeByLevel.length - 1)] ?? type.range;
-        }
-        return type.range;
+        const baseRange = attack.kind === "sniper"
+            ? attack.rangeByLevel?.[Math.min(levelIndex, attack.rangeByLevel.length - 1)] ?? type.range
+            : attack.kind === "support"
+                ? attack.auraRadiusByLevel?.[Math.min(levelIndex, attack.auraRadiusByLevel.length - 1)] ?? attack.auraRadius
+                : attack.kind === "support_buff"
+                    ? attack.auraRadius
+                    : attack.kind === "pipeline"
+                        ? attack.rangeByLevel?.[Math.min(levelIndex, attack.rangeByLevel.length - 1)] ?? type.range
+                        : type.range;
+        return baseRange * (this.compiledArsenalTower(tower)?.rangeMultiplier ?? 1);
     }
     slipperyJackInterval(tower) {
         const type = this.towerTypes[tower.typeId];
@@ -13680,6 +13836,16 @@ export class TowerDefenseGame {
                 && tower.typeId === towerTypeId
                 && (tower.hp === undefined || tower.hp > 0));
         if (sourceTower) {
+            const arsenal = this.compiledArsenalTower(sourceTower);
+            if (arsenal && arsenal.damageMultiplier !== 1) {
+                modifiers.push({
+                    id: `arsenal:${sourceTower.id}:modules`,
+                    target: "damage",
+                    stage: "run",
+                    operation: "multiplier",
+                    value: arsenal.damageMultiplier
+                });
+            }
             modifiers.push(...(this.artifactDamageModifiersByTowerId.get(sourceTower.id) ?? []));
             modifiers.push(...this.draftDamageModifiersForTower(sourceTower));
             const damageBonusBasisPoints = this.highGroundPair(sourceTower, enemy)?.damageBonusBasisPoints ?? 0;

@@ -229,10 +229,10 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("R5.4A exact GameCommand/Journal v6 skill boundary (RED)", () => {
   it("accepts only the closed v6 unlock envelope and preserves older aliases", () => {
-    expect((Engine as any).GAME_COMMAND_SCHEMA_VERSION).toBe(6);
-    expect((Engine as any).GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS).toEqual([1, 2, 3, 4, 5, 6]);
-    expect((Engine as any).GAME_COMMAND_JOURNAL_SCHEMA_VERSION).toBe(6);
-    expect((Engine as any).GAME_COMMAND_JOURNAL_SUPPORTED_SCHEMA_VERSIONS).toEqual([1, 2, 3, 4, 5, 6]);
+    expect((Engine as any).GAME_COMMAND_SCHEMA_VERSION).toBe(7);
+    expect((Engine as any).GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect((Engine as any).GAME_COMMAND_JOURNAL_SCHEMA_VERSION).toBe(7);
+    expect((Engine as any).GAME_COMMAND_JOURNAL_SUPPORTED_SCHEMA_VERSIONS).toEqual([1, 2, 3, 4, 5, 6, 7]);
 
     const subject = game({ prepTimeUnits: 2 });
     expect(dispatchGameCommand(subject, { ...unlock("arc"), schemaVersion: 5 }))

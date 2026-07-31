@@ -1591,3 +1591,37 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - This repairs the reproducible PR #24 CI symptom without weakening stale-revision handling or
   future-version read-only preservation. Full exact-commit CI and both R13 sign-offs remain required
   before merge.
+
+## 2026-08-01 — R13 accepted and R14 Modular Arsenal
+
+- R13 PR #24 merged into `main` as `318671c25f79f79f6092ff9abe77e443f1093bba`. Exact source
+  `3b629248c421e5d2c0b6cab6b7174543c2794798` passed CI run `30655702863`; the repaired browser
+  race had already passed 20/20 repeated serial runs.
+- R14.0 RED introduced `r14-campaign-run-v2.contract.test.ts`: before implementation, four of five
+  contracts failed because CampaignRun still emitted v1 and rejected/ignored the Arsenal inventory.
+  GREEN adds the explicit v1→v2 migration, closed hostile-data codec and independent
+  `arsenal.moduleInventory`; the combined campaign focused set passed 78/78.
+- R14.1/R14.3 RED introduced `r14-arsenal.contract.test.ts`; all four contracts initially failed
+  because the module normalizer, compiler and crafting reducer did not exist. GREEN adds closed
+  authoring data, base/barrel/core compatibility, immutable effective multipliers and exact rotated
+  3×3 crafting with atomic concrete artifact consumption; 4/4 pass.
+- R14.2 adds GameCommand/Journal v7, active-only tower loadouts, shared modifier-pipeline damage,
+  range and durability, management-phase module configuration, runtime `craftGem`, checkpoint and
+  journal replay equivalence, branch-upgrade loadout cleanup and absent-module no-op coverage.
+- R14.4 adds the isolated Studio Arsenal editor, authoritative Playtest controls, a fail-closed
+  renderer projector used by Canvas and Phaser generated players, MCP schema/recipe discovery and
+  agent guide v48. Campaign presentation now accepts both legacy Run v1 and current Run v2 module
+  inventory without deriving gameplay.
+- Final source-tree verification passed 3,716/3,716 unit and contract tests in 357 files, typecheck,
+  engine build, content validation, the 60-second tutorial simulation, starter balance and map
+  compilation, production web build, all three plugin build/validate/smoke checks, and mobile plus
+  desktop scaffold packaging. `cargo test` passed 7/7 desktop bridge/lifecycle tests.
+- The first full browser pass exposed one stale assertion that still expected imported CampaignRun
+  v1 to remain v1. A focused RED regression proved the intended explicit v1→v2 migration; after the
+  expectation was corrected, the exact final browser matrix passed 141/141 across Studio, Canvas,
+  Phaser, hex and square paths.
+- The local Apple-silicon Tauri build produced `TowerForge_0.5.0_aarch64.dmg`. The first sandboxed
+  attempt failed at the system `hdiutil` boundary; the identical command succeeded with normal
+  macOS device access. `verify:macos-bundle` then mounted the DMG and verified both the complete
+  ad-hoc app signature and the disk-image container. The artifact remains an unsigned,
+  non-notarized pre-release until Developer ID credentials are configured.

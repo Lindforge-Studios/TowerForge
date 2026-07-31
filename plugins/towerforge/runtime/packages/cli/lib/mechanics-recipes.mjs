@@ -23,6 +23,7 @@ const TAGGED_MOAT_ID = "tagged_moat";
 const TAGGED_DESTRUCTIBLE_BRIDGE_ID = "tagged_destructible_bridge";
 const BASIC_ELEMENTAL_SYNERGY_ID = "basic_elemental_synergy";
 const BASIC_BOSS_ARTIFACT_LOOT_ID = "basic_boss_artifact_loot";
+const BASIC_MODULAR_ARSENAL_ID = "basic_modular_arsenal";
 const BASIC_COMMANDER_HERO_ID = "basic_commander_hero";
 const BASIC_MOBILE_COMMANDER_HERO_ID = "basic_mobile_commander_hero";
 const BASIC_DURABLE_COMMANDER_HERO_ID = "basic_durable_commander_hero";
@@ -337,6 +338,14 @@ const RECIPES = Object.freeze([
     parameterSchema: ROGUELITE_ARTIFACT_PARAMETER_SCHEMA
   }),
   Object.freeze({
+    id: BASIC_MODULAR_ARSENAL_ID,
+    moduleId: "arsenal",
+    label: "Basic Modular Arsenal",
+    description: "Inert arsenal v1 profile with compatible base, barrel and core modules plus an exact two-gem recipe.",
+    suggestedId: BASIC_MODULAR_ARSENAL_ID,
+    moduleSchemaVersion: 1
+  }),
+  Object.freeze({
     id: BASIC_COMMANDER_HERO_ID,
     moduleId: "heroes",
     label: "Basic Commander Hero",
@@ -593,6 +602,50 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
   }
   if (recipeId === BASIC_DYNAMIC_NAVIGATION_ID) {
     return materializeDynamicNavigationRecipe(recipe, missionId);
+  }
+  if (recipeId === BASIC_MODULAR_ARSENAL_ID) {
+    const towerTypeId = firstSafeId(towerIds);
+    if (towerTypeId === undefined) {
+      throw new MechanicsRecipeParameterError(
+        "arsenal_recipe_context_required",
+        "Basic modular arsenal requires at least one authored tower."
+      );
+    }
+    const modules = safeRecord();
+    defineOwn(modules, "starter_base", {
+      label: "Starter base", category: "base", compatibilityTags: [towerTypeId],
+      modifiers: { damageMultiplier: 1, rangeMultiplier: 1, durabilityMultiplier: 1 }
+    });
+    defineOwn(modules, "starter_barrel", {
+      label: "Starter barrel", category: "barrel", compatibilityTags: [towerTypeId],
+      modifiers: { damageMultiplier: 1, rangeMultiplier: 1, durabilityMultiplier: 1 }
+    });
+    defineOwn(modules, "starter_core", {
+      label: "Starter core", category: "core", compatibilityTags: [towerTypeId],
+      modifiers: { damageMultiplier: 1, rangeMultiplier: 1, durabilityMultiplier: 1 }
+    });
+    const blueprints = safeRecord();
+    defineOwn(blueprints, towerTypeId, {
+      compatibilityTags: [towerTypeId], footprint: [{ q: 0, r: 0 }],
+      defaultModules: { base: "starter_base", barrel: "starter_barrel", core: "starter_core" }
+    });
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "arsenal", moduleSchemaVersion: 1, missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: {
+          modules,
+          blueprints,
+          craftingRecipes: {
+            gem_t2: {
+              outputArtifactId: "gem_t2", allowRotations: true,
+              pattern: [{ x: 0, y: 0, artifactId: "gem_t1" }, { x: 1, y: 0, artifactId: "gem_t1" }]
+            }
+          }
+        }
+      }
+    };
   }
   if (recipeId === BASIC_ADAPTIVE_WAVE_DIRECTOR_ID) {
     const counterEnemyId = chooseId("armored_brute", enemyIds) ?? "";

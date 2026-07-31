@@ -922,6 +922,20 @@
               <pre id="campaign-preview-result" class="mechanics-preview-result" aria-live="polite">Load or preview the campaign graph.</pre>
             </div>
           </div>
+          <div id="mechanics-arsenal-editor" class="hidden">
+            <div class="mechanics-shield-section mechanics-roguelite-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Arsenal blueprint catalog</h4>
+                  <p>The engine compiles this same closed profile for author-time preview and runtime assembly. Ordinary tower forms remain unchanged.</p>
+                </div>
+              </div>
+              <label>Modules, tower blueprints, and gem recipes JSON
+                <textarea id="mechanics-arsenal-json" class="mono" spellcheck="false" rows="22" placeholder='{"modules":{},"blueprints":{},"craftingRecipes":{}}'></textarea>
+              </label>
+              <p id="mechanics-arsenal-status" class="mechanics-notice" role="status">Use Preview before Save; invalid JSON never reaches the project.</p>
+            </div>
+          </div>
           <div id="mechanics-heroes-editor" class="hidden">
             <div class="mechanics-heroes-section">
               <div class="mechanics-section-head">
@@ -1432,6 +1446,7 @@
           <div id="pt-inspector" class="pt-inspector">Click Inspect, then choose a tower or enemy.</div>
           <div id="pt-wave-draft" class="pt-artifact-inventory" hidden></div>
           <div id="pt-artifact-inventory" class="pt-artifact-inventory" hidden></div>
+          <div id="pt-arsenal" class="pt-artifact-inventory" hidden></div>
           <div id="pt-logistics-power" class="pt-artifact-inventory" hidden></div>
           <div id="pt-quests" class="pt-artifact-inventory pt-quests" hidden></div>
           <div id="pt-ballistics" class="pt-artifact-inventory pt-ballistics" hidden></div>

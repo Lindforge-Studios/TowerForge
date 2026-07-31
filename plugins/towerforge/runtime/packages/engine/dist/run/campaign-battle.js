@@ -199,7 +199,8 @@ export function settleCampaignBattleVictory(run, profile, content, nodeId, earne
             nodeId,
             deck: settlement.deck,
             artifacts: settlement.artifacts,
-            runResources: captured.runResources
+            runResources: captured.runResources,
+            arsenal: captured.arsenal
         }).run;
     }
     catch {

@@ -17,6 +17,7 @@ const R0A_MODULE_IDS = [
   "weather",
   "terraforming",
   "roguelite",
+  "arsenal",
   "heroes",
   "logistics",
   "director",
@@ -26,7 +27,7 @@ const R0A_MODULE_IDS = [
   "multiplayer"
 ];
 const IMPLEMENTED_MODULE_IDS = [
-  "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "heroes",
+  "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "arsenal", "heroes",
   "logistics", "director", "quests", "enemyBehaviors", "multiplayer"
 ];
 const UNAVAILABLE_MODULE_IDS = R0A_MODULE_IDS.filter(
@@ -170,7 +171,7 @@ describe("R1 combat mechanics MCP contract", () => {
         inputSchema: campaignInputSchema,
         handoff: {
           markerSchemaVersion: 2,
-          campaignRunSchemaVersion: 1,
+          campaignRunSchemaVersion: 2,
           prepare: "prepareCampaignBattle",
           settle: "settleCampaignBattleVictory",
           carries: ["deck", "artifacts"],
@@ -394,7 +395,7 @@ describe("R1 combat mechanics MCP contract", () => {
       commands: [],
       events: []
     });
-    expect(mechanics.mechanics.moduleIds).toHaveLength(16);
+    expect(mechanics.mechanics.moduleIds).toHaveLength(17);
     expect(mechanics.towerScript.actions.restoreEnemyShield.required).toEqual({
       target: "enemy target", amount: "expression >= 0"
     });
@@ -429,7 +430,7 @@ describe("R1 combat mechanics MCP contract", () => {
 
       expect(result.missionId).toBe("tutorial_01");
       expect(Object.keys(result.capabilities)).toEqual(R0A_MODULE_IDS);
-      expect(Object.values(result.capabilities)).toHaveLength(16);
+      expect(Object.values(result.capabilities)).toHaveLength(17);
       expect(result.capabilities.combat).toMatchObject({
         available: true,
         moduleEnabled: false,

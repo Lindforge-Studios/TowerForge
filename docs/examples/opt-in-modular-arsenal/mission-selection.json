@@ -1,0 +1,8 @@
+{
+  "mechanics": {
+    "profiles": {
+      "arsenal": "basic_modular_arsenal",
+      "roguelite": "arsenal_gems"
+    }
+  }
+}

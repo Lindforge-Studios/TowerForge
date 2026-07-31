@@ -8,7 +8,8 @@ import {
   exportCampaignRun,
   importCampaignRun,
   type CampaignRun,
-  type CampaignRunV1
+  type CampaignRunV1,
+  type CampaignRunV2
 } from "../index.js";
 
 function validRun(overrides: Partial<CampaignRunV1> = {}): CampaignRunV1 {
@@ -29,12 +30,15 @@ function validRun(overrides: Partial<CampaignRunV1> = {}): CampaignRunV1 {
   };
 }
 
-function expectDeeplyFrozen(run: CampaignRunV1): void {
+function expectDeeplyFrozen(run: CampaignRunV2): void {
   expect(Object.isFrozen(run)).toBe(true);
   expect(Object.isFrozen(run.deck)).toBe(true);
   expect(Object.isFrozen(run.artifacts)).toBe(true);
   expect(Object.isFrozen(run.runResources)).toBe(true);
+  expect(Object.isFrozen(run.arsenal)).toBe(true);
+  expect(Object.isFrozen(run.arsenal.moduleInventory)).toBe(true);
   for (const entry of [...run.deck, ...run.artifacts]) expect(Object.isFrozen(entry)).toBe(true);
+  for (const entry of run.arsenal.moduleInventory) expect(Object.isFrozen(entry)).toBe(true);
 }
 
 function ownRecord(entries: readonly (readonly [string, number])[]): Record<string, number> {
@@ -70,11 +74,11 @@ function statefulRunProxy(first: CampaignRunV1, substituted: object): {
   return { proxy, descriptorPasses: () => descriptorPasses, valueReads: () => valueReads };
 }
 
-describe("CampaignRunV1 portable codec", () => {
-  it("publishes the independent v1 contract and exact machine-readable limits", () => {
+describe("CampaignRunV2 portable codec", () => {
+  it("keeps v1 importable while publishing v2 as the current contract", () => {
     const alias: CampaignRun = validRun();
     expect(alias.version).toBe(1);
-    expect(CAMPAIGN_RUN_SCHEMA_VERSION).toBe(1);
+    expect(CAMPAIGN_RUN_SCHEMA_VERSION).toBe(2);
     expect(CAMPAIGN_RUN_LIMITS).toEqual({
       jsonBytes: 1_048_576,
       collectionEntries: 10_000,
@@ -89,25 +93,30 @@ describe("CampaignRunV1 portable codec", () => {
   it("creates the exact deeply frozen inert run without random defaults", () => {
     const run = createCampaignRun("seed");
     expect(run).toEqual({
-      version: 1,
+      version: 2,
       seed: "seed",
       nodeId: null,
       deck: [],
       artifacts: [],
-      runResources: {}
+      runResources: {},
+      arsenal: { moduleInventory: [] }
     });
     expectDeeplyFrozen(run);
     expect(exportCampaignRun(run)).toBe(
-      '{"artifacts":[],"deck":[],"nodeId":null,"runResources":{},"seed":"seed","version":1}'
+      '{"arsenal":{"moduleInventory":[]},"artifacts":[],"deck":[],"nodeId":null,"runResources":{},"seed":"seed","version":2}'
     );
     expect(createCampaignRun("").seed).toBe("");
   });
 
-  it("round-trips populated string and numeric seeds with source metadata and no migrations", () => {
+  it("migrates populated v1 runs for string and numeric seeds", () => {
     for (const seed of ["campaign-seed", 42] as const) {
       const original = validRun({ seed });
       const decoded = importCampaignRun(exportCampaignRun(original));
-      expect(decoded).toEqual({ run: original, source: "v1", migrations: [] });
+      expect(decoded).toEqual({
+        run: { ...original, version: 2, arsenal: { moduleInventory: [] } },
+        source: "v2",
+        migrations: []
+      });
       expect(decoded.run).not.toBe(original);
       expect(Object.isFrozen(decoded)).toBe(true);
       expect(Object.isFrozen(decoded.migrations)).toBe(true);
@@ -201,12 +210,12 @@ describe("CampaignRunV1 portable codec", () => {
     });
     let error: unknown;
     try {
-      decodeCampaignRun({ ...validRun(), version: 2, deck: hostileDeck });
+      decodeCampaignRun({ ...validRun(), version: 3, deck: hostileDeck });
     } catch (caught) {
       error = caught;
     }
     expect(error).toBeInstanceOf(UnsupportedCampaignRunVersionError);
-    expect(error).toMatchObject({ code: "UNSUPPORTED_CAMPAIGN_RUN_VERSION", version: 2 });
+    expect(error).toMatchObject({ code: "UNSUPPORTED_CAMPAIGN_RUN_VERSION", version: 3 });
     expect(nestedTouches).toBe(0);
   });
 
@@ -266,15 +275,23 @@ describe("CampaignRunV1 portable codec", () => {
 
   it("uses one root descriptor snapshot and never ordinary-reads a stateful proxy", () => {
     const first = validRun();
-    const substituted = { ...validRun(), version: 2, secret: "injected" };
+    const substituted = { ...validRun(), version: 3, secret: "injected" };
     const decodeSubject = statefulRunProxy(first, substituted);
     const decoded = decodeCampaignRun(decodeSubject.proxy).run;
-    expect(decoded).toEqual(first);
+    expect(decoded).toEqual({ ...first, version: 2, arsenal: { moduleInventory: [] } });
     expect(decodeSubject.descriptorPasses()).toBe(1);
     expect(decodeSubject.valueReads()).toBe(0);
 
     const exportSubject = statefulRunProxy(first, substituted);
-    expect(JSON.parse(exportCampaignRun(exportSubject.proxy))).toEqual(first);
+    expect(JSON.parse(exportCampaignRun(exportSubject.proxy))).toEqual({
+      arsenal: { moduleInventory: [] },
+      artifacts: first.artifacts,
+      deck: first.deck,
+      nodeId: first.nodeId,
+      runResources: first.runResources,
+      seed: first.seed,
+      version: 2
+    });
     expect(exportSubject.descriptorPasses()).toBe(1);
     expect(exportSubject.valueReads()).toBe(0);
   });

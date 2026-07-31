@@ -1,8 +1,8 @@
 /** Stable mechanics module identifiers shared by project catalogs and mission selections. */
-export declare const MECHANICS_MODULE_IDS: readonly ["combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "heroes", "logistics", "director", "quests", "enemyBehaviors", "scriptingDx", "multiplayer"];
+export declare const MECHANICS_MODULE_IDS: readonly ["combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "arsenal", "heroes", "logistics", "director", "quests", "enemyBehaviors", "scriptingDx", "multiplayer"];
 export type MechanicsModuleId = (typeof MECHANICS_MODULE_IDS)[number];
 /** Modules with executable engine support. Authoring any other module remains capability-inactive. */
-export declare const IMPLEMENTED_MECHANICS_MODULE_IDS: readonly ["combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "heroes", "logistics", "director", "quests", "enemyBehaviors", "multiplayer"];
+export declare const IMPLEMENTED_MECHANICS_MODULE_IDS: readonly ["combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "arsenal", "heroes", "logistics", "director", "quests", "enemyBehaviors", "multiplayer"];
 export declare const SHIELD_LIMITS: Readonly<{
     capacity: 1000000000000;
     ratePerUnit: 1000000000;

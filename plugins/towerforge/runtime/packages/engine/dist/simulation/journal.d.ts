@@ -1,10 +1,10 @@
 import type { GameContentRegistry } from "../content/registry.js";
-import { type GameCommandV1, type GameCommandV2, type GameCommandV3, type GameCommandV4, type GameCommandV5, type GameCommandV6 } from "./command-internal.js";
+import { type GameCommandV1, type GameCommandV2, type GameCommandV3, type GameCommandV4, type GameCommandV5, type GameCommandV6, type GameCommandV7 } from "./command-internal.js";
 import { SIMULATION_ENGINE_VERSION, type GameCheckpointV1 } from "./checkpoint.js";
 import { TowerDefenseGame } from "./TowerDefenseGame.js";
 import type { ActionResult } from "./types.js";
-export declare const GAME_COMMAND_JOURNAL_SCHEMA_VERSION: 6;
-export declare const GAME_COMMAND_JOURNAL_SUPPORTED_SCHEMA_VERSIONS: readonly [1, 2, 3, 4, 5, 6];
+export declare const GAME_COMMAND_JOURNAL_SCHEMA_VERSION: 7;
+export declare const GAME_COMMAND_JOURNAL_SUPPORTED_SCHEMA_VERSIONS: readonly [1, 2, 3, 4, 5, 6, 7];
 export declare const GAME_COMMAND_JOURNAL_LIMITS: Readonly<{
     entries: 100000;
     totalBytes: number;
@@ -94,10 +94,23 @@ export interface GameCommandJournalV6 {
     readonly initialCheckpoint: GameCheckpointV1;
     readonly entries: readonly GameCommandJournalEntryV6[];
 }
-export type GameCommandJournal = GameCommandJournalV1 | GameCommandJournalV2 | GameCommandJournalV3 | GameCommandJournalV4 | GameCommandJournalV5 | GameCommandJournalV6;
+export interface GameCommandJournalEntryV7 {
+    readonly sequence: number;
+    readonly command: GameCommandV1 | GameCommandV2 | GameCommandV3 | GameCommandV4 | GameCommandV5 | GameCommandV6 | GameCommandV7;
+    readonly result: GameCommandJournalResultV1;
+    readonly postStateDigest: string;
+}
+export interface GameCommandJournalV7 {
+    readonly schemaVersion: 7;
+    readonly engineVersion: typeof SIMULATION_ENGINE_VERSION;
+    readonly contentDigest: string;
+    readonly initialCheckpoint: GameCheckpointV1;
+    readonly entries: readonly GameCommandJournalEntryV7[];
+}
+export type GameCommandJournal = GameCommandJournalV1 | GameCommandJournalV2 | GameCommandJournalV3 | GameCommandJournalV4 | GameCommandJournalV5 | GameCommandJournalV6 | GameCommandJournalV7;
 export interface GameCommandJournalAcceptedTail {
     readonly entryCount: number;
-    readonly entry?: GameCommandJournalEntryV6;
+    readonly entry?: GameCommandJournalEntryV7;
 }
 /**
  * Owns the command boundary around one simulation instance. Any mutation that

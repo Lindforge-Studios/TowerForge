@@ -93,7 +93,7 @@ const BALANCE_PATCH_KEYS = [
   "enemies", "towers", "waveSets", "missions", "abilities", "constants", "currencies", "defaultMissionId",
   "defaultDifficultyId", "difficulties", "metaProgression", "terrainTypes"
 ];
-const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "heroes", "logistics", "director", "quests", "enemyBehaviors", "personaQa", "multiplayer", "proceduralJuice", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
+const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "arsenal", "heroes", "logistics", "director", "quests", "enemyBehaviors", "personaQa", "multiplayer", "proceduralJuice", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
 
 // Maps an upsert_entity/delete_entity `collection` to (a) the balance.json key, (b) the shape
 // (a map keyed by id, or an array of {id,...} items — currencies only), and (c) the
@@ -2156,7 +2156,7 @@ export async function callTool(name, args = {}, ctx = {}) {
         inputSchema: CAMPAIGN_GRAPH_INPUT_SCHEMA,
         handoff: {
           markerSchemaVersion: 2,
-          campaignRunSchemaVersion: 1,
+          campaignRunSchemaVersion: 2,
           prepare: "prepareCampaignBattle",
           settle: "settleCampaignBattleVictory",
           carries: ["deck", "artifacts"],
@@ -2185,6 +2185,30 @@ export async function callTool(name, args = {}, ctx = {}) {
           additionalProperties: false
         }
       }
+    };
+    const arsenal = {
+      authoring: engine.ARSENAL_MECHANICS_SCHEMA,
+      campaignRun: { schemaVersion: 2, field: "arsenal.moduleInventory", migrationFromV1: "empty inventory" },
+      snapshot: {
+        field: "arsenal", optional: true, supportedSchemaVersions: [1],
+        engineOwnedFields: ["towerId", "availableModules", "damageMultiplier", "rangeMultiplier", "durabilityMultiplier", "craftingRecipes"]
+      },
+      commands: {
+        schemaVersion: 7,
+        configureTowerModules: {
+          requiredFields: ["towerId", "modules"],
+          moduleFields: ["base", "barrel", "core"],
+          phase: "setup_or_between"
+        },
+        craftGem: {
+          requiredFields: ["recipeId", "cells"],
+          cellFields: ["x", "y", "artifactInstanceId"],
+          board: "3x3",
+          phase: "setup_or_between"
+        }
+      },
+      recipes: ["basic_modular_arsenal"],
+      gameplayBoundary: "The engine-owned compiler is canonical for Studio preview, runtime assembly, range, damage and durability."
     };
     const heroesAuthoringV5 = engine.HEROES_MECHANICS_SCHEMA.versions?.[5];
     const heroesAuthoringV6 = engine.HEROES_MECHANICS_SCHEMA.versions?.[6];
@@ -2509,6 +2533,7 @@ export async function callTool(name, args = {}, ctx = {}) {
       ...(includes("weather") ? { weather } : {}),
       ...(includes("terraforming") ? { terraforming } : {}),
       ...(includes("roguelite") ? { roguelite } : {}),
+      ...(includes("arsenal") ? { arsenal } : {}),
       ...(includes("heroes") ? { heroes } : {}),
       ...(includes("logistics") ? { logistics } : {}),
       ...(includes("director") ? { director } : {}),
@@ -2554,7 +2579,7 @@ export async function callTool(name, args = {}, ctx = {}) {
           schemaVersion: 1,
           moduleIds: [...engine.MECHANICS_MODULE_IDS],
           implementedModuleIds: [...engine.IMPLEMENTED_MECHANICS_MODULE_IDS],
-          modules: { combat: combatShields, reactions, navigation, elevation, physics, ballistics, weather, terraforming, roguelite, heroes, logistics, director, quests, enemyBehaviors, multiplayer }
+          modules: { combat: combatShields, reactions, navigation, elevation, physics, ballistics, weather, terraforming, roguelite, arsenal, heroes, logistics, director, quests, enemyBehaviors, multiplayer }
         }
       } : {})
     };
@@ -2758,7 +2783,7 @@ export async function callTool(name, args = {}, ctx = {}) {
           engine.ELEVATION_MECHANICS_SCHEMA
         );
       }
-      for (const moduleId of ["combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "heroes", "logistics", "director", "quests", "enemyBehaviors", "multiplayer"]) {
+      for (const moduleId of ["combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "arsenal", "heroes", "logistics", "director", "quests", "enemyBehaviors", "multiplayer"]) {
         if (!Number.isSafeInteger(result[moduleId]?.moduleSchemaVersion)) continue;
         result.capabilities = {
           ...result.capabilities,

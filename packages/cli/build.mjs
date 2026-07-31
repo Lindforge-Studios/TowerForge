@@ -438,6 +438,7 @@ function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "
         <section id="roguelite-status" class="roguelite-status" aria-label="Tower synergies" hidden></section>
         <section id="wave-draft" class="roguelite-status" aria-label="Wave draft" hidden></section>
         <section id="artifact-inventory" class="roguelite-status" aria-label="Artifact inventory" hidden></section>
+        <section id="arsenal-status" class="roguelite-status" aria-label="Modular arsenal" hidden></section>
         <section id="logistics-status" class="roguelite-status" aria-label="Power grid" hidden></section>
         <section id="quest-status" class="roguelite-status" aria-label="Optional challenges" hidden></section>
         <section id="campaign-run-panel" class="campaign-run-panel" aria-label="Campaign run" hidden>
@@ -703,6 +704,81 @@ function resetPlayerProgress() {
 // TOWERFORGE_PROFILE_RUNTIME_END`;
 }
 
+function arsenalPlayerRuntimeTemplate() {
+  return `function updateArsenalStatus(snap) {
+  const panel = $("arsenal-status");
+  if (!panel) return;
+  const presentation = projectArsenalPresentation(snap);
+  panel.replaceChildren();
+  panel.hidden = !presentation?.active;
+  if (!presentation?.active) return;
+  const heading = document.createElement("strong");
+  heading.textContent = "Modular Arsenal";
+  panel.append(heading);
+  const tower = presentation.towers.find((entry) => entry.towerId === selectedTowerId);
+  if (tower) {
+    const selects = {};
+    for (const category of ["base", "barrel", "core"]) {
+      const label = document.createElement("label");
+      label.textContent = category;
+      const select = document.createElement("select");
+      select.dataset.arsenalCategory = category;
+      for (const option of tower.availableModules[category]) {
+        const element = document.createElement("option");
+        element.value = option.id;
+        element.textContent = option.label;
+        element.selected = option.id === tower.modules[category];
+        select.append(element);
+      }
+      label.append(select);
+      panel.append(label);
+      selects[category] = select;
+    }
+    const apply = document.createElement("button");
+    apply.type = "button";
+    apply.textContent = "Apply modules";
+    apply.disabled = !presentation.managementAllowed;
+    apply.addEventListener("click", () => {
+      const result = dispatchGameCommand(game, {
+        schemaVersion: 7, type: "configureTowerModules", towerId: tower.towerId,
+        modules: { base: selects.base.value, barrel: selects.barrel.value, core: selects.core.value }
+      });
+      report(result);
+      if (result.ok) updateArsenalStatus(game.getSnapshot());
+    });
+    panel.append(apply);
+    const stats = document.createElement("span");
+    stats.textContent = "Damage ×" + tower.damageMultiplier + " · range ×" + tower.rangeMultiplier + " · durability ×" + tower.durabilityMultiplier;
+    panel.append(stats);
+  } else if (presentation.towers.length) {
+    const note = document.createElement("span");
+    note.textContent = "Select a tower to configure its modules.";
+    panel.append(note);
+  }
+  const inventory = projectRoguelitePresentation(snap)?.artifacts?.inventory ?? [];
+  for (const recipe of presentation.craftingRecipes) {
+    const available = inventory.filter((entry) => !entry.socket);
+    const used = new Set();
+    const cells = recipe.pattern.map((cell) => {
+      const artifact = available.find((entry) => entry.artifactId === cell.artifactId && !used.has(entry.instanceId));
+      if (artifact) used.add(artifact.instanceId);
+      return artifact ? { x: cell.x, y: cell.y, artifactInstanceId: artifact.instanceId } : null;
+    });
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.craftRecipe = recipe.id;
+    button.textContent = "Craft " + recipe.outputArtifactId;
+    button.disabled = !presentation.managementAllowed || cells.some((cell) => cell === null);
+    button.addEventListener("click", () => {
+      const result = dispatchGameCommand(game, { schemaVersion: 7, type: "craftGem", recipeId: recipe.id, cells });
+      report(result);
+      if (result.ok) { updateRogueliteStatus(game.getSnapshot()); updateArsenalStatus(game.getSnapshot()); }
+    });
+    panel.append(button);
+  }
+}`;
+}
+
 function playerTemplate(includeMultiplayer = false) {
   return `import {
   createCampaignRun,
@@ -729,7 +805,7 @@ function playerTemplate(includeMultiplayer = false) {
 } from "./engine/index.js";
 ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multiplayer/index.js";' : ""}
 import { createPlayerProfileStore, derivePlayerProfileStorageKey } from "./player-runtime/index.mjs";
-import { createCanvasRenderer, hitTestHeroesPresentation, projectCampaignPresentation, projectDirectorDecisionCues, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectProceduralJuicePresentation, projectQuestPresentation, projectRoguelitePresentation, projectVanguardProtectionPresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
+import { createCanvasRenderer, hitTestHeroesPresentation, projectArsenalPresentation, projectCampaignPresentation, projectDirectorDecisionCues, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectProceduralJuicePresentation, projectQuestPresentation, projectRoguelitePresentation, projectVanguardProtectionPresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
 import { createAudioPlayer } from "./renderer/audio.mjs";
 import project from "./project-data.js";
 
@@ -746,6 +822,7 @@ const content = createGameContentRegistry({
 ${includeMultiplayer ? "globalThis.__towerforgeMultiplayer = TowerForgeMultiplayer;" : ""}
 
 ${playerProfileRuntimeTemplate()}
+${arsenalPlayerRuntimeTemplate()}
 
 const $ = (id) => document.getElementById(id);
 applyProjectTheme();
@@ -1663,6 +1740,7 @@ function updateHud(snap) {
   updateHeroSkillTree(snap);
   updateTargetMode(snap);
   updateRogueliteStatus(snap);
+  updateArsenalStatus(snap);
   updateLogisticsStatus(snap);
   updateQuestStatus(snap);
   if (snap.outcome === "victory" && !victoryRewarded) {
@@ -1998,6 +2076,7 @@ import {
   createProceduralJuicePresentationRuntime,
   createProceduralJuiceWorldSnapshotBuffer,
   projectCampaignPresentation,
+  projectArsenalPresentation,
   projectBallisticsEventPresentation,
   projectBallisticsPresentation,
   projectBallisticsPresentationPoint,
@@ -2057,6 +2136,7 @@ function ownDataValue(record, key) {
 }
 
 ${playerProfileRuntimeTemplate()}
+${arsenalPlayerRuntimeTemplate()}
 
 const $ = (id) => document.getElementById(id);
 applyProjectTheme();
@@ -3740,6 +3820,7 @@ function updateHud(snap) {
   updateHeroSkillTree(snap);
   updateTargetMode(snap);
   updateRogueliteStatus(snap);
+  updateArsenalStatus(snap);
   updateLogisticsStatus(snap);
   updateQuestStatus(snap);
   if (snap.outcome === "victory" && !victoryRewarded) {

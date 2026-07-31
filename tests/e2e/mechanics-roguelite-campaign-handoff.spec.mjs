@@ -67,8 +67,9 @@ test.describe("R4.4C generated-player campaign battle handoff", () => {
       await expect(page.locator("#campaign-run-panel"), `${grid}/${renderer} active panel`).toBeVisible();
 
       const imported = importedRun(`${grid}-${renderer}`);
+      const migrated = { ...imported, version: 2, arsenal: { moduleInventory: [] } };
       await importRun(page, imported);
-      await expect.poll(async () => (await inspectCampaign(page)).run).toMatchObject(imported);
+      await expect.poll(async () => (await inspectCampaign(page)).run).toMatchObject(migrated);
 
       const node = page.locator('#campaign-run-nodes button[data-state="available"]');
       await expect(node).toHaveCount(1);
@@ -84,7 +85,7 @@ test.describe("R4.4C generated-player campaign battle handoff", () => {
         artifacts: [{ instanceId: "imported_artifact", artifactId: "scope", socket: null }],
         draft: [{ cardId: "ember", count: 1 }]
       });
-      await expect.poll(async () => (await inspectCampaign(page)).run).toMatchObject(imported);
+      await expect.poll(async () => (await inspectCampaign(page)).run).toMatchObject(migrated);
 
       const placement = await nextPlacementPoint(page);
       expect(placement, `${grid}/${renderer} buildable tower tile`).not.toBeNull();

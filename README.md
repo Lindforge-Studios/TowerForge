@@ -21,7 +21,7 @@ Desktop-сборки публикуются в [GitHub Releases](https://github.
 
 ## Текущий статус
 
-Актуальная публичная desktop-версия — [v0.4.0](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.4.0), неподписанный pre-release от 28 июля 2026 года. Ветка `main` уже содержит R9–R11: Behavior Trees/HFSM, Persona QA с процедурными квестами и Procedural Juice. R12 реализован в открытом [PR #23](https://github.com/Lindforge-Studios/TowerForge/pull/23) с зелёным CI; stacked [PR #24](https://github.com/Lindforge-Studios/TowerForge/pull/24) содержит R13 и RED/GREEN-исправление гонки его browser gate, но ещё ожидает повторный exact-commit CI и sign-off. По новой команде владельца следующим этапом будет R14. Точный статус, границы и следующие этапы ведутся в [ROADMAP](docs/ROADMAP.md).
+Актуальная desktop-линия — `v0.5.0` (неподписанный pre-release): она объединяет R9–R14 поверх прежнего R0–R8 baseline. В неё входят Behavior Trees/HFSM, Persona QA и процедурные квесты, Procedural Juice, многосоставные боссы и формации, deterministic 2.5D ballistics/destructibles/weather, а также opt-in Modular Arsenal с CampaignRunV2 и gem crafting. Все gameplay-расширения остаются выключенными по умолчанию. Точный статус, границы и следующие этапы ведутся в [ROADMAP](docs/ROADMAP.md).
 
 ## Состав продукта
 

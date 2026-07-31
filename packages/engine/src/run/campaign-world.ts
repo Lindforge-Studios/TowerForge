@@ -2,6 +2,7 @@ import {
   resolveActiveRogueliteMechanics,
   type ActiveRogueliteMechanicsV4
 } from "../content/roguelite-mechanics.js";
+import { resolveActiveArsenalMechanics } from "../content/arsenal-mechanics.js";
 import type {
   GameContentRegistry,
   WorldCampaignBattleNodeV1,
@@ -21,7 +22,7 @@ import {
   type PlayerProfileFailureCode,
   type PlayerProfileV3
 } from "../profile/player-profile.js";
-import { decodeCampaignRun, type CampaignRunV1 } from "./campaign-run.js";
+import { decodeCampaignRun, type CampaignRunV2 } from "./campaign-run.js";
 
 export const WORLD_CAMPAIGN_SCHEMA = Object.freeze({
   supportedSchemaVersions: Object.freeze([1, 2] as const),
@@ -961,17 +962,17 @@ export function resolveWorldCampaign(content: GameContentRegistry): ResolvedWorl
 }
 
 export type CampaignRunContentValidationResult = Readonly<
-  | { ok: true; code: "valid"; run: CampaignRunV1; campaign: ResolvedWorldCampaign }
+  | { ok: true; code: "valid"; run: CampaignRunV2; campaign: ResolvedWorldCampaign }
   | {
       ok: false;
-      code: "campaign_inactive" | "invalid_run" | "unknown_node" | "unknown_card" | "unknown_artifact"
+      code: "campaign_inactive" | "invalid_run" | "unknown_node" | "unknown_card" | "unknown_artifact" | "unknown_module"
         | "unknown_run_resource" | "invalid_run_resource";
-      run: CampaignRunV1;
+      run: CampaignRunV2;
     }
 >;
 
 function validateCapturedCampaignRunAgainstContent(
-  run: CampaignRunV1,
+  run: CampaignRunV2,
   content: GameContentRegistry
 ): CampaignRunContentValidationResult {
   const campaign = resolveWorldCampaign(content);
@@ -991,6 +992,18 @@ function validateCapturedCampaignRunAgainstContent(
   ))) {
     return Object.freeze({ ok: false, code: "unknown_artifact" as const, run });
   }
+  if (run.arsenal.moduleInventory.length > 0) {
+    const knownModuleIds = new Set<string>();
+    for (const node of campaign.nodes) {
+      if (!("missionId" in node)) continue;
+      const arsenal = resolveActiveArsenalMechanics(content, node.missionId);
+      if (!arsenal) continue;
+      for (const moduleId of Object.keys(arsenal.modules)) knownModuleIds.add(moduleId);
+    }
+    if (run.arsenal.moduleInventory.some((entry) => !knownModuleIds.has(entry.moduleId))) {
+      return Object.freeze({ ok: false, code: "unknown_module" as const, run });
+    }
+  }
   if (campaign.schemaVersion === 2) {
     for (const resourceId of Object.keys(run.runResources).sort(binaryCompare)) {
       if (!Object.prototype.hasOwnProperty.call(campaign.runResources, resourceId)) {
@@ -1006,7 +1019,7 @@ function validateCapturedCampaignRunAgainstContent(
 }
 
 function availableCampaignNodeIds(
-  run: CampaignRunV1,
+  run: CampaignRunV2,
   campaign: ResolvedWorldCampaign
 ): readonly string[] {
   if (run.nodeId === null) return Object.freeze([...campaign.entryNodeIds]);
@@ -1014,23 +1027,24 @@ function availableCampaignNodeIds(
   return Object.freeze([...(current?.nextNodeIds ?? [])].sort(binaryCompare));
 }
 
-function advanceCapturedCampaignRun(run: CampaignRunV1, nodeId: string): CampaignRunV1 {
+function advanceCapturedCampaignRun(run: CampaignRunV2, nodeId: string): CampaignRunV2 {
   return Object.freeze({
     version: run.version,
     seed: run.seed,
     nodeId,
     deck: run.deck,
     artifacts: run.artifacts,
-    runResources: run.runResources
+    runResources: run.runResources,
+    arsenal: run.arsenal
   });
 }
 
-/** Validate the unchanged CampaignRunV1 codec document against currently active authored content. */
+/** Validate the normalized CampaignRunV2 document against currently active authored content. */
 export function validateCampaignRunAgainstContent(
-  run: CampaignRunV1,
+  run: CampaignRunV2,
   content: GameContentRegistry
 ): CampaignRunContentValidationResult {
-  let captured: CampaignRunV1;
+  let captured: CampaignRunV2;
   try {
     captured = decodeCampaignRun(run).run;
   } catch {
@@ -1041,10 +1055,10 @@ export function validateCampaignRunAgainstContent(
 
 /** Return binary-sorted entries or direct successors; it never evaluates merchant/event gameplay. */
 export function getAvailableCampaignNodeIds(
-  run: CampaignRunV1,
+  run: CampaignRunV2,
   content: GameContentRegistry
 ): readonly string[] {
-  let captured: CampaignRunV1;
+  let captured: CampaignRunV2;
   try {
     captured = decodeCampaignRun(run).run;
   } catch {
@@ -1061,6 +1075,7 @@ export type CampaignBattleVictoryFailureCode =
   | "unknown_node"
   | "unknown_card"
   | "unknown_artifact"
+  | "unknown_module"
   | "unknown_run_resource"
   | "invalid_run_resource"
   | "node_not_available"
@@ -1072,14 +1087,14 @@ export type CampaignBattleVictoryResult = Readonly<
   | {
       ok: false;
       code: CampaignBattleVictoryFailureCode;
-      run: CampaignRunV1;
+      run: CampaignRunV2;
       profile: PlayerProfileV3;
     }
   | {
       ok: true;
       code: "campaign_battle_recorded";
       nodeId: string;
-      run: CampaignRunV1;
+      run: CampaignRunV2;
       profile: PlayerProfileV3;
       newlyAvailableNodeIds: readonly string[];
     }
@@ -1087,13 +1102,13 @@ export type CampaignBattleVictoryResult = Readonly<
 
 /** Atomically apply a graph-available battle result to separate immutable run and profile documents. */
 export function recordCampaignBattleVictory(
-  run: CampaignRunV1,
+  run: CampaignRunV2,
   profile: PlayerProfileV3,
   content: GameContentRegistry,
   nodeId: string,
   earnedStars: number
 ): CampaignBattleVictoryResult {
-  let captured: CampaignRunV1;
+  let captured: CampaignRunV2;
   try {
     captured = decodeCampaignRun(run).run;
   } catch {
@@ -1141,6 +1156,7 @@ export type CampaignStructuralChoiceFailureCode =
   | "unknown_node"
   | "unknown_card"
   | "unknown_artifact"
+  | "unknown_module"
   | "unknown_run_resource"
   | "invalid_run_resource"
   | "node_not_available"
@@ -1153,22 +1169,22 @@ export type CampaignStructuralChoiceResult = Readonly<
   | {
       ok: false;
       code: CampaignStructuralChoiceFailureCode;
-      run: CampaignRunV1;
+      run: CampaignRunV2;
     }
   | {
       ok: true;
       code: "campaign_structural_choice_resolved";
       nodeId: string;
       choiceId: string;
-      run: CampaignRunV1;
+      run: CampaignRunV2;
       newlyAvailableNodeIds: readonly string[];
     }
 >;
 
 function applyStructuralChoiceResources(
-  run: CampaignRunV1,
+  run: CampaignRunV2,
   choice: WorldCampaignStructuralChoiceV2
-): CampaignRunV1 | "insufficient_run_resources" | "resource_overflow" {
+): CampaignRunV2 | "insufficient_run_resources" | "resource_overflow" {
   const balances = new Map<string, number>();
   for (const resourceId of Object.keys(run.runResources).sort(binaryCompare)) {
     balances.set(resourceId, run.runResources[resourceId]!);
@@ -1202,7 +1218,8 @@ function applyStructuralChoiceResources(
       nodeId: run.nodeId,
       deck: run.deck,
       artifacts: run.artifacts,
-      runResources
+      runResources,
+      arsenal: run.arsenal
     }).run;
   } catch {
     return "resource_overflow";
@@ -1211,12 +1228,12 @@ function applyStructuralChoiceResources(
 
 /** Atomically pay and grant one authored v2 merchant/event choice, then advance the run. */
 export function resolveCampaignStructuralChoice(
-  run: CampaignRunV1,
+  run: CampaignRunV2,
   content: GameContentRegistry,
   nodeId: string,
   choiceId: string
 ): CampaignStructuralChoiceResult {
-  let captured: CampaignRunV1;
+  let captured: CampaignRunV2;
   try {
     captured = decodeCampaignRun(run).run;
   } catch {

@@ -72,4 +72,5 @@ Reference examples show expected project and code patterns.
 - MCP fixtures for malformed input, invalid-write rollback, stale revisions, concurrent writers, permission denial, provider protocol drift, and agent-authored maps/scripts.
 - Renderer fixtures that prove sprite/atlas parity and enforce swarm-scale performance budgets.
 - A focused R13/R4.4B browser regression fixture proving expected guarded 400/409 responses do not become uncaught application errors.
-- R14–R17 reference fixtures only when their contracts enter RED/GREEN implementation; planned schemas must not be presented as available authoring examples.
+- `opt-in-modular-arsenal/` — R14 Arsenal v1 plus the minimal Roguelite gem catalog needed by its exact crafting recipe.
+- R15–R17 reference fixtures only when their contracts enter RED/GREEN implementation; planned schemas must not be presented as available authoring examples.

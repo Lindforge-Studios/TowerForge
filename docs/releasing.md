@@ -4,7 +4,7 @@ TowerForge desktop artifacts are built and published through GitHub Actions. Unt
 
 ## Published Baseline
 
-The current public desktop artifact is [`v0.4.0`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.4.0), published as an unsigned pre-release on 2026-07-28 from tagged source commit `f07a403`. It includes the accepted R0–R8 line. R9–R11 are newer `main` source, while R12 and R13 remain open PRs; none is part of the v0.4.0 installers. A local build or GitHub Actions artifact MUST NOT be described as a release until the matching tag, public release page, installers, notes, and `SHA256SUMS` exist and have been verified.
+The current release line is `v0.5.0`, an unsigned pre-release containing accepted R0–R14. A local build or GitHub Actions artifact MUST NOT be described as a release until the matching tag, public release page, installers, notes, and `SHA256SUMS` exist and have been verified.
 
 ## Release Invariants
 

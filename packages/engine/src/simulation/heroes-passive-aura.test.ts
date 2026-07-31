@@ -447,8 +447,8 @@ describe("R5.5A passive-aura compatibility and deterministic persistence (RED)",
   });
 
   it("derives aura membership from existing v4 hero checkpoint state and replays without a new command domain", () => {
-    expect((Engine as any).GAME_COMMAND_SCHEMA_VERSION).toBe(6);
-    expect((Engine as any).GAME_COMMAND_JOURNAL_SCHEMA_VERSION).toBe(6);
+    expect((Engine as any).GAME_COMMAND_SCHEMA_VERSION).toBe(7);
+    expect((Engine as any).GAME_COMMAND_JOURNAL_SCHEMA_VERSION).toBe(7);
     const subjectContent = content({ radius: 1 });
     const session = new JournaledGameSession(new TowerDefenseGame({
       content: subjectContent,

@@ -1,5 +1,5 @@
 import type { GameSeed } from "../simulation/rng.js";
-export declare const CAMPAIGN_RUN_SCHEMA_VERSION: 1;
+export declare const CAMPAIGN_RUN_SCHEMA_VERSION: 2;
 export declare const CAMPAIGN_RUN_LIMITS: Readonly<{
     jsonBytes: 1048576;
     collectionEntries: 10000;
@@ -17,21 +17,37 @@ export interface CampaignRunArtifactEntryV1 {
     readonly artifactId: string;
 }
 export interface CampaignRunV1 {
-    readonly version: typeof CAMPAIGN_RUN_SCHEMA_VERSION;
+    readonly version: 1;
     readonly seed: GameSeed;
     readonly nodeId: string | null;
     readonly deck: readonly CampaignRunDeckEntryV1[];
     readonly artifacts: readonly CampaignRunArtifactEntryV1[];
     readonly runResources: Readonly<Record<string, number>>;
 }
-export type CampaignRun = CampaignRunV1;
-export type CampaignRunSource = "v1";
+export interface CampaignRunModuleInventoryEntryV2 {
+    readonly instanceId: string;
+    readonly moduleId: string;
+}
+export interface CampaignRunArsenalV2 {
+    readonly moduleInventory: readonly CampaignRunModuleInventoryEntryV2[];
+}
+export interface CampaignRunV2 {
+    readonly version: typeof CAMPAIGN_RUN_SCHEMA_VERSION;
+    readonly seed: GameSeed;
+    readonly nodeId: string | null;
+    readonly deck: readonly CampaignRunDeckEntryV1[];
+    readonly artifacts: readonly CampaignRunArtifactEntryV1[];
+    readonly runResources: Readonly<Record<string, number>>;
+    readonly arsenal: CampaignRunArsenalV2;
+}
+export type CampaignRun = CampaignRunV1 | CampaignRunV2;
+export type CampaignRunSource = "v1" | "v2";
 export interface CampaignRunMigration {
     readonly id: string;
     readonly description: string;
 }
 export interface DecodedCampaignRun {
-    readonly run: CampaignRunV1;
+    readonly run: CampaignRunV2;
     readonly source: CampaignRunSource;
     readonly migrations: readonly CampaignRunMigration[];
 }
@@ -40,7 +56,7 @@ export declare class UnsupportedCampaignRunVersionError extends Error {
     readonly version: number;
     constructor(version: number);
 }
-export declare function createCampaignRun(seed: GameSeed): CampaignRunV1;
+export declare function createCampaignRun(seed: GameSeed): CampaignRunV2;
 export declare function decodeCampaignRun(value: unknown): DecodedCampaignRun;
 export declare function importCampaignRun(source: string): DecodedCampaignRun;
-export declare function exportCampaignRun(run: CampaignRunV1): string;
+export declare function exportCampaignRun(run: CampaignRunV1 | CampaignRunV2): string;

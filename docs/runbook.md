@@ -56,16 +56,14 @@ gh pr view <number> --json state,baseRefName,headRefOid,mergeStateStatus,statusC
 gh pr checks <number>
 ```
 
-As of 2026-08-01, public desktop release `v0.4.0` contains R0–R8, `main` contains R9–R11, R12 is
-open as green PR #23, and R13 is stacked as PR #24. The R4.4B browser-gate race now has explicit
-RED (1/12) and GREEN (20/20) evidence: the fixture waits for the guarded mechanics apply response
-before introducing future-version bytes. R13 MUST NOT merge until the repaired exact commit passes
-CI and both independent re-sign-offs. The owner has authorized R14 after that merge; R15–R17 remain
+As of 2026-08-01, R12 and R13 are merged and the repaired R13 exact commit passed remote CI. The
+`v0.5.0` release line adds R9–R14 to the previous R0–R8 public baseline. R14 remains fully opt-in:
+CampaignRunV2, Arsenal v1 and GameCommand/Journal v7 do not change legacy projects. R15–R17 remain
 out of scope for this release.
 
 ## Opt-In Mechanics
 
-Open **Mechanics** in Studio to use the isolated Mechanics Hub. Pick a mission and switch between the implemented combat, reactions, navigation, elevation, physics, terraforming, rogue-lite, heroes, logistics, Director, quests, multiplayer, enemy-behavior, Ballistics, and Weather capabilities. Preview before apply. The ordinary mechanics transaction updates `project.json`, `content/mechanics.json`, and mission selections with validation, backup, and rollback; domain-specific multi-file editors such as campaign graphs, tower tags, or destructibles use their narrower documented transaction. Recipes return inert candidates and never enable dependencies or select a mission automatically. Disable preserves authored data and restores the lower-capability runtime path. Ordinary tower, enemy, map, mission, and TowerScript forms remain unchanged.
+Open **Mechanics** in Studio to use the isolated Mechanics Hub. Pick a mission and switch between the implemented combat, reactions, navigation, elevation, physics, terraforming, rogue-lite, Arsenal, heroes, logistics, Director, quests, multiplayer, enemy-behavior, Ballistics, and Weather capabilities. Preview before apply. The ordinary mechanics transaction updates `project.json`, `content/mechanics.json`, and mission selections with validation, backup, and rollback; domain-specific multi-file editors such as campaign graphs, tower tags, or destructibles use their narrower documented transaction. Recipes return inert candidates and never enable dependencies or select a mission automatically. Disable preserves authored data and restores the lower-capability runtime path. Ordinary tower, enemy, map, mission, and TowerScript forms remain unchanged.
 
 In Playtest, the dynamic-navigation overlay analyzes all cells when the viewport contains at most 4,096 tiles. On a larger viewport it shows a deterministic focus window around the most recent pointer or keyboard interaction coordinate and reports `analyzed/total` partial coverage; move focus near the area you want to inspect. The overlay is advisory: every click still runs authoritative `canPlaceTower` preflight and `placeTower`, so a cell outside the current window cannot bypass last-path validation.
 
@@ -758,6 +756,31 @@ replay digest and player performance. Verify Canvas and Phaser on both hex and s
 single-file, web package and `.tdpack` carriers. Use
 `docs/examples/opt-in-weather/` as the complete copyable reference.
 
+### R14 Modular Arsenal and gem crafting
+
+Arsenal is a separate mission-selected `arsenal` v1 module. In **Mechanics Hub**, start from the
+inert `basic_modular_arsenal` recipe, inspect the JSON blueprint and explicitly preview before
+enable/apply. The equivalent AI flow is:
+
+`describe_schema({domain:"arsenal"}) -> get_capabilities -> get_recipe({collection:"mechanics",recipeId:"basic_modular_arsenal"}) -> preview_mechanics_module -> apply_mechanics_module(ifRevision=preview.revision) -> validate_project`.
+
+Every blueprint selects exactly one compatible `base`, `barrel` and `core`. Runtime changes use
+`GameCommandV7 configureTowerModules` only during setup or between waves. Read the exact tower ID,
+available module options and effective damage/range/durability only from `snapshot.arsenal`; never
+recompute them in Studio or a player.
+
+Gem recipes use a bounded 3×3 relative pattern with optional rotations. Every input/output ID must
+exist in the mission's selected Roguelite artifact profile. Dispatch `GameCommandV7 craftGem` with
+concrete unsocketed artifact instance IDs from the authoritative inventory. A failure consumes
+nothing; a success removes all inputs and adds one deterministic output artifact that uses the
+existing socket system.
+
+CampaignRun v1 imports explicitly as v2 with an empty `arsenal.moduleInventory`. Do not move this
+state into `PlayerProfileV3` or browser-local profile storage. Disable/unselect Arsenal and reload to
+confirm that `snapshot.arsenal`, its checkpoint tower loadouts and all Arsenal controls disappear.
+Verify both Canvas and Phaser on hex/square plus PWA, single-file, web package and `.tdpack`. The
+copyable reference is `docs/examples/opt-in-modular-arsenal/`.
+
 ## Desktop Studio Navigation
 
 The packaged Studio uses a native application menu. macOS exposes `TowerForge`, `File`, `Edit`, `View`, `Project`, `Window`, and `Help` in the system menu bar. Windows and Linux expose the equivalent menu on the application window, with Exit and About in their conventional menus.
@@ -847,7 +870,7 @@ CI is configured in `.github/workflows/ci.yml` for local-alpha quality gates. `.
 
 Public desktop releases follow [the desktop release policy](releasing.md). Until signing is configured, they remain GitHub pre-releases with `Unsigned build` in the title. To inspect a cross-platform candidate without publishing, run **Actions > Unsigned Desktop Builds > Run workflow** against the intended commit. To publish, merge the release commit, then create and push an annotated tag whose version matches all desktop manifests:
 
-The current published baseline is [`v0.4.0`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.4.0) from source commit `f07a403`. Later R9–R13 development is not part of that downloadable build. Never describe `main` or an open PR as released merely because local installers or Actions artifacts exist.
+The v0.5.0 release line includes R0–R14. Never describe `main` or an open PR as released merely because local installers or Actions artifacts exist; the GitHub tag and published installer assets remain authoritative.
 
 ```bash
 git tag -a vX.Y.Z -m "TowerForge vX.Y.Z"

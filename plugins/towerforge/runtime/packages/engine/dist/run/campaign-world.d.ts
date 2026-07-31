@@ -1,6 +1,6 @@
 import type { GameContentRegistry, WorldCampaignDefinition, WorldCampaignDefinitionV1, WorldCampaignDefinitionV2, WorldCampaignNodeV1, WorldCampaignNodeV2, WorldCampaignRunResourceDefinitionV2, WorldMapCatalog } from "../content/registry.js";
 import { type PlayerProfileFailureCode, type PlayerProfileV3 } from "../profile/player-profile.js";
-import { type CampaignRunV1 } from "./campaign-run.js";
+import { type CampaignRunV2 } from "./campaign-run.js";
 export declare const WORLD_CAMPAIGN_SCHEMA: Readonly<{
     supportedSchemaVersions: readonly [1, 2];
     nodeTypes: readonly ["battle", "elite", "merchant", "event", "boss"];
@@ -75,48 +75,48 @@ export declare function resolveWorldCampaign(content: GameContentRegistry): Reso
 export type CampaignRunContentValidationResult = Readonly<{
     ok: true;
     code: "valid";
-    run: CampaignRunV1;
+    run: CampaignRunV2;
     campaign: ResolvedWorldCampaign;
 } | {
     ok: false;
-    code: "campaign_inactive" | "invalid_run" | "unknown_node" | "unknown_card" | "unknown_artifact" | "unknown_run_resource" | "invalid_run_resource";
-    run: CampaignRunV1;
+    code: "campaign_inactive" | "invalid_run" | "unknown_node" | "unknown_card" | "unknown_artifact" | "unknown_module" | "unknown_run_resource" | "invalid_run_resource";
+    run: CampaignRunV2;
 }>;
-/** Validate the unchanged CampaignRunV1 codec document against currently active authored content. */
-export declare function validateCampaignRunAgainstContent(run: CampaignRunV1, content: GameContentRegistry): CampaignRunContentValidationResult;
+/** Validate the normalized CampaignRunV2 document against currently active authored content. */
+export declare function validateCampaignRunAgainstContent(run: CampaignRunV2, content: GameContentRegistry): CampaignRunContentValidationResult;
 /** Return binary-sorted entries or direct successors; it never evaluates merchant/event gameplay. */
-export declare function getAvailableCampaignNodeIds(run: CampaignRunV1, content: GameContentRegistry): readonly string[];
-export type CampaignBattleVictoryFailureCode = "campaign_inactive" | "invalid_run" | "unknown_node" | "unknown_card" | "unknown_artifact" | "unknown_run_resource" | "invalid_run_resource" | "node_not_available" | "node_type_not_implemented" | "invalid_profile" | PlayerProfileFailureCode;
+export declare function getAvailableCampaignNodeIds(run: CampaignRunV2, content: GameContentRegistry): readonly string[];
+export type CampaignBattleVictoryFailureCode = "campaign_inactive" | "invalid_run" | "unknown_node" | "unknown_card" | "unknown_artifact" | "unknown_module" | "unknown_run_resource" | "invalid_run_resource" | "node_not_available" | "node_type_not_implemented" | "invalid_profile" | PlayerProfileFailureCode;
 export type CampaignBattleVictoryResult = Readonly<{
     ok: false;
     code: CampaignBattleVictoryFailureCode;
-    run: CampaignRunV1;
+    run: CampaignRunV2;
     profile: PlayerProfileV3;
 } | {
     ok: true;
     code: "campaign_battle_recorded";
     nodeId: string;
-    run: CampaignRunV1;
+    run: CampaignRunV2;
     profile: PlayerProfileV3;
     newlyAvailableNodeIds: readonly string[];
 }>;
 /** Atomically apply a graph-available battle result to separate immutable run and profile documents. */
-export declare function recordCampaignBattleVictory(run: CampaignRunV1, profile: PlayerProfileV3, content: GameContentRegistry, nodeId: string, earnedStars: number): CampaignBattleVictoryResult;
-export type CampaignStructuralChoiceFailureCode = "campaign_inactive" | "invalid_run" | "unknown_node" | "unknown_card" | "unknown_artifact" | "unknown_run_resource" | "invalid_run_resource" | "node_not_available" | "node_type_not_implemented" | "unknown_choice" | "insufficient_run_resources" | "resource_overflow";
+export declare function recordCampaignBattleVictory(run: CampaignRunV2, profile: PlayerProfileV3, content: GameContentRegistry, nodeId: string, earnedStars: number): CampaignBattleVictoryResult;
+export type CampaignStructuralChoiceFailureCode = "campaign_inactive" | "invalid_run" | "unknown_node" | "unknown_card" | "unknown_artifact" | "unknown_module" | "unknown_run_resource" | "invalid_run_resource" | "node_not_available" | "node_type_not_implemented" | "unknown_choice" | "insufficient_run_resources" | "resource_overflow";
 export type CampaignStructuralChoiceResult = Readonly<{
     ok: false;
     code: CampaignStructuralChoiceFailureCode;
-    run: CampaignRunV1;
+    run: CampaignRunV2;
 } | {
     ok: true;
     code: "campaign_structural_choice_resolved";
     nodeId: string;
     choiceId: string;
-    run: CampaignRunV1;
+    run: CampaignRunV2;
     newlyAvailableNodeIds: readonly string[];
 }>;
 /** Atomically pay and grant one authored v2 merchant/event choice, then advance the run. */
-export declare function resolveCampaignStructuralChoice(run: CampaignRunV1, content: GameContentRegistry, nodeId: string, choiceId: string): CampaignStructuralChoiceResult;
+export declare function resolveCampaignStructuralChoice(run: CampaignRunV2, content: GameContentRegistry, nodeId: string, choiceId: string): CampaignStructuralChoiceResult;
 /** Author-facing input alias retained separately from the normalized runtime shape. */
 export type AuthoredWorldCampaignV1 = WorldCampaignDefinitionV1;
 export type AuthoredWorldCampaignV2 = WorldCampaignDefinitionV2;

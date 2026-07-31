@@ -32,6 +32,18 @@ function subject() {
 }
 
 describe("R4.4C campaign carry presentation", () => {
+  it("projects CampaignRun v2 module inventory without deriving arsenal rules", () => {
+    const input = subject();
+    input.run = {
+      ...input.run,
+      version: 2,
+      arsenal: { moduleInventory: [{ instanceId: "module_1", moduleId: "barrel_a" }] }
+    };
+    expect(projectCampaignPresentation(input)?.loadout?.modules).toEqual([
+      { instanceId: "module_1", moduleId: "barrel_a" }
+    ]);
+  });
+
   it("projects a detached, frozen and ordered CampaignRun loadout for the shared renderer surface", () => {
     const input = subject();
     const projected = projectCampaignPresentation(input);

@@ -1,6 +1,6 @@
 import { TOWER_TARGET_MODES } from "./types.js";
-export const GAME_COMMAND_SCHEMA_VERSION = 6;
-export const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4, 5, 6]);
+export const GAME_COMMAND_SCHEMA_VERSION = 7;
+export const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4, 5, 6, 7]);
 const MAX_PAYLOAD_DEPTH = 32;
 const MAX_PAYLOAD_NODES = 4_096;
 const MAX_PAYLOAD_BYTES = 64 * 1_024;
@@ -175,7 +175,7 @@ export function parseGameCommand(input) {
     const schemaVersion = fields.get("schemaVersion");
     const type = fields.get("type");
     if ((schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3 && schemaVersion !== 4
-        && schemaVersion !== 5 && schemaVersion !== 6)
+        && schemaVersion !== 5 && schemaVersion !== 6 && schemaVersion !== 7)
         || typeof type !== "string")
         return undefined;
     if (type === "tick") {
@@ -305,14 +305,57 @@ export function parseGameCommand(input) {
         }
         return { schemaVersion, type, heroId, abilityId, targetEnemyId };
     }
-    if (schemaVersion === 6 && type === "unlockHeroSkill") {
+    if (schemaVersion >= 6 && type === "unlockHeroSkill") {
         if (!hasClosedFields(fields, ["schemaVersion", "type", "heroId", "skillId"]))
             return undefined;
         const heroId = fields.get("heroId");
         const skillId = fields.get("skillId");
         if (!isBoundedCommandId(heroId) || !isBoundedCommandId(skillId))
             return undefined;
-        return { schemaVersion: 6, type, heroId, skillId };
+        return { schemaVersion, type, heroId, skillId };
+    }
+    if (schemaVersion === 7 && type === "configureTowerModules") {
+        if (!hasClosedFields(fields, ["schemaVersion", "type", "towerId", "modules"]))
+            return undefined;
+        const towerId = fields.get("towerId");
+        const modules = snapshotPlainDataFields(fields.get("modules"));
+        if (!isBoundedCommandId(towerId) || !modules || !hasClosedFields(modules, ["base", "barrel", "core"]))
+            return undefined;
+        const base = modules.get("base");
+        const barrel = modules.get("barrel");
+        const core = modules.get("core");
+        if (!isBoundedCommandId(base) || !isBoundedCommandId(barrel) || !isBoundedCommandId(core))
+            return undefined;
+        return { schemaVersion: 7, type, towerId, modules: { base, barrel, core } };
+    }
+    if (schemaVersion === 7 && type === "craftGem") {
+        if (!hasClosedFields(fields, ["schemaVersion", "type", "recipeId", "cells"]))
+            return undefined;
+        const recipeId = fields.get("recipeId");
+        const cells = fields.get("cells");
+        if (!isBoundedCommandId(recipeId) || !Array.isArray(cells) || Object.getPrototypeOf(cells) !== Array.prototype
+            || cells.length < 1 || cells.length > 9)
+            return undefined;
+        const descriptors = Object.getOwnPropertyDescriptors(cells);
+        if (Object.keys(descriptors).length !== cells.length + 1)
+            return undefined;
+        const normalized = [];
+        for (let index = 0; index < cells.length; index += 1) {
+            const descriptor = descriptors[String(index)];
+            if (!descriptor?.enumerable || !("value" in descriptor))
+                return undefined;
+            const cell = snapshotPlainDataFields(descriptor.value);
+            if (!cell || !hasClosedFields(cell, ["x", "y", "artifactInstanceId"]))
+                return undefined;
+            const x = cell.get("x");
+            const y = cell.get("y");
+            const artifactInstanceId = cell.get("artifactInstanceId");
+            if (!Number.isSafeInteger(x) || !Number.isSafeInteger(y) || Number(x) < 0 || Number(x) > 2
+                || Number(y) < 0 || Number(y) > 2 || !isBoundedCommandId(artifactInstanceId))
+                return undefined;
+            normalized.push({ x: Number(x), y: Number(y), artifactInstanceId });
+        }
+        return { schemaVersion: 7, type, recipeId, cells: normalized };
     }
     return undefined;
 }
@@ -350,5 +393,9 @@ export function executeParsedGameCommand(game, command) {
             return game.useHeroAbility(command.heroId, command.abilityId, command.targetEnemyId);
         case "unlockHeroSkill":
             return game.unlockHeroSkill(command.heroId, command.skillId);
+        case "configureTowerModules":
+            return game.configureTowerModules(command.towerId, command.modules);
+        case "craftGem":
+            return game.craftGem(command.recipeId, command.cells);
     }
 }

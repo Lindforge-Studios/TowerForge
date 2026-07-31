@@ -220,15 +220,25 @@ export function projectCampaignPresentation(value) {
     ? ["schemaVersion", "source", "rogueliteProfileId", "runResources", "entryNodeIds", "nodes"]
     : ["schemaVersion", "source", "rogueliteProfileId", "entryNodeIds", "nodes"];
   const campaign = campaignHeader;
-  const run = ownRecord(input.run, ["version", "seed", "nodeId", "deck", "artifacts", "runResources"]);
+  const run = ownRecord(input.run, ["version", "seed", "nodeId", "deck", "artifacts", "runResources", "arsenal"]);
+  const runFields = run?.version === 2
+    ? ["version", "seed", "nodeId", "deck", "artifacts", "runResources", "arsenal"]
+    : ["version", "seed", "nodeId", "deck", "artifacts", "runResources"];
   if (!hasExactKeys(campaign, campaignFields)
-    || campaign.source !== "authored" || !run || Object.keys(run).length !== 6 || run.version !== 1) return undefined;
+    || campaign.source !== "authored" || !run || !hasExactKeys(run, runFields)
+    || (run.version !== 1 && run.version !== 2)) return undefined;
   const profileId = boundedText(campaign.rogueliteProfileId, MAX_ID_BYTES);
   if (!profileId) return undefined;
   const deck = projectCarryEntries(run.deck, "cardId");
   const artifacts = projectCarryEntries(run.artifacts, "artifactId");
   if (!deck || !artifacts || deck.length + artifacts.length > MAX_CARRY_ENTRIES) return undefined;
-  const loadout = Object.freeze({ deck, artifacts });
+  let modules = Object.freeze([]);
+  if (run.version === 2) {
+    const arsenal = ownRecord(run.arsenal, ["moduleInventory"]);
+    modules = arsenal && projectCarryEntries(arsenal.moduleInventory, "moduleId");
+    if (!modules || deck.length + artifacts.length + modules.length > MAX_CARRY_ENTRIES) return undefined;
+  }
+  const loadout = Object.freeze({ deck, artifacts, ...(run.version === 2 ? { modules } : {}) });
 
   const resourceIds = new Set();
   const resourceLabels = new Map();
@@ -285,7 +295,7 @@ export function projectCampaignPresentation(value) {
     active: true,
     profileId,
     currentNodeId,
-    ...(deck.length > 0 || artifacts.length > 0 || currentNodeId === null ? { loadout } : {}),
+    ...(deck.length > 0 || artifacts.length > 0 || modules.length > 0 || currentNodeId === null ? { loadout } : {}),
     ...(schemaVersion === 2 ? { runResources: Object.freeze(runResources) } : {}),
     nodes: Object.freeze(nodes.map((node) => Object.freeze({
       ...node,

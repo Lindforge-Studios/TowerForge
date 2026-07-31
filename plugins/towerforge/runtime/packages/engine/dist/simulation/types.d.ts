@@ -638,6 +638,8 @@ export interface TowerState {
     disabledFor?: number;
     /** Current health if the tower type has `maxHp`; when it reaches 0 the tower is destroyed. */
     hp?: number;
+    /** Active-only immutable modular arsenal selection. Omitted on the legacy path. */
+    arsenalModules?: import("../content/arsenal-mechanics.js").ArsenalModuleLoadoutV1;
 }
 export interface TowerScriptedTargetingSnapshotV1 {
     readonly schemaVersion: 1;
@@ -1499,6 +1501,21 @@ export interface GameSnapshot {
     elevation?: ElevationSnapshotV1;
     terraforming?: TerraformingSnapshotV1;
     roguelite?: RogueliteSnapshot;
+    arsenal?: {
+        readonly schemaVersion: 1;
+        readonly profileId: string;
+        readonly managementAllowed: boolean;
+        readonly towers: readonly (import("../content/arsenal-mechanics.js").CompiledArsenalTowerV1 & {
+            readonly towerId: string;
+            readonly availableModules: Readonly<Record<import("../content/arsenal-mechanics.js").ArsenalModuleCategoryV1, readonly {
+                readonly id: string;
+                readonly label: string;
+            }[]>>;
+        })[];
+        readonly craftingRecipes: readonly (import("../content/arsenal-mechanics.js").ArsenalCraftingRecipeV1 & {
+            readonly id: string;
+        })[];
+    };
     heroes?: HeroesSnapshot;
     logistics?: LogisticsSnapshot;
     director?: DirectorSnapshotV1;
