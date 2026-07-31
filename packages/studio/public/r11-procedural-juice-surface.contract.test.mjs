@@ -69,12 +69,15 @@ describe("R11 Studio Procedural Juice Lab", () => {
   });
 
   it("keeps compute-only preview failures free of Studio trace writes", () => {
-    const start = server.indexOf('if (req.method === "POST" && [\n    "/api/procedural-juice/event-preview"');
-    const end = server.indexOf("// Persona QA is evidence-only", start);
-    expect(start).toBeGreaterThanOrEqual(0);
-    const route = server.slice(start, end);
-    expect(route).toMatch(/const isWrite = pathname\.endsWith\("\/apply"\)/);
-    expect(route).toMatch(/catch \(error\) \{\s*if \(isWrite\) \{\s*writeRunTrace/);
+    for (const source of [server, server.replace(/\r?\n/g, "\r\n")]) {
+      const start = source.search(/if \(req\.method === "POST" && \[\r?\n\s*"\/api\/procedural-juice\/event-preview"/);
+      const end = source.indexOf("// Persona QA is evidence-only", start);
+      expect(start).toBeGreaterThanOrEqual(0);
+      expect(end).toBeGreaterThan(start);
+      const route = source.slice(start, end);
+      expect(route).toMatch(/const isWrite = pathname\.endsWith\("\/apply"\)/);
+      expect(route).toMatch(/catch \(error\) \{\s*if \(isWrite\) \{\s*writeRunTrace/);
+    }
   });
 
   it("resets same-mission presentation state and drains muted procedural cues", () => {

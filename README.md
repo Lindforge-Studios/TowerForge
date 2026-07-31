@@ -21,7 +21,7 @@ Desktop-сборки публикуются в [GitHub Releases](https://github.
 
 ## Текущий статус
 
-Актуальная desktop-линия — `v0.5.0` (неподписанный pre-release): она объединяет R9–R14 поверх прежнего R0–R8 baseline. В неё входят Behavior Trees/HFSM, Persona QA и процедурные квесты, Procedural Juice, многосоставные боссы и формации, deterministic 2.5D ballistics/destructibles/weather, а также opt-in Modular Arsenal с CampaignRunV2 и gem crafting. Все gameplay-расширения остаются выключенными по умолчанию. Точный статус, границы и следующие этапы ведутся в [ROADMAP](docs/ROADMAP.md).
+Актуальная desktop-линия — `v0.5.1` (неподписанный pre-release): она объединяет R9–R14 поверх прежнего R0–R8 baseline. В неё входят Behavior Trees/HFSM, Persona QA и процедурные квесты, Procedural Juice, многосоставные боссы и формации, deterministic 2.5D ballistics/destructibles/weather, а также opt-in Modular Arsenal с CampaignRunV2 и gem crafting. Все gameplay-расширения остаются выключенными по умолчанию. Точный статус, границы и следующие этапы ведутся в [ROADMAP](docs/ROADMAP.md).
 
 ## Состав продукта
 
