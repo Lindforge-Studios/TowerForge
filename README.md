@@ -19,6 +19,10 @@ TowerForge — открытый и независимый от конкретн�
 
 Desktop-сборки публикуются в [GitHub Releases](https://github.com/Lindforge-Studios/TowerForge/releases). Текущие alpha-версии явно помечаются как **Unsigned build**. Перед запуском сверяйте установщик с приложенным файлом `SHA256SUMS`. Инструкции по установке на macOS и политика распространения неподписанных сборок находятся в [docs/releasing.md](docs/releasing.md).
 
+## Текущий статус
+
+Актуальная публичная desktop-версия — [v0.4.0](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.4.0), неподписанный pre-release от 28 июля 2026 года. Ветка `main` уже содержит R9–R11: Behavior Trees/HFSM, Persona QA с процедурными квестами и Procedural Juice. R12 реализован в открытом [PR #23](https://github.com/Lindforge-Studios/TowerForge/pull/23) с зелёным CI; stacked [PR #24](https://github.com/Lindforge-Studios/TowerForge/pull/24) содержит R13 и RED/GREEN-исправление гонки его browser gate, но ещё ожидает повторный exact-commit CI и sign-off. По новой команде владельца следующим этапом будет R14. Точный статус, границы и следующие этапы ведутся в [ROADMAP](docs/ROADMAP.md).
+
 ## Состав продукта
 
 | Компонент | Назначение | Расположение |
@@ -55,6 +59,7 @@ Studio откроется по адресу `http://localhost:5174` и по ум
 | Симулировать стартовую миссию | `npm run sim tutorial_01 60` |
 | Получить симуляцию в JSON | `npm run sim tutorial_01 60 -- --json` |
 | Запустить анализ баланса | `npm run balance -- --project examples/starter.tdproj` |
+| Запустить Persona QA | `npm run persona-qa -- --project examples/starter.tdproj --mission tutorial_01 --seed smoke --seconds 20` |
 | Скомпилировать исходные карты | `npm run maps:compile -- --project examples/starter.tdproj` |
 | Записать миграции схемы | `npm run migrate -- --project examples/starter.tdproj --write` |
 | Проверить типы движка | `npm run typecheck` |
@@ -93,16 +98,16 @@ python3 -m http.server 5175 --bind 127.0.0.1 --directory examples/starter.tdproj
 - `content/balance.json` — константы, типизированный terrain registry, сложности, метапрогрессия, награды, способности, враги, башни, волны и миссии.
 - `content/mechanics.json` — необязательный versioned-каталог opt-in механик; без него проект сохраняет штатное legacy-поведение.
 - `content/world-map.json` — регионы и узлы миссий.
-- `content/visuals.json` — визуальный каталог v2: атласы, спрайты, tilesets, Wang/signature rules, веса, transforms и map/grid bindings.
+- `content/visuals.json` — визуальный каталог v2; schema v3 опционально добавляет декларативный `proceduralJuice` v1 для частиц, синтезируемого аудио и camera cues без влияния на gameplay digest.
 - `content/story-comics.json` — сюжетные панели, связанные с миссиями.
 - `content/battle-backgrounds.json` — цвета миссий и необязательные фоновые спрайты.
 - `maps/src/*.tmj` — редактируемые исходные карты.
 - `maps/compiled/maps.json` — runtime-описания карт, созданные компилятором.
-- `scripts/**/*.tower.json` — детерминированная пользовательская логика, включая terrain scope, tile events и контролируемые runtime terrain changes.
+- `scripts/**/*.tower.json` — детерминированная пользовательская логика; TowerScript v7 опционально добавляет Behavior Trees и HFSM, а v1–v6 сохраняют прежний путь.
 - `build-targets.json` — цели сборки.
 - `.towerforge/` — локальное состояние редактора и резервные копии; каталог нельзя добавлять в git.
 
-Миссия выбирает профили каталога через `mission.mechanics`; само наличие профиля не включает механику. Модуль `combat` v1 добавляет opt-in щиты, v2 — author-defined типы урона/брони, а v3 — метки уязвимости. Независимый `reactions` v1 добавляет exposures и bounded secondary effects только при явном выборе совместимого combat v2/v3. `navigation` v1 включает dynamic-flow отдельно от legacy routes. `elevation` v1 включает только authored-высоты, v2 опционально добавляет deterministic LoS, а v3 — независимый bounded high-ground профиль с pairwise range и immediate tower damage bonus; snapshot высот остаётся v1. Независимый `physics` v1 добавляет только bounded tile-discrete push/pull для pipeline-башен и custom abilities, явные immunity-списки и terrain-tag fall hazards. Он не добавляет TowerScript, continuous physics или terraforming; при неактивном модуле displacement effects не меняют gameplay. Mechanics Hub и AI/MCP показывают prerequisites для recipes, но никогда не патчат зависимые combat, terrain, map, tower или ability автоматически. Обычные starter-проекты не содержат `content/mechanics.json` и сохраняют legacy path. Подробнее: [ADR 0011](docs/adr/0011-opt-in-versioned-mechanics.md), [ADR 0021](docs/adr/0021-opt-in-elemental-reactions.md), [ADR 0022](docs/adr/0022-opt-in-dynamic-flow-navigation.md), [ADR 0023](docs/adr/0023-opt-in-authored-elevation-foundation.md), [ADR 0024](docs/adr/0024-opt-in-deterministic-elevation-line-of-sight.md), [ADR 0025](docs/adr/0025-opt-in-authored-high-ground-modifiers.md), [ADR 0026](docs/adr/0026-opt-in-tile-displacement-physics.md) и [roadmap](docs/ROADMAP.md).
+Миссия выбирает профили каталога через `mission.mechanics`; само наличие профиля не включает механику. Реализованные независимые профили охватывают combat/reactions, navigation/elevation/physics/terraforming, roguelite, heroes, logistics, director, quests, multiplayer, enemy behaviors, ballistics и weather. Mechanics Hub и AI/MCP показывают prerequisites для recipes, но никогда не включают зависимые профили и не патчат terrain, map, tower или ability автоматически. Обычные starter-проекты не содержат `content/mechanics.json` и сохраняют legacy path. Точные версии, зависимости и checkpoint/snapshot contracts находятся в [ARCHITECTURE.md](ARCHITECTURE.md), а пользовательские последовательности — в [runbook](docs/runbook.md) и [reference examples](docs/examples/README.md).
 
 ## Архитектура
 

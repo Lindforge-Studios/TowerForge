@@ -214,6 +214,12 @@ function validateSource(source) {
         case "reaction":
             validateId(source.reactionId, "Reaction source reactionId");
             return;
+        case "weather":
+            validateId(source.profileId, "Weather source profileId");
+            validateId(source.weatherId, "Weather source weatherId");
+            validateId(source.zoneId, "Weather source zoneId");
+            validateId(source.effectId, "Weather source effectId");
+            return;
         case "enemy":
         case "leak":
             validateId(source.enemyId, `${source.kind} source enemyId`);
@@ -241,6 +247,10 @@ function validateTarget(target) {
         case "hero":
             validateId(target.heroId, "Hero target heroId");
             validateId(target.heroDefinitionId, "Hero target heroDefinitionId");
+            return;
+        case "map_object":
+            validateId(target.objectId, "Map object target objectId");
+            validateId(target.definitionId, "Map object target definitionId");
             return;
         case "core":
             return;
@@ -349,4 +359,8 @@ export class DamageResolver {
             blockedByArmor
         };
     }
+}
+/** Validate and normalize every closed DamagePacket field without mutating an entity. */
+export function validateDamagePacket(packet) {
+    void DamageResolver.resolve(packet);
 }

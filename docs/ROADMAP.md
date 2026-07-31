@@ -1,6 +1,6 @@
 # TowerForge — Roadmap расширяемых механик
 
-Последняя проверка: 2026-07-29
+Последняя проверка: 2026-07-31
 
 Цель программы — расширить TowerForge от классического TD до набора совместимых жанровых механик,
 не меняя поведение существующих проектов. Gameplay-модули являются opt-in: разработчик добавляет
@@ -51,13 +51,33 @@ service. Нет соответствующего выбора или локал�
 | R7 — Director и Generative Studio | Завершён; code + constructor sign-off; ADR Accepted | Opt-in Director v1, proposal-only worker auto-balancer, seeded map preview и guarded generated-asset staging не меняют legacy path |
 | R8 — Multiplayer protocol и local transport | Завершён; code + constructor sign-off; ADR Accepted | Separate multiplayer entrypoint, local/asymmetric sessions, replay/handshake/transports/reconnect/desync и conditional packaging без hosted runtime |
 | R9 — TowerScript DX 3.0 | Завершён и слит; code + constructor sign-off; ADR Accepted | TowerScript v7 Behavior Tree/HFSM, Graph/Trace/Debugger v2, guarded Studio/MCP surfaces и неизменный v1–v6 legacy path прошли обязательные gates |
-| R10 — Persona QA и Procedural Quests | Завершён; code + constructor sign-off; ADR Accepted | Pure три-persona QA + opt-in `quests` v1 с CLI/Studio/MCP, renderer/player, packages и fixture; merge/release не входят в R10 |
-| R11 — Procedural Juice Engine | Завершён; ADR Accepted | Opt-in visuals v3: deterministic particle/audio/camera plans, shared Canvas/Phaser surfaces, Studio/MCP authoring и неизменный gameplay/legacy path |
-| R12.1 — targetable boss components | В работе; ADR Proposed | Opt-in `enemyBehaviors` v1, component damage/state, guarded Studio/MCP authoring, shared presentation и absent/disabled legacy path |
-| R12.2 — component-driven boss phases | В работе; ADR Proposed | Schema-v7 component events, exact read-only HFSM context, unchanged Graph/Trace v2 grammar и guarded AI authoring |
-| R12.3 — bounded formation steering | В работе; engine GREEN, ADR Proposed | Dynamic-flow-only cohorts, three roles, bounded shared-field steering, active-only snapshot/checkpoint и isolated constructor surfaces |
+| R10 — Persona QA и Procedural Quests | Завершён и слит; code + constructor sign-off; ADR Accepted | Pure три-persona QA + opt-in `quests` v1 с CLI/Studio/MCP, renderer/player, packages и fixture |
+| R11 — Procedural Juice Engine | Завершён и слит; code + constructor sign-off; ADR Accepted | Opt-in visuals v3: deterministic particle/audio/camera plans, shared Canvas/Phaser surfaces, Studio/MCP authoring и неизменный gameplay/legacy path |
+| R12 — Advanced Enemy Behaviors | Реализация завершена; PR #23 открыт и CI green; code + constructor sign-off; ADR Proposed | Targetable boss components, schema-v7 component events/HFSM context, bounded formation steering, vanguard protection и unchanged legacy path |
+| R13.1 — projectile foundation | Реализация завершена; ADR Accepted | Separate opt-in `ballistics` v1, authoritative fixed-tick direct/arc projectiles, active-only state and shared Canvas/Phaser projection |
+| R13.2 — arc clearance | Реализация завершена; ADR Accepted | Optional tag/height blockers, canonical launch-time topology trace, checkpoint inner v2 and authoritative blocked-event projection |
+| R13.3 — bounded ricochet | Реализация завершена; ADR Accepted | Closed terrain/armor surfaces, topology-owned bounded reflection, checkpoint inner v3 and shared authoritative event projection |
+| R13.4 — destructible environment | Реализация завершена; ADR Accepted | Targetable map-object HP/armor, atomic persistent terrain mutation, Ballistics snapshot v2/checkpoint inner v4, guarded five-file authoring and shared Canvas/Phaser projection |
+| R13.5 — deterministic Weather | Реализация завершена; ADR Accepted | Independent opt-in `weather` v1, seeded schedule, bounded effects, active-only state and shared Canvas/Phaser projection |
+| R13 | Ожидает принятия; stacked PR #24 содержит RED/GREEN-исправление browser race | Regression воспроизведён 1/12 и после исправления прошёл 20/20; до merge нужны exact-commit CI и оба повторных sign-off |
+| R14 — Gem Crafting & Modular Arsenal | Разрешён владельцем; начинается после merge R13 | CampaignRunV2 отдельно от arsenal content; затем author-time blueprints, runtime assembly, gem crafting и constructor surfaces |
+| R15 — Deterministic Macro-Economy | Запланирован; пауза, работа не начата | Independent `macroEconomy` v1 slices: seeded local market, explicit deposits, atomic rituals |
+| R16 — Ghost Replay Lab | Запланирован; пауза, работа не начата | Binary replay archive, detached ghost, immutable What-If branches и отдельный reference relay |
+| R17 — Web Publish, Remix & Monetization | Запланирован; пауза, работа не начата | Reproducible publish manifest, provider adapters, licensed remix provenance и host-only monetization hooks |
 
-R0A изначально ввёл только контракт и поверхности обнаружения. Поставленные версии `combat`, `reactions`, `navigation` и `elevation` уже прошли полные вертикальные срезы. Остальные модули Mechanics Hub остаются planned, а preview/apply отклоняют их включение без записи.
+### Delivery snapshot на 2026-07-31
+
+- Последний опубликованный desktop pre-release — [`v0.4.0`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.4.0) на source commit `f07a403`; он включает R0–R8.
+- `main` находится на `e505e4f` и включает слитые R9, R10 и R11.
+- [`PR #23`](https://github.com/Lindforge-Studios/TowerForge/pull/23) (`codex/r12-advanced-enemies`, `2311d64`) основан на `main`, открыт и имеет успешный обязательный CI.
+- [`PR #24`](https://github.com/Lindforge-Studios/TowerForge/pull/24) (`codex/r13-ballistics-weather`) stacked на R12. Предыдущий commit прошёл unit 3,693/3,693 и все CI steps, кроме Playwright 140/141. Трассировка показала гонку фикстуры: внешнее future-version изменение иногда обгоняло завершение предыдущего guarded apply. RED — 1/12, GREEN после ожидания точного response — 20/20. Кандидат ожидает повторный CI/sign-off.
+- 1 августа владелец явно разрешил merge R12/R13, полную реализацию R14 и новый release. R15–R17 остаются вне этой поставки.
+
+R0A изначально ввёл только контракт и поверхности обнаружения. Сейчас исполнимыми являются только
+версии, перечисленные в [ARCHITECTURE.md](../ARCHITECTURE.md): наличие planned descriptor или
+roadmap-строки не считается capability. R14 `arsenal`, R15 `macroEconomy` и любые R16/R17 contracts
+ещё не существуют; Studio/MCP/player не должны показывать их как доступные и не должны создавать
+их данные.
 
 ## Порядок поставки
 
@@ -769,6 +789,146 @@ Active metadata читается из `snapshot.enemyBehaviors.formations.protec
 `vanguardDamageIntercepted` — только read-only GameEvent, не TowerScript event.
 См. `docs/examples/opt-in-vanguard-protection/`.
 
+### R13 — Deterministic 2.5D Ballistics, Destructibles & Weather
+
+R13 не добавляет 3D physics runtime. Авторитетная карта остаётся 2D, а engine
+добавляет только deterministic scalar altitude и typed world mutations. Все срезы
+opt-in; выключенный модуль не меняет legacy attack, snapshot, checkpoint, digest, UI и
+player bundle.
+
+1. **R13.1 — projectile foundation.** Separate `ballistics` v1 может связать только
+   unchained `single` tower attack с `direct | arc`, positive bounded `travelTimeUnits` и
+   arc-only `maxAltitude`. Engine фиксирует launch packet, component/target point и endpoint
+   elevations, не делает projectile homing и разрешает impact через общий
+   `DamageResolver`. Shared renderer projector только переводит авторитетный
+   snapshot в pixels.
+2. **R13.2 — arc clearance.** Topology line, elevation и authored blocker height решают,
+   пройдёт ли дуга над препятствием; слайс не добавляет ricochet.
+3. **R13.3 — ricochet.** Authored terrain/entity surfaces и topology-owned fixed tie-breaks,
+   не более четырёх отскоков; каждый урон идёт через resolver.
+4. **R13.4 — destructibles.** Map object HP/armor и exactly-once destruction; влияющая
+   на LoS/navigation мутация проходит candidate -> reachability proof -> atomic commit/rollback.
+   Активный контракт публикует Ballistics snapshot v2 и checkpoint inner v4; read-only events
+   `destructibleObjectDamaged` / `destructibleObjectDestroyed` доступны presentation-слою.
+   Canvas и Phaser используют один fail-closed projector. Procedural Juice создаёт cue только
+   при явном authored binding и не добавляет автоматический debris.
+5. **R13.5 — weather.** Separate mission-selected `weather` v1 с closed
+   `{zones,definitions,schedule}` profile, zones `all_map | tiles`, пятью typed effect
+   kinds и отдельным seeded RNG-domain. Каждая волна получает не более
+   одного authored occurrence либо calm result; Ballistics и Weather не
+   объединяются в один RED/GREEN срез. Active-only `snapshot.weather` v1 и
+   events `weatherStarted`, `weatherEnded`, `weatherEffectApplied`, `weatherBudgetExceeded`
+   создаются engine; Canvas/Phaser получают только fail-closed projection.
+
+R13.1–R13.3 authoring идёт через guarded flow
+`describe_schema(ballistics) -> get_capabilities -> get_recipe(basic_projectile_ballistics) ->
+preview_mechanics_module -> apply_mechanics_module(ifRevision) -> validate_project`. См.
+[ADR 0054](adr/0054-r13-deterministic-2-5d-ballistics.md) и
+`docs/examples/opt-in-projectile-ballistics/`. Для R13.3 используется отдельный inert recipe
+`basic_projectile_ricochet` и fixture `docs/examples/opt-in-projectile-ricochet/`.
+
+R13.4 использует отдельную narrow transaction:
+`get_recipe(basic_destructible_environment) -> preview_destructible_environment ->
+apply_destructible_environment(ifRevision) -> validate_project`. Она валидирует и атомарно
+записывает five files с backup/rollback; broad write не добавляется. Complete opt-in fixture:
+`docs/examples/opt-in-destructible-environment/`. Absent, disabled и mission-unselected profiles
+не меняют legacy snapshots, checkpoint/replay, UI или PWA/single-file/web package/`.tdpack` carrier.
+TowerScript actions/events для destructibles в R13.4 не добавляются. Реализация R13.1–R13.5 и обе
+независимые проверки завершены, но milestone не считается принятым до устранения зафиксированного
+PR E2E regression и нового exact-commit gate/sign-off цикла.
+
+R13.5 возвращается к общему guarded mechanics flow:
+`describe_schema(weather) -> get_capabilities -> get_recipe(basic_blizzard_weather) ->
+preview_mechanics_module -> apply_mechanics_module(ifRevision) -> validate_project`.
+`basic_blizzard_weather`, `basic_acid_rain_weather` и `basic_sandstorm_weather` — inert
+candidates: recipe не включает модуль и не выбирает mission. Guarded apply проверяет
+revision, создаёт backup и делает rollback при ошибке; отдельный broad
+`write_weather` не добавляется. Complete opt-in reference:
+`docs/examples/opt-in-weather/`. Absent, disabled и unselected Weather не меняет
+legacy snapshot/checkpoint/replay/UI/player path; R13.5 не расширяет TowerScript
+и не создаёт automatic Procedural Juice cues.
+
+### R14 — Gem Crafting & Modular Arsenal
+
+R14 продолжает существующие artifacts, sockets, upgrade branches и modifier pipeline вместо второй
+системы предметов. Весь Arsenal является opt-in и хранит runtime inventory только внутри campaign
+run; `PlayerProfileV3` не меняется.
+
+1. **R14.0 — CampaignRunV2.** Отдельный migration/codec slice до любого arsenal content. V1
+   импортируется как V2 с пустым arsenal inventory; malformed/future/round-trip contracts идут RED
+   до production codec.
+2. **R14.1 — author-time Arsenal.** Новый `arsenal` v1 с категориями `base | barrel | core`,
+   compatibility tags, default loadout и существующими artifact sockets. Studio blueprint builder и
+   AI preview используют один engine-owned compiler.
+3. **R14.2 — runtime assembly.** `configureTowerModules` доступен только в setup/между волнами;
+   смена base требует совместимого footprint. Immutable definitions и общий modifier/effect pipeline
+   формируют effective tower contract. Первый command повышает GameCommand/Journal до v7.
+4. **R14.3 — gem crafting.** Гемы остаются artifact instances. Bounded 3×3 board применяет exact
+   relative recipes с optional rotations; `craftGem` атомарно потребляет конкретные instance IDs и
+   создаёт deterministic output в CampaignRunV2.
+5. **R14.4 — surfaces.** Отдельный Arsenal Hub, runtime management UI, MCP descriptors/recipes и
+   Canvas/Phaser controls обязаны доказать author-time/runtime equivalence. Выключенный модуль не
+   добавляет inventory, management pause или player code.
+
+### R15 — Deterministic Macro-Economy
+
+Новый mission-selected `macroEconomy` v1 не заменяет существующий
+`mission.economy.interestRate`. Каждый slice независим и использует отдельный deterministic state.
+
+1. **R15.1 — local seeded market.** До 32 authored commodities с bounded price inputs. Отдельный
+   wave-shock RNG-domain не двигает simulation RNG; сделки текущей management-фазы влияют только на
+   следующий price step. `buyCommodity`/`sellCommodity` требуют достаточных средств и точной фазы.
+2. **R15.2 — deposits.** `openDeposit` блокирует явную сумму на authored число очищенных волн;
+   basis-point interest и principal выплачиваются автоматически на maturity boundary. Early
+   withdrawal не входит в v1.
+3. **R15.3 — rituals.** `performRitual` принимает altar ID и exact tower instance IDs. Engine до
+   мутации атомарно проверяет ownership, радиус, состояние и requirements, затем уничтожает башни и
+   выполняет только allowlisted resource/damage/status/temporary-modifier effects. Частичный commit
+   запрещён.
+
+Первый macro-economy command повышает GameCommand/Journal до v8; replay продолжает принимать
+v1–v8. Market, deposits и rituals нельзя объединять в один RED/GREEN slice.
+
+### R16 — Ghost Replay Lab
+
+R16 расширяет существующие R0/R8 checkpoint, journal и transport contracts, не создавая второго
+симулятора и не включая multiplayer runtime в single-player bundle.
+
+1. **R16.1 — ReplayArchiveV1.** Checksummed binary container оборачивает канонические JSON
+   checkpoint/journal contracts. Truncated, malformed, oversized и incompatible bytes отклоняются
+   до создания simulation.
+2. **R16.2 — ghost session.** Detached read-only replay публикует ghost snapshots, не занимает
+   клетки, не участвует в targeting и не выдаёт commands. Engine/content/capability digest mismatch
+   блокирует запуск.
+3. **R16.3 — What-If.** `ReplayBranchV1` хранит parent digest, fork sequence и новый journal suffix;
+   исходный archive immutable. Replay Lab показывает timeline, overlay и first-divergence
+   diagnostics.
+4. **R16.4 — reference relay.** Отдельный self-host package поверх R8 WebSocket adapter: invite-code
+   rooms, обязательный capability handshake, без аккаунтов и gameplay logic. Hosted auth,
+   matchmaking и TowerForge Cloud остаются вне R16.
+
+### R17 — Web Publish, Remix & Monetization
+
+R17 является distribution-track после gameplay и replay milestones. Внешний upload всегда требует
+явного подтверждения пользователя; credentials остаются в OS/provider runtime и не попадают в
+`.tdproj`, MCP trace или bundle.
+
+1. **R17.1 — PublishManifestV1.** Reproducible engine/content/bundle digests, capability list,
+   license и remix policy. Preview compute-only; build не содержит secret или user-local paths.
+2. **R17.2 — provider adapters.** Единый порядок `preview → reproducible build → explicit
+   confirmation → upload → remote verification`; первые targets — filesystem/self-host, GitHub
+   Pages и Cloudflare-compatible deployment. Failed upload не меняет source project.
+3. **R17.3 — Remix.** Кнопка доступна только при опубликованном source `.tdpack` и разрешающей
+   лицензии. Импорт создаёт новый project ID; `RemixProvenanceV1` сохраняет parent digest,
+   attribution и source, но не копирует tokens, caches, deployment metadata или private
+   `.towerforge` state.
+4. **R17.4 — MonetizationHookV1.** Только host-injected banner/interstitial/purchase-link
+   placements вне engine. Rewarded gameplay rewards, payment keys, hidden telemetry и real-money
+   balance исключены из v1.
+
+R14–R17 сейчас запланированы и остановлены до отдельной команды владельца; ни один их public
+contract ещё не считается реализованным или доступным агентам.
+
 ## TDD и роли
 
 Каждый небольшой вертикальный срез проходит цикл **RED → GREEN engine → GREEN surfaces → refactor → code verification → constructor integration verification**.
@@ -791,6 +951,16 @@ Active metadata читается из `snapshot.enemyBehaviors.formations.protec
 - Profile migration и rogue content.
 - Power grid и factory/ammo logistics.
 - Procedural maps и asset hooks.
+- Boss components и formation steering.
+- Projectile foundation и ricochet.
+- Ballistics и Weather.
+- Destructible navigation mutation и projectile collision.
+- CampaignRun migration и arsenal content.
+- Runtime modules и gem crafting.
+- Market, deposits и rituals.
+- Replay archive и network relay.
+- Publish manifest и external upload.
+- Remix и monetization hooks.
 
 Эти пары требуют отдельных RED/GREEN циклов и отдельных sign-off, даже если используют общий контракт.
 

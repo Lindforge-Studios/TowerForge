@@ -192,7 +192,7 @@ function hasIssue(
 describe("R3.4a physics module v1 contract", () => {
   it("publishes physics as implemented with exact closed limits and authoring descriptor", () => {
     expect(Engine.IMPLEMENTED_MECHANICS_MODULE_IDS).toEqual([
-      "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes",
+      "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "heroes",
       "logistics", "director", "quests", "enemyBehaviors", "multiplayer"
     ]);
 

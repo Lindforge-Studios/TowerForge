@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "ballistics": {
+      "schemaVersion": 1,
+      "enabled": true,
+      "profiles": {
+        "basic_projectile_ballistics": {
+          "projectiles": {
+            "towers": {
+              "arrow_tower": {
+                "trajectory": "arc",
+                "travelTimeUnits": 0.4,
+                "maxAltitude": 2
+              }
+            },
+            "clearance": {
+              "terrainBlockerHeights": {
+                "blocked": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

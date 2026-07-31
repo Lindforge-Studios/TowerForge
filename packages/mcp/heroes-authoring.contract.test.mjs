@@ -799,8 +799,8 @@ describe("R5.4A MCP/AI battle-local hero skill-tree authoring", () => {
     expect(stale).toMatchObject({ code: "conflict" });
   });
 
-  it("keeps the guarded tree flow in guide v30 with the authoritative v6 command contract", () => {
-    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(41);
+  it("keeps the guarded tree flow in the current guide with the authoritative v6 command contract", () => {
+    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(46);
     expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/Heroes v5[\s\S]*skillTree[\s\S]*basic_hero_skill_tree/i);
     expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(
       /get_capabilities[\s\S]*get_recipe[\s\S]*preview_mechanics_module[\s\S]*apply_mechanics_module[\s\S]*ifRevision/i
@@ -1034,8 +1034,8 @@ describe("R5.5A MCP/AI passive hero damage-aura authoring", () => {
     expect(await callTool("validate_project", { projectDir }, {})).toMatchObject({ ok: true });
   }, 30_000);
 
-  it("keeps explicit aura promotion and membership in guide v30", () => {
-    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(41);
+  it("keeps explicit aura promotion and membership in the current guide", () => {
+    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(46);
     expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(
       /Heroes v6[\s\S]*passiveAura[\s\S]*basic_passive_hero_aura/i
     );
@@ -1223,8 +1223,8 @@ describe("R5.6A MCP/AI dynamic-navigation hero blocking authoring", () => {
     }, {}))).toMatchObject({ code: "conflict" });
   }, 30_000);
 
-  it("publishes guide v30 with explicit dependency, promotion, and snapshot-only presentation", () => {
-    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(41);
+  it("publishes the current guide with explicit dependency, promotion, and snapshot-only presentation", () => {
+    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(46);
     expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(
       /Heroes v7[\s\S]*blocking[\s\S]*basic_dynamic_hero_blocking/i
     );

@@ -371,6 +371,61 @@ describe("R11 shared procedural juice projection", () => {
     });
   });
 
+  it("projects destructible damage and destruction only through authored bindings at event.coord", () => {
+    const project = projector();
+    const configured = visuals();
+    configured.proceduralJuice.eventBindings = {
+      object_damage: {
+        event: "destructibleObjectDamaged",
+        particleEmitterIds: ["impact_sparks"]
+      },
+      object_destroyed: {
+        event: "destructibleObjectDestroyed",
+        audioCueIds: ["impact_tone"]
+      }
+    };
+    const current = snapshot({
+      lastEvents: [
+        {
+          type: "destructibleObjectDamaged", projectileId: "projectile_1",
+          objectId: "gate_1", definitionId: "gate", coord: { q: 8, r: 3 },
+          fromHp: 50, toHp: 30, damage: 20
+        },
+        {
+          type: "destructibleObjectDestroyed", projectileId: "projectile_2",
+          objectId: "gate_1", definitionId: "gate", coord: { q: 8, r: 3 }
+        }
+      ]
+    });
+
+    expect(project(projectOptions({ visuals: configured, snapshot: current }))).toMatchObject({
+      active: true,
+      particleBursts: [expect.objectContaining({
+        bindingId: "object_damage", origin: { q: 8, r: 3 }
+      })],
+      audioCues: [expect.objectContaining({
+        bindingId: "object_destroyed", origin: { q: 8, r: 3 }
+      })],
+      cameraCues: []
+    });
+  });
+
+  it("emits no destructible cue when the valid Juice catalog has no matching binding", () => {
+    const project = projector();
+    const current = snapshot({
+      lastEvents: [{
+        type: "destructibleObjectDestroyed", projectileId: "projectile_1",
+        objectId: "gate_1", definitionId: "gate", coord: { q: 8, r: 3 }
+      }]
+    });
+    expect(project(projectOptions({ snapshot: current }))).toEqual({
+      active: true,
+      particleBursts: [],
+      audioCues: [],
+      cameraCues: []
+    });
+  });
+
   it("keeps absent v2 catalogs completely inert and applies mission filters without touching events", () => {
     const project = projector();
     let reads = 0;

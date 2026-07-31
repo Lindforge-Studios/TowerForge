@@ -1,4 +1,5 @@
 import { LINE_OF_SIGHT_LIMITS } from "../content/elevation-mechanics.js";
+import { dynamicAuthoredLineOfSightBlockerAtV1 } from "./destructible-line-of-sight.js";
 function fail(message) {
     throw new Error(`Line-of-sight analysis request is invalid: ${message}`);
 }
@@ -178,6 +179,124 @@ export function traceLineOfSight(map, terrainTypes, terrainBlockerTags, source, 
     }
     return { row: row(target, true, "clear"), cellInspections: inspections, budgetExceeded: false };
 }
+function blockerV2(coord, terrainId, elevation, details = {}) {
+    return Object.freeze({
+        coord: Object.freeze({ ...coord }),
+        terrainId,
+        elevation,
+        ...(details.tag === undefined ? {} : { tag: details.tag }),
+        ...(details.objectId === undefined ? {} : { objectId: details.objectId }),
+        ...(details.definitionId === undefined ? {} : { definitionId: details.definitionId }),
+        ...(details.blockerHeight === undefined ? {} : { blockerHeight: details.blockerHeight })
+    });
+}
+function rowV2(target, visible, reason, blockedBy) {
+    return Object.freeze({
+        target: Object.freeze({ ...target }),
+        visible,
+        reason,
+        ...(blockedBy === undefined ? {} : { blocker: blockedBy })
+    });
+}
+/**
+ * Generalized source/target-exclusive LoS trace. When no dynamic index is supplied, the existing
+ * public wrapper remains the exact implementation and result contract.
+ */
+export function traceLineOfSightV2(map, legacyPolicy, dynamicIndex, source, target, remainingCellInspections = LINE_OF_SIGHT_LIMITS.cellInspectionsPerOperation) {
+    if (dynamicIndex === undefined && legacyPolicy !== undefined) {
+        return traceLineOfSight(map, legacyPolicy.terrainTypes, legacyPolicy.terrainBlockerTags, source, target, remainingCellInspections);
+    }
+    if (!Number.isSafeInteger(remainingCellInspections) || remainingCellInspections < 0) {
+        fail("remainingCellInspections must be a non-negative safe integer");
+    }
+    const distance = map.distance(source, target);
+    if (distance > LINE_OF_SIGHT_LIMITS.maximumRayDistance) {
+        return Object.freeze({
+            row: rowV2(target, false, "ray_budget_exceeded"),
+            cellInspections: 0,
+            budgetExceeded: true
+        });
+    }
+    const line = map.line(source, target);
+    const steps = line.length - 1;
+    if (steps <= 1) {
+        return Object.freeze({ row: rowV2(target, true, "clear"), cellInspections: 0, budgetExceeded: false });
+    }
+    const sourceElevation = map.elevationAt(source);
+    const targetElevation = map.elevationAt(target);
+    if (sourceElevation === undefined || targetElevation === undefined) {
+        return Object.freeze({
+            row: rowV2(target, false, "operation_budget_exceeded"),
+            cellInspections: 0,
+            budgetExceeded: true
+        });
+    }
+    const terrainTypes = legacyPolicy?.terrainTypes ?? {};
+    const terrainBlockerTags = new Set(legacyPolicy?.terrainBlockerTags ?? []);
+    let inspections = 0;
+    for (let index = 1; index < line.length - 1; index += 1) {
+        if (inspections >= remainingCellInspections) {
+            return Object.freeze({
+                row: rowV2(target, false, "operation_budget_exceeded"),
+                cellInspections: inspections,
+                budgetExceeded: true
+            });
+        }
+        inspections += 1;
+        const coord = line[index];
+        const tile = map.getTile(coord);
+        const elevation = map.elevationAt(coord);
+        if (!tile || elevation === undefined) {
+            return Object.freeze({
+                row: rowV2(target, false, "operation_budget_exceeded"),
+                cellInspections: inspections,
+                budgetExceeded: true
+            });
+        }
+        let matchingTag;
+        for (const tag of terrainTypes[tile.terrain]?.tags ?? []) {
+            if (terrainBlockerTags.has(tag) && (matchingTag === undefined || tag < matchingTag)) {
+                matchingTag = tag;
+            }
+        }
+        if (matchingTag !== undefined) {
+            return Object.freeze({
+                row: rowV2(target, false, "terrain_tag", blockerV2(coord, tile.terrain, elevation, { tag: matchingTag })),
+                cellInspections: inspections,
+                budgetExceeded: false
+            });
+        }
+        const rayHeightNumerator = (sourceElevation + 1) * (steps - index)
+            + (targetElevation + 1) * index;
+        const dynamicBlocker = dynamicIndex === undefined
+            ? undefined
+            : dynamicAuthoredLineOfSightBlockerAtV1(map, dynamicIndex, coord);
+        if (dynamicBlocker !== undefined
+            && (elevation + dynamicBlocker.blockerHeight) * steps >= rayHeightNumerator) {
+            return Object.freeze({
+                row: rowV2(target, false, "destructible", blockerV2(coord, tile.terrain, elevation, {
+                    objectId: dynamicBlocker.objectId,
+                    definitionId: dynamicBlocker.definitionId,
+                    blockerHeight: dynamicBlocker.blockerHeight
+                })),
+                cellInspections: inspections,
+                budgetExceeded: false
+            });
+        }
+        if (legacyPolicy !== undefined && elevation * steps >= rayHeightNumerator) {
+            return Object.freeze({
+                row: rowV2(target, false, "elevation", blockerV2(coord, tile.terrain, elevation)),
+                cellInspections: inspections,
+                budgetExceeded: false
+            });
+        }
+    }
+    return Object.freeze({
+        row: rowV2(target, true, "clear"),
+        cellInspections: inspections,
+        budgetExceeded: false
+    });
+}
 export function analyzeLineOfSightTargets(map, terrainTypes, profile, request) {
     let remaining = LINE_OF_SIGHT_LIMITS.cellInspectionsPerOperation;
     let inspected = 0;
@@ -193,6 +312,32 @@ export function analyzeLineOfSightTargets(map, terrainTypes, profile, request) {
     return Object.freeze({
         schemaVersion: 1,
         profileId: profile.profileId,
+        source: Object.freeze({ ...request.source }),
+        rows: Object.freeze(rows),
+        coverage: Object.freeze({
+            requestedTargets: request.targets.length,
+            analyzedTargets: rows.length,
+            cellInspections: inspected,
+            budgetExceeded
+        })
+    });
+}
+/** Compute-only dynamic diagnostics; no index or result state is persisted by the simulation. */
+export function analyzeLineOfSightTargetsV2(map, legacyPolicy, dynamicIndex, profiles, request) {
+    let remaining = LINE_OF_SIGHT_LIMITS.cellInspectionsPerOperation;
+    let inspected = 0;
+    let budgetExceeded = false;
+    const rows = [];
+    for (const target of request.targets) {
+        const result = traceLineOfSightV2(map, legacyPolicy, dynamicIndex, request.source, target, remaining);
+        rows.push(result.row);
+        inspected += result.cellInspections;
+        remaining = Math.max(0, remaining - result.cellInspections);
+        budgetExceeded ||= result.budgetExceeded;
+    }
+    return Object.freeze({
+        schemaVersion: 2,
+        profiles: Object.freeze({ ...profiles }),
         source: Object.freeze({ ...request.source }),
         rows: Object.freeze(rows),
         coverage: Object.freeze({

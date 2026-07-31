@@ -729,6 +729,84 @@
               <p class="text-muted">One ID or tag per line. Physics v1 supports tile-discrete ground displacement with a maximum distance of 8.</p>
             </div>
           </div>
+          <div id="mechanics-ballistics-editor" class="hidden">
+            <div class="mechanics-shield-section mechanics-ballistics-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Deterministic projectile ballistics</h4>
+                  <p>Bind authored single-target towers to direct or arc fixed-travel projectiles. Flight remains inert until this profile is selected.</p>
+                </div>
+                <span id="mechanics-ballistics-capability" class="text-muted">Ballistics v1</span>
+              </div>
+              <div id="mechanics-ballistics-read-only" class="mechanics-notice warning hidden" role="status">This future Ballistics schema is preserved read-only.</div>
+              <label>Closed profile JSON
+                <textarea id="mechanics-ballistics-profile-json" class="mono" rows="14" spellcheck="false" aria-label="Ballistics profile JSON"></textarea>
+              </label>
+              <p class="text-muted">Allowed fields: projectiles.towers.{towerId}.{trajectory, travelTimeUnits, maxAltitude, ricochet.{maxBounces, rangeCells}}, optional clearance.terrainBlockerHeights, and ricochet surfaces in terrainTags or armorTypes. Arc requires maxAltitude; direct forbids it.</p>
+            </div>
+          </div>
+          <div id="mechanics-weather-editor" class="hidden">
+            <div class="mechanics-shield-section mechanics-weather-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Dynamic weather zones</h4>
+                  <p>Author deterministic all-map or explicit tile zones independently from Ballistics and ordinary mission forms.</p>
+                </div>
+                <span id="mechanics-weather-capability" class="text-muted">Weather v1</span>
+              </div>
+              <div id="mechanics-weather-read-only" class="mechanics-notice warning hidden" role="status">This future Weather schema is preserved losslessly and read-only.</div>
+              <label>Zones JSON
+                <textarea id="mechanics-weather-zone-rows" class="mono" rows="10" spellcheck="false" aria-label="Weather zones JSON"></textarea>
+              </label>
+            </div>
+            <div class="mechanics-shield-section mechanics-weather-section">
+              <div class="mechanics-section-head">
+                <div><h4>Weather definitions and effects</h4><p id="mechanics-weather-effect-help">Bounded effect kinds are provided by the shared engine descriptor.</p></div>
+              </div>
+              <label>Definitions JSON
+                <textarea id="mechanics-weather-definition-rows" class="mono" rows="16" spellcheck="false" aria-label="Weather definitions JSON"></textarea>
+              </label>
+            </div>
+            <div class="mechanics-shield-section mechanics-weather-section">
+              <div class="mechanics-section-head">
+                <div><h4>Seeded wave schedule</h4><p>Set a calm weight and authored weighted choices. Recipes remain inert until Preview and Enable.</p></div>
+              </div>
+              <label>Schedule JSON
+                <textarea id="mechanics-weather-schedule-rows" class="mono" rows="10" spellcheck="false" aria-label="Weather schedule JSON"></textarea>
+              </label>
+            </div>
+          </div>
+          <div id="mechanics-destructibles-editor" class="hidden">
+            <div class="mechanics-shield-section mechanics-destructibles-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Destructible environment</h4>
+                  <p>Author closed Ballistics v1 object definitions separately from ordinary tower, enemy and mission forms.</p>
+                </div>
+                <button id="btn-mechanics-add-destructible-definition" class="btn btn-outline" type="button">+ Add definition</button>
+              </div>
+              <div id="mechanics-destructibles-definition-rows" class="mechanics-definition-rows"></div>
+            </div>
+            <div class="mechanics-shield-section mechanics-destructibles-section">
+              <div class="mechanics-section-head">
+                <div>
+                  <h4>Authored map placements</h4>
+                  <p>Choose an existing map and place stable definition IDs at explicit tile coordinates.</p>
+                </div>
+                <label>Map<select id="mechanics-destructibles-map-select"></select></label>
+                <button id="btn-mechanics-add-destructible-placement" class="btn btn-outline" type="button">+ Add placement</button>
+              </div>
+              <div id="mechanics-destructibles-placement-rows" class="mechanics-definition-rows"></div>
+            </div>
+            <div class="mechanics-actions">
+              <button id="btn-mechanics-destructibles-preview" class="btn btn-outline" type="button">Preview candidate</button>
+              <button id="btn-mechanics-destructibles-enable" class="btn btn-primary" type="button">Enable and save</button>
+              <button id="btn-mechanics-destructibles-save" class="btn btn-outline" type="button">Save candidate</button>
+              <button id="btn-mechanics-destructibles-disable" class="btn btn-danger" type="button">Disable module</button>
+              <button id="btn-mechanics-destructibles-reload" class="btn btn-outline" type="button">Reload</button>
+            </div>
+            <pre id="mechanics-destructibles-status" class="mechanics-preview-result" aria-live="polite">Preview and save through the guarded five-file transaction.</pre>
+          </div>
           <div id="mechanics-terraforming-editor" class="hidden">
             <div class="mechanics-shield-section mechanics-terraforming-section">
               <div class="mechanics-section-head">
@@ -1356,6 +1434,7 @@
           <div id="pt-artifact-inventory" class="pt-artifact-inventory" hidden></div>
           <div id="pt-logistics-power" class="pt-artifact-inventory" hidden></div>
           <div id="pt-quests" class="pt-artifact-inventory pt-quests" hidden></div>
+          <div id="pt-ballistics" class="pt-artifact-inventory pt-ballistics" hidden></div>
           <div class="form-section-title pt-debug-title">Event timeline</div>
           <div id="pt-event-timeline" class="pt-event-timeline"></div>
           <div class="form-section-title" style="margin-top:6px">Build (click tower, then a tile)</div>

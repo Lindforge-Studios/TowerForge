@@ -1,46 +1,69 @@
 # TowerForge Engine Review And Production Roadmap
 
-Last reviewed: 2026-07-20
+Last reviewed: 2026-07-31
 
-This document summarizes the current engine review. The original July review was implementation input; its closed-union, missing-difficulty, missing-keyboard, missing-theme, and incomplete conformance findings have since been resolved. Current priorities are tracked here, with product sequencing in [ROADMAP.md](ROADMAP.md) and release gaps in [quality-gaps.md](quality-gaps.md).
+This document is the compact engineering review. Product sequencing and live PR state are canonical
+in [ROADMAP.md](ROADMAP.md); release and production gaps are canonical in
+[quality-gaps.md](quality-gaps.md).
 
 ## Current State
 
-TowerForge now has a strong production-oriented foundation:
+TowerForge now has:
 
-- a deterministic, browser-safe, Node-free, content-id-agnostic simulation engine;
-- a universal tower pipeline with targeting, delivery, and ordered effects, while legacy attack kinds remain compatible;
-- data-driven abilities, objectives, economy, arbitrary currencies, difficulty variants, rewards, and persistent meta progression;
-- a deterministic TowerScript runtime for global, mission, map, wave, tower, enemy, and ability behavior;
-- one runtime contract across headless simulation, Studio Playtest, Canvas, and Phaser;
-- a four-template by two-renderer conformance matrix with keyboard placement coverage;
-- schema discovery, recipes, project-tree/script reads, deterministic diagnosis, revision-guarded granular MCP writes, backups, validation, and rollback;
-- a local-first Studio, Tauri desktop shell, static/single-file/PWA builds, `.tdpack` handoff, and native game scaffolds.
+- a deterministic, browser-safe, Node-free TypeScript simulation engine shared by headless runs,
+  Studio Playtest, Canvas, Phaser, and generated players;
+- an optional versioned mechanics platform with shared damage/modifier, navigation/topology,
+  checkpoint/journal/replay, profile, campaign, hero, logistics, and multiplayer contracts;
+- TowerScript v7 Behavior Trees/HFSM plus lossless Graph, structured Trace, and checkpoint-backed
+  Debugger v2 without arbitrary project code execution;
+- compute-only Persona QA, deterministic procedural quests, and visuals-v3 Procedural Juice;
+- implemented R12 targetable boss components, component-driven phases, bounded formation steering,
+  and vanguard protection in open PR #23;
+- implemented R13 direct/arc projectiles, clearance, ricochet, transactional destructibles, and
+  independent seeded Weather in stacked PR #24;
+- local-first Studio, guarded MCP/AI authoring, Tauri desktop, PWA/single-file builds, `.tdpack`,
+  Codex plugin packaging, and mobile/desktop game scaffolds.
 
-The expressive ceiling is no longer the old attack-kind union. It is now the finite set of validated effects, TowerScript events/actions, renderer presentations, and authoring affordances. That is the correct boundary: extend it with typed deterministic capabilities instead of arbitrary executable project code.
+The extension boundary is typed, versioned data plus engine descriptors. New gameplay must extend
+that boundary; arbitrary JavaScript/Lua, host imports, renderer-owned rules, or broad filesystem
+tools remain out of scope.
 
-## Priority Gaps
+## Immediate Gate
 
-| Priority | Area | Current gap | Next increment |
-| --- | --- | --- | --- |
-| P1 | Script authoring | TowerScript is safe and capable but JSON-heavy, with no completion, symbol navigation, breakpoint/step debugging, or inline event context. | Generate editor assistance from the script schema; add event/action documentation, handler tracing, breakpoints, and deterministic replay without adding host execution. |
-| P1 | Script mechanics | Shields, marks/vulnerability, split behaviors, terrain reactions, and richer tower-to-tower buffs are not first-class typed actions/effects. | Add narrowly typed engine effects/events with validation, snapshots, reports, renderer cues, Studio forms, MCP schema exposure, and deterministic tests. |
-| P1 | Renderer parity | Phaser remains shape-first and trails Canvas sprite/atlas presentation; neither renderer has enforced swarm-scale budgets. | Define visual conformance fixtures, close sprite parity, profile large waves, cache geometry/indexes, cap DPR/effects, and fail CI on agreed budgets. |
-| P1 | Asset pipeline | Theme packs ship backgrounds and palettes, not complete tower/enemy families. Binding remains object-by-object. | Add licensed or generated-original sprite families, pack manifests, batch preview/binding, provenance/license metadata, and renderer-matrix tests. |
-| P2 | Progression profiles | The player persists one versioned app-scoped profile. | Add named slots/loadouts, explicit migration UX, and validated profile export/import without moving ownership to a cloud service. |
-| P2 | Maps and terrain | Core tile-layer/path authoring ships, but terrain has limited gameplay meaning and full Tiled object/layer workflows are absent. | Add typed terrain effect zones and preserve/import richer Tiled layers through the compiler and Studio. |
-| P2 | Agent evaluation | Tool contracts are narrow and guarded, but coverage is stronger for happy paths than adversarial multi-agent use. | Add malformed project packs, stale revisions, concurrent writers, oversized inputs, protocol drift, misleading balance strategies, and policy-denial fixtures. |
-| P3 | Distribution | Local builds and handoff ship; publish/remix and store automation do not. | Design an opt-in static-host/git publish contract around signed/checksummed project artifacts, keeping cloud services optional. |
+R13 is not accepted yet. GitHub CI on prior head `b3069a4` passed 3,693 unit tests and every
+pre-browser step, then failed one of 141 Playwright tests. Trace evidence proved a fixture race
+between the completed file write and the pending guarded apply response; RED reproduced 1/12 and
+the repaired contract passed 20/20. The new exact commit still requires full gates and two fresh
+sign-offs. The owner has authorized R14 after R13; later planned items are not implemented APIs.
+
+## Next Planned Increments
+
+| Order | Area | Contract boundary |
+| --- | --- | --- |
+| R14.0 | Campaign run migration | `CampaignRunV2` codec and V1 migration, with no arsenal content in the same RED/GREEN slice |
+| R14.1–R14.4 | Modular arsenal and gem crafting | Opt-in `arsenal` v1, engine-owned blueprint compiler, between-wave module commands, existing artifact instances on a bounded 3×3 board, shared Studio/MCP/player surfaces |
+| R15.1–R15.3 | Macro-economy | Opt-in `macroEconomy` v1; separate seeded market, explicit deposits, and atomic rituals; command/journal v8 only when commands arrive |
+| R16.1–R16.4 | Ghost Replay Lab | Checksummed binary archive over canonical JSON, detached ghost, immutable branch suffix, and a separate gameplay-free self-host relay |
+| R17.1–R17.4 | Distribution | Reproducible publish manifest, explicit-confirmation provider adapters, licensed `.tdpack` remix provenance, and host-only monetization placements |
 
 ## Engineering Invariants
 
-- Engine behavior MUST stay deterministic: no wall clock, ambient randomness, filesystem, network, DOM, or Node dependencies.
-- New mechanics SHOULD enter through data, universal effects, or typed TowerScript events/actions before introducing new bespoke runtime branches.
+- Engine behavior MUST stay deterministic: no wall clock, ambient randomness, filesystem, network,
+  DOM, or Node dependencies.
+- Every gameplay extension MUST remain opt-in; absence or deselection MUST preserve legacy state,
+  snapshot, checkpoint, replay digest, UI, bundle composition, and hot-path work.
 - Studio, CLI, MCP, generated players, Canvas, and Phaser MUST consume the same engine contracts.
 - Project writes MUST remain local, confined, revision-aware, validated, backed up, and reversible.
 - AI tools MUST expose application concepts, not raw shell or filesystem access.
-- Project format changes MUST be additive where possible and ship with migrations, fixtures, and documentation.
+- Project/version-domain changes MUST be explicit and ship with migrations, hostile-data tests,
+  fixtures, documentation, and compatibility coverage.
+- One roadmap R uses one branch and one PR. Each vertical slice records RED before production; the
+  final exact commit needs independent Code Verifier and Constructor Integration Verifier sign-off.
 
 ## Completion Evidence
 
-Use the command-to-change mapping in [../AGENTS.md](../AGENTS.md). Mechanics are not complete until engine tests, schema validation, headless reporting, Studio/MCP authoring, both generated renderers, and relevant docs agree on the same behavior. Avoid embedding test counts in roadmap prose; CI and the test runner are the live source of truth.
+Use the command-to-change mapping in [../AGENTS.md](../AGENTS.md). A mechanic is not complete until
+engine tests, schema validation, checkpoint/journal determinism, headless evidence, Studio/MCP
+authoring, both generated renderers, packages, disabled legacy behavior, and documentation agree.
+Use live CI/test output and `progress.md` for counts; do not treat stale prose or an open PR as proof
+of release.

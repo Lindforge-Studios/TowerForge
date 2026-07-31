@@ -75,6 +75,10 @@ import {
   previewMapElevations
 } from "../cli/lib/map-elevation-authoring.mjs";
 import {
+  applyDestructibleEnvironment,
+  previewDestructibleEnvironment
+} from "../cli/lib/destructible-environment-authoring.mjs";
+import {
   PROCEDURAL_JUICE_AUTHORING_SCHEMA,
   applyProceduralJuiceAuthoring,
   getProceduralJuiceRecipe,
@@ -89,7 +93,7 @@ const BALANCE_PATCH_KEYS = [
   "enemies", "towers", "waveSets", "missions", "abilities", "constants", "currencies", "defaultMissionId",
   "defaultDifficultyId", "difficulties", "metaProgression", "terrainTypes"
 ];
-const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "director", "quests", "enemyBehaviors", "personaQa", "multiplayer", "proceduralJuice", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
+const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "heroes", "logistics", "director", "quests", "enemyBehaviors", "personaQa", "multiplayer", "proceduralJuice", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
 
 // Maps an upsert_entity/delete_entity `collection` to (a) the balance.json key, (b) the shape
 // (a map keyed by id, or an array of {id,...} items — currencies only), and (c) the
@@ -201,6 +205,75 @@ const EXPLAIN_CURATED = {
 const IF_REVISION_PROPERTY = {
   type: "string",
   description: "Optional. The revision hash last read (from get_project_summary/validate_project/a prior write's response). If the file has since changed, the write is rejected with {conflict:true} instead of clobbering it."
+};
+const DESTRUCTIBLE_COORD_SCHEMA = {
+  type: "object",
+  properties: { q: { type: "integer", minimum: 0 }, r: { type: "integer", minimum: 0 } },
+  required: ["q", "r"],
+  additionalProperties: false
+};
+const DESTRUCTIBLE_DEFINITION_SCHEMA = {
+  type: "object",
+  properties: {
+    maxHp: { type: "number", exclusiveMinimum: 0 },
+    hitRegion: {
+      type: "object",
+      properties: {
+        kind: { const: "tile" }, blockerHeight: { type: "number", minimum: 0 },
+        blocksLineOfSight: { type: "boolean" }
+      },
+      required: ["kind", "blockerHeight", "blocksLineOfSight"],
+      additionalProperties: false
+    },
+    armorTypeId: { type: "string", minLength: 1, maxLength: 128 },
+    onDestroyed: {
+      type: "object",
+      properties: { terrainTransitionId: { type: "string", minLength: 1, maxLength: 128 } },
+      required: ["terrainTransitionId"], additionalProperties: false
+    }
+  },
+  required: ["maxHp", "hitRegion"], additionalProperties: false
+};
+const DESTRUCTIBLE_PROFILE_SCHEMA = {
+  type: "object",
+  properties: {
+    projectiles: {
+      type: "object",
+      properties: {
+        towers: { type: "object", maxProperties: 256 },
+        destructibles: {
+          type: "object",
+          properties: {
+            definitions: {
+              type: "object", minProperties: 1, maxProperties: 256,
+              additionalProperties: DESTRUCTIBLE_DEFINITION_SCHEMA
+            }
+          },
+          required: ["definitions"], additionalProperties: false
+        }
+      },
+      required: ["towers", "destructibles"], additionalProperties: false
+    }
+  },
+  required: ["projectiles"], additionalProperties: false
+};
+const DESTRUCTIBLE_AUTHORING_PROPERTIES = {
+  projectDir: { type: "string", description: "Path to the .tdproj directory." },
+  moduleSchemaVersion: { const: 1 }, missionId: { type: "string", minLength: 1, maxLength: 128 },
+  profileId: { type: "string", minLength: 1, maxLength: 128 },
+  mapId: { type: "string", minLength: 1, maxLength: 128 }, enabled: { type: "boolean" },
+  profile: DESTRUCTIBLE_PROFILE_SCHEMA,
+  placements: {
+    type: "array", maxItems: 4096,
+    items: {
+      type: "object",
+      properties: {
+        id: { type: "string", minLength: 1, maxLength: 128 },
+        definitionId: { type: "string", minLength: 1, maxLength: 128 }, coord: DESTRUCTIBLE_COORD_SCHEMA
+      },
+      required: ["id", "definitionId", "coord"], additionalProperties: false
+    }
+  }
 };
 
 const TILESET_SLICING_SCHEMA = {
@@ -811,6 +884,26 @@ export const TOOLS = [
     }
   },
   {
+    name: "preview_destructible_environment",
+    description: "Preview an explicit Ballistics destructible catalog, mission binding and canonical map placements through one five-file candidate without writing.",
+    inputSchema: {
+      type: "object",
+      properties: DESTRUCTIBLE_AUTHORING_PROPERTIES,
+      required: ["projectDir", "moduleSchemaVersion", "missionId", "profileId", "mapId", "enabled", "profile", "placements"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "apply_destructible_environment",
+    description: "Apply the exact previewed destructible environment with revision guard, validation, five-file backup and rollback.",
+    inputSchema: {
+      type: "object",
+      properties: { ...DESTRUCTIBLE_AUTHORING_PROPERTIES, ifRevision: IF_REVISION_PROPERTY },
+      required: ["projectDir", "moduleSchemaVersion", "missionId", "profileId", "mapId", "enabled", "profile", "placements", "ifRevision"],
+      additionalProperties: false
+    }
+  },
+  {
     name: "apply_map_elevations",
     description:
       "Apply a previewed canonical elevation layer with optimistic revision checking, validation, backup, and rollback. This may upgrade project.json to schema v3 and writes the target map source plus compiled maps; create a missing map with write_map before this guarded elevation workflow.",
@@ -848,7 +941,7 @@ export const TOOLS = [
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
         moduleId: { type: "string", description: "Engine-owned mechanics module id." },
-        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3, 4, 5, 6, 7], description: "Module contract version: navigation, physics, and terraforming support v1; multiplayer supports local co-op v1 and asymmetric Send-vs-Build v2; roguelite supports v1 for synergies, v2 for artifact loot, v3 for optional wave draft, and v4 for an optional campaign marker; heroes supports v1 for a static roster, v2 for movement, v3 for durability, v4 for mana plus one targeted ability, v5 for an optional battle-local skill tree, v6 for an optional passive tower-damage aura, and v7 for explicit dynamic-navigation blocking; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Omitted edits preserve an existing version and new modules default to v1." },
+        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3, 4, 5, 6, 7], description: "Module contract version: navigation, physics, ballistics, weather, and terraforming support v1; multiplayer supports local co-op v1 and asymmetric Send-vs-Build v2; roguelite supports v1 for synergies, v2 for artifact loot, v3 for optional wave draft, and v4 for an optional campaign marker; heroes supports v1 for a static roster, v2 for movement, v3 for durability, v4 for mana plus one targeted ability, v5 for an optional battle-local skill tree, v6 for an optional passive tower-damage aura, and v7 for explicit dynamic-navigation blocking; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Omitted edits preserve an existing version and new modules default to v1." },
         missionId: { type: "string", description: "Mission that would select the profile; defaults to the project's default mission." },
         profileId: { type: "string", description: "Profile id to preview." },
         profile: { type: "object", description: "Versioned module profile payload." },
@@ -870,7 +963,7 @@ export const TOOLS = [
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server's project." },
         moduleId: { type: "string", description: "Engine-owned mechanics module id." },
-        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3, 4, 5, 6, 7], description: "Module contract version: navigation, physics, and terraforming support v1; multiplayer supports local co-op v1 and asymmetric Send-vs-Build v2; roguelite supports v1 for synergies, v2 for artifact loot, v3 for optional wave draft, and v4 for an optional campaign marker; heroes supports v1 for a static roster, v2 for movement, v3 for durability, v4 for mana plus one targeted ability, v5 for an optional battle-local skill tree, v6 for an optional passive tower-damage aura, and v7 for explicit dynamic-navigation blocking; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Upgrades are guarded and version downgrades are rejected." },
+        moduleSchemaVersion: { type: "integer", enum: [1, 2, 3, 4, 5, 6, 7], description: "Module contract version: navigation, physics, ballistics, weather, and terraforming support v1; multiplayer supports local co-op v1 and asymmetric Send-vs-Build v2; roguelite supports v1 for synergies, v2 for artifact loot, v3 for optional wave draft, and v4 for an optional campaign marker; heroes supports v1 for a static roster, v2 for movement, v3 for durability, v4 for mana plus one targeted ability, v5 for an optional battle-local skill tree, v6 for an optional passive tower-damage aura, and v7 for explicit dynamic-navigation blocking; elevation supports v1 for elevation-only, v2 for optional LoS, and v3 for optional high-ground modifiers; combat supports v1 for shields, v2 for armor matrices, and v3 for marks. Upgrades are guarded and version downgrades are rejected." },
         missionId: { type: "string", description: "Mission that would select the profile; defaults to the project's default mission." },
         profileId: { type: "string", description: "Profile id to enable." },
         profile: { type: "object", description: "Versioned module profile payload." },
@@ -1862,6 +1955,8 @@ const TOOL_RISK = {
   diagnose_multiplayer_desync: { riskClass: "compute_only", sideEffect: "loads @towerforge/engine/multiplayer; writes no project files" },
   preview_map_elevations: { riskClass: "read_only", sideEffect: "none" },
   apply_map_elevations: { riskClass: "write_local", sideEffect: "may upgrade project.json to schema v3; writes the target map source and compiled maps with revision guard, validation, backup, and rollback" },
+  preview_destructible_environment: { riskClass: "compute_only", sideEffect: "none" },
+  apply_destructible_environment: { riskClass: "write_local", sideEffect: "writes project, mechanics, balance, map source, and compiled maps with revision guard, validation, five-file backup, and rollback" },
   preview_mechanics_module: { riskClass: "read_only", sideEffect: "none" },
   apply_mechanics_module: { riskClass: "write_local", sideEffect: "would write project.json, content/mechanics.json, and content/balance.json (mission selection and optional roguelite tower tags) with revision guard, validation, backup, and rollback; unavailable modules are rejected before writing" },
   get_progression: { riskClass: "read_only", sideEffect: "none" },
@@ -1989,6 +2084,61 @@ export async function callTool(name, args = {}, ctx = {}) {
       authoring: engine.PHYSICS_MECHANICS_SCHEMA,
       snapshot: { field: null, optional: true, supportedSchemaVersions: [] },
       events: ["enemyDisplacementResolved", "enemyFell"]
+    };
+    const ballistics = {
+      authoring: {
+        ...engine.BALLISTICS_MECHANICS_SCHEMA,
+        destructibles: {
+          ...engine.BALLISTICS_MECHANICS_SCHEMA.destructibles,
+          placement: {
+            requiredFields: ["id", "definitionId", "coord"],
+            optionalFields: [],
+            additionalProperties: false
+          }
+        },
+        towerBinding: {
+          ...engine.BALLISTICS_MECHANICS_SCHEMA.towerBinding,
+          trajectories: [...engine.BALLISTICS_MECHANICS_SCHEMA.trajectories]
+        }
+      },
+      authoringTransaction: {
+        preview: "preview_destructible_environment",
+        apply: "apply_destructible_environment",
+        revisionGuard: "ifRevision",
+        files: [
+          "project.json", "content/mechanics.json", "content/balance.json",
+          "maps/src/<mapId>.tmj", "maps/compiled/maps.json"
+        ]
+      },
+      snapshot: {
+        field: "ballistics",
+        optional: true,
+        supportedSchemaVersions: [1],
+        projectile: {
+          requiredFields: ["id", "sourceCoord", "targetCoord", "trajectory", "elapsedUnits", "travelTimeUnits", "altitude"],
+          optionalFields: ["maxAltitude"],
+          additionalProperties: false
+        }
+      },
+      trajectories: ["direct", "arc"],
+      checkpoint: {
+        field: "ballistics",
+        optional: true,
+        supportedSchemaVersions: [1, 2, 3, 4],
+        clearanceCollisionSchemaVersion: 1,
+        ricochetCheckpointSchemaVersion: 1
+      },
+      events: ["projectileMissed", "projectileBlocked", "projectileRicocheted", "destructibleObjectDamaged", "destructibleObjectDestroyed"],
+      commands: [],
+      gameplayBoundary: "Engine-authoritative fixed-tick projectiles; renderers consume projected altitude and never resolve collisions."
+    };
+    const weather = {
+      authoring: engine.WEATHER_MECHANICS_SCHEMA,
+      snapshot: { field: "weather", optional: true, supportedSchemaVersions: [1] },
+      checkpoint: { field: "weather", optional: true, supportedSchemaVersions: [1] },
+      events: ["weatherStarted", "weatherEnded", "weatherEffectApplied", "weatherBudgetExceeded"],
+      commands: [],
+      gameplayBoundary: "Engine-authoritative seeded schedule, zone membership, DamagePacket/status settlement, and spatial modifiers; authoring surfaces never recompute Weather gameplay."
     };
     const terraforming = {
       authoring: engine.TERRAFORMING_MECHANICS_SCHEMA,
@@ -2355,6 +2505,8 @@ export async function callTool(name, args = {}, ctx = {}) {
       ...(includes("navigation") ? { navigation } : {}),
       ...(includes("elevation") ? { elevation } : {}),
       ...(includes("physics") ? { physics } : {}),
+      ...(includes("ballistics") ? { ballistics } : {}),
+      ...(includes("weather") ? { weather } : {}),
       ...(includes("terraforming") ? { terraforming } : {}),
       ...(includes("roguelite") ? { roguelite } : {}),
       ...(includes("heroes") ? { heroes } : {}),
@@ -2402,7 +2554,7 @@ export async function callTool(name, args = {}, ctx = {}) {
           schemaVersion: 1,
           moduleIds: [...engine.MECHANICS_MODULE_IDS],
           implementedModuleIds: [...engine.IMPLEMENTED_MECHANICS_MODULE_IDS],
-          modules: { combat: combatShields, reactions, navigation, elevation, physics, terraforming, roguelite, heroes, logistics, director, quests, enemyBehaviors, multiplayer }
+          modules: { combat: combatShields, reactions, navigation, elevation, physics, ballistics, weather, terraforming, roguelite, heroes, logistics, director, quests, enemyBehaviors, multiplayer }
         }
       } : {})
     };
@@ -2606,7 +2758,7 @@ export async function callTool(name, args = {}, ctx = {}) {
           engine.ELEVATION_MECHANICS_SCHEMA
         );
       }
-      for (const moduleId of ["combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes", "logistics", "director", "quests", "enemyBehaviors", "multiplayer"]) {
+      for (const moduleId of ["combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "heroes", "logistics", "director", "quests", "enemyBehaviors", "multiplayer"]) {
         if (!Number.isSafeInteger(result[moduleId]?.moduleSchemaVersion)) continue;
         result.capabilities = {
           ...result.capabilities,
@@ -2651,6 +2803,18 @@ export async function callTool(name, args = {}, ctx = {}) {
         mapId: args.mapId,
         elevationOverrides: args.elevationOverrides
       });
+
+    case "preview_destructible_environment":
+      return destructibleEnvironmentResult(
+        projectDir,
+        await previewDestructibleEnvironment(projectDir, destructibleEnvironmentRequest(args))
+      );
+
+    case "apply_destructible_environment":
+      return destructibleEnvironmentResult(
+        projectDir,
+        await applyDestructibleEnvironment(projectDir, destructibleEnvironmentRequest(args))
+      );
 
     case "apply_map_elevations":
       return applyMapElevations(projectDir, {
@@ -5548,6 +5712,36 @@ function scrubMechanicsResult(value) {
       configurable: true,
       writable: true
     });
+  }
+  return result;
+}
+
+function destructibleEnvironmentRequest(args) {
+  return {
+    moduleSchemaVersion: args.moduleSchemaVersion,
+    missionId: args.missionId,
+    profileId: args.profileId,
+    mapId: args.mapId,
+    enabled: args.enabled,
+    profile: args.profile,
+    placements: args.placements,
+    ...(args.ifRevision === undefined ? {} : { ifRevision: args.ifRevision })
+  };
+}
+
+function destructibleEnvironmentResult(projectDir, value) {
+  const result = { ...value };
+  delete result.projectDir;
+  if (value?.backup) {
+    const canonicalProjectDir = fs.realpathSync(projectDir);
+    const relativeDirectory = path.relative(canonicalProjectDir, value.backup.directory).split(path.sep).join("/");
+    result.backup = {
+      directory: relativeDirectory,
+      files: Object.fromEntries(Object.entries(value.backup.files).map(([relativePath, filePath]) => [
+        relativePath,
+        filePath === null ? null : path.relative(canonicalProjectDir, filePath).split(path.sep).join("/")
+      ]))
+    };
   }
   return result;
 }

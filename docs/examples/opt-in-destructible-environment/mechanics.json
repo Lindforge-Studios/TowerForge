@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "ballistics": {
+      "schemaVersion": 1,
+      "enabled": true,
+      "profiles": {
+        "basic_destructible_environment": {
+          "projectiles": {
+            "towers": {},
+            "destructibles": {
+              "definitions": {
+                "basic_crate": {
+                  "maxHp": 50,
+                  "hitRegion": {
+                    "kind": "tile",
+                    "blockerHeight": 1,
+                    "blocksLineOfSight": false
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

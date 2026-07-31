@@ -32,6 +32,8 @@ const MECHANICS_MODULE_SCHEMA_VERSIONS = Object.freeze({
   navigation: Object.freeze([1]),
   elevation: Object.freeze([1, 2, 3]),
   physics: Object.freeze([1]),
+  ballistics: Object.freeze([1]),
+  weather: Object.freeze([1]),
   terraforming: Object.freeze([1]),
   roguelite: Object.freeze([1, 2, 3, 4]),
   heroes: Object.freeze([1, 2, 3, 4, 5, 6, 7]),
@@ -97,6 +99,8 @@ export async function inspectMechanicsAuthoring(projectDir, options = {}) {
   const navigation = moduleAuthoringView(files, mission, "navigation", engine.NAVIGATION_MECHANICS_SCHEMA);
   const elevation = moduleAuthoringView(files, mission, "elevation", engine.ELEVATION_MECHANICS_SCHEMA);
   const physics = moduleAuthoringView(files, mission, "physics", engine.PHYSICS_MECHANICS_SCHEMA);
+  const ballistics = moduleAuthoringView(files, mission, "ballistics", engine.BALLISTICS_MECHANICS_SCHEMA);
+  const weather = moduleAuthoringView(files, mission, "weather", engine.WEATHER_MECHANICS_SCHEMA);
   const terraforming = moduleAuthoringView(files, mission, "terraforming", engine.TERRAFORMING_MECHANICS_SCHEMA);
   const roguelite = {
     ...moduleAuthoringView(files, mission, "roguelite", engine.ROGUELITE_MECHANICS_SCHEMA),
@@ -133,6 +137,8 @@ export async function inspectMechanicsAuthoring(projectDir, options = {}) {
     navigation,
     elevation,
     physics,
+    ballistics,
+    weather,
     terraforming,
     roguelite,
     heroes,

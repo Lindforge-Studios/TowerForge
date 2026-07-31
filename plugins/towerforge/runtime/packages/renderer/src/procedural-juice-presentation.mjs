@@ -24,7 +24,8 @@ export const PROCEDURAL_JUICE_PRESENTATION_EVENTS = Object.freeze([
   "towerPlaced", "towerUpgraded", "towerFired", "enemyHit", "enemyKilled", "enemyLeaked",
   "areaPulse", "waveStarted", "waveCleared", "victory", "defeat", "enemyShieldChanged",
   "towerShieldChanged", "enemyMarkChanged", "enemyExposureChanged", "enemyReactionTriggered",
-  "enemyDisplacementResolved", "enemyFell", "heroAbilityUsed", "objectiveCompleted", "objectiveFailed"
+  "enemyDisplacementResolved", "enemyFell", "heroAbilityUsed", "objectiveCompleted", "objectiveFailed",
+  "destructibleObjectDamaged", "destructibleObjectDestroyed"
 ]);
 const PROCEDURAL_JUICE_EVENT_SET = new Set(PROCEDURAL_JUICE_PRESENTATION_EVENTS);
 

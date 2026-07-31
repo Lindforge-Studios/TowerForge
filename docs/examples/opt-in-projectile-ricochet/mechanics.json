@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "ballistics": {
+      "schemaVersion": 1,
+      "enabled": true,
+      "profiles": {
+        "basic_projectile_ricochet": {
+          "projectiles": {
+            "towers": {
+              "arrow_tower": {
+                "trajectory": "direct",
+                "travelTimeUnits": 0.4,
+                "ricochet": {
+                  "maxBounces": 2,
+                  "rangeCells": 12
+                }
+              }
+            },
+            "clearance": {
+              "terrainBlockerHeights": {
+                "blocked": 1
+              }
+            },
+            "ricochet": {
+              "terrainTags": {
+                "blocked": true
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

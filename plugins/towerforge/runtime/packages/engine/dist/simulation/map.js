@@ -5,6 +5,10 @@ export const ELEVATION_LIMITS = Object.freeze({
     minimum: -1_000_000,
     maximum: 1_000_000
 });
+export const GRID_DESTRUCTIBLE_OBJECT_LIMITS = Object.freeze({
+    placementsPerMap: 4_096,
+    idUtf8Bytes: 128
+});
 export class GridElevationValidationError extends Error {
     fieldPath;
     constructor(fieldPath, message) {
@@ -138,6 +142,159 @@ export function normalizeGridElevationOverrides(value, width, height) {
     }
     return normalized.sort((left, right) => left.r - right.r || left.q - right.q);
 }
+/** Read the optional placement field without invoking authored accessors. */
+export function inspectGridDestructibleObjects(definition) {
+    if (definition === null || typeof definition !== "object" || Array.isArray(definition)) {
+        throw new Error("Map definition must be an ordinary object before destructible placements are inspected.");
+    }
+    let prototype;
+    let descriptors;
+    try {
+        prototype = Object.getPrototypeOf(definition);
+        descriptors = Object.getOwnPropertyDescriptors(definition);
+    }
+    catch {
+        throw new Error("Map destructible placements could not be inspected safely.");
+    }
+    if (prototype !== Object.prototype || Object.getOwnPropertySymbols(descriptors).length > 0) {
+        throw new Error("Map destructible placements require an ordinary map definition without symbol fields.");
+    }
+    const descriptor = descriptors.destructibleObjects;
+    if (descriptor === undefined || ("value" in descriptor && descriptor.value === undefined))
+        return undefined;
+    if (!descriptor.enumerable || !("value" in descriptor)) {
+        throw new Error("Map destructibleObjects must be an enumerable own data field; accessors are forbidden.");
+    }
+    return descriptor.value;
+}
+function destructibleUtf8Bytes(value) {
+    return new TextEncoder().encode(value).length;
+}
+function destructibleIdentifier(value, fieldPath) {
+    if (typeof value !== "string" || value.length === 0 || value !== value.trim()
+        || /[\u0000-\u001f\u007f]/.test(value)
+        || destructibleUtf8Bytes(value) > GRID_DESTRUCTIBLE_OBJECT_LIMITS.idUtf8Bytes) {
+        throw new Error(`${fieldPath} identifier must contain 1..${GRID_DESTRUCTIBLE_OBJECT_LIMITS.idUtf8Bytes} UTF-8 bytes.`);
+    }
+    return value;
+}
+/** Canonicalize the closed, bounded placement list without invoking hostile authored code. */
+export function normalizeGridDestructibleObjects(value, width, height) {
+    if (!Number.isSafeInteger(width) || width <= 0 || !Number.isSafeInteger(height) || height <= 0) {
+        throw new Error("Destructible placement map bounds must be positive safe integers.");
+    }
+    if (value === undefined)
+        return [];
+    let prototype;
+    let descriptors;
+    let isArray;
+    try {
+        isArray = Array.isArray(value);
+        prototype = value !== null && typeof value === "object" ? Object.getPrototypeOf(value) : null;
+        descriptors = value !== null && typeof value === "object"
+            ? Object.getOwnPropertyDescriptors(value)
+            : {};
+    }
+    catch {
+        throw new Error("Destructible placement array could not be inspected safely.");
+    }
+    if (!isArray || prototype !== Array.prototype) {
+        throw new Error("Destructible placements must be an ordinary dense array.");
+    }
+    const length = descriptors.length && "value" in descriptors.length ? descriptors.length.value : undefined;
+    if (!Number.isSafeInteger(length) || length < 0) {
+        throw new Error("Destructible placement array length must be a non-negative safe integer.");
+    }
+    if (length > GRID_DESTRUCTIBLE_OBJECT_LIMITS.placementsPerMap) {
+        throw new Error(`Destructible placements exceed the ${GRID_DESTRUCTIBLE_OBJECT_LIMITS.placementsPerMap} placement limit.`);
+    }
+    const expectedKeys = new Set(["length", ...Array.from({ length }, (_, index) => String(index))]);
+    if (Reflect.ownKeys(descriptors).some((key) => typeof key !== "string" || !expectedKeys.has(key))) {
+        throw new Error("Destructible placements must be dense own data without extra fields.");
+    }
+    const normalized = [];
+    const ids = new Set();
+    const coords = new Set();
+    for (let index = 0; index < length; index += 1) {
+        const itemDescriptor = descriptors[String(index)];
+        if (!itemDescriptor?.enumerable || !("value" in itemDescriptor)) {
+            throw new Error(`Destructible placement ${index} must be an enumerable own data item; sparse/accessor entries are forbidden.`);
+        }
+        const item = itemDescriptor.value;
+        let itemPrototype;
+        let itemDescriptors;
+        try {
+            itemPrototype = item !== null && typeof item === "object" ? Object.getPrototypeOf(item) : null;
+            itemDescriptors = item !== null && typeof item === "object"
+                ? Object.getOwnPropertyDescriptors(item)
+                : {};
+        }
+        catch {
+            throw new Error(`Destructible placement ${index} could not be inspected safely.`);
+        }
+        const itemKeys = Reflect.ownKeys(itemDescriptors);
+        if (item === null || typeof item !== "object" || Array.isArray(item)
+            || itemPrototype !== Object.prototype
+            || itemKeys.length !== 3
+            || itemKeys.some((key) => typeof key !== "string" || !["id", "definitionId", "coord"].includes(key))) {
+            throw new Error(`Destructible placement ${index} must contain exactly id, definitionId, and coord data fields.`);
+        }
+        for (const key of ["id", "definitionId", "coord"]) {
+            const descriptor = itemDescriptors[key];
+            if (!descriptor?.enumerable || !("value" in descriptor)) {
+                throw new Error(`Destructible placement ${index}.${key} must be an enumerable own data field; accessors are forbidden.`);
+            }
+        }
+        const id = destructibleIdentifier(itemDescriptors.id.value, `Destructible placement ${index}.id`);
+        const definitionId = destructibleIdentifier(itemDescriptors.definitionId.value, `Destructible placement ${index}.definitionId`);
+        const coordValue = itemDescriptors.coord.value;
+        let coordPrototype;
+        let coordDescriptors;
+        try {
+            coordPrototype = coordValue !== null && typeof coordValue === "object"
+                ? Object.getPrototypeOf(coordValue)
+                : null;
+            coordDescriptors = coordValue !== null && typeof coordValue === "object"
+                ? Object.getOwnPropertyDescriptors(coordValue)
+                : {};
+        }
+        catch {
+            throw new Error(`Destructible placement ${index}.coord could not be inspected safely.`);
+        }
+        const coordKeys = Reflect.ownKeys(coordDescriptors);
+        if (coordValue === null || typeof coordValue !== "object" || Array.isArray(coordValue)
+            || coordPrototype !== Object.prototype
+            || coordKeys.length !== 2
+            || coordKeys.some((key) => typeof key !== "string" || (key !== "q" && key !== "r"))) {
+            throw new Error(`Destructible placement ${index}.coord must contain exactly q and r data fields.`);
+        }
+        for (const key of ["q", "r"]) {
+            const descriptor = coordDescriptors[key];
+            if (!descriptor?.enumerable || !("value" in descriptor)) {
+                throw new Error(`Destructible placement ${index}.coord.${key} must be an enumerable own data field.`);
+            }
+        }
+        const q = coordDescriptors.q.value;
+        const r = coordDescriptors.r.value;
+        if (!Number.isSafeInteger(q) || !Number.isSafeInteger(r)) {
+            throw new Error(`Destructible placement ${index} coordinate q/r must be safe integers.`);
+        }
+        if (q < 0 || r < 0 || q >= width || r >= height) {
+            throw new Error(`Destructible placement ${index} coordinate is outside map bounds.`);
+        }
+        const coordKeyValue = `${q},${r}`;
+        if (ids.has(id))
+            throw new Error(`Destructible placement id "${id}" is duplicated.`);
+        if (coords.has(coordKeyValue))
+            throw new Error(`Destructible placement coordinate ${coordKeyValue} is duplicated.`);
+        ids.add(id);
+        coords.add(coordKeyValue);
+        normalized.push({ id, definitionId, coord: { q: q, r: r } });
+    }
+    return normalized.sort((left, right) => (left.coord.r - right.coord.r
+        || left.coord.q - right.coord.q
+        || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)));
+}
 export class GridMap {
     id;
     width;
@@ -208,6 +365,13 @@ export class GridMap {
                 effective.set(key, { ...entry });
         }
         return [...effective.values()].sort((left, right) => left.r - right.r || left.q - right.q);
+    }
+    getDestructibleObjects() {
+        return (this.definition.destructibleObjects ?? []).map((placement) => ({
+            id: placement.id,
+            definitionId: placement.definitionId,
+            coord: { ...placement.coord }
+        }));
     }
     /** Attach the authoritative simulation-owned runtime projection without copying it. */
     useRuntimeElevationOverrides(overrides) {
@@ -307,6 +471,7 @@ export class GridMap {
 }
 function cloneMapDefinition(definition) {
     const elevationOverrides = normalizeGridElevationOverrides(inspectGridElevationOverrides(definition), definition.width, definition.height);
+    const destructibleObjects = normalizeGridDestructibleObjects(inspectGridDestructibleObjects(definition), definition.width, definition.height);
     return {
         id: definition.id,
         width: definition.width,
@@ -318,7 +483,8 @@ function cloneMapDefinition(definition) {
         spawnCoord: { ...definition.spawnCoord },
         coreCoord: { ...definition.coreCoord },
         terrainOverrides: definition.terrainOverrides.map((override) => ({ ...override })),
-        ...(elevationOverrides.length === 0 ? {} : { elevationOverrides })
+        ...(elevationOverrides.length === 0 ? {} : { elevationOverrides }),
+        ...(destructibleObjects.length === 0 ? {} : { destructibleObjects })
     };
 }
 function normalizePathRoutes(definition) {

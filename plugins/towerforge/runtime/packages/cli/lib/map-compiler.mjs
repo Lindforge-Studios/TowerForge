@@ -8,6 +8,8 @@ export const GID_BY_TERRAIN = { buildable: 1, path: 2, blocked: 3, water: 4, spa
 export const MAX_ELEVATION_OVERRIDES = 65_536;
 export const MIN_TILE_ELEVATION = -1_000_000;
 export const MAX_TILE_ELEVATION = 1_000_000;
+export const MAX_DESTRUCTIBLE_OBJECTS = 4_096;
+export const MAX_DESTRUCTIBLE_ID_UTF8_BYTES = 128;
 
 export function readMapSources(projectDir) {
   const srcDir = path.join(projectDir, "maps", "src");
@@ -62,6 +64,7 @@ export function compileMapSource(source, sourceName = "map.tmj", terrainTypes = 
   const explicitOverrides = normalizeTerrainOverrides(source.terrainOverrides ?? parseJson(properties.terrainOverrides, []), `${sourceName}.terrainOverrides`);
   const terrainOverrides = mergeTerrainOverrides(layerOverrides, explicitOverrides);
   const elevationOverrides = readElevationOverrides(source, properties, width, height, sourceName);
+  const destructibleObjects = readDestructibleObjects(source, properties, width, height, sourceName);
   const pathRoutes = normalizeRoutes(source.pathRoutes ?? parseJson(properties.pathRoutes, []), pathCenterline, `${sourceName}.pathRoutes`);
   validateRoutes(pathRoutes, grid, width, height, defaultTerrain, terrainOverrides, terrainTypes, sourceName);
 
@@ -78,6 +81,7 @@ export function compileMapSource(source, sourceName = "map.tmj", terrainTypes = 
     terrainOverrides
   };
   if (elevationOverrides.length > 0) compiled.elevationOverrides = elevationOverrides;
+  if (destructibleObjects.length > 0) compiled.destructibleObjects = destructibleObjects;
   return compiled;
 }
 
@@ -171,6 +175,148 @@ export function normalizeElevationOverrides(value, width, height, fieldPath = "e
   return normalized;
 }
 
+function readDestructibleObjects(source, properties, width, height, sourceName) {
+  let sourceDescriptor;
+  try {
+    sourceDescriptor = Object.getOwnPropertyDescriptor(source, "destructibleObjects");
+  } catch {
+    throw new Error(`${sourceName}.destructibleObjects could not be inspected safely.`);
+  }
+  if (sourceDescriptor && !("value" in sourceDescriptor)) {
+    throw new Error(`${sourceName}.destructibleObjects must be an own data field; accessors are not allowed.`);
+  }
+  if (sourceDescriptor?.value === undefined) sourceDescriptor = undefined;
+  const propertyDescriptor = Object.getOwnPropertyDescriptor(properties, "destructibleObjects");
+  if (sourceDescriptor && propertyDescriptor) {
+    throw new Error(
+      `${sourceName}.destructibleObjects is ambiguous: author it either at the top level or as a Tiled property, not both.`
+    );
+  }
+  if (!sourceDescriptor && !propertyDescriptor) return [];
+  const authored = sourceDescriptor ? sourceDescriptor.value : propertyDescriptor.value;
+  const parsed = parseStrictJson(authored, `${sourceName}.destructibleObjects`);
+  return normalizeDestructibleObjects(parsed, width, height, `${sourceName}.destructibleObjects`);
+}
+
+function utf8Bytes(value) {
+  return new TextEncoder().encode(value).length;
+}
+
+function destructibleId(value, fieldPath) {
+  if (typeof value !== "string" || value.length === 0 || value !== value.trim()
+    || /[\u0000-\u001f\u007f]/.test(value)
+    || utf8Bytes(value) > MAX_DESTRUCTIBLE_ID_UTF8_BYTES) {
+    throw new Error(
+      `${fieldPath} identifier must contain 1..${MAX_DESTRUCTIBLE_ID_UTF8_BYTES} UTF-8 bytes.`
+    );
+  }
+  return value;
+}
+
+export function normalizeDestructibleObjects(value, width, height, fieldPath = "destructibleObjects") {
+  if (!Number.isSafeInteger(width) || width <= 0 || !Number.isSafeInteger(height) || height <= 0) {
+    throw new Error(`${fieldPath} map bounds must be positive safe integers.`);
+  }
+  if (value === undefined) return [];
+  let prototype;
+  let descriptors;
+  let array;
+  try {
+    array = Array.isArray(value);
+    prototype = value !== null && typeof value === "object" ? Object.getPrototypeOf(value) : null;
+    descriptors = value !== null && typeof value === "object" ? Object.getOwnPropertyDescriptors(value) : {};
+  } catch {
+    throw new Error(`${fieldPath} placement array could not be inspected safely.`);
+  }
+  if (!array || prototype !== Array.prototype) throw new Error(`${fieldPath} must be an ordinary dense array.`);
+  const length = descriptors.length && "value" in descriptors.length ? descriptors.length.value : undefined;
+  if (!Number.isSafeInteger(length) || length < 0) throw new Error(`${fieldPath} has an invalid array length.`);
+  if (length > MAX_DESTRUCTIBLE_OBJECTS) {
+    throw new Error(`${fieldPath} may contain at most ${MAX_DESTRUCTIBLE_OBJECTS} placements.`);
+  }
+  const expected = new Set(["length", ...Array.from({ length }, (_, index) => String(index))]);
+  if (Reflect.ownKeys(descriptors).some((key) => typeof key !== "string" || !expected.has(key))) {
+    throw new Error(`${fieldPath} must be a dense own-data array without extra fields.`);
+  }
+  const ids = new Set();
+  const cells = new Set();
+  const result = [];
+  for (let index = 0; index < length; index += 1) {
+    const itemDescriptor = descriptors[String(index)];
+    if (!itemDescriptor?.enumerable || !("value" in itemDescriptor)) {
+      throw new Error(`${fieldPath}.${index} must be an enumerable own-data placement.`);
+    }
+    const item = itemDescriptor.value;
+    let itemPrototype;
+    let itemDescriptors;
+    try {
+      itemPrototype = item !== null && typeof item === "object" ? Object.getPrototypeOf(item) : null;
+      itemDescriptors = item !== null && typeof item === "object" ? Object.getOwnPropertyDescriptors(item) : {};
+    } catch {
+      throw new Error(`${fieldPath}.${index} could not be inspected safely.`);
+    }
+    const itemKeys = Reflect.ownKeys(itemDescriptors);
+    if (item === null || typeof item !== "object" || Array.isArray(item)
+      || itemPrototype !== Object.prototype
+      || itemKeys.length !== 3
+      || itemKeys.some((key) => typeof key !== "string" || !["id", "definitionId", "coord"].includes(key))) {
+      throw new Error(`${fieldPath}.${index} must contain exactly id, definitionId, and coord data fields.`);
+    }
+    for (const key of ["id", "definitionId", "coord"]) {
+      const descriptor = itemDescriptors[key];
+      if (!descriptor?.enumerable || !("value" in descriptor)) {
+        throw new Error(`${fieldPath}.${index}.${key} must be an enumerable own data field; accessors are forbidden.`);
+      }
+    }
+    const id = destructibleId(itemDescriptors.id.value, `${fieldPath}.${index}.id`);
+    const definitionId = destructibleId(
+      itemDescriptors.definitionId.value,
+      `${fieldPath}.${index}.definitionId`
+    );
+    const coord = itemDescriptors.coord.value;
+    let coordPrototype;
+    let coordDescriptors;
+    try {
+      coordPrototype = coord !== null && typeof coord === "object" ? Object.getPrototypeOf(coord) : null;
+      coordDescriptors = coord !== null && typeof coord === "object" ? Object.getOwnPropertyDescriptors(coord) : {};
+    } catch {
+      throw new Error(`${fieldPath}.${index}.coord could not be inspected safely.`);
+    }
+    const coordKeys = Reflect.ownKeys(coordDescriptors);
+    if (coord === null || typeof coord !== "object" || Array.isArray(coord)
+      || coordPrototype !== Object.prototype
+      || coordKeys.length !== 2
+      || coordKeys.some((key) => typeof key !== "string" || (key !== "q" && key !== "r"))) {
+      throw new Error(`${fieldPath}.${index}.coord must contain exactly q and r data fields.`);
+    }
+    for (const key of ["q", "r"]) {
+      const descriptor = coordDescriptors[key];
+      if (!descriptor?.enumerable || !("value" in descriptor)) {
+        throw new Error(`${fieldPath}.${index}.coord.${key} must be an enumerable own data field.`);
+      }
+    }
+    const q = coordDescriptors.q.value;
+    const r = coordDescriptors.r.value;
+    if (!Number.isSafeInteger(q) || !Number.isSafeInteger(r)) {
+      throw new Error(`${fieldPath}.${index} coordinate q/r must be safe integers.`);
+    }
+    if (q < 0 || r < 0 || q >= width || r >= height) {
+      throw new Error(`${fieldPath}.${index} coordinate is outside map bounds.`);
+    }
+    const cell = `${q},${r}`;
+    if (ids.has(id)) throw new Error(`${fieldPath}.${index} duplicates placement id "${id}".`);
+    if (cells.has(cell)) throw new Error(`${fieldPath}.${index} duplicates placement coordinate ${cell}.`);
+    ids.add(id);
+    cells.add(cell);
+    result.push({ id, definitionId, coord: { q, r } });
+  }
+  return result.sort((left, right) => (
+    left.coord.r - right.coord.r
+    || left.coord.q - right.coord.q
+    || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)
+  ));
+}
+
 function resolveGrid(source, properties, sourceName) {
   const explicit = properties["towerforge.gridKind"] ?? properties.gridKind ?? source.gridKind;
   if (explicit === "square" || (!explicit && source.orientation === "orthogonal")) {
@@ -257,15 +403,15 @@ function propertiesToObject(properties) {
     if (!valueDescriptor || !("value" in valueDescriptor) || !valueDescriptor.enumerable) {
       throw new Error(`Map property "${name}" value must be an enumerable own data field; accessors are not allowed.`);
     }
-    if (name !== "elevationOverrides") {
+    if (name !== "elevationOverrides" && name !== "destructibleObjects") {
       // Preserve the pre-elevation behavior for every legacy Tiled property.
       result[name] = valueDescriptor.value;
       continue;
     }
-    if (Object.hasOwn(result, "elevationOverrides")) {
-      throw new Error("Tiled map properties may define elevationOverrides only once.");
+    if (Object.hasOwn(result, name)) {
+      throw new Error(`Tiled map properties may define ${name} only once.`);
     }
-    result.elevationOverrides = valueDescriptor.value;
+    result[name] = valueDescriptor.value;
   }
   return result;
 }

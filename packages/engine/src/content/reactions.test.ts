@@ -290,7 +290,7 @@ function issue(
 describe("R1.5 reactions module capability and public schema", () => {
   it("implements reactions v1 alongside navigation while leaving combat pinned to v3", () => {
     expect(IMPLEMENTED_MECHANICS_MODULE_IDS).toEqual([
-      "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes",
+      "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "heroes",
       "logistics", "director", "quests", "enemyBehaviors", "multiplayer"
     ]);
 

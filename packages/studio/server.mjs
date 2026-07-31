@@ -1166,6 +1166,45 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if (req.method === "POST" && [
+    "/api/mechanics/destructibles/preview",
+    "/api/mechanics/destructibles/apply"
+  ].includes(pathname)) {
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { code: "malformed_request", error: "Invalid JSON body" }); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return jsonResp(res, 400, { code: "invalid_request", error: "Destructible environment request must be a JSON object." });
+    }
+    const applying = pathname.endsWith("/apply");
+    if (applying && (typeof body.ifRevision !== "string" || !body.ifRevision)) {
+      return jsonResp(res, 428, {
+        code: "revision_required",
+        error: "Destructible environment apply requires ifRevision returned by preview."
+      });
+    }
+    try {
+      const toolName = applying ? "apply_destructible_environment" : "preview_destructible_environment";
+      const request = {
+        projectDir: PROJECT_DIR,
+        moduleSchemaVersion: body.moduleSchemaVersion,
+        missionId: body.missionId,
+        profileId: body.profileId,
+        mapId: body.mapId,
+        enabled: body.enabled,
+        profile: body.profile,
+        placements: body.placements,
+        ...(applying ? { ifRevision: body.ifRevision } : {})
+      };
+      const result = await callTool(toolName, request, { defaultProjectDir: PROJECT_DIR });
+      const status = result?.conflict ? 409 : result?.ok === false ? 422 : 200;
+      return jsonResp(res, status, sanitizeMechanicsResponse(result));
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
+    }
+  }
+
   // Procedural Juice is a visuals-only opt-in catalog. Studio deliberately delegates to the same
   // narrow revision-guarded tools as MCP agents instead of using the broad project save route.
   if (req.method === "GET" && pathname === "/api/procedural-juice/read") {

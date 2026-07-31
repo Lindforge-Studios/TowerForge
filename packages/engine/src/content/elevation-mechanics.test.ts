@@ -118,7 +118,7 @@ function game(activation: Activation = "active", overrides?: unknown[]) {
 describe("R3.1 elevation data foundation", () => {
   it("publishes the closed bounded elevation v1-v3 capability without confusing map height", () => {
     expect(Engine.IMPLEMENTED_MECHANICS_MODULE_IDS).toEqual([
-      "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes",
+      "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "heroes",
       "logistics", "director", "quests", "enemyBehaviors", "multiplayer"
     ]);
     expect((Engine as unknown as Record<string, unknown>).ELEVATION_LIMITS).toEqual(ELEVATION_LIMITS_V1);

@@ -15,6 +15,7 @@ Run the relevant checks before declaring work complete:
 - `npm run validate` after content/schema/loader changes.
 - `npm run sim tutorial_01 60` after simulation, balance, map, or content changes.
 - `npm run balance -- --project examples/starter.tdproj` after balance-strategy, advisor, economy, template, or MCP balance-tool changes.
+- `npm run persona-qa -- --project examples/starter.tdproj --mission tutorial_01 --seed smoke --seconds 20` after Persona QA policy, worker, cache, report, CLI, Studio, or MCP changes.
 - `npm run maps:compile -- --project examples/starter.tdproj` after source map compiler or map source changes.
 - `npm run tiles:build-presets` after changing bundled tile art generation or theme-pack tile manifests.
 - `npm run build` after CLI build, target, engine export, or player changes.
@@ -31,6 +32,7 @@ Run the relevant checks before declaring work complete:
 3. Implement with focused verification.
 4. Run checks and read full output.
 5. Update docs when commands, boundaries, project format, or operations change.
+6. For roadmap increments, MUST record the expected RED in `progress.md` before production changes, use one `codex/r<id>-...` branch and one PR per R, freeze the exact candidate for full gates, then obtain independent Code Verifier and Constructor Integration Verifier sign-offs. A production-code author MUST NOT provide either sign-off; any source change invalidates both.
 
 ## Architectural Boundaries
 
@@ -74,12 +76,15 @@ Run the relevant checks before declaring work complete:
 - User-facing Studio/CLI/player behavior is verified when touched.
 - Generated build output is not treated as source unless explicitly requested.
 - Documentation is updated for changed commands, project shape, or runtime behavior.
+- Roadmap increments include recorded RED evidence, an opt-in/disabled compatibility fixture, exact-commit gate evidence, and two independent sign-offs before they are marked accepted.
 
 ## Canonical Documentation
 
 - `ARCHITECTURE.md`
 - `docs/td-constructor-architecture.md`
+- `docs/ROADMAP.md`
 - `docs/runbook.md`
 - `docs/releasing.md`
 - `docs/adr/`
 - `docs/examples/`
+- `progress.md` for chronological TDD/gate evidence; it is not the architecture source of truth.

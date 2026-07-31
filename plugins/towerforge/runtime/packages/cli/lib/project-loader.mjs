@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { readMapSources } from "./map-compiler.mjs";
+import { normalizeDestructibleObjects, readMapSources } from "./map-compiler.mjs";
 import { migrateProjectFiles } from "./project-migrations.mjs";
 import { defaultVisuals, normalizeManifest, normalizeVisuals, validateProjectSchemas } from "./project-schema.mjs";
 import { mergeValidationResults } from "./trace.mjs";
@@ -503,6 +503,14 @@ function normalizeMaps(input) {
       : { kind: "hex", layout: "odd-r" };
     map.pathRoutes ??= [];
     map.terrainOverrides ??= [];
+    const destructibleObjects = normalizeDestructibleObjects(
+      map.destructibleObjects,
+      map.width,
+      map.height,
+      `maps.${mapId}.destructibleObjects`
+    );
+    if (destructibleObjects.length > 0) map.destructibleObjects = destructibleObjects;
+    else delete map.destructibleObjects;
   }
   return maps;
 }

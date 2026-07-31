@@ -12,6 +12,13 @@ export type DamageSourceRef =
   | { readonly kind: "tower_script"; readonly scriptId: string }
   | { readonly kind: "status"; readonly statusId: string }
   | { readonly kind: "reaction"; readonly reactionId: string }
+  | {
+      readonly kind: "weather";
+      readonly profileId: string;
+      readonly weatherId: string;
+      readonly zoneId: string;
+      readonly effectId: string;
+    }
   | { readonly kind: "enemy"; readonly enemyId: string; readonly enemyTypeId: string }
   | { readonly kind: "leak"; readonly enemyId: string; readonly enemyTypeId: string };
 
@@ -19,6 +26,7 @@ export type DamageTargetRef =
   | { readonly kind: "enemy"; readonly enemyId: string; readonly enemyTypeId: string; readonly componentId?: string }
   | { readonly kind: "tower"; readonly towerId: string; readonly towerTypeId: string }
   | { readonly kind: "hero"; readonly heroId: string; readonly heroDefinitionId: string }
+  | { readonly kind: "map_object"; readonly objectId: string; readonly definitionId: string }
   | { readonly kind: "core" };
 
 export const DAMAGE_TAGS = Object.freeze(["area", "over_time", "armor_piercing", "reaction"] as const);
@@ -314,6 +322,12 @@ function validateSource(source: DamageSourceRef): void {
     case "reaction":
       validateId(source.reactionId, "Reaction source reactionId");
       return;
+    case "weather":
+      validateId(source.profileId, "Weather source profileId");
+      validateId(source.weatherId, "Weather source weatherId");
+      validateId(source.zoneId, "Weather source zoneId");
+      validateId(source.effectId, "Weather source effectId");
+      return;
     case "enemy":
     case "leak":
       validateId(source.enemyId, `${source.kind} source enemyId`);
@@ -341,6 +355,10 @@ function validateTarget(target: DamageTargetRef): void {
     case "hero":
       validateId(target.heroId, "Hero target heroId");
       validateId(target.heroDefinitionId, "Hero target heroDefinitionId");
+      return;
+    case "map_object":
+      validateId(target.objectId, "Map object target objectId");
+      validateId(target.definitionId, "Map object target definitionId");
       return;
     case "core":
       return;
@@ -456,4 +474,9 @@ export class DamageResolver {
       blockedByArmor
     };
   }
+}
+
+/** Validate and normalize every closed DamagePacket field without mutating an entity. */
+export function validateDamagePacket(packet: DamagePacket): void {
+  void DamageResolver.resolve(packet);
 }

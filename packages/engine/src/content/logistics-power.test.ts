@@ -187,7 +187,7 @@ function hasIssue(
 describe("R5.7A Logistics power authoring contract (RED)", () => {
   it("preserves the exact Logistics v1 power contract inside the versioned v3 descriptor", () => {
     expect(Engine.IMPLEMENTED_MECHANICS_MODULE_IDS).toEqual([
-      "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes",
+      "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "heroes",
       "logistics", "director", "quests", "enemyBehaviors", "multiplayer"
     ]);
     const exported = Engine as unknown as {

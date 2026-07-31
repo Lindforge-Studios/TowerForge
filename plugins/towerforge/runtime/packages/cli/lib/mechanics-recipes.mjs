@@ -12,6 +12,12 @@ const BASIC_ELEVATION_LINE_OF_SIGHT_ID = "basic_elevation_line_of_sight";
 const BASIC_ELEVATION_HIGH_GROUND_ID = "basic_elevation_high_ground";
 const BASIC_DISPLACEMENT_PHYSICS_ID = "basic_displacement_physics";
 const TAGGED_FALL_HAZARDS_ID = "tagged_fall_hazards";
+const BASIC_PROJECTILE_BALLISTICS_ID = "basic_projectile_ballistics";
+const BASIC_PROJECTILE_RICOCHET_ID = "basic_projectile_ricochet";
+const BASIC_DESTRUCTIBLE_ENVIRONMENT_ID = "basic_destructible_environment";
+const BASIC_BLIZZARD_WEATHER_ID = "basic_blizzard_weather";
+const BASIC_ACID_RAIN_WEATHER_ID = "basic_acid_rain_weather";
+const BASIC_SANDSTORM_WEATHER_ID = "basic_sandstorm_weather";
 const TAGGED_FLOOD_ID = "tagged_flood";
 const TAGGED_MOAT_ID = "tagged_moat";
 const TAGGED_DESTRUCTIBLE_BRIDGE_ID = "tagged_destructible_bridge";
@@ -235,6 +241,54 @@ const RECIPES = Object.freeze([
     label: "Tagged Fall Hazards",
     description: "Opt-in physics v1 profile that treats the authored fall_hazard terrain tag as a terminal chasm.",
     suggestedId: TAGGED_FALL_HAZARDS_ID,
+    moduleSchemaVersion: 1
+  }),
+  Object.freeze({
+    id: BASIC_PROJECTILE_BALLISTICS_ID,
+    moduleId: "ballistics",
+    label: "Basic Projectile Ballistics",
+    description: "Opt-in fixed-travel arc projectile for one deterministic authored single-target tower.",
+    suggestedId: BASIC_PROJECTILE_BALLISTICS_ID,
+    moduleSchemaVersion: 1
+  }),
+  Object.freeze({
+    id: BASIC_PROJECTILE_RICOCHET_ID,
+    moduleId: "ballistics",
+    label: "Basic Projectile Ricochet",
+    description: "Opt-in bounded direct projectile ricochet from one authored terrain surface.",
+    suggestedId: BASIC_PROJECTILE_RICOCHET_ID,
+    moduleSchemaVersion: 1
+  }),
+  Object.freeze({
+    id: BASIC_DESTRUCTIBLE_ENVIRONMENT_ID,
+    moduleId: "ballistics",
+    label: "Basic Destructible Environment",
+    description: "Project-bound inert destructible definition ready for explicit map placement.",
+    suggestedId: BASIC_DESTRUCTIBLE_ENVIRONMENT_ID,
+    moduleSchemaVersion: 1
+  }),
+  Object.freeze({
+    id: BASIC_BLIZZARD_WEATHER_ID,
+    moduleId: "weather",
+    label: "Basic Blizzard Weather",
+    description: "Inert Weather v1 recipe with bounded slow, movement, and visibility effects.",
+    suggestedId: BASIC_BLIZZARD_WEATHER_ID,
+    moduleSchemaVersion: 1
+  }),
+  Object.freeze({
+    id: BASIC_ACID_RAIN_WEATHER_ID,
+    moduleId: "weather",
+    label: "Basic Acid Rain Weather",
+    description: "Inert Weather v1 recipe with periodic resolver-routed area damage.",
+    suggestedId: BASIC_ACID_RAIN_WEATHER_ID,
+    moduleSchemaVersion: 1
+  }),
+  Object.freeze({
+    id: BASIC_SANDSTORM_WEATHER_ID,
+    moduleId: "weather",
+    label: "Basic Sandstorm Weather",
+    description: "Inert Weather v1 recipe with bounded visibility and tower fire-rate modifiers.",
+    suggestedId: BASIC_SANDSTORM_WEATHER_ID,
     moduleSchemaVersion: 1
   }),
   Object.freeze({
@@ -1125,6 +1179,162 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
         profile: recipeId === TAGGED_FALL_HAZARDS_ID
           ? { fallHazardTerrainTags: ["fall_hazard"] }
           : {}
+      }
+    };
+  }
+  if (recipeId === BASIC_PROJECTILE_BALLISTICS_ID) {
+    const towerId = firstSafeId(towerIds);
+    const terrainTag = firstSafeId(ownDataValue(context, "terrainTags"));
+    const towers = safeRecord();
+    const terrainBlockerHeights = safeRecord();
+    if (towerId !== undefined) defineOwn(towers, towerId, {
+      trajectory: "arc",
+      travelTimeUnits: 0.4,
+      maxAltitude: 2
+    });
+    if (terrainTag !== undefined) defineOwn(terrainBlockerHeights, terrainTag, 1);
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "ballistics",
+        moduleSchemaVersion: 1,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: {
+          projectiles: {
+            towers,
+            ...(terrainTag === undefined ? {} : {
+              clearance: { terrainBlockerHeights }
+            })
+          }
+        }
+      }
+    };
+  }
+  if (recipeId === BASIC_PROJECTILE_RICOCHET_ID) {
+    const towerId = firstSafeId(towerIds);
+    const terrainTag = firstSafeId(ownDataValue(context, "terrainTags"));
+    const towers = safeRecord();
+    if (towerId === undefined || terrainTag === undefined) {
+      return {
+        ...recipe,
+        entity: {
+          moduleId: "ballistics",
+          moduleSchemaVersion: 1,
+          missionId: missionId ?? "",
+          profileId: recipe.suggestedId,
+          profile: { projectiles: { towers } }
+        }
+      };
+    }
+    const terrainBlockerHeights = safeRecord();
+    const terrainTags = safeRecord();
+    defineOwn(towers, towerId, {
+      trajectory: "direct",
+      travelTimeUnits: 0.4,
+      ricochet: { maxBounces: 2, rangeCells: 12 }
+    });
+    defineOwn(terrainBlockerHeights, terrainTag, 1);
+    defineOwn(terrainTags, terrainTag, true);
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "ballistics",
+        moduleSchemaVersion: 1,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: {
+          projectiles: {
+            towers,
+            clearance: { terrainBlockerHeights },
+            ricochet: { terrainTags }
+          }
+        }
+      }
+    };
+  }
+  if (recipeId === BASIC_DESTRUCTIBLE_ENVIRONMENT_ID) {
+    const mapId = firstSafeId(ownDataValue(context, "mapIds"));
+    return {
+      ...recipe,
+      authoringTool: "preview_destructible_environment",
+      entity: {
+        moduleSchemaVersion: 1,
+        missionId: missionId ?? "",
+        mapId: mapId ?? "",
+        profileId: recipe.suggestedId,
+        profile: {
+          projectiles: {
+            towers: {},
+            destructibles: {
+              definitions: {
+                basic_crate: {
+                  maxHp: 50,
+                  hitRegion: { kind: "tile", blockerHeight: 1, blocksLineOfSight: false }
+                }
+              }
+            }
+          }
+        },
+        placements: []
+      }
+    };
+  }
+  if ([BASIC_BLIZZARD_WEATHER_ID, BASIC_ACID_RAIN_WEATHER_ID, BASIC_SANDSTORM_WEATHER_ID].includes(recipeId)) {
+    const weatherId = recipeId === BASIC_BLIZZARD_WEATHER_ID
+      ? "blizzard"
+      : recipeId === BASIC_ACID_RAIN_WEATHER_ID
+        ? "acid_rain"
+        : "sandstorm";
+    const effects = recipeId === BASIC_BLIZZARD_WEATHER_ID
+      ? {
+          chill: {
+            kind: "status",
+            target: "enemies",
+            intervalUnits: 1,
+            status: {
+              slow: { factor: 0.7, duration: 1 },
+              slowAffectsClasses: ["ground", "flying"]
+            }
+          },
+          movement: { kind: "enemy_speed", multiplier: 0.8 },
+          visibility: { kind: "visibility_range", multiplier: 0.8 }
+        }
+      : recipeId === BASIC_ACID_RAIN_WEATHER_ID
+        ? {
+            corrosion: {
+              kind: "periodic_damage",
+              target: "enemies",
+              amount: 4,
+              intervalUnits: 1
+            }
+          }
+        : {
+            visibility: { kind: "visibility_range", multiplier: 0.65 },
+            cadence: { kind: "tower_fire_rate", multiplier: 0.85 }
+          };
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "weather",
+        moduleSchemaVersion: 1,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: {
+          zones: { field: { kind: "all_map" } },
+          definitions: {
+            [weatherId]: {
+              label: recipe.label.replace(/^Basic /, "").replace(/ Weather$/, ""),
+              effects
+            }
+          },
+          schedule: {
+            calmWeight: 0,
+            choices: {
+              always: { weatherId, zoneId: "field", weight: 1 }
+            }
+          }
+        }
       }
     };
   }

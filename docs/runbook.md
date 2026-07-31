@@ -16,6 +16,7 @@
 | Simulate | `npm run sim tutorial_01 60` | Runs an engine-backed headless smoke simulation. |
 | Simulate JSON | `npm run sim tutorial_01 60 -- --json` | Machine-readable smoke simulation with aggregate events, timelines, milestones, strategy, and next actions. |
 | Balance sweep | `npm run balance -- --project examples/starter.tdproj` | Multi-strategy deterministic balance report with advisor flags. |
+| Persona QA smoke | `npm run persona-qa -- --project examples/starter.tdproj --mission tutorial_01 --seed smoke --seconds 20` | Runs the three fixed evidence-only personas without applying a patch. |
 | Compile map sources | `npm run maps:compile -- --project examples/starter.tdproj` | Writes `maps/compiled/maps.json` from `maps/src/*.tmj`. |
 | Migrate project schema | `npm run migrate -- --project examples/starter.tdproj --write` | Writes migrated files after creating `.towerforge/migration-backups`. |
 | Typecheck | `npm run typecheck` | Engine only. |
@@ -42,9 +43,29 @@ Russian is the default Studio language. Switch between Russian and English under
 
 The template/grid/renderer conformance gate is part of `npm run test` and `npm run test:e2e`: Classic, Maze, Idle, and Roguelike are built on hex and square grids with Canvas and Phaser. The 16-output matrix must boot, render nonblank tile pixels, expose difficulty/meta UI, and place a tower through exact pointer picking and keyboard focus plus Enter.
 
+## Milestone And CI Verification
+
+The authoritative delivery snapshot is [ROADMAP.md](ROADMAP.md); chronological RED/GREEN and exact
+gate evidence lives in `progress.md`. Before describing an R as accepted, verify the remote state
+rather than relying on local history:
+
+```bash
+git status --short
+git rev-parse HEAD
+gh pr view <number> --json state,baseRefName,headRefOid,mergeStateStatus,statusCheckRollup
+gh pr checks <number>
+```
+
+As of 2026-08-01, public desktop release `v0.4.0` contains R0–R8, `main` contains R9–R11, R12 is
+open as green PR #23, and R13 is stacked as PR #24. The R4.4B browser-gate race now has explicit
+RED (1/12) and GREEN (20/20) evidence: the fixture waits for the guarded mechanics apply response
+before introducing future-version bytes. R13 MUST NOT merge until the repaired exact commit passes
+CI and both independent re-sign-offs. The owner has authorized R14 after that merge; R15–R17 remain
+out of scope for this release.
+
 ## Opt-In Mechanics
 
-Open **Mechanics** in Studio to use the isolated Mechanics Hub. Pick a mission and switch between combat, reactions, navigation, elevation, physics, terraforming, rogue-lite, Director, and multiplayer capabilities. Combat profiles edit shields, the v2 damage/armor matrix, or v3 marks; reactions v1 profiles edit exposures, predicates, and bounded effects; navigation v1 profiles choose `authored_routes` or `dynamic_flow`; physics v1 profiles edit immunity and fall-hazard selectors; terraforming v1 profiles edit transitions and elevation policy; roguelite v1 profiles edit synergies, v2 adds artifacts, v3 adds optional draft, and v4 adds an independent optional campaign marker; Director v1 edits the authored counter pool, threat budget, and fairness caps. Preview before apply. The ordinary mechanics transaction updates `project.json`, `content/mechanics.json`, and mission selections with validation, backup, and rollback; its rogue-lite form also owns tower-tag arrays. Campaign graph authoring uses the narrower four-file transaction described below. Disable preserves authored data and restores the lower-capability runtime path. Ordinary tower, enemy, map, mission, and TowerScript forms remain unchanged.
+Open **Mechanics** in Studio to use the isolated Mechanics Hub. Pick a mission and switch between the implemented combat, reactions, navigation, elevation, physics, terraforming, rogue-lite, heroes, logistics, Director, quests, multiplayer, enemy-behavior, Ballistics, and Weather capabilities. Preview before apply. The ordinary mechanics transaction updates `project.json`, `content/mechanics.json`, and mission selections with validation, backup, and rollback; domain-specific multi-file editors such as campaign graphs, tower tags, or destructibles use their narrower documented transaction. Recipes return inert candidates and never enable dependencies or select a mission automatically. Disable preserves authored data and restores the lower-capability runtime path. Ordinary tower, enemy, map, mission, and TowerScript forms remain unchanged.
 
 In Playtest, the dynamic-navigation overlay analyzes all cells when the viewport contains at most 4,096 tiles. On a larger viewport it shows a deterministic focus window around the most recent pointer or keyboard interaction coordinate and reports `analyzed/total` partial coverage; move focus near the area you want to inspect. The overlay is advisory: every click still runs authoritative `canPlaceTower` preflight and `placeTower`, so a cell outside the current window cannot bypass last-path validation.
 
@@ -635,6 +656,108 @@ confirm that the protection snapshot/checkpoint/UI disappears while ordinary dyn
 returns. See `docs/examples/opt-in-vanguard-protection/` and Proposed
 [ADR 0053](adr/0053-r12-advanced-enemy-behaviors.md).
 
+## Projectile Ballistics
+
+R13.1 is an opt-in `ballistics` v1 mission mechanic. In **Mechanics Hub**, select Ballistics, load
+`basic_projectile_ballistics` or author a closed profile, preview it, and save only against the
+revision returned by preview. The equivalent AI sequence is:
+
+`describe_schema({domain:"ballistics"}) -> get_capabilities -> get_recipe({collection:"mechanics",recipeId:"basic_projectile_ballistics"}) -> preview_mechanics_module -> apply_mechanics_module(ifRevision=preview.revision) -> validate_project`.
+
+For R13.3 ricochet, use the same guarded sequence with recipe ID
+`basic_projectile_ricochet`. It selects no module or mission and materializes a candidate only when
+both an eligible authored tower ID and terrain tag exist. The profile uses closed
+`projectiles.ricochet.terrainTags` / `armorTypes` surface catalogs and a per-tower
+`ricochet { maxBounces, rangeCells }` binding; do not invent missing IDs.
+
+The inert recipe chooses the binary-first authored unchained `single` tower, supplies an arc with
+`travelTimeUnits: 0.4` and `maxAltitude: 2`, and, when terrain tags exist, adds the binary-first tag
+to optional R13.2 `clearance.terrainBlockerHeights`. It never enables the module or selects a mission.
+A profile may bind at most 256 eligible tower types. `direct` accepts no `maxAltitude`; `arc`
+requires it. Both travel time and altitude are positive finite values bounded by the schema
+descriptor. Remove `clearance` to keep exact R13.1 travel without obstacle checks.
+
+At runtime, treat optional `snapshot.ballistics` v1 as the sole presentation source. The engine has
+already fixed the target point and calculated authoritative altitude. Canvas and Phaser use the
+shared projector only for screen interpolation. A moved, removed, or incompatible target produces
+one `projectileMissed` event and no retargeting. With R13.2 clearance, the engine combines the
+canonical topology line, launch-time effective tile elevation, and the highest matching authored
+terrain-tag height. Equality blocks; the first blocker produces one `projectileBlocked` event and
+no hidden damage. A landed packet enters the common damage resolver,
+so impact-time armor, resistance, marks, shields, reactions, component/root death, and rewards keep
+their normal exactly-once rules.
+For selected R13.3 ricochet, display `projectileRicocheted` only through the shared presentation
+projector. Its `collisionCoord`, `nextSourceCoord`, and `nextTargetCoord` are authoritative; Canvas,
+Phaser, Studio, and agents must not derive reflection vectors or choose a new target.
+
+To disable the feature, remove the mission's `ballistics` selection or disable the module through
+the same preview/guarded-apply transaction. Confirm that the optional snapshot/checkpoint panel
+disappears and the same tower attacks immediately again. Remove only the ricochet binding/catalogs
+to retain ordinary projectile travel and clearance. Homing remains outside R13; Weather is the
+independent R13.5 opt-in module documented below. Use `docs/examples/opt-in-projectile-ballistics/`
+and `docs/examples/opt-in-projectile-ricochet/` with Accepted
+[ADR 0054](adr/0054-r13-deterministic-2-5d-ballistics.md) as the copyable reference.
+
+### R13.4 destructible environment
+
+Use the separate **Destructibles** section in Mechanics Hub or the narrow agent flow:
+
+`describe_schema({domain:"ballistics"}) -> get_capabilities -> get_recipe({collection:"mechanics",recipeId:"basic_destructible_environment"}) -> preview_destructible_environment -> apply_destructible_environment(ifRevision=preview.revision) -> validate_project`.
+
+The complete request supplies the Ballistics v1 profile, mission/profile/map IDs and exact
+`destructibleObjects` placements. Preview writes nothing. Apply owns exactly five files —
+`project.json`, `content/mechanics.json`, `content/balance.json`, the selected authored `.tmj`, and
+`maps/compiled/maps.json` — and creates a backup before replacement. A stale revision, invalid map
+reference, failed reachability proof or post-write validation prevents partial state; write failure
+uses rollback. Do not use a generic broad write for this boundary.
+
+An active R13.4 mission exposes Ballistics snapshot v2 and checkpoint inner v4. Present object HP,
+destroyed state and `destructibleObjectDamaged` / `destructibleObjectDestroyed` through the shared
+Canvas/Phaser projection only. Procedural Juice may attach particles/audio/camera cues at the
+authoritative event coordinate, but only through an authored binding; there is no automatic debris.
+R13.4 adds no TowerScript action or event.
+
+Verify Canvas and Phaser on hex and square, then `npm run build`, the PWA, single-file output,
+`npm run package:web` web package and `.tdpack` carrier. An absent, disabled or mission-unselected
+module must have no destructible snapshot/UI/work and preserve legacy replay behavior. Copy the
+minimal reference from `docs/examples/opt-in-destructible-environment/`; the canonical starter must
+remain mechanics-free.
+
+### R13.5 Weather
+
+Weather is an independent mission-selected `weather` v1 module; it is not a Ballistics profile and
+does not inherit projectile, elevation or terrain rules. In **Mechanics Hub**, start from one of
+the inert recipes and explicitly enable/select it only after preview. The equivalent AI flow is:
+
+`describe_schema({domain:"weather"}) -> get_capabilities -> get_recipe({collection:"mechanics",recipeId:"basic_blizzard_weather"}) -> preview_mechanics_module -> apply_mechanics_module(ifRevision=preview.revision) -> validate_project`.
+
+`basic_blizzard_weather`, `basic_acid_rain_weather` and `basic_sandstorm_weather` return detached
+candidates only. `preview_mechanics_module` performs no write. `apply_mechanics_module` requires
+the exact `ifRevision`, validates before replacement, creates a backup and uses rollback on write
+or post-write validation failure. Do not add or use a broad `write_weather` tool.
+
+A profile is exactly `{zones,definitions,schedule}`. Zones are `all_map` or bounded canonical
+`tiles`; definitions contain only `periodic_damage`, `status`, `visibility_range`, `enemy_speed`
+and `tower_fire_rate` effects. The engine samples at most one choice per authored wave, including a
+possible `calmWeight` result, through the separate deterministic
+`towerforge:weather:v1` RNG domain. Weather selection never advances simulation, draft, artifact
+or quest RNG and never uses wall-clock or host random state.
+
+Read presentation only from optional `snapshot.weather` schema v1 and the read-only events
+`weatherStarted`, `weatherEnded`, `weatherEffectApplied` and `weatherBudgetExceeded`. Canvas and
+Phaser use the shared fail-closed projector; neither renderer computes tile membership, damage,
+status merging, enemy speed, visibility/range, tower fire rate or schedule selection. Weather adds
+no TowerScript action/event, Visual Graph node, terrain mutation, Ballistics coupling or automatic
+Procedural Juice cue.
+
+To disable Weather, remove the mission's `weather` selection or apply the module with
+`enabled:false` through the same preview/revision-guarded flow. Reload and confirm that the Weather
+editor remains available for retained authored data while `snapshot.weather`, checkpoint state and
+presentation disappear. Absent, disabled and unselected projects must preserve legacy simulation,
+replay digest and player performance. Verify Canvas and Phaser on both hex and square, plus PWA,
+single-file, web package and `.tdpack` carriers. Use
+`docs/examples/opt-in-weather/` as the complete copyable reference.
+
 ## Desktop Studio Navigation
 
 The packaged Studio uses a native application menu. macOS exposes `TowerForge`, `File`, `Edit`, `View`, `Project`, `Window`, and `Help` in the system menu bar. Windows and Linux expose the equivalent menu on the application window, with Exit and About in their conventional menus.
@@ -698,7 +821,6 @@ AI Chat accepts up to eight JPEG/PNG/GIF/WebP images per turn, at most 4 MB each
 - TowerScript load failures: run `npm run validate` and inspect the reported script file/field. Parse errors are associated with the source path; reference/schema errors identify the script id and field path.
 - TowerScript runtime issues: inspect Studio Playtest events or `snapshot.scriptState.diagnostics`. Budget errors usually indicate recursive signals, broad `allEnemies/allTowers` work, or an unbounded tick handler; add `when`/`every`, narrow the binding, or split the rule.
 - TowerScript Graph conflicts: reload `GET /api/project/script/graph` and repeat preview/apply with the new composite revision. Do not copy layout into the script or bypass a stale guard. A missing layout is normal and a graph read must not create one.
-- TowerScript debugger issues: confirm the debug session was explicitly enabled and inspect the structured `event -> binding -> handler -> condition -> action -> state_diff/diagnostic` trace. Rewind is limited to the retained checkpoint ring; an out-of-range request or content/engine mismatch must start a fresh session. Partial action frames are never resumable gameplay state.
 - Persona QA worker issues: call the library with `cache:false` to separate execution from cache validation, then inspect the closed request limits (32 missions, 64 seeds, three fixed personas, 1,024 runs, 2,000,000 total ticks, and tick step 0.05–0.2). A cancelled result intentionally has no partial findings. Treat malformed/future cache envelopes below `.towerforge/cache/persona-qa/v1` as disposable generated state; do not edit them into project content.
 - Quest runtime issues: confirm project schema v3, an enabled supported `quests` v1 profile, and the mission's exact profile selection. Inactive profiles intentionally produce no `snapshot.quests`, `state.quests`, or quest events. Checkpoint rejection usually indicates a mismatch between the restored active profile/initial RNG identity and the canonical selected IDs, labels, kinds, targets, progress, or status; never repair it in a renderer.
 - TowerScript Behavior Tree issues: confirm the script is schema v7, the tree has non-overlapping tower-only bindings, and the bound type is an attacking tower. `Scripted` is active only for a resolved binding. A tree that returns failure or exceeds candidate/node/expression budgets intentionally uses the saved target mode; inspect `behavior` trace records and diagnostics instead of reimplementing candidate filtering in Studio or a renderer.
@@ -724,6 +846,8 @@ Deployable web-game artifacts are the static bundle from `npm run build`, its op
 CI is configured in `.github/workflows/ci.yml` for local-alpha quality gates. `.github/workflows/desktop-release.yml` builds unsigned desktop artifacts on Windows, macOS, and Ubuntu. A manual run uploads a consolidated `towerforge-release-candidate` Actions artifact. Pushing a matching `vX.Y.Z` tag additionally publishes that candidate as a GitHub pre-release after version, installer, and checksum validation. Production macOS distribution requires Developer ID signing plus notarization; production Windows distribution requires a code-signing certificate.
 
 Public desktop releases follow [the desktop release policy](releasing.md). Until signing is configured, they remain GitHub pre-releases with `Unsigned build` in the title. To inspect a cross-platform candidate without publishing, run **Actions > Unsigned Desktop Builds > Run workflow** against the intended commit. To publish, merge the release commit, then create and push an annotated tag whose version matches all desktop manifests:
+
+The current published baseline is [`v0.4.0`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.4.0) from source commit `f07a403`. Later R9–R13 development is not part of that downloadable build. Never describe `main` or an open PR as released merely because local installers or Actions artifacts exist.
 
 ```bash
 git tag -a vX.Y.Z -m "TowerForge vX.Y.Z"
