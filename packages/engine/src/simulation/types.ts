@@ -790,6 +790,32 @@ export type GameEvent =
   | { type: "towerFired"; towerId: string; enemyId: string; damage: number }
   | { type: "enemyHit"; towerId: string; enemyId: string; enemyTypeId: string; damage: number }
   | EnemyShieldChangedEvent
+  | {
+      type: "bossComponentDamaged" | "bossComponentDestroyed";
+      enemyId: string;
+      enemyTypeId: string;
+      componentId: string;
+      sourceKind: import("./damage.js").DamageSourceRef["kind"];
+      previousHp: number;
+      currentHp: number;
+      maxHp: number;
+      hpDamage: number;
+      previousShield: number;
+      currentShield: number;
+      shieldCapacity: number;
+      shieldAbsorbed: number;
+    }
+  | {
+      type: "vanguardDamageIntercepted";
+      cohortId: string;
+      protectedEnemyId: string;
+      protectedEnemyTypeId: string;
+      vanguardEnemyId: string;
+      vanguardEnemyTypeId: string;
+      sourceKind: "tower" | "ability" | "tower_script" | "status" | "reaction" | "enemy";
+      requestedAmount: number;
+      originalComponentId: string | null;
+    }
   | EnemyMarkChangedEvent
   | EnemyExposureChangedEvent
   | EnemyReactionTriggeredEvent
@@ -1259,6 +1285,36 @@ export interface QuestSnapshotV1 {
   readonly entries: readonly QuestProgressSnapshotV1[];
 }
 
+export interface BossComponentRuntimeStateV1 {
+  readonly hp: number;
+  readonly maxHp: number;
+  readonly shield?: {
+    readonly current: number;
+    readonly capacity: number;
+    readonly regenerationDelayRemaining: number;
+  };
+}
+
+/** Active-only authoritative state for the opt-in enemyBehaviors v1 module. */
+export interface EnemyBehaviorsStateV1 {
+  readonly schemaVersion: 1;
+  readonly components: Readonly<Record<string, Readonly<Record<string, BossComponentRuntimeStateV1>>>>;
+  readonly formations?: {
+    readonly schemaVersion: 1;
+    readonly enemies: Readonly<Record<string, {
+      readonly cohortId: string;
+      readonly role: "vanguard" | "body" | "support";
+    }>>;
+    readonly protection?: {
+      readonly schemaVersion: 1;
+      readonly cohorts: Readonly<Record<string, {
+        readonly radius: number;
+        readonly sourceKinds: readonly ("tower" | "ability" | "tower_script" | "status" | "reaction" | "enemy")[];
+      }>>;
+    };
+  };
+}
+
 export interface GameSnapshot {
   /** Canonical authored map identity for presentation and renderer adapters. */
   mapId: string;
@@ -1308,6 +1364,7 @@ export interface GameSnapshot {
   logistics?: LogisticsSnapshot;
   director?: DirectorSnapshotV1;
   quests?: QuestSnapshotV1;
+  enemyBehaviors?: EnemyBehaviorsStateV1;
   scriptState: import("../scripting/types.js").TowerScriptStateSnapshot;
   lastEvents: GameEvent[];
 }

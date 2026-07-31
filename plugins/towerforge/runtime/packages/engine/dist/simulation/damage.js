@@ -231,6 +231,8 @@ function validateTarget(target) {
         case "enemy":
             validateId(target.enemyId, "Enemy target enemyId");
             validateId(target.enemyTypeId, "Enemy target enemyTypeId");
+            if (target.componentId !== undefined)
+                validateId(target.componentId, "Enemy target componentId");
             return;
         case "tower":
             validateId(target.towerId, "Tower target towerId");

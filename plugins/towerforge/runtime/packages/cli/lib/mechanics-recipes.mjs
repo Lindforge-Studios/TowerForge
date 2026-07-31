@@ -1,3 +1,5 @@
+import { types as nodeUtilTypes } from "node:util";
+
 const BASIC_REGENERATING_SHIELDS_ID = "basic_regenerating_shields";
 const BASIC_ELEMENTAL_ARMOR_MATRIX_ID = "basic_elemental_armor_matrix";
 const BASIC_VULNERABILITY_MARKS_ID = "basic_vulnerability_marks";
@@ -27,9 +29,13 @@ const BASIC_LOCAL_AMMUNITION_ID = "basic_local_ammunition";
 const BASIC_FACTORY_AMMUNITION_SUPPLY_ID = "basic_factory_ammunition_supply";
 const BASIC_ADAPTIVE_WAVE_DIRECTOR_ID = "basic_adaptive_wave_director";
 const BASIC_PROCEDURAL_QUESTS_ID = "basic_procedural_quests";
+const BASIC_TARGETABLE_BOSS_COMPONENTS_ID = "basic_targetable_boss_components";
+const BASIC_FORMATION_STEERING_ID = "basic_formation_steering";
+const BASIC_VANGUARD_PROTECTION_ID = "basic_vanguard_protection";
 const BASIC_LOCAL_COOP_ID = "basic_local_coop";
 const BASIC_PARTITIONED_LOCAL_COOP_ID = "basic_partitioned_local_coop";
 const BASIC_ASYMMETRIC_SEND_VS_BUILD_ID = "basic_asymmetric_send_vs_build";
+const MECHANICS_RECIPE_CONTEXT_ID_LIMIT = 100_000;
 const TERRAFORMING_RECIPE_IDS = Object.freeze([
   TAGGED_FLOOD_ID,
   TAGGED_MOAT_ID,
@@ -376,6 +382,38 @@ const RECIPES = Object.freeze([
     moduleSchemaVersion: 1
   }),
   Object.freeze({
+    id: BASIC_TARGETABLE_BOSS_COMPONENTS_ID,
+    moduleId: "enemyBehaviors",
+    label: "Basic Targetable Boss Components",
+    description: "Inert enemyBehaviors v1 profile with one targetable component and one deterministic tower priority binding.",
+    suggestedId: BASIC_TARGETABLE_BOSS_COMPONENTS_ID,
+    moduleSchemaVersion: 1
+  }),
+  Object.freeze({
+    id: BASIC_FORMATION_STEERING_ID,
+    moduleId: "enemyBehaviors",
+    label: "Basic Formation Steering",
+    description: "Inert enemyBehaviors v1 cohort with bounded deterministic vanguard, body, and support steering.",
+    suggestedId: BASIC_FORMATION_STEERING_ID,
+    moduleSchemaVersion: 1,
+    prerequisites: Object.freeze({
+      navigation: Object.freeze({ moduleSchemaVersion: 1, mode: "dynamic_flow" })
+    })
+  }),
+  Object.freeze({
+    id: BASIC_VANGUARD_PROTECTION_ID,
+    moduleId: "enemyBehaviors",
+    label: "Basic Vanguard Protection",
+    description: "Inert enemyBehaviors v1 protected cohort that redirects bounded authored damage sources to a shielded vanguard.",
+    suggestedId: BASIC_VANGUARD_PROTECTION_ID,
+    moduleSchemaVersion: 1,
+    prerequisites: Object.freeze({
+      navigation: Object.freeze({ moduleSchemaVersion: 1, mode: "dynamic_flow" }),
+      combat: Object.freeze({ moduleSchemaVersion: 1, enemyRootShields: true }),
+      enemyBehaviors: Object.freeze({ moduleSchemaVersion: 1, formations: true })
+    })
+  }),
+  Object.freeze({
     id: BASIC_LOCAL_COOP_ID,
     moduleId: "multiplayer",
     label: "Basic Local Co-op",
@@ -413,6 +451,10 @@ export function listMechanicsRecipes() {
 export function materializeMechanicsRecipe(recipeId, context = {}) {
   const recipe = RECIPES.find((candidate) => candidate.id === recipeId);
   if (!recipe) throw new Error(`Unknown mechanics recipe "${recipeId}".`);
+  const defaultMissionId = mechanicsRecipeContextDataValue(context, "defaultMissionId");
+  const missionIds = mechanicsRecipeContextIdCatalog(context, "missionIds");
+  const enemyIds = mechanicsRecipeContextIdCatalog(context, "enemyIds");
+  const towerIds = mechanicsRecipeContextIdCatalog(context, "towerIds");
 
   const parameterField = inspectParameterField(context);
   if (recipeId === BASIC_ELEMENTAL_SYNERGY_ID) {
@@ -491,7 +533,7 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
     );
   }
 
-  const missionId = chooseId(context.defaultMissionId, context.missionIds);
+  const missionId = chooseId(defaultMissionId, missionIds);
   if ([ELEMENTAL_SHATTER_ID, WET_CHAIN_SHOCK_ID, POISON_COMBUSTION_ID].includes(recipeId)) {
     return materializeReactionRecipe(recipe, missionId, context);
   }
@@ -499,7 +541,7 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
     return materializeDynamicNavigationRecipe(recipe, missionId);
   }
   if (recipeId === BASIC_ADAPTIVE_WAVE_DIRECTOR_ID) {
-    const counterEnemyId = chooseId("armored_brute", context.enemyIds) ?? "";
+    const counterEnemyId = chooseId("armored_brute", enemyIds) ?? "";
     return {
       ...recipe,
       entity: {
@@ -539,8 +581,8 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
     };
   }
   if (recipeId === BASIC_PROCEDURAL_QUESTS_ID) {
-    const towerTypeId = chooseId(undefined, context.missionDamagingTowerIds);
-    const abilityId = chooseId(undefined, context.missionDamagingAbilityIds);
+    const towerTypeId = chooseId(undefined, ownDataValue(context, "missionDamagingTowerIds"));
+    const abilityId = chooseId(undefined, ownDataValue(context, "missionDamagingAbilityIds"));
     if (towerTypeId === undefined && abilityId === undefined) {
       throw new MechanicsRecipeParameterError(
         "quest_recipe_source_unavailable",
@@ -572,6 +614,117 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
           selectionCount: Math.min(2, Object.keys(definitions).length),
           definitions
         }
+      }
+    };
+  }
+  if (recipeId === BASIC_TARGETABLE_BOSS_COMPONENTS_ID) {
+    const bossEnemyTypeId = firstSafeId(enemyIds);
+    if (bossEnemyTypeId === undefined) {
+      throw new MechanicsRecipeParameterError(
+        "enemy_behaviors_recipe_context_required",
+        "Basic targetable boss components require at least one authored enemy in the project."
+      );
+    }
+    const towerTypeId = firstSafeId(towerIds);
+    const bosses = safeRecord();
+    const components = safeRecord();
+    defineOwn(components, "core", {
+      maxHp: 20,
+      hitRegion: { kind: "circle", offsetX: 0, offsetY: 0, radius: 0.25 },
+      tags: ["core"]
+    });
+    defineOwn(bosses, bossEnemyTypeId, { components });
+    const profile = { bosses };
+    if (towerTypeId !== undefined) {
+      const towers = safeRecord();
+      defineOwn(towers, towerTypeId, { priorityTags: ["core"] });
+      profile.targeting = { towers };
+    }
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "enemyBehaviors",
+        moduleSchemaVersion: 1,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile
+      }
+    };
+  }
+  if (recipeId === BASIC_FORMATION_STEERING_ID) {
+    const enemyTypeIds = sortedSafeIds(enemyIds);
+    if (enemyTypeIds.length === 0) {
+      throw new MechanicsRecipeParameterError(
+        "enemy_behaviors_formation_recipe_context_required",
+        "Basic formation steering requires at least one authored enemy in the project."
+      );
+    }
+    const members = safeRecord();
+    const roles = ["vanguard", "body", "support"];
+    for (const [index, enemyTypeId] of enemyTypeIds.slice(0, 3).entries()) {
+      defineOwn(members, enemyTypeId, roles[index]);
+    }
+    const cohorts = safeRecord();
+    defineOwn(cohorts, "main", {
+      members,
+      steering: {
+        neighborRadius: 2,
+        cohesionWeight: 600,
+        separationWeight: 800,
+        roleWeight: 400
+      }
+    });
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "enemyBehaviors",
+        moduleSchemaVersion: 1,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: { formations: { cohorts } }
+      }
+    };
+  }
+  if (recipeId === BASIC_VANGUARD_PROTECTION_ID) {
+    const enemyTypeIds = sortedSafeIds(enemyIds);
+    const authoredShieldIdsValue = mechanicsRecipeContextIdCatalog(context, "shieldedEnemyIds");
+    const shieldedEnemyTypeIds = authoredShieldIdsValue === undefined
+      ? enemyTypeIds
+      : sortedSafeIds(authoredShieldIdsValue).filter((enemyTypeId) => enemyTypeIds.includes(enemyTypeId));
+    const vanguardEnemyTypeId = shieldedEnemyTypeIds[0];
+    const protectedEnemyTypeIds = enemyTypeIds.filter((enemyTypeId) => enemyTypeId !== vanguardEnemyTypeId);
+    if (!vanguardEnemyTypeId || protectedEnemyTypeIds.length === 0) {
+      throw new MechanicsRecipeParameterError(
+        "enemy_behaviors_vanguard_protection_recipe_context_required",
+        "Basic vanguard protection requires an authored shielded vanguard and at least one other authored enemy."
+      );
+    }
+    const members = safeRecord();
+    defineOwn(members, vanguardEnemyTypeId, "vanguard");
+    defineOwn(members, protectedEnemyTypeIds[0], "body");
+    if (protectedEnemyTypeIds[1] !== undefined) defineOwn(members, protectedEnemyTypeIds[1], "support");
+    const cohorts = safeRecord();
+    defineOwn(cohorts, "main", {
+      members,
+      steering: {
+        neighborRadius: 2,
+        cohesionWeight: 600,
+        separationWeight: 800,
+        roleWeight: 400
+      },
+      protection: {
+        radius: 2,
+        sourceKinds: ["tower", "ability", "tower_script", "status", "reaction", "enemy"]
+      }
+    });
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "enemyBehaviors",
+        moduleSchemaVersion: 1,
+        missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: { formations: { cohorts } }
       }
     };
   }
@@ -610,7 +763,7 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
     };
   }
   if (recipeId === BASIC_ASYMMETRIC_SEND_VS_BUILD_ID) {
-    const enemyTypeId = chooseId("armored_brute", context.enemyIds) ?? "";
+    const enemyTypeId = chooseId("armored_brute", enemyIds) ?? "";
     return {
       ...recipe,
       entity: {
@@ -977,13 +1130,13 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
   }
   const moduleSchemaVersion = effectiveCombatModuleSchemaVersion(recipe.moduleSchemaVersion, context);
   if (recipeId === BASIC_ELEMENTAL_ARMOR_MATRIX_ID) {
-    return materializeArmorRecipe(recipe, moduleSchemaVersion, missionId, context.enemyIds);
+    return materializeArmorRecipe(recipe, moduleSchemaVersion, missionId, enemyIds);
   }
   if (recipeId === BASIC_VULNERABILITY_MARKS_ID) {
-    return materializeMarksRecipe(recipe, moduleSchemaVersion, missionId, context.towerIds);
+    return materializeMarksRecipe(recipe, moduleSchemaVersion, missionId, towerIds);
   }
-  const enemyId = firstSafeId(context.enemyIds);
-  const towerId = firstSafeId(context.destructibleTowerIds);
+  const enemyId = firstSafeId(enemyIds);
+  const towerId = firstSafeId(ownDataValue(context, "destructibleTowerIds"));
   const enemies = safeRecord();
   const towers = safeRecord();
   if (enemyId !== undefined) defineOwn(enemies, enemyId, cloneShield());
@@ -1010,7 +1163,7 @@ function materializePowerGridRecipe(recipe, context, parameterValue) {
   if (new Set([generatorTowerTypeId, relayTowerTypeId, consumerTowerTypeId]).size !== 3) {
     throw invalidLogisticsRecipeParameter("Logistics generator, relay, and consumer roles must use three distinct tower IDs.");
   }
-  const towerIds = new Set(sortedSafeIds(ownDataValue(context, "towerIds")));
+  const towerIds = new Set(sortedSafeIds(mechanicsRecipeContextIdCatalog(context, "towerIds")));
   for (const towerTypeId of [generatorTowerTypeId, relayTowerTypeId, consumerTowerTypeId]) {
     if (!towerIds.has(towerTypeId)) {
       throw invalidLogisticsRecipeParameter(`Logistics recipe references unknown authored tower "${towerTypeId}".`);
@@ -1034,7 +1187,10 @@ function materializePowerGridRecipe(recipe, context, parameterValue) {
     entity: {
       moduleId: "logistics",
       moduleSchemaVersion: 1,
-      missionId: chooseId(context.defaultMissionId, context.missionIds) ?? "",
+      missionId: chooseId(
+        mechanicsRecipeContextDataValue(context, "defaultMissionId"),
+        mechanicsRecipeContextDataValue(context, "missionIds")
+      ) ?? "",
       profileId: recipe.suggestedId,
       profile: { power: { generators, relays, consumers } }
     }
@@ -1046,7 +1202,7 @@ function materializeLocalAmmunitionRecipe(recipe, context, parameterValue) {
   const consumerTowerTypeId = boundedLogisticsRecipeId(parameters.consumerTowerTypeId, "consumerTowerTypeId");
   const ammoTypeId = boundedLogisticsRecipeId(parameters.ammoTypeId, "ammoTypeId");
   const ammoLabel = boundedLogisticsRecipeId(parameters.ammoLabel, "ammoLabel");
-  const towerIds = new Set(sortedSafeIds(ownDataValue(context, "towerIds")));
+  const towerIds = new Set(sortedSafeIds(mechanicsRecipeContextIdCatalog(context, "towerIds")));
   if (!towerIds.has(consumerTowerTypeId)) {
     throw invalidLogisticsRecipeParameter(
       `Local ammunition recipe references unknown authored tower "${consumerTowerTypeId}".`
@@ -1076,7 +1232,10 @@ function materializeLocalAmmunitionRecipe(recipe, context, parameterValue) {
     entity: {
       moduleId: "logistics",
       moduleSchemaVersion: 2,
-      missionId: chooseId(context.defaultMissionId, context.missionIds) ?? "",
+      missionId: chooseId(
+        mechanicsRecipeContextDataValue(context, "defaultMissionId"),
+        mechanicsRecipeContextDataValue(context, "missionIds")
+      ) ?? "",
       profileId: recipe.suggestedId,
       profile: { power: null, ammunition: { types, towerInventories } }
     }
@@ -1093,7 +1252,7 @@ function materializeFactoryAmmunitionSupplyRecipe(recipe, context, parameterValu
       "Factory ammunition supply producer, storage, and consumer roles must use three distinct tower IDs."
     );
   }
-  const towerIds = new Set(sortedSafeIds(ownDataValue(context, "towerIds")));
+  const towerIds = new Set(sortedSafeIds(mechanicsRecipeContextIdCatalog(context, "towerIds")));
   for (const towerTypeId of [producerTowerTypeId, storageTowerTypeId, consumerTowerTypeId]) {
     if (!towerIds.has(towerTypeId)) {
       throw invalidLogisticsRecipeParameter(
@@ -1188,7 +1347,10 @@ function materializeFactoryAmmunitionSupplyRecipe(recipe, context, parameterValu
     entity: {
       moduleId: "logistics",
       moduleSchemaVersion: 3,
-      missionId: chooseId(context.defaultMissionId, context.missionIds) ?? "",
+      missionId: chooseId(
+        mechanicsRecipeContextDataValue(context, "defaultMissionId"),
+        mechanicsRecipeContextDataValue(context, "missionIds")
+      ) ?? "",
       profileId: recipe.suggestedId,
       profile: {
         power: null,
@@ -1315,7 +1477,7 @@ function invalidLogisticsRecipeParameter(message) {
 function materializeElementalSynergyRecipe(recipe, context, parameterValue) {
   const parameters = inspectRogueliteParameters(parameterValue);
   const towerTypeIds = inspectTowerTypeIds(parameters.towerTypeIds);
-  const authoredTowerIds = new Set(sortedSafeIds(ownDataValue(context, "towerIds")));
+  const authoredTowerIds = new Set(sortedSafeIds(mechanicsRecipeContextIdCatalog(context, "towerIds")));
   for (const towerTypeId of towerTypeIds) {
     if (!authoredTowerIds.has(towerTypeId)) {
       throw new MechanicsRecipeParameterError(
@@ -1357,7 +1519,7 @@ function materializeBossArtifactRecipe(recipe, context, parameterValue) {
   const parameters = inspectArtifactParameters(parameterValue);
   const towerTypeIds = inspectTowerTypeIds(parameters.towerTypeIds);
   const bossEnemyTypeId = boundedRogueliteRecipeId(parameters.bossEnemyTypeId, "bossEnemyTypeId");
-  const authoredTowerIds = new Set(sortedSafeIds(ownDataValue(context, "towerIds")));
+  const authoredTowerIds = new Set(sortedSafeIds(mechanicsRecipeContextIdCatalog(context, "towerIds")));
   for (const towerTypeId of towerTypeIds) {
     if (!authoredTowerIds.has(towerTypeId)) {
       throw new MechanicsRecipeParameterError(
@@ -1366,7 +1528,7 @@ function materializeBossArtifactRecipe(recipe, context, parameterValue) {
       );
     }
   }
-  const authoredEnemyIds = new Set(sortedSafeIds(ownDataValue(context, "enemyIds")));
+  const authoredEnemyIds = new Set(sortedSafeIds(mechanicsRecipeContextIdCatalog(context, "enemyIds")));
   if (!authoredEnemyIds.has(bossEnemyTypeId)) {
     throw new MechanicsRecipeParameterError(
       "roguelite_recipe_enemy_missing",
@@ -1963,6 +2125,95 @@ function ownDataValue(value, key) {
   } catch {
     return undefined;
   }
+}
+
+function mechanicsRecipeContextDataValue(context, key) {
+  if (!isPlainRecord(context)) {
+    throw new MechanicsRecipeParameterError(
+      "mechanics_recipe_context_invalid",
+      "Mechanics recipe context must be a plain object with enumerable own data fields."
+    );
+  }
+  let descriptor;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(context, key);
+  } catch {
+    throw new MechanicsRecipeParameterError(
+      "mechanics_recipe_context_invalid",
+      `Mechanics recipe context field "${key}" could not be inspected as own data.`
+    );
+  }
+  if (descriptor === undefined) return undefined;
+  if (!descriptor.enumerable || !("value" in descriptor)) {
+    throw new MechanicsRecipeParameterError(
+      "mechanics_recipe_context_invalid",
+      `Mechanics recipe context field "${key}" must be an enumerable own data field, not an accessor.`
+    );
+  }
+  return descriptor.value;
+}
+
+function mechanicsRecipeContextIdCatalog(context, key) {
+  const value = mechanicsRecipeContextDataValue(context, key);
+  if (value === undefined) return undefined;
+  let array;
+  let proxy;
+  let prototype;
+  let descriptors;
+  try {
+    proxy = nodeUtilTypes.isProxy(value);
+    array = Array.isArray(value);
+    prototype = proxy || !array ? undefined : Object.getPrototypeOf(value);
+    descriptors = proxy || !array ? undefined : Object.getOwnPropertyDescriptors(value);
+  } catch {
+    throw new MechanicsRecipeParameterError(
+      "mechanics_recipe_context_invalid",
+      `Mechanics recipe context ID array "${key}" could not be inspected safely.`
+    );
+  }
+  if (proxy || !array || prototype !== Array.prototype || descriptors === undefined) {
+    throw new MechanicsRecipeParameterError(
+      "mechanics_recipe_context_invalid",
+      `Mechanics recipe context field "${key}" must be a dense ordinary own-data array.`
+    );
+  }
+  const lengthDescriptor = descriptors.length;
+  const length = lengthDescriptor && "value" in lengthDescriptor ? lengthDescriptor.value : undefined;
+  if (!Number.isSafeInteger(length) || length < 0 || length > MECHANICS_RECIPE_CONTEXT_ID_LIMIT) {
+    throw new MechanicsRecipeParameterError(
+      "mechanics_recipe_context_invalid",
+      `Mechanics recipe context field "${key}" exceeds the dense ID array budget.`
+    );
+  }
+  const descriptorKeys = Reflect.ownKeys(descriptors);
+  if (descriptorKeys.some((descriptorKey) => {
+    if (descriptorKey === "length") return false;
+    return typeof descriptorKey !== "string"
+      || !/^(0|[1-9][0-9]*)$/.test(descriptorKey)
+      || Number(descriptorKey) >= length;
+  })) {
+    throw new MechanicsRecipeParameterError(
+      "mechanics_recipe_context_invalid",
+      `Mechanics recipe context field "${key}" must contain only dense own-data indexes.`
+    );
+  }
+  const result = [];
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = descriptors[String(index)];
+    if (
+      !descriptor?.enumerable
+      || !("value" in descriptor)
+      || typeof descriptor.value !== "string"
+      || descriptor.value.length === 0
+    ) {
+      throw new MechanicsRecipeParameterError(
+        "mechanics_recipe_context_invalid",
+        `Mechanics recipe context field "${key}" index ${index} must be a non-empty enumerable own string value.`
+      );
+    }
+    result.push(descriptor.value);
+  }
+  return result.sort(compareBinary);
 }
 
 function defineOwn(record, key, value) {

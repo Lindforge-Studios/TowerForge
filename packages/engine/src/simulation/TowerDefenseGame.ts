@@ -72,6 +72,16 @@ import {
   type QuestDefinitionV1,
   type QuestShieldScopeV1
 } from "../content/quest-mechanics.js";
+import {
+  ENEMY_BEHAVIORS_LIMITS,
+  resolveActiveEnemyBehaviorsV1,
+  type ActiveEnemyBehaviorsV1,
+  type FormationRoleV1,
+  type FormationSteeringDefinitionV1,
+  type VanguardProtectionDefinitionV1,
+  type VanguardProtectionRuntimeStatsV1,
+  type VanguardProtectionSourceKindV1
+} from "../content/enemy-behaviors-mechanics.js";
 import { CAMPAIGN_RUN_LIMITS } from "../run/campaign-run.js";
 import {
   campaignBattleWorstCaseModifierCount,
@@ -125,6 +135,11 @@ import { NavigationResolver } from "./navigation-runtime.js";
 import { NavigationFieldLookupCache } from "./navigation-movement.js";
 import { buildNavigationField, type NavigationFieldResult } from "./navigation-field.js";
 import {
+  selectFormationSteeringNextV1,
+  type FormationSteeringNeighborV1,
+  type FormationSteeringRuntimeStatsV1
+} from "./formation-steering.js";
+import {
   planDynamicTerraformingNavigation,
   type DynamicTerraformingNavigationPlan
 } from "./terraforming-navigation.js";
@@ -174,6 +189,7 @@ import {
   type GameCheckpointIdentityV1,
   type ArtifactCheckpointState,
   type DraftCheckpointState,
+  type EnemyBehaviorsCheckpointStateV1,
   type RuntimeElevationOverrideV1,
   type TerraformingCheckpointStateV2,
   type GameCheckpointStateV1,
@@ -332,6 +348,13 @@ interface ResolvedEnemyDamageOptions {
   modifiers?: readonly ModifierSpec[];
   context?: DamageResolutionContext;
   reactionRuntime?: ReactionRuntimeContext;
+  componentId?: string;
+}
+
+interface MutableBossComponentRuntimeStateV1 {
+  hp: number;
+  maxHp: number;
+  shield?: ShieldStateV1;
 }
 
 type ReactionQueuedPacket = ReactionPlannerOutput["secondaryPlans"][number];
@@ -425,6 +448,7 @@ interface TowerScriptExecutionContext {
   stateKey: string;
   event: Record<string, unknown>;
   eventName: TowerScriptEventName;
+  machineComponent?: Readonly<Record<string, unknown>>;
 }
 
 const INVALID_SHIELD_RESTORE_MESSAGE = "TowerScript action is invalid for the current shield target.";
@@ -665,7 +689,7 @@ function assertPinnedGridMapSurface(map: GridMap): void {
 
 const SCRIPT_GAME_EVENT_NAMES = new Set<TowerScriptEventName>([
   "towerPlaced", "towerSold", "towerMoved", "towerUpgraded", "towerDestroyed", "towerTargetModeChanged",
-  "towerFired", "towerResourcesGranted", "towerShieldChanged", "enemyHit", "enemyShieldChanged", "enemyMarkChanged", "enemyKilled", "enemyLeaked", "enemySpawnedOnDeath",
+  "towerFired", "towerResourcesGranted", "towerShieldChanged", "enemyHit", "enemyShieldChanged", "bossComponentDamaged", "bossComponentDestroyed", "enemyMarkChanged", "enemyKilled", "enemyLeaked", "enemySpawnedOnDeath",
   "enemyExposureChanged", "enemyReactionTriggered",
   "enemyPhaseSpawned", "waveStarted", "waveCleared", "resourcesGranted", "abilityUsed", "objectiveCompleted",
   "enemyEnteredTile", "terrainChanged", "elevationChanged", "objectiveFailed", "starEarned", "victory", "defeat",
@@ -895,6 +919,37 @@ interface ScriptedTargetingControllerV1 {
   readonly tree: TowerScriptBehaviorTreeV1;
 }
 
+interface ActiveFormationAssignmentV1 {
+  readonly cohortId: string;
+  readonly role: FormationRoleV1;
+  readonly steering: FormationSteeringDefinitionV1;
+  readonly protection?: VanguardProtectionDefinitionV1;
+}
+
+interface FormationTickObservationV1 extends ActiveFormationAssignmentV1 {
+  readonly enemyId: string;
+  readonly anchorCoord: HexCoord;
+  readonly fieldKey: string;
+  readonly remainingCostMilli: number;
+}
+
+interface FormationTickIndexV1 {
+  readonly observations: ReadonlyMap<string, FormationTickObservationV1>;
+  readonly buckets: ReadonlyMap<string, readonly string[]>;
+}
+
+interface VanguardProtectionIndexV1 {
+  readonly buckets: ReadonlyMap<string, readonly EnemyState[]>;
+}
+
+interface RuntimeDamageApplicationResult extends DamageApplicationResult {
+  readonly enemyTarget?: EnemyState;
+}
+
+type MutableFormationSteeringRuntimeStatsV1 = {
+  -readonly [Key in keyof FormationSteeringRuntimeStatsV1]: FormationSteeringRuntimeStatsV1[Key];
+};
+
 export class TowerDefenseGame {
   readonly content: GameContentRegistry;
   readonly mission: GameContentRegistry["missions"][string];
@@ -933,6 +988,20 @@ export class TowerDefenseGame {
   private readonly activeLogisticsSchemaVersion: 1 | 2 | 3 | undefined;
   private readonly activeDirectorMechanics: ActiveDirectorMechanicsV1 | undefined;
   private readonly activeQuestMechanics: ActiveQuestMechanicsV1 | undefined;
+  private readonly activeEnemyBehaviors: ActiveEnemyBehaviorsV1 | undefined;
+  private readonly activeFormationAssignments: ReadonlyMap<string, ActiveFormationAssignmentV1> | undefined;
+  private formationSteeringStats: MutableFormationSteeringRuntimeStatsV1 = {
+    bucketBuildCount: 0,
+    bucketEntryCount: 0,
+    fieldReadCount: 0,
+    plannerInvocationCount: 0,
+    neighborEntriesInspected: 0,
+    maximumNeighborCount: 0
+  };
+  private vanguardProtectionIndex: VanguardProtectionIndexV1 | undefined;
+  private vanguardProtectionTransactionsThisTick = 0;
+  private vanguardProtectionCandidatesInspected = 0;
+  private vanguardProtectionMaximumCandidateCount = 0;
   private questEntries: NonNullable<GameSnapshot["quests"]>["entries"] = Object.freeze([]);
   private readonly scriptedTargetingByTowerType = new Map<string, ScriptedTargetingControllerV1>();
   private directorDecisions: NonNullable<GameSnapshot["director"]>["decisions"] = Object.freeze([]);
@@ -990,6 +1059,7 @@ export class TowerDefenseGame {
   private towerShields: Record<string, ShieldStateV1> = {};
   private enemyMarks: Record<string, Record<string, MarkStateV1>> = {};
   private enemyExposures: Record<string, Record<string, ExposureRuntimeStateV1>> = emptyDataRecord();
+  private enemyComponentStates: Record<string, Record<string, MutableBossComponentRuntimeStateV1>> = {};
 
   private enemyCounter = 0;
   private towerCounter = 0;
@@ -1077,6 +1147,7 @@ export class TowerDefenseGame {
     this.activeHeroesMechanics = resolveActiveHeroesMechanics(this.content, missionId);
     this.activeDirectorMechanics = resolveActiveDirectorMechanics(this.content, missionId);
     this.activeQuestMechanics = resolveActiveQuestMechanics(this.content, missionId);
+    this.activeEnemyBehaviors = resolveActiveEnemyBehaviorsV1(this.content, missionId);
     this.initializeQuestEntries();
     const activeLogistics = resolveActiveLogisticsMechanics(this.content, missionId);
     this.activeLogisticsSchemaVersion = activeLogistics?.schemaVersion;
@@ -1230,6 +1301,19 @@ export class TowerDefenseGame {
       this.navigationFieldLookupCache = undefined;
       this.navigationEnemyFields = undefined;
     }
+    this.activeFormationAssignments = this.activeNavigationProfile && this.activeEnemyBehaviors?.formations
+      ? new Map(Object.entries(this.activeEnemyBehaviors.formations.cohorts).flatMap(([cohortId, cohort]) => (
+          Object.entries(cohort.members).map(([enemyTypeId, role]) => [
+            enemyTypeId,
+            Object.freeze({
+              cohortId,
+              role,
+              steering: cohort.steering,
+              ...(cohort.protection === undefined ? {} : { protection: cohort.protection })
+            })
+          ] as const)
+        )))
+      : undefined;
     this.difficulty = this.content.difficulties.find((item) => item.id === options.difficultyId)
       ?? this.content.difficulties.find((item) => item.id === this.content.defaultDifficultyId)
       ?? { id: "normal", label: "Normal" };
@@ -1373,6 +1457,11 @@ export class TowerDefenseGame {
     this.enemyShields = {};
     this.towerShields = {};
     this.enemyMarks = {};
+    this.enemyComponentStates = {};
+    this.vanguardProtectionIndex = undefined;
+    this.vanguardProtectionTransactionsThisTick = 0;
+    this.vanguardProtectionCandidatesInspected = 0;
+    this.vanguardProtectionMaximumCandidateCount = 0;
     this.directorDecisions = Object.freeze([]);
     this.initializeQuestEntries();
     this.lastEvents = [];
@@ -2649,6 +2738,8 @@ export class TowerDefenseGame {
 
   tick(deltaUnits: number): void {
     this.lastEvents = [];
+    this.vanguardProtectionTransactionsThisTick = 0;
+    this.vanguardProtectionIndex = undefined;
     if (this.activePhysicsMechanics) this.displacementStepAttemptsThisTick = 0;
     this.scriptEventCursor = 0;
     this.beginScriptTransaction();
@@ -2679,6 +2770,7 @@ export class TowerDefenseGame {
     this.updateEnemyExposures(delta);
     this.updateEnemyStatuses(delta);
     this.moveEnemies(delta);
+    this.vanguardProtectionIndex = undefined;
     this.applySunlightRegeneration(delta);
     this.applyHealAuras(delta);
     this.applyDotDamage(delta);
@@ -3747,6 +3839,79 @@ export class TowerDefenseGame {
     return { schemaVersion: 1, exposures: { enemies } };
   }
 
+  private buildEnemyBehaviorsState(): GameSnapshot["enemyBehaviors"] {
+    if (!this.activeEnemyBehaviors) return undefined;
+    const formationEnemies = this.activeFormationAssignments === undefined
+      ? undefined
+      : Object.fromEntries(this.enemies
+          .filter((enemy) => enemy.hp > 0 && this.activeFormationAssignments!.has(enemy.typeId))
+          .sort((left, right) => compareBinary(left.id, right.id))
+          .map((enemy) => {
+            const assignment = this.activeFormationAssignments!.get(enemy.typeId)!;
+            return [enemy.id, { cohortId: assignment.cohortId, role: assignment.role }];
+          }));
+    const protectionCohorts = this.activeFormationAssignments === undefined
+      ? undefined
+      : Object.fromEntries(Object.entries(this.activeEnemyBehaviors.formations?.cohorts ?? {})
+          .filter(([, cohort]) => cohort.protection !== undefined)
+          .sort(([left], [right]) => compareBinary(left, right))
+          .map(([cohortId, cohort]) => [cohortId, {
+            radius: cohort.protection!.radius,
+            sourceKinds: [...cohort.protection!.sourceKinds]
+          }]));
+    return {
+      schemaVersion: 1,
+      components: Object.fromEntries(Object.keys(this.enemyComponentStates).sort(compareBinary).map((enemyId) => [
+        enemyId,
+        Object.fromEntries(Object.keys(this.enemyComponentStates[enemyId] ?? {}).sort(compareBinary).map((componentId) => {
+          const state = this.enemyComponentStates[enemyId]![componentId]!;
+          return [componentId, {
+            hp: state.hp,
+            maxHp: state.maxHp,
+            ...(state.shield === undefined ? {} : { shield: { ...state.shield } })
+          }];
+        }))
+      ])),
+      ...(formationEnemies === undefined ? {} : {
+        formations: {
+          schemaVersion: 1,
+          enemies: formationEnemies,
+          ...(protectionCohorts === undefined || Object.keys(protectionCohorts).length === 0 ? {} : {
+            protection: { schemaVersion: 1, cohorts: protectionCohorts }
+          })
+        }
+      })
+    };
+  }
+
+  private buildEnemyBehaviorsCheckpointState(): EnemyBehaviorsCheckpointStateV1 | undefined {
+    const state = this.buildEnemyBehaviorsState();
+    if (state === undefined) return undefined;
+    const hasProtection = Object.values(this.activeEnemyBehaviors?.formations?.cohorts ?? {})
+      .some((cohort) => cohort.protection !== undefined);
+    return {
+      ...state,
+      ...(hasProtection ? {
+        protectionRuntime: {
+          schemaVersion: 1,
+          transactionsThisTick: this.vanguardProtectionTransactionsThisTick
+        }
+      } : {})
+    };
+  }
+
+  getFormationSteeringStats(): FormationSteeringRuntimeStatsV1 {
+    return Object.freeze({ ...this.formationSteeringStats });
+  }
+
+  getVanguardProtectionStats(): VanguardProtectionRuntimeStatsV1 {
+    return Object.freeze({
+      transactionsThisTick: this.vanguardProtectionTransactionsThisTick,
+      candidatesInspected: this.vanguardProtectionCandidatesInspected,
+      maximumCandidateCount: this.vanguardProtectionMaximumCandidateCount
+    });
+  }
+
   private consumeNavigationAnalysisField(
     field: NavigationFieldResult,
     budget: NavigationAnalysisRelaxationBudget
@@ -4012,6 +4177,7 @@ export class TowerDefenseGame {
     }));
     const combat = this.buildCombatState();
     const reactions = this.buildReactionState();
+    const enemyBehaviors = this.buildEnemyBehaviorsCheckpointState();
     const artifacts = this.buildArtifactCheckpointState();
     const draft = this.buildDraftCheckpointState();
     const heroes = this.heroStateV2 === undefined
@@ -4250,6 +4416,7 @@ export class TowerDefenseGame {
       ...(logistics === undefined ? {} : { logistics }),
       ...(director === undefined ? {} : { director }),
       ...(quests === undefined ? {} : { quests }),
+      ...(enemyBehaviors === undefined ? {} : { enemyBehaviors }),
       ...(this.campaignBattle === undefined ? {} : {
         campaignBattle: {
           schemaVersion: 1 as const,
@@ -4319,6 +4486,7 @@ export class TowerDefenseGame {
     const checkpointHeroes = resolveActiveHeroesMechanics(content, identity.missionId);
     const checkpointDirector = resolveActiveDirectorMechanics(content, identity.missionId);
     const checkpointQuests = resolveActiveQuestMechanics(content, identity.missionId);
+    const checkpointEnemyBehaviors = resolveActiveEnemyBehaviorsV1(content, identity.missionId);
     const checkpointStateMachines = Object.values(content.scripts ?? {})
       .filter((script): script is TowerScriptDefinition => Boolean(
         script && script.enabled !== false && script.schemaVersion === 7 && script.stateMachines?.length
@@ -4406,6 +4574,14 @@ export class TowerDefenseGame {
       throw new Error("Game checkpoint quest state is unsupported for an inactive capability.");
     }
     if (hasQuestCheckpoint) checkpointDataField(descriptors, "quests", "Game checkpoint state");
+    const hasEnemyBehaviorsCheckpoint = Object.prototype.hasOwnProperty.call(descriptors, "enemyBehaviors");
+    if (checkpointEnemyBehaviors && !hasEnemyBehaviorsCheckpoint) {
+      throw new Error("Game checkpoint enemyBehaviors state is required for an active capability.");
+    }
+    if (!checkpointEnemyBehaviors && hasEnemyBehaviorsCheckpoint) {
+      throw new Error("Game checkpoint enemyBehaviors state is unsupported for an inactive capability.");
+    }
+    if (hasEnemyBehaviorsCheckpoint) checkpointDataField(descriptors, "enemyBehaviors", "Game checkpoint state");
     const hasScriptMachinesCheckpoint = Object.prototype.hasOwnProperty.call(descriptors, "scriptMachines");
     if (requiresScriptMachinesCheckpoint && !hasScriptMachinesCheckpoint) {
       throw new Error("Game checkpoint TowerScript machine state is required for active schema v7 machines.");
@@ -4426,6 +4602,7 @@ export class TowerDefenseGame {
       ...(hasLogisticsCheckpoint ? ["logistics"] : []),
       ...(hasDirectorCheckpoint ? ["director"] : []),
       ...(hasQuestCheckpoint ? ["quests"] : []),
+      ...(hasEnemyBehaviorsCheckpoint ? ["enemyBehaviors"] : []),
       ...(hasScriptMachinesCheckpoint ? ["scriptMachines"] : [])
     ], "Game checkpoint state");
 
@@ -5012,6 +5189,25 @@ export class TowerDefenseGame {
             : { enemyMovementProfiles: selectedNavigation.enemyMovementProfiles })
         }
       : undefined;
+    const checkpointFormationAssignments = activeNavigationProfile && checkpointEnemyBehaviors?.formations
+      ? new Map(Object.entries(checkpointEnemyBehaviors.formations.cohorts).flatMap(([cohortId, cohort]) => (
+          Object.entries(cohort.members).map(([enemyTypeId, role]) => [
+            enemyTypeId,
+            Object.freeze({
+              cohortId,
+              role,
+              steering: cohort.steering,
+              ...(cohort.protection === undefined ? {} : { protection: cohort.protection })
+            })
+          ] as const)
+        )))
+      : undefined;
+    const checkpointFormationProtection = checkpointFormationAssignments
+      ? Object.fromEntries(Object.entries(checkpointEnemyBehaviors?.formations?.cohorts ?? {})
+          .filter(([, cohort]) => cohort.protection !== undefined)
+          .sort(([left], [right]) => compareBinary(left, right))
+          .map(([cohortId, cohort]) => [cohortId, cohort.protection!]))
+      : {};
     const optionalRoute = (descriptors: ReturnType<typeof closed>, label: string): void => {
       if (!own(descriptors, "routeId")) return;
       const routeId = stringValue(checkpointDataField(descriptors, "routeId", label), `${label}.routeId`);
@@ -5024,6 +5220,8 @@ export class TowerDefenseGame {
     };
 
     const enemyIds = new Set<string>();
+    const liveEnemyIds = new Set<string>();
+    const enemyTypeByInstance = new Map<string, string>();
     const disruptTargetReferences: Array<{ enemyId: string; towerIds: string[] }> = [];
     const navigationStates: Array<{
       readonly enemyId: string;
@@ -5053,6 +5251,7 @@ export class TowerDefenseGame {
       if (!Number.isSafeInteger(numericId)) throw new Error("Game checkpoint state enemy id suffix is unsafe.");
       maxEnemyId = Math.max(maxEnemyId, numericId);
       enemyIds.add(id);
+      enemyTypeByInstance.set(id, typeId);
       for (const key of ["hp", "maxHp", "pathProgress", "dotRemaining", "pathOffset"] as const) {
         finite(checkpointDataField(enemy, key, "Game checkpoint enemy"), `enemy.${key}`, key === "pathOffset" ? -Infinity : 0);
       }
@@ -5065,6 +5264,7 @@ export class TowerDefenseGame {
       if (maxHp !== expectedMaxHp || typeof hp !== "number" || hp > expectedMaxHp) {
         throw new Error("Game checkpoint enemy hp or maxHp is inconsistent with authored content.");
       }
+      if (hp > 0) liveEnemyIds.add(id);
       if (own(enemy, "dotSourceTowerTypeId")) {
         const towerTypeId = stringValue(checkpointDataField(enemy, "dotSourceTowerTypeId", "enemy"), "enemy.dotSourceTowerTypeId");
         if (!own(content.towers, towerTypeId)) throw new Error("Game checkpoint enemy references an unknown dot tower type.");
@@ -5213,6 +5413,205 @@ export class TowerDefenseGame {
       throw new Error("Game checkpoint live enemy navigation state budget is exceeded.");
     }
     if (enemyCounter < maxEnemyId) throw new Error("Game checkpoint enemy counter is below a live enemy id.");
+    let checkpointVanguardProtectionTransactionsThisTick: number | undefined;
+    if (checkpointEnemyBehaviors) {
+      const protectionCohortIds = Object.keys(checkpointFormationProtection);
+      const hasProtectionRuntime = protectionCohortIds.length > 0;
+      const enemyBehaviorsValue = checkpointDataField(descriptors, "enemyBehaviors", "Game checkpoint state");
+      const enemyBehaviorsDescriptors = checkpointObjectDescriptors(
+        enemyBehaviorsValue,
+        "Game checkpoint state enemyBehaviors state"
+      );
+      if (!hasProtectionRuntime && own(enemyBehaviorsDescriptors, "protectionRuntime")) {
+        throw new Error(
+          "Game checkpoint enemyBehaviors protectionRuntime is unsupported when formation protection is inactive."
+        );
+      }
+      const section = closed(
+        enemyBehaviorsValue,
+        "enemyBehaviors state",
+        [
+          "schemaVersion",
+          "components",
+          ...(checkpointFormationAssignments ? ["formations"] : []),
+          ...(hasProtectionRuntime ? ["protectionRuntime"] : [])
+        ]
+      );
+      if (checkpointDataField(section, "schemaVersion", "enemyBehaviors state") !== 1) {
+        throw new Error("Game checkpoint enemyBehaviors schema version is unsupported.");
+      }
+      if (hasProtectionRuntime) {
+        const protectionRuntime = checkpointObjectDescriptors(
+          checkpointDataField(section, "protectionRuntime", "enemyBehaviors state"),
+          "Game checkpoint state enemyBehaviors protectionRuntime"
+        );
+        checkpointDataField(protectionRuntime, "schemaVersion", "enemyBehaviors protectionRuntime");
+        checkpointDataField(protectionRuntime, "transactionsThisTick", "enemyBehaviors protectionRuntime");
+        const unsupportedProtectionRuntimeKey = Object.keys(protectionRuntime)
+          .find((key) => key !== "schemaVersion" && key !== "transactionsThisTick");
+        if (unsupportedProtectionRuntimeKey !== undefined) {
+          throw new Error(
+            `Game checkpoint enemyBehaviors protectionRuntime closed schema contains unknown field "${unsupportedProtectionRuntimeKey}".`
+          );
+        }
+        if (checkpointDataField(protectionRuntime, "schemaVersion", "enemyBehaviors protectionRuntime") !== 1) {
+          throw new Error("Game checkpoint enemyBehaviors protectionRuntime schema version is unsupported.");
+        }
+        const transactionsThisTick = checkpointDataField(
+          protectionRuntime,
+          "transactionsThisTick",
+          "enemyBehaviors protectionRuntime"
+        );
+        if (
+          typeof transactionsThisTick !== "number"
+          || !Number.isSafeInteger(transactionsThisTick)
+          || transactionsThisTick < 0
+          || transactionsThisTick > ENEMY_BEHAVIORS_LIMITS.protectionTransactionsPerTick
+        ) {
+          throw new Error(
+            `Game checkpoint enemyBehaviors protectionRuntime.transactionsThisTick must be an integer in range 0..${ENEMY_BEHAVIORS_LIMITS.protectionTransactionsPerTick}.`
+          );
+        }
+        checkpointVanguardProtectionTransactionsThisTick = transactionsThisTick;
+      }
+      const componentEnemies = checkpointObjectDescriptors(
+        checkpointDataField(section, "components", "enemyBehaviors state"),
+        "Game checkpoint enemyBehaviors components"
+      );
+      const expectedEnemyIds = [...enemyTypeByInstance.entries()]
+        .filter(([, typeId]) => checkpointEnemyBehaviors.bosses?.[typeId] !== undefined)
+        .map(([enemyId]) => enemyId)
+        .sort(compareBinary);
+      const actualEnemyIds = Object.keys(componentEnemies);
+      if (actualEnemyIds.join("\u0000") !== expectedEnemyIds.join("\u0000")) {
+        throw new Error("Game checkpoint enemyBehaviors state has missing, extra, or non-canonical enemy ids.");
+      }
+      for (const enemyId of actualEnemyIds) {
+        const typeId = enemyTypeByInstance.get(enemyId)!;
+        const authoredBoss = checkpointEnemyBehaviors.bosses?.[typeId];
+        if (!authoredBoss) throw new Error("Game checkpoint enemyBehaviors state references a non-component enemy.");
+        const authored = authoredBoss.components;
+        const componentRecord = checkpointObjectDescriptors(
+          checkpointDataField(componentEnemies, enemyId, "enemyBehaviors components"),
+          `Game checkpoint enemyBehaviors components for ${enemyId}`
+        );
+        const expectedComponentIds = Object.keys(authored).sort(compareBinary);
+        const actualComponentIds = Object.keys(componentRecord);
+        if (actualComponentIds.join("\u0000") !== expectedComponentIds.join("\u0000")) {
+          throw new Error(`Game checkpoint enemyBehaviors state for "${enemyId}" has invalid component ids.`);
+        }
+        for (const componentId of actualComponentIds) {
+          const definition = authored[componentId]!;
+          const component = closed(
+            checkpointDataField(componentRecord, componentId, `enemyBehaviors components for ${enemyId}`),
+            `enemyBehaviors component ${enemyId}.${componentId}`,
+            ["hp", "maxHp"],
+            definition.shield === undefined ? [] : ["shield"]
+          );
+          const expectedMaxHp = definition.maxHp * (difficulty.enemyHpMultiplier ?? 1);
+          if (checkpointDataField(component, "maxHp", componentId) !== expectedMaxHp) {
+            throw new Error(`Game checkpoint enemyBehaviors component "${componentId}" maxHp differs from authored content.`);
+          }
+          finite(checkpointDataField(component, "hp", componentId), `${componentId}.hp`, 0, expectedMaxHp);
+          const hasShield = own(component, "shield");
+          if ((definition.shield !== undefined) !== hasShield) {
+            throw new Error(`Game checkpoint enemyBehaviors component "${componentId}" shield state is inconsistent.`);
+          }
+          if (definition.shield && hasShield) {
+            const shield = closed(
+              checkpointDataField(component, "shield", componentId),
+              `${componentId}.shield`,
+              ["current", "capacity", "regenerationDelayRemaining"]
+            );
+            if (checkpointDataField(shield, "capacity", componentId) !== definition.shield.capacity) {
+              throw new Error(`Game checkpoint enemyBehaviors component "${componentId}" shield capacity differs.`);
+            }
+            finite(checkpointDataField(shield, "current", componentId), `${componentId}.shield.current`, 0, definition.shield.capacity);
+            finite(
+              checkpointDataField(shield, "regenerationDelayRemaining", componentId),
+              `${componentId}.shield.regenerationDelayRemaining`,
+              0,
+              definition.shield.regeneration?.delayAfterDamage ?? 0
+            );
+          }
+        }
+      }
+      if (checkpointFormationAssignments) {
+        const formations = closed(
+          checkpointDataField(section, "formations", "enemyBehaviors state"),
+          "enemyBehaviors formations state",
+          protectionCohortIds.length > 0
+            ? ["schemaVersion", "enemies", "protection"]
+            : ["schemaVersion", "enemies"]
+        );
+        if (checkpointDataField(formations, "schemaVersion", "enemyBehaviors formations state") !== 1) {
+          throw new Error("Game checkpoint enemyBehaviors formation schema version is unsupported.");
+        }
+        const formationEnemies = checkpointObjectDescriptors(
+          checkpointDataField(formations, "enemies", "enemyBehaviors formations state"),
+          "Game checkpoint enemyBehaviors formation enemies"
+        );
+        const expectedFormationEnemyIds = [...enemyTypeByInstance.entries()]
+          .filter(([enemyId, typeId]) => liveEnemyIds.has(enemyId) && checkpointFormationAssignments.has(typeId))
+          .map(([enemyId]) => enemyId)
+          .sort(compareBinary);
+        const actualFormationEnemyIds = Object.keys(formationEnemies);
+        if (actualFormationEnemyIds.join("\u0000") !== expectedFormationEnemyIds.join("\u0000")) {
+          throw new Error("Game checkpoint enemyBehaviors formation state has missing, stale, extra, or non-canonical enemy ids.");
+        }
+        for (const enemyId of actualFormationEnemyIds) {
+          const typeId = enemyTypeByInstance.get(enemyId)!;
+          const expected = checkpointFormationAssignments.get(typeId)!;
+          const membership = closed(
+            checkpointDataField(formationEnemies, enemyId, "enemyBehaviors formation enemies"),
+            `enemyBehaviors formation membership ${enemyId}`,
+            ["cohortId", "role"]
+          );
+          if (
+            checkpointDataField(membership, "cohortId", `formation membership ${enemyId}`) !== expected.cohortId
+            || checkpointDataField(membership, "role", `formation membership ${enemyId}`) !== expected.role
+          ) {
+            throw new Error(`Game checkpoint enemyBehaviors formation membership for "${enemyId}" has an invalid cohort or role.`);
+          }
+        }
+        if (protectionCohortIds.length > 0) {
+          const protection = closed(
+            checkpointDataField(formations, "protection", "enemyBehaviors formations state"),
+            "enemyBehaviors formation protection state",
+            ["schemaVersion", "cohorts"]
+          );
+          if (checkpointDataField(protection, "schemaVersion", "enemyBehaviors formation protection state") !== 1) {
+            throw new Error("Game checkpoint enemyBehaviors formation protection schema version is unsupported.");
+          }
+          const cohorts = checkpointObjectDescriptors(
+            checkpointDataField(protection, "cohorts", "enemyBehaviors formation protection state"),
+            "Game checkpoint enemyBehaviors formation protection cohorts"
+          );
+          if (Object.keys(cohorts).join("\u0000") !== protectionCohortIds.join("\u0000")) {
+            throw new Error("Game checkpoint enemyBehaviors formation protection cohorts are missing, extra, or non-canonical.");
+          }
+          for (const cohortId of protectionCohortIds) {
+            const authored = checkpointFormationProtection[cohortId]!;
+            const cohort = closed(
+              checkpointDataField(cohorts, cohortId, "enemyBehaviors formation protection cohorts"),
+              `enemyBehaviors formation protection ${cohortId}`,
+              ["radius", "sourceKinds"]
+            );
+            if (checkpointDataField(cohort, "radius", `formation protection ${cohortId}`) !== authored.radius) {
+              throw new Error(`Game checkpoint enemyBehaviors formation protection radius for "${cohortId}" differs from authored content.`);
+            }
+            const sourceKinds = stringArray(
+              checkpointDataField(cohort, "sourceKinds", `formation protection ${cohortId}`),
+              `formation protection ${cohortId}.sourceKinds`,
+              true
+            );
+            if (sourceKinds.join("\u0000") !== authored.sourceKinds.join("\u0000")) {
+              throw new Error(`Game checkpoint enemyBehaviors formation protection sources for "${cohortId}" differ from authored content.`);
+            }
+          }
+        }
+      }
+    }
 
     const towerIds = new Set<string>();
     const towerStateById = new Map<string, { readonly typeId: string; readonly hp?: number }>();
@@ -5929,6 +6328,24 @@ export class TowerDefenseGame {
         required: ["type", "enemyId", "enemyTypeId", "previous", "current", "capacity", "cause", "amount"],
         optional: ["overflowDamage"]
       },
+      bossComponentDamaged: {
+        required: [
+          "type", "enemyId", "enemyTypeId", "componentId", "sourceKind", "previousHp", "currentHp",
+          "maxHp", "hpDamage", "previousShield", "currentShield", "shieldCapacity", "shieldAbsorbed"
+        ]
+      },
+      bossComponentDestroyed: {
+        required: [
+          "type", "enemyId", "enemyTypeId", "componentId", "sourceKind", "previousHp", "currentHp",
+          "maxHp", "hpDamage", "previousShield", "currentShield", "shieldCapacity", "shieldAbsorbed"
+        ]
+      },
+      vanguardDamageIntercepted: {
+        required: [
+          "type", "cohortId", "protectedEnemyId", "protectedEnemyTypeId", "vanguardEnemyId",
+          "vanguardEnemyTypeId", "sourceKind", "requestedAmount", "originalComponentId"
+        ]
+      },
       enemyMarkChanged: {
         required: [
           "type", "enemyId", "enemyTypeId", "markId", "previousStacks", "currentStacks",
@@ -5977,7 +6394,8 @@ export class TowerDefenseGame {
       "depth", "limit", "dropped", "requestedDistance", "movedDistance", "fromElevation", "toElevation",
       "rollIndex", "shieldAbsorbed", "hpDamage", "previousMana", "currentMana", "manaSpent",
       "cooldownApplied", "requestedDamage", "resolvedDamage", "cost", "previousPoints", "currentPoints",
-      "threatCost"
+      "threatCost", "previousHp", "currentHp", "maxHp", "previousShield", "currentShield", "shieldCapacity",
+      "requestedAmount"
     ]);
     const stringEventFields = new Set([
       "towerId", "towerTypeId", "enemyId", "enemyTypeId", "parentEnemyId", "parentEnemyTypeId", "healerEnemyId",
@@ -5986,7 +6404,9 @@ export class TowerDefenseGame {
       "exposureId", "reactionId", "originEnemyId", "originEnemyTypeId", "rootEnemyId", "rootEnemyTypeId",
       "triggerDamageType", "budget", "sourceKind", "sourceId", "stopReason", "terrainTag",
       "artifactInstanceId", "artifactId", "slotId", "heroId", "heroDefinitionId", "skillId",
-      "counterId", "questId", "machineId", "contextId", "transitionId", "fromStatePath", "toStatePath"
+      "counterId", "questId", "machineId", "contextId", "transitionId", "fromStatePath", "toStatePath",
+      "componentId", "cohortId", "protectedEnemyId", "protectedEnemyTypeId", "vanguardEnemyId",
+      "vanguardEnemyTypeId"
     ]);
     const coordEventFields = new Set(["coord", "from", "to", "center", "originCoord", "sourceCoord"]);
     const bagEventFields = new Set(["refund", "cost", "resources", "income", "interest"]);
@@ -6011,6 +6431,7 @@ export class TowerDefenseGame {
       toStatePath: string;
     }> = [];
     const checkpointEvents = array(state.lastEvents, "lastEvents");
+    let checkpointVanguardInterceptionEventCount = 0;
     for (const [eventIndex, value] of checkpointEvents.entries()) {
       const base = checkpointObjectDescriptors(value, "Game checkpoint last event");
       const type = stringValue(checkpointDataField(base, "type", "last event"), "last event type");
@@ -6041,6 +6462,9 @@ export class TowerDefenseGame {
           stringArray(checkpointDataField(terrain, "tags", "terrain metadata"), "terrain tags");
         } else if (key === "diagnostic") validateDiagnostic(field, "event script diagnostic");
         else if (key === "payload") validateScriptJson(field, `last event ${type}.${key}`);
+        else if (key === "originalComponentId") {
+          if (field !== null) stringValue(field, `last event ${type}.${key}`);
+        }
         else if (key === "reason") validateDirectorReason(
           field,
           `last event ${type}.reason`,
@@ -6127,6 +6551,97 @@ export class TowerDefenseGame {
           fromStatePath: stringValue(checkpointDataField(event, "fromStatePath", type), `${type}.fromStatePath`),
           toStatePath: stringValue(checkpointDataField(event, "toStatePath", type), `${type}.toStatePath`)
         });
+      }
+      if (type === "bossComponentDamaged" || type === "bossComponentDestroyed") {
+        if (!checkpointEnemyBehaviors) {
+          throw new Error("Game checkpoint boss component event requires active enemyBehaviors.");
+        }
+        const enemyTypeId = stringValue(checkpointDataField(event, "enemyTypeId", type), `${type}.enemyTypeId`);
+        const componentId = stringValue(checkpointDataField(event, "componentId", type), `${type}.componentId`);
+        const definition = checkpointEnemyBehaviors.bosses?.[enemyTypeId]?.components[componentId];
+        if (!definition) throw new Error("Game checkpoint boss component event references an unknown component.");
+        const sourceKind = checkpointDataField(event, "sourceKind", type);
+        if (!["tower", "ability", "tower_script", "status", "reaction", "enemy", "leak"].includes(String(sourceKind))) {
+          throw new Error("Game checkpoint boss component event sourceKind is invalid.");
+        }
+        const expectedMaxHp = definition.maxHp * (difficulty.enemyHpMultiplier ?? 1);
+        const maxHp = finite(checkpointDataField(event, "maxHp", type), `${type}.maxHp`, Number.MIN_VALUE, expectedMaxHp);
+        const previousHp = finite(checkpointDataField(event, "previousHp", type), `${type}.previousHp`, 0, expectedMaxHp);
+        const currentHp = finite(checkpointDataField(event, "currentHp", type), `${type}.currentHp`, 0, expectedMaxHp);
+        const hpDamage = finite(checkpointDataField(event, "hpDamage", type), `${type}.hpDamage`, 0, expectedMaxHp);
+        const expectedShieldCapacity = definition.shield?.capacity ?? 0;
+        const shieldCapacity = finite(
+          checkpointDataField(event, "shieldCapacity", type),
+          `${type}.shieldCapacity`,
+          0,
+          expectedShieldCapacity
+        );
+        const previousShield = finite(
+          checkpointDataField(event, "previousShield", type),
+          `${type}.previousShield`,
+          0,
+          expectedShieldCapacity
+        );
+        const currentShield = finite(
+          checkpointDataField(event, "currentShield", type),
+          `${type}.currentShield`,
+          0,
+          expectedShieldCapacity
+        );
+        const componentShieldAbsorbed = finite(
+          checkpointDataField(event, "shieldAbsorbed", type),
+          `${type}.shieldAbsorbed`,
+          0,
+          expectedShieldCapacity
+        );
+        const nearlyEqual = (left: number, right: number): boolean => (
+          Math.abs(left - right) <= 1e-9 * Math.max(1, Math.abs(left), Math.abs(right))
+        );
+        if (maxHp !== expectedMaxHp || shieldCapacity !== expectedShieldCapacity
+          || currentHp > previousHp || currentShield > previousShield
+          || !nearlyEqual(previousHp - currentHp, hpDamage)
+          || !nearlyEqual(previousShield - currentShield, componentShieldAbsorbed)
+          || (hpDamage <= 0 && componentShieldAbsorbed <= 0)) {
+          throw new Error("Game checkpoint boss component event arithmetic is invalid.");
+        }
+        if (type === "bossComponentDestroyed" && !(previousHp > 0 && currentHp === 0)) {
+          throw new Error("Game checkpoint boss component destruction event crossing is invalid.");
+        }
+      }
+      if (type === "vanguardDamageIntercepted") {
+        const cohortId = stringValue(checkpointDataField(event, "cohortId", type), `${type}.cohortId`);
+        const authored = checkpointFormationProtection[cohortId];
+        if (!authored) throw new Error("Game checkpoint vanguard interception event references inactive protection.");
+        const protectedEnemyTypeId = stringValue(
+          checkpointDataField(event, "protectedEnemyTypeId", type),
+          `${type}.protectedEnemyTypeId`
+        );
+        const vanguardEnemyTypeId = stringValue(
+          checkpointDataField(event, "vanguardEnemyTypeId", type),
+          `${type}.vanguardEnemyTypeId`
+        );
+        const protectedAssignment = checkpointFormationAssignments?.get(protectedEnemyTypeId);
+        const vanguardAssignment = checkpointFormationAssignments?.get(vanguardEnemyTypeId);
+        if (
+          protectedAssignment?.cohortId !== cohortId
+          || (protectedAssignment.role !== "body" && protectedAssignment.role !== "support")
+          || vanguardAssignment?.cohortId !== cohortId
+          || vanguardAssignment.role !== "vanguard"
+        ) {
+          throw new Error("Game checkpoint vanguard interception event has invalid formation roles.");
+        }
+        const sourceKind = stringValue(checkpointDataField(event, "sourceKind", type), `${type}.sourceKind`);
+        if (!authored.sourceKinds.includes(sourceKind as VanguardProtectionSourceKindV1)) {
+          throw new Error("Game checkpoint vanguard interception event source is not authored.");
+        }
+        const originalComponentId = checkpointDataField(event, "originalComponentId", type);
+        if (
+          originalComponentId !== null
+          && !checkpointEnemyBehaviors?.bosses?.[protectedEnemyTypeId]?.components[String(originalComponentId)]
+        ) {
+          throw new Error("Game checkpoint vanguard interception event references an unknown original component.");
+        }
+        checkpointVanguardInterceptionEventCount += 1;
       }
       if (own(event, "towerTypeId")) {
         const typeId = stringValue(checkpointDataField(event, "towerTypeId", type), `${type}.towerTypeId`);
@@ -7188,7 +7703,24 @@ export class TowerDefenseGame {
         if (!nextCell || nextCell.distance >= currentCell.distance) {
           throw new Error("Game checkpoint enemy navigation nextCoord must strictly lower field distance.");
         }
-        if (
+        const formationAssignment = checkpointFormationAssignments?.get(enemyTypeByInstance.get(entry.enemyId)!);
+        if (formationAssignment) {
+          const movementProfile = activeNavigationProfile.movementProfiles[navigation.movementProfileId]!;
+          const terrainId = terrainByCoord[coordKey(navigation.nextCoord)];
+          const hasTerrainOverride = terrainId !== undefined
+            && Object.prototype.hasOwnProperty.call(movementProfile.terrainCosts ?? {}, terrainId);
+          const enteredCost = terrainId === undefined
+            ? null
+            : hasTerrainOverride
+              ? movementProfile.terrainCosts![terrainId] ?? null
+              : movementProfile.terrainMode === "respect_walkable"
+                && content.terrainTypes[terrainId]?.walkable !== true
+                ? null
+                : movementProfile.defaultTerrainCost;
+          if (enteredCost === null || nextCell.distance + enteredCost !== currentCell.distance) {
+            throw new Error("Game checkpoint formation navigation nextCoord is not an equal-optimal field link.");
+          }
+        } else if (
           !currentCell.nextCoord
           || navigation.nextCoord.q !== currentCell.nextCoord.q
           || navigation.nextCoord.r !== currentCell.nextCoord.r
@@ -7284,6 +7816,14 @@ export class TowerDefenseGame {
           }
         }
       }
+    }
+    if (
+      checkpointVanguardProtectionTransactionsThisTick !== undefined
+      && checkpointVanguardProtectionTransactionsThisTick !== checkpointVanguardInterceptionEventCount
+    ) {
+      throw new Error(
+        "Game checkpoint enemyBehaviors protectionRuntime.transactionsThisTick must equal this tick's vanguardDamageIntercepted event count."
+      );
     }
     for (const transitionEvent of checkpointTransitionEvents) {
       if (transitionEvent.index >= eventCursor) {
@@ -7457,6 +7997,18 @@ export class TowerDefenseGame {
         ]))
       : {};
     this.enemyExposures = cloneEnemyExposureStates(state.reactions?.exposures.enemies ?? {});
+    this.enemyComponentStates = Object.fromEntries(Object.entries(state.enemyBehaviors?.components ?? {}).map(([enemyId, components]) => [
+      enemyId,
+      Object.fromEntries(Object.entries(components).map(([componentId, component]) => [
+        componentId,
+        {
+          hp: component.hp,
+          maxHp: component.maxHp,
+          ...(component.shield === undefined ? {} : { shield: { ...component.shield } })
+        }
+      ]))
+    ]));
+    this.vanguardProtectionTransactionsThisTick = state.enemyBehaviors?.protectionRuntime?.transactionsThisTick ?? 0;
     this.initialRngState = cloneCheckpointJson(initialRng);
     this.rng = SeededRng.fromState(currentRng);
 
@@ -7563,6 +8115,7 @@ export class TowerDefenseGame {
   private buildSnapshot(copyStaticState: boolean): GameSnapshot {
     const combat = this.buildCombatState();
     const reactions = this.buildReactionState();
+    const enemyBehaviors = this.buildEnemyBehaviorsState();
     const navigation = this.buildNavigationSnapshot();
     const elevation = this.buildElevationSnapshot(copyStaticState);
     const terraforming = this.activeTerraformingMechanics
@@ -8033,6 +8586,7 @@ export class TowerDefenseGame {
       ...(logistics === undefined ? {} : { logistics }),
       ...(director === undefined ? {} : { director }),
       ...(quests === undefined ? {} : { quests }),
+      ...(enemyBehaviors === undefined ? {} : { enemyBehaviors }),
       scriptState: {
         values: this.cloneScriptValues(),
         diagnostics: this.scriptDiagnostics.map((diagnostic) => ({ ...diagnostic })),
@@ -8178,6 +8732,7 @@ export class TowerDefenseGame {
     event: Record<string, unknown>,
     parentTraceSequence?: number
   ): void {
+    const machineComponent = this.scriptMachineComponentContext(eventName, event);
     for (const machine of script.stateMachines ?? []) {
       const machineContexts = new Set<string>();
       for (const binding of machine.bindings) {
@@ -8193,7 +8748,8 @@ export class TowerDefenseGame {
             state,
             stateKey: contextId,
             event,
-            eventName
+            eventName,
+            ...(machineComponent === undefined ? {} : { machineComponent })
           };
           const machineStates = (this.scriptMachines[script.id] ??= {});
           const contexts = (machineStates[machine.id] ??= {});
@@ -8223,7 +8779,11 @@ export class TowerDefenseGame {
               machine,
               runtime,
               eventName,
-              { ...root, machine: { ...runtime } } as unknown as TowerScriptMachineExpressionContextV1,
+              {
+                ...root,
+                ...(context.machineComponent === undefined ? {} : { component: context.machineComponent }),
+                machine: { ...runtime }
+              } as unknown as TowerScriptMachineExpressionContextV1,
               this.missionElapsed
             );
             if (!plan) continue;
@@ -8302,6 +8862,7 @@ export class TowerDefenseGame {
     const runtime = this.scriptMachines[context.script.id]?.[machine.id]?.[context.stateKey];
     const root = {
       ...this.scriptExpressionContext(context),
+      ...(context.machineComponent === undefined ? {} : { component: context.machineComponent }),
       ...(runtime ? { machine: { ...runtime } } : {})
     };
     for (const [actionIndex, action] of actions.entries()) {
@@ -8645,6 +9206,39 @@ export class TowerDefenseGame {
     };
   }
 
+  private scriptMachineComponentContext(
+    eventName: TowerScriptEventName,
+    event: Record<string, unknown>
+  ): Readonly<Record<string, unknown>> | undefined {
+    if (eventName !== "bossComponentDamaged" && eventName !== "bossComponentDestroyed") return undefined;
+    const enemyTypeId = event.enemyTypeId;
+    const componentId = event.componentId;
+    if (typeof enemyTypeId !== "string" || typeof componentId !== "string") return undefined;
+    const authored = this.activeEnemyBehaviors?.bosses?.[enemyTypeId]?.components[componentId];
+    if (!authored) return undefined;
+    const hp = Number(event.currentHp);
+    const maxHp = Number(event.maxHp);
+    const currentShield = Number(event.currentShield);
+    const shieldCapacity = Number(event.shieldCapacity);
+    const shield = shieldCapacity > 0
+      ? Object.freeze({ current: currentShield, capacity: shieldCapacity, ratio: currentShield / shieldCapacity })
+      : null;
+    return Object.freeze({
+      schemaVersion: 1,
+      enemyId: String(event.enemyId),
+      enemyTypeId,
+      id: componentId,
+      label: authored.label ?? null,
+      hp,
+      maxHp,
+      hpRatio: hp / maxHp,
+      destroyed: hp === 0,
+      tags: Object.freeze([...(authored.tags ?? [])].sort(compareBinary)),
+      disablesAbilities: Object.freeze([...(authored.disablesAbilities ?? [])].sort(compareBinary)),
+      shield
+    });
+  }
+
   private applyScriptAction(
     action: TowerScriptAction,
     context: TowerScriptExecutionContext,
@@ -8839,6 +9433,7 @@ export class TowerDefenseGame {
         if (!enemy) throw new Error(`Unknown enemy type "${action.enemyTypeId}".`);
         this.enemies.push(enemy);
       }
+      this.vanguardProtectionIndex = undefined;
       return;
     }
     if (action.action === "setTileTerrain" || action.action === "restoreTileTerrain") {
@@ -10086,6 +10681,7 @@ export class TowerDefenseGame {
         else delete navigation.nextCoord;
         navigation.edgeProgress = 0;
         enemy.pathProgress = navigation.stepsEntered;
+        this.vanguardProtectionIndex = undefined;
       };
     } else {
       const track = this.enemyTrack(enemy);
@@ -10731,7 +11327,60 @@ export class TowerDefenseGame {
       enemy.pathProgress = enemy.navigation.stepsEntered + enemy.navigation.edgeProgress;
     }
     this.initializeEnemyShield(enemy);
+    this.initializeEnemyComponents(enemy);
     return enemy;
+  }
+
+  private initializeEnemyComponents(enemy: EnemyState): void {
+    const authored = this.activeEnemyBehaviors?.bosses?.[enemy.typeId]?.components;
+    if (!authored) return;
+    const multiplier = this.difficulty.enemyHpMultiplier ?? 1;
+    this.enemyComponentStates[enemy.id] = Object.fromEntries(Object.keys(authored).sort(compareBinary).map((componentId) => {
+      const definition = authored[componentId]!;
+      const maxHp = definition.maxHp * multiplier;
+      return [componentId, {
+        hp: maxHp,
+        maxHp,
+        ...(definition.shield === undefined ? {} : {
+          shield: {
+            current: definition.shield.capacity,
+            capacity: definition.shield.capacity,
+            regenerationDelayRemaining: 0
+          }
+        })
+      }];
+    }));
+  }
+
+  private enemyAbilityEnabled(
+    enemy: EnemyState,
+    abilityId: "towerAttack" | "towerDisrupt" | "healAura"
+  ): boolean {
+    const definitions = this.activeEnemyBehaviors?.bosses?.[enemy.typeId]?.components;
+    const states = this.enemyComponentStates[enemy.id];
+    if (!definitions || !states) return true;
+    for (const componentId of Object.keys(definitions).sort(compareBinary)) {
+      if ((states[componentId]?.hp ?? 0) <= 0 && definitions[componentId]?.disablesAbilities?.includes(abilityId)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private towerComponentTargetId(enemy: EnemyState, towerTypeId: string): string | undefined {
+    const binding = this.activeEnemyBehaviors?.targeting?.towers[towerTypeId];
+    const definitions = this.activeEnemyBehaviors?.bosses?.[enemy.typeId]?.components;
+    const states = this.enemyComponentStates[enemy.id];
+    if (!binding || !definitions || !states) return undefined;
+    const componentIds = Object.keys(definitions).sort(compareBinary);
+    for (const tag of binding.priorityTags) {
+      const componentId = componentIds.find((candidateId) => (
+        (states[candidateId]?.hp ?? 0) > 0
+        && definitions[candidateId]?.tags?.includes(tag)
+      ));
+      if (componentId !== undefined) return componentId;
+    }
+    return undefined;
   }
 
   private initializeEnemyShield(enemy: EnemyState): void {
@@ -10888,10 +11537,10 @@ export class TowerDefenseGame {
   }
 
   private updateShieldRegeneration(delta: number): void {
-    if (delta <= 0 || !this.combatShieldDefinitions) return;
+    if (delta <= 0 || (!this.combatShieldDefinitions && !this.activeEnemyBehaviors)) return;
     const regenerate = (
       state: ShieldStateV1,
-      definition: NonNullable<ActiveCombatShieldDefinitions["enemies"][string]>,
+      definition: { readonly regeneration?: { readonly ratePerUnit: number; readonly delayAfterDamage?: number } },
       emitFull: (previous: number, amount: number) => void
     ) => {
       const regeneration = definition.regeneration;
@@ -10912,7 +11561,7 @@ export class TowerDefenseGame {
 
     for (const enemy of this.enemies) {
       const state = this.enemyShields[enemy.id];
-      const definition = this.combatShieldDefinitions.enemies[enemy.typeId];
+      const definition = this.combatShieldDefinitions?.enemies[enemy.typeId];
       if (!state || !definition) continue;
       regenerate(state, definition, (previous, amount) => {
         this.lastEvents.push({
@@ -10929,7 +11578,7 @@ export class TowerDefenseGame {
     }
     for (const tower of this.towers) {
       const state = this.towerShields[tower.id];
-      const definition = this.combatShieldDefinitions.towers[tower.typeId];
+      const definition = this.combatShieldDefinitions?.towers[tower.typeId];
       if (!state || !definition) continue;
       regenerate(state, definition, (previous, amount) => {
         this.lastEvents.push({
@@ -10943,6 +11592,17 @@ export class TowerDefenseGame {
           amount
         });
       });
+    }
+    for (const enemy of this.enemies) {
+      const definitions = this.activeEnemyBehaviors?.bosses?.[enemy.typeId]?.components;
+      const states = this.enemyComponentStates[enemy.id];
+      if (!definitions || !states) continue;
+      for (const componentId of Object.keys(definitions).sort(compareBinary)) {
+        const definition = definitions[componentId];
+        const state = states[componentId]?.shield;
+        if (!definition?.shield || !state) continue;
+        regenerate(state, definition.shield, () => {});
+      }
     }
   }
 
@@ -11164,9 +11824,13 @@ export class TowerDefenseGame {
 
   private moveDynamicEnemies(delta: number): void {
     this.stabilizeDynamicEnemyNavigation();
+    const formationIndex = this.buildFormationTickIndex();
     const blockingActive = this.heroBlockingActive();
     const blockedEnemyIds = new Set(blockingActive ? this.deriveHeroBlockedEnemyIds() : []);
-    const enemies = blockingActive ? [...this.enemies].sort((left, right) => compareBinary(left.id, right.id)) : this.enemies;
+    if (formationIndex !== undefined) this.enemies.sort((left, right) => compareBinary(left.id, right.id));
+    const enemies = blockingActive && formationIndex === undefined
+      ? [...this.enemies].sort((left, right) => compareBinary(left.id, right.id))
+      : this.enemies;
     for (const enemy of enemies) {
       if (enemy.hp <= 0 || !enemy.navigation || !enemy.routeId) continue;
       const type = this.enemyTypes[enemy.typeId];
@@ -11200,8 +11864,14 @@ export class TowerDefenseGame {
           if (cell.distance === 0) this.leakDynamicEnemy(enemy, type);
           break;
         }
-        navigation.nextCoord = { q: cell.nextCoord.q, r: cell.nextCoord.r };
-        const enteredCost = lookup.enteredCost(cell);
+        const selectedNextCoord = navigation.edgeProgress > 0 && navigation.nextCoord
+          ? navigation.nextCoord
+          : this.selectFormationNextCoord(enemy, field, formationIndex) ?? cell.nextCoord;
+        const selectedNextCell = lookup.get(selectedNextCoord);
+        const enteredCost = selectedNextCell === undefined
+          ? undefined
+          : cell.distance - selectedNextCell.distance;
+        navigation.nextCoord = { q: selectedNextCoord.q, r: selectedNextCoord.r };
         if (enteredCost === undefined || movementBudget <= 0) {
           enemy.pathProgress = navigation.stepsEntered + navigation.edgeProgress;
           break;
@@ -11213,7 +11883,7 @@ export class TowerDefenseGame {
           break;
         }
         movementBudget = Math.max(0, movementBudget - remainingCost);
-        navigation.currentCoord = { q: cell.nextCoord.q, r: cell.nextCoord.r };
+        navigation.currentCoord = { q: selectedNextCoord.q, r: selectedNextCoord.r };
         navigation.edgeProgress = 0;
         navigation.stepsEntered += 1;
         enemy.pathProgress = navigation.stepsEntered;
@@ -11240,6 +11910,158 @@ export class TowerDefenseGame {
         if (this.tryAcquireHeroBlock(enemy, lookup, blockedEnemyIds)) break;
       }
     }
+  }
+
+  private buildFormationTickIndex(): FormationTickIndexV1 | undefined {
+    const assignments = this.activeFormationAssignments;
+    const resolver = this.navigationResolver;
+    const lookupCache = this.navigationFieldLookupCache;
+    if (!assignments || !resolver || !lookupCache) return undefined;
+
+    const observations = new Map<string, FormationTickObservationV1>();
+    const mutableBuckets = new Map<string, string[]>();
+    const partitionKeys = new Set<string>();
+    const enemies = this.enemies
+      .filter((enemy) => enemy.hp > 0 && enemy.navigation && enemy.routeId && assignments.has(enemy.typeId))
+      .sort((left, right) => compareBinary(left.id, right.id));
+
+    for (const enemy of enemies) {
+      const navigation = enemy.navigation!;
+      const assignment = assignments.get(enemy.typeId)!;
+      const field = this.navigationField(navigation.movementProfileId, enemy.routeId!);
+      const lookup = lookupCache.get(field);
+      const anchorCoord = navigation.edgeProgress >= 0.5 && navigation.nextCoord
+        ? navigation.nextCoord
+        : navigation.currentCoord;
+      const remainingCost = lookup.remainingCost(navigation);
+      if (!Number.isFinite(remainingCost)) continue;
+      const fieldKey = JSON.stringify([
+        assignment.cohortId,
+        navigation.movementProfileId,
+        field.goal.q,
+        field.goal.r
+      ]);
+      const observation = Object.freeze({
+        enemyId: enemy.id,
+        cohortId: assignment.cohortId,
+        role: assignment.role,
+        steering: assignment.steering,
+        anchorCoord: Object.freeze({ q: anchorCoord.q, r: anchorCoord.r }),
+        fieldKey,
+        remainingCostMilli: Math.round(remainingCost)
+      });
+      observations.set(enemy.id, observation);
+      partitionKeys.add(fieldKey);
+      const bucketKey = `${fieldKey}:${coordKey(anchorCoord)}`;
+      const bucket = mutableBuckets.get(bucketKey) ?? [];
+      bucket.push(enemy.id);
+      mutableBuckets.set(bucketKey, bucket);
+      this.formationSteeringStats.fieldReadCount += 1;
+      this.formationSteeringStats.bucketEntryCount += 1;
+    }
+
+    this.formationSteeringStats.bucketBuildCount += partitionKeys.size;
+    const buckets = new Map<string, readonly string[]>();
+    for (const [key, ids] of mutableBuckets) {
+      buckets.set(key, Object.freeze(ids.sort(compareBinary)));
+    }
+    return { observations, buckets };
+  }
+
+  private collectFormationNeighbors(
+    self: FormationTickObservationV1,
+    index: FormationTickIndexV1
+  ): readonly FormationSteeringNeighborV1[] {
+    const neighborIds: string[] = [];
+    let inspected = 0;
+    const coords = this.map.topology.tilesWithin(self.anchorCoord, self.steering.neighborRadius)
+      .sort((left, right) => (
+        this.map.topology.distance(self.anchorCoord, left) - this.map.topology.distance(self.anchorCoord, right)
+        || left.r - right.r
+        || left.q - right.q
+      ));
+    for (const coord of coords) {
+      const ids = index.buckets.get(`${self.fieldKey}:${coordKey(coord)}`) ?? [];
+      for (const enemyId of ids) {
+        if (inspected >= 32 || neighborIds.length >= 16) break;
+        inspected += 1;
+        if (enemyId !== self.enemyId) neighborIds.push(enemyId);
+      }
+      if (inspected >= 32 || neighborIds.length >= 16) break;
+    }
+    this.formationSteeringStats.neighborEntriesInspected += inspected;
+
+    const neighbors = neighborIds
+      .map((enemyId) => index.observations.get(enemyId))
+      .filter((value): value is FormationTickObservationV1 => value !== undefined)
+      .sort((left, right) => (
+        this.map.topology.distance(self.anchorCoord, left.anchorCoord)
+          - this.map.topology.distance(self.anchorCoord, right.anchorCoord)
+        || compareBinary(left.enemyId, right.enemyId)
+      ))
+      .slice(0, 16)
+      .map((neighbor) => Object.freeze({
+        enemyId: neighbor.enemyId,
+        role: neighbor.role,
+        anchorCoord: neighbor.anchorCoord,
+        remainingCostMilli: neighbor.remainingCostMilli
+      }));
+    this.formationSteeringStats.maximumNeighborCount = Math.max(
+      this.formationSteeringStats.maximumNeighborCount,
+      neighbors.length
+    );
+    return Object.freeze(neighbors);
+  }
+
+  private navigationDestinationCost(movementProfileId: string, coord: HexCoord): number | undefined {
+    const profile = this.activeNavigationProfile?.movementProfiles[movementProfileId];
+    const terrain = this.map.getTile(coord)?.terrain;
+    if (!profile || terrain === undefined) return undefined;
+    if (Object.prototype.hasOwnProperty.call(profile.terrainCosts ?? {}, terrain)) {
+      return profile.terrainCosts![terrain] ?? undefined;
+    }
+    if (profile.terrainMode === "respect_walkable" && this.content.terrainTypes[terrain]?.walkable !== true) {
+      return undefined;
+    }
+    return profile.defaultTerrainCost ?? undefined;
+  }
+
+  private selectFormationNextCoord(
+    enemy: EnemyState,
+    field: NavigationFieldResult,
+    index: FormationTickIndexV1 | undefined
+  ): HexCoord | undefined {
+    const navigation = enemy.navigation;
+    const lookup = this.navigationFieldLookupCache?.get(field);
+    const currentCell = navigation && lookup?.get(navigation.currentCoord);
+    if (!navigation || navigation.edgeProgress !== 0 || !index || !lookup || !currentCell?.nextCoord) return undefined;
+    const self = index.observations.get(enemy.id);
+    if (!self) return undefined;
+
+    const candidates = this.map.topology.neighbors(navigation.currentCoord)
+      .map((coord) => ({ coord, cell: lookup.get(coord) }))
+      .filter((entry): entry is { coord: HexCoord; cell: NonNullable<typeof currentCell> } => {
+        if (!entry.cell) return false;
+        const enteredCost = this.navigationDestinationCost(navigation.movementProfileId, entry.coord);
+        return enteredCost !== undefined && entry.cell.distance + enteredCost === currentCell.distance;
+      })
+      .map((entry) => Object.freeze({
+        coord: Object.freeze({ q: entry.coord.q, r: entry.coord.r }),
+        remainingCostMilli: entry.cell.distance
+      }));
+    if (candidates.length === 0) return undefined;
+
+    this.formationSteeringStats.plannerInvocationCount += 1;
+    return selectFormationSteeringNextV1({
+      schemaVersion: 1,
+      grid: this.map.grid,
+      currentCoord: navigation.currentCoord,
+      canonicalNextCoord: currentCell.nextCoord,
+      candidates,
+      self: { enemyId: enemy.id, cohortId: self.cohortId, role: self.role },
+      neighbors: this.collectFormationNeighbors(self, index),
+      steering: self.steering
+    }).nextCoord;
   }
 
   private heroBlockingActive(): boolean {
@@ -11380,7 +12202,7 @@ export class TowerDefenseGame {
         continue;
       }
       const aura = this.enemyTypes[healer.typeId]?.healAura;
-      if (!aura || aura.radius <= 0 || aura.healPerUnit <= 0) {
+      if (!aura || !this.enemyAbilityEnabled(healer, "healAura") || aura.radius <= 0 || aura.healPerUnit <= 0) {
         continue;
       }
       const healerCoord = this.enemyCoord(healer);
@@ -11434,7 +12256,8 @@ export class TowerDefenseGame {
         continue;
       }
       const disrupt = this.enemyTypes[enemy.typeId]?.towerDisrupt;
-      if (!disrupt || disrupt.interval <= 0 || disrupt.duration <= 0) {
+      if (!disrupt || !this.enemyAbilityEnabled(enemy, "towerDisrupt") || disrupt.interval <= 0 || disrupt.duration <= 0) {
+        if (!this.enemyAbilityEnabled(enemy, "towerDisrupt")) delete enemy.disruptTargetTowerIds;
         continue;
       }
       enemy.disruptCooldown = (enemy.disruptCooldown ?? disrupt.interval) - delta;
@@ -11499,7 +12322,7 @@ export class TowerDefenseGame {
         continue;
       }
       const attack = this.enemyTypes[enemy.typeId]?.towerAttack;
-      if (!attack || attack.interval <= 0 || attack.damage <= 0) {
+      if (!attack || !this.enemyAbilityEnabled(enemy, "towerAttack") || attack.interval <= 0 || attack.damage <= 0) {
         continue;
       }
       enemy.towerAttackCooldown = (enemy.towerAttackCooldown ?? attack.interval) - delta;
@@ -12881,13 +13704,166 @@ export class TowerDefenseGame {
     return this.sunlightPathKeys.has(this.routePathKey(enemy.routeId, order));
   }
 
+  private buildVanguardProtectionIndex(): VanguardProtectionIndexV1 | undefined {
+    if (this.vanguardProtectionIndex) return this.vanguardProtectionIndex;
+    const assignments = this.activeFormationAssignments;
+    if (!assignments) return undefined;
+    const mutable = new Map<string, EnemyState[]>();
+    for (const enemy of [...this.enemies].sort((left, right) => compareBinary(left.id, right.id))) {
+      const assignment = assignments.get(enemy.typeId);
+      if (enemy.hp <= 0 || assignment?.role !== "vanguard" || !assignment.protection) continue;
+      const key = `${assignment.cohortId}:${coordKey(this.enemyCoord(enemy))}`;
+      const bucket = mutable.get(key) ?? [];
+      bucket.push(enemy);
+      mutable.set(key, bucket);
+    }
+    const buckets = new Map<string, readonly EnemyState[]>();
+    for (const [key, enemies] of mutable) buckets.set(key, Object.freeze(enemies));
+    this.vanguardProtectionIndex = { buckets };
+    return this.vanguardProtectionIndex;
+  }
+
+  private collectVanguardProtectionCandidates(
+    cohortId: string,
+    targetCoord: HexCoord,
+    radius: number,
+    index: VanguardProtectionIndexV1
+  ): readonly EnemyState[] {
+    const candidates: EnemyState[] = [];
+    const coords = this.map.topology.tilesWithin(targetCoord, radius);
+    for (let distance = 0; distance <= radius && candidates.length < ENEMY_BEHAVIORS_LIMITS.protectionCandidatesPerPacket; distance += 1) {
+      const buckets = coords
+        .filter((coord) => this.map.topology.distance(targetCoord, coord) === distance)
+        .map((coord) => index.buckets.get(`${cohortId}:${coordKey(coord)}`) ?? [])
+        .filter((bucket) => bucket.length > 0);
+      const cursors = buckets.map(() => 0);
+      while (candidates.length < ENEMY_BEHAVIORS_LIMITS.protectionCandidatesPerPacket) {
+        let selectedBucket = -1;
+        let selected: EnemyState | undefined;
+        for (let bucketIndex = 0; bucketIndex < buckets.length; bucketIndex += 1) {
+          const candidate = buckets[bucketIndex]![cursors[bucketIndex]!];
+          if (candidate && (!selected || compareBinary(candidate.id, selected.id) < 0)) {
+            selected = candidate;
+            selectedBucket = bucketIndex;
+          }
+        }
+        if (!selected || selectedBucket < 0) break;
+        cursors[selectedBucket] = cursors[selectedBucket]! + 1;
+        candidates.push(selected);
+      }
+    }
+    this.vanguardProtectionMaximumCandidateCount = Math.max(
+      this.vanguardProtectionMaximumCandidateCount,
+      candidates.length
+    );
+    return Object.freeze(candidates);
+  }
+
+  private planVanguardDamageInterception(
+    packet: DamagePacket,
+    target: EnemyState
+  ): { readonly packet: DamagePacket; readonly enemy: EnemyState } | undefined {
+    const assignment = this.activeFormationAssignments?.get(target.typeId);
+    const protection = assignment?.protection;
+    if (
+      target.hp <= 0
+      || !protection
+      || (assignment.role !== "body" && assignment.role !== "support")
+      || packet.target.kind !== "enemy"
+      || packet.amount <= 0
+      || packet.source.kind === "leak"
+      || !protection.sourceKinds.includes(packet.source.kind)
+      || this.vanguardProtectionTransactionsThisTick >= ENEMY_BEHAVIORS_LIMITS.protectionTransactionsPerTick
+    ) return undefined;
+    const index = this.buildVanguardProtectionIndex();
+    if (!index) return undefined;
+    const candidates = this.collectVanguardProtectionCandidates(
+      assignment.cohortId,
+      this.enemyCoord(target),
+      protection.radius,
+      index
+    );
+    let vanguard: EnemyState | undefined;
+    for (const candidate of candidates) {
+      this.vanguardProtectionCandidatesInspected += 1;
+      const shield = this.enemyShields[candidate.id];
+      if (candidate.hp > 0 && shield && shield.current > 0) {
+        vanguard = candidate;
+        break;
+      }
+    }
+    if (!vanguard) return undefined;
+    this.vanguardProtectionTransactionsThisTick += 1;
+    this.lastEvents.push({
+      type: "vanguardDamageIntercepted",
+      cohortId: assignment.cohortId,
+      protectedEnemyId: target.id,
+      protectedEnemyTypeId: target.typeId,
+      vanguardEnemyId: vanguard.id,
+      vanguardEnemyTypeId: vanguard.typeId,
+      sourceKind: packet.source.kind,
+      requestedAmount: packet.amount,
+      originalComponentId: packet.target.componentId ?? null
+    });
+    return {
+      packet: {
+        ...packet,
+        target: { kind: "enemy", enemyId: vanguard.id, enemyTypeId: vanguard.typeId }
+      },
+      enemy: vanguard
+    };
+  }
+
+  private enemyDamageResolutionContext(
+    enemy: EnemyState,
+    packet: DamagePacket
+  ): DamageResolutionContext | undefined {
+    const armorMatrix = resolveEnemyArmorMatrix(this.activeCombatMechanics, enemy.typeId);
+    const resistances = this.activeCombatMechanics?.enemyResistances[enemy.typeId]
+      ?? this.enemyTypes[enemy.typeId]?.resistances;
+    const marks = this.activeMarkDamageContext(enemy);
+    const legacyDefinition = this.enemyTypes[enemy.typeId]?.armor;
+    const towerTypeId = packet.source.kind === "tower" ? packet.source.towerTypeId : undefined;
+    const legacyArmor = legacyDefinition?.kind === "pierce_only"
+      ? {
+          kind: "pierce_only" as const,
+          bypassed: packet.tags?.includes("armor_piercing") === true
+            || (towerTypeId !== undefined && this.piercesSniperArmor(towerTypeId)),
+          chipDamage: towerTypeId === undefined
+            ? 0
+            : this.armoredChipDamageForTower(towerTypeId, legacyDefinition.chipDamageByTowerId)
+        }
+      : undefined;
+    const context: DamageResolutionContext = {
+      ...(armorMatrix === undefined ? {} : { armorMatrix }),
+      ...(resistances === undefined ? {} : { resistances }),
+      ...(legacyArmor === undefined ? {} : { legacyArmor }),
+      ...(marks === undefined ? {} : { marks })
+    };
+    return Object.keys(context).length === 0 ? undefined : context;
+  }
+
   private applyResolvedEnemyDamage(
     enemy: EnemyState,
     amount: number,
     source: DamageSourceRef,
     options: ResolvedEnemyDamageOptions = {}
-  ): DamageApplicationResult {
-    const armorMatrix = resolveEnemyArmorMatrix(this.activeCombatMechanics, enemy.typeId);
+  ): RuntimeDamageApplicationResult {
+    const componentDefinition = options.componentId === undefined
+      ? undefined
+      : this.activeEnemyBehaviors?.bosses?.[enemy.typeId]?.components[options.componentId];
+    const componentArmor = componentDefinition?.armorTypeId === undefined
+      ? undefined
+      : this.activeCombatMechanics?.armorTypes[componentDefinition.armorTypeId];
+    const armorMatrix = componentDefinition
+      ? componentArmor === undefined
+        ? undefined
+        : {
+            armorTypeId: componentDefinition.armorTypeId!,
+            ...(componentArmor.defaultMultiplier === undefined ? {} : { defaultMultiplier: componentArmor.defaultMultiplier }),
+            multipliers: componentArmor.multipliers
+          }
+      : resolveEnemyArmorMatrix(this.activeCombatMechanics, enemy.typeId);
     const resistances = this.activeCombatMechanics?.enemyResistances[enemy.typeId];
     const marks = this.activeMarkDamageContext(enemy);
     const context: DamageResolutionContext = {
@@ -12900,7 +13876,12 @@ export class TowerDefenseGame {
       {
         amount,
         source,
-        target: { kind: "enemy", enemyId: enemy.id, enemyTypeId: enemy.typeId },
+        target: {
+          kind: "enemy",
+          enemyId: enemy.id,
+          enemyTypeId: enemy.typeId,
+          ...(options.componentId === undefined ? {} : { componentId: options.componentId })
+        },
         ...(options.damageType === undefined ? {} : { damageType: options.damageType }),
         ...(options.tags?.length ? { tags: options.tags } : {}),
         ...(options.modifiers?.length ? { modifiers: options.modifiers } : {})
@@ -12960,13 +13941,40 @@ export class TowerDefenseGame {
     context: DamageResolutionContext | undefined,
     mutableTarget: MutableDamageTarget,
     reactionRuntime?: ReactionRuntimeContext
-  ): DamageApplicationResult {
+  ): RuntimeDamageApplicationResult {
+    if (mutableTarget.kind === "enemy") {
+      const initialComponentId = packet.target.kind === "enemy" ? packet.target.componentId : undefined;
+      const initialComponentState = initialComponentId === undefined
+        ? undefined
+        : this.enemyComponentStates[mutableTarget.enemy.id]?.[initialComponentId];
+      if (
+        packet.target.kind !== "enemy"
+        || packet.target.enemyId !== mutableTarget.enemy.id
+        || packet.target.enemyTypeId !== mutableTarget.enemy.typeId
+        || (initialComponentId !== undefined && initialComponentState === undefined)
+      ) {
+        throw new Error("Damage packet target does not match mutable target or authored component.");
+      }
+    }
+    if (mutableTarget.kind === "enemy") {
+      const interception = this.planVanguardDamageInterception(packet, mutableTarget.enemy);
+      if (interception) {
+        packet = interception.packet;
+        mutableTarget = { kind: "enemy", enemy: interception.enemy };
+        context = this.enemyDamageResolutionContext(interception.enemy, packet);
+      }
+    }
+    const componentId = packet.target.kind === "enemy" ? packet.target.componentId : undefined;
+    const componentState = componentId === undefined || mutableTarget.kind !== "enemy"
+      ? undefined
+      : this.enemyComponentStates[mutableTarget.enemy.id]?.[componentId];
     const targetMatches = mutableTarget.kind === "core"
       ? packet.target.kind === "core"
       : mutableTarget.kind === "enemy"
         ? packet.target.kind === "enemy"
           && packet.target.enemyId === mutableTarget.enemy.id
           && packet.target.enemyTypeId === mutableTarget.enemy.typeId
+          && (packet.target.componentId === undefined || componentState !== undefined)
         : mutableTarget.kind === "tower"
           ? packet.target.kind === "tower"
             && packet.target.towerId === mutableTarget.tower.id
@@ -12977,7 +13985,28 @@ export class TowerDefenseGame {
     if (!targetMatches) {
       throw new Error("Damage packet target does not match mutable target.");
     }
-    const resolvedDamage = DamageResolver.resolve(packet, context);
+    const componentDefinition = componentId === undefined || mutableTarget.kind !== "enemy"
+      ? undefined
+      : this.activeEnemyBehaviors?.bosses?.[mutableTarget.enemy.typeId]?.components[componentId];
+    const previousComponentHp = componentState?.hp;
+    const previousComponentShield = componentState?.shield?.current ?? 0;
+    const componentShieldCapacity = componentState?.shield?.capacity ?? 0;
+    const componentArmor = componentDefinition?.armorTypeId === undefined
+      ? undefined
+      : this.activeCombatMechanics?.armorTypes[componentDefinition.armorTypeId];
+    const componentContext = componentDefinition === undefined
+      ? context
+      : {
+          ...(context ?? {}),
+          armorMatrix: componentArmor === undefined
+            ? undefined
+            : {
+                armorTypeId: componentDefinition.armorTypeId!,
+                ...(componentArmor.defaultMultiplier === undefined ? {} : { defaultMultiplier: componentArmor.defaultMultiplier }),
+                multipliers: componentArmor.multipliers
+              }
+        };
+    const resolvedDamage = DamageResolver.resolve(packet, componentContext);
     const capturedReactionState = mutableTarget.kind === "enemy" && this.activeReactionsMechanics
       ? {
           coord: this.enemyCoord(mutableTarget.enemy),
@@ -13027,10 +14056,9 @@ export class TowerDefenseGame {
       resolvedDamage.finalAmount > 0
       && (mutableTarget.kind === "enemy" || mutableTarget.kind === "tower")
     ) {
-      const isEnemy = mutableTarget.kind === "enemy";
-      const entity = isEnemy ? mutableTarget.enemy : mutableTarget.tower;
-      const state = isEnemy ? this.enemyShields[entity.id] : this.towerShields[entity.id];
-      const definition = isEnemy
+      const entity = mutableTarget.kind === "enemy" ? mutableTarget.enemy : mutableTarget.tower;
+      const state = mutableTarget.kind === "enemy" ? this.enemyShields[entity.id] : this.towerShields[entity.id];
+      const definition = mutableTarget.kind === "enemy"
         ? this.combatShieldDefinitions?.enemies[entity.typeId]
         : this.combatShieldDefinitions?.towers[entity.typeId];
       if (state && definition) {
@@ -13040,7 +14068,7 @@ export class TowerDefenseGame {
         hpDamage = resolvedDamage.finalAmount - shieldAbsorbed;
         state.current = previous - shieldAbsorbed;
         if (shieldAbsorbed > 0) {
-          if (isEnemy) {
+          if (mutableTarget.kind === "enemy") {
             this.lastEvents.push({
               type: "enemyShieldChanged",
               enemyId: entity.id,
@@ -13071,12 +14099,23 @@ export class TowerDefenseGame {
         }
       }
     }
+    if (resolvedDamage.finalAmount > 0 && componentState && componentDefinition?.shield) {
+      const shield = componentState.shield;
+      if (!shield) throw new Error("Boss component shield state is missing.");
+      shield.regenerationDelayRemaining = componentDefinition.shield.regeneration?.delayAfterDamage ?? 0;
+      const absorbed = Math.min(shield.current, hpDamage);
+      shield.current -= absorbed;
+      shieldAbsorbed += absorbed;
+      hpDamage -= absorbed;
+    }
     // Keep the target-specific legacy mutation formulas stable while applying only overflow to HP.
     const resolution: DamageResolution = hpDamage === resolvedDamage.finalAmount
       ? resolvedDamage
       : { ...resolvedDamage, finalAmount: hpDamage };
     const previousEnemyHp = mutableTarget.kind === "enemy" ? mutableTarget.enemy.hp : undefined;
-    if (mutableTarget.kind === "enemy") {
+    if (mutableTarget.kind === "enemy" && componentState) {
+      componentState.hp = Math.max(0, componentState.hp - resolution.finalAmount);
+    } else if (mutableTarget.kind === "enemy") {
       // Zero is the canonical pending-death state. Settlement intentionally stays
       // deferred to removeDeadEnemies(), preserving reward/event ordering exactly once.
       mutableTarget.enemy.hp = Math.max(0, mutableTarget.enemy.hp - resolution.finalAmount);
@@ -13090,6 +14129,36 @@ export class TowerDefenseGame {
     } else {
       mutableTarget.hero.hp = Math.max(0, (mutableTarget.hero.hp ?? 0) - resolution.finalAmount);
     }
+    if (
+      mutableTarget.kind === "enemy"
+      && componentId !== undefined
+      && componentState
+      && previousComponentHp !== undefined
+    ) {
+      const currentComponentShield = componentState.shield?.current ?? 0;
+      const componentHpDamage = previousComponentHp - componentState.hp;
+      const componentShieldAbsorbed = previousComponentShield - currentComponentShield;
+      if (componentHpDamage > 0 || componentShieldAbsorbed > 0) {
+        const payload = {
+          enemyId: mutableTarget.enemy.id,
+          enemyTypeId: mutableTarget.enemy.typeId,
+          componentId,
+          sourceKind: packet.source.kind,
+          previousHp: previousComponentHp,
+          currentHp: componentState.hp,
+          maxHp: componentState.maxHp,
+          hpDamage: componentHpDamage,
+          previousShield: previousComponentShield,
+          currentShield: currentComponentShield,
+          shieldCapacity: componentShieldCapacity,
+          shieldAbsorbed: componentShieldAbsorbed
+        } as const;
+        this.lastEvents.push({ type: "bossComponentDamaged", ...payload });
+        if (previousComponentHp > 0 && componentState.hp === 0) {
+          this.lastEvents.push({ type: "bossComponentDestroyed", ...payload });
+        }
+      }
+    }
     if (mutableTarget.kind === "enemy") {
       this.consumeResolvedMarks(mutableTarget.enemy, resolvedDamage);
       this.applySourceMarkBindings(mutableTarget.enemy, packet, resolvedDamage);
@@ -13097,7 +14166,12 @@ export class TowerDefenseGame {
         this.planAndApplyReactions(packet, mutableTarget.enemy, resolvedDamage, capturedReactionState, reactionRuntime);
       }
     }
-    return { resolution: resolvedDamage, shieldAbsorbed, hpDamage };
+    return {
+      resolution: resolvedDamage,
+      shieldAbsorbed,
+      hpDamage,
+      ...(mutableTarget.kind === "enemy" ? { enemyTarget: mutableTarget.enemy } : {})
+    };
   }
 
   private planAndApplyReactions(
@@ -13294,14 +14368,15 @@ export class TowerDefenseGame {
     options: DamageResolutionOptions = {}
   ): number {
     const application = this.applyResolvedTowerDamage(tower.typeId, enemy, rawDamage, options, tower.id);
+    const appliedEnemy = application.enemyTarget ?? enemy;
     const damage = application.resolution.finalAmount;
     if (damage > 0) {
-      if (options.applyLegacyStatus !== false) this.applyStatusOnHit(tower.typeId, enemy);
+      if (options.applyLegacyStatus !== false) this.applyStatusOnHit(tower.typeId, appliedEnemy);
       this.lastEvents.push({
         type: "enemyHit",
         towerId: tower.id,
-        enemyId: enemy.id,
-        enemyTypeId: enemy.typeId,
+        enemyId: appliedEnemy.id,
+        enemyTypeId: appliedEnemy.typeId,
         damage
       });
       return damage;
@@ -13311,8 +14386,8 @@ export class TowerDefenseGame {
       this.lastEvents.push({
         type: "enemyArmorBlocked",
         towerId: tower.id,
-        enemyId: enemy.id,
-        enemyTypeId: enemy.typeId,
+        enemyId: appliedEnemy.id,
+        enemyTypeId: appliedEnemy.typeId,
         rawDamage
       });
     }
@@ -13325,7 +14400,7 @@ export class TowerDefenseGame {
     rawDamage: number,
     options: DamageResolutionOptions = {},
     towerId?: string
-  ): DamageApplicationResult {
+  ): RuntimeDamageApplicationResult {
     const modifiers: ModifierSpec[] = [];
     if (this.towerDamageMultiplier !== 1) {
       modifiers.push({
@@ -13390,6 +14465,7 @@ export class TowerDefenseGame {
     };
     return this.applyResolvedEnemyDamage(enemy, rawDamage, source, {
       damageType: options.damageType ?? this.damageTypeOf(towerTypeId),
+      componentId: this.towerComponentTargetId(enemy, towerTypeId),
       ...(tags.length ? { tags } : {}),
       ...(modifiers.length ? { modifiers } : {}),
       context: {
@@ -13537,6 +14613,7 @@ export class TowerDefenseGame {
     }
     if (spawned.length > 0) {
       this.enemies.push(...spawned);
+      this.vanguardProtectionIndex = undefined;
     }
   }
 
@@ -14213,6 +15290,7 @@ export class TowerDefenseGame {
       delete this.enemyShields[enemy.id];
       delete this.enemyMarks[enemy.id];
       delete this.enemyExposures[enemy.id];
+      delete this.enemyComponentStates[enemy.id];
       this.navigationEnemyFields?.delete(enemy.id);
 
       const killedBeforeEndpoint = enemy.navigation
@@ -14240,6 +15318,7 @@ export class TowerDefenseGame {
     }
 
     this.enemies = [...survivors, ...spawned];
+    this.vanguardProtectionIndex = undefined;
   }
 
   private settleArtifactLoot(enemy: EnemyState): void {

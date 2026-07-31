@@ -1,7 +1,9 @@
 import { type GameContentRegistry } from "../content/registry.js";
+import { type VanguardProtectionRuntimeStatsV1 } from "../content/enemy-behaviors-mechanics.js";
 import { type TowerScriptTraceCollector } from "../scripting/trace.js";
 import type { TowerScriptJson } from "../scripting/types.js";
 import { GridMap } from "./map.js";
+import { type FormationSteeringRuntimeStatsV1 } from "./formation-steering.js";
 import { type NavigationAnalysisRequestV1, type NavigationAnalysisV1 } from "./navigation-analysis.js";
 import { type LineOfSightAnalysisRequestV1, type LineOfSightAnalysisV1 } from "./line-of-sight.js";
 import { type GameCheckpointV1 } from "./checkpoint.js";
@@ -89,6 +91,13 @@ export declare class TowerDefenseGame {
     private readonly activeLogisticsSchemaVersion;
     private readonly activeDirectorMechanics;
     private readonly activeQuestMechanics;
+    private readonly activeEnemyBehaviors;
+    private readonly activeFormationAssignments;
+    private formationSteeringStats;
+    private vanguardProtectionIndex;
+    private vanguardProtectionTransactionsThisTick;
+    private vanguardProtectionCandidatesInspected;
+    private vanguardProtectionMaximumCandidateCount;
     private questEntries;
     private readonly scriptedTargetingByTowerType;
     private directorDecisions;
@@ -135,6 +144,7 @@ export declare class TowerDefenseGame {
     private towerShields;
     private enemyMarks;
     private enemyExposures;
+    private enemyComponentStates;
     private enemyCounter;
     private towerCounter;
     private clearedWaveCount;
@@ -286,6 +296,10 @@ export declare class TowerDefenseGame {
     private checkpointIdentity;
     private buildCombatState;
     private buildReactionState;
+    private buildEnemyBehaviorsState;
+    private buildEnemyBehaviorsCheckpointState;
+    getFormationSteeringStats(): FormationSteeringRuntimeStatsV1;
+    getVanguardProtectionStats(): VanguardProtectionRuntimeStatsV1;
     private consumeNavigationAnalysisField;
     private buildNavigationAnalysisFields;
     private navigationDiagnosticPairs;
@@ -314,6 +328,7 @@ export declare class TowerDefenseGame {
     private scriptContexts;
     private scriptStateFor;
     private scriptExpressionContext;
+    private scriptMachineComponentContext;
     private applyScriptAction;
     private applyActiveLegacyTerrainAction;
     private resolveScriptTileTarget;
@@ -367,6 +382,9 @@ export declare class TowerDefenseGame {
     private buildSpawnQueue;
     private spawnDueEnemies;
     private createEnemyState;
+    private initializeEnemyComponents;
+    private enemyAbilityEnabled;
+    private towerComponentTargetId;
     private initializeEnemyShield;
     private initializeTowerShield;
     private runtimeMarkApplicationCount;
@@ -384,6 +402,10 @@ export declare class TowerDefenseGame {
     private buildSunlightTilesSnapshot;
     private moveEnemies;
     private moveDynamicEnemies;
+    private buildFormationTickIndex;
+    private collectFormationNeighbors;
+    private navigationDestinationCost;
+    private selectFormationNextCoord;
     private heroBlockingActive;
     private heroBlockingCandidate;
     private deriveHeroBlockedEnemyIds;
@@ -464,6 +486,10 @@ export declare class TowerDefenseGame {
     private enemyTerrainSpeedFactor;
     private enemyStatusSpeedFactor;
     private isEnemyInSunlight;
+    private buildVanguardProtectionIndex;
+    private collectVanguardProtectionCandidates;
+    private planVanguardDamageInterception;
+    private enemyDamageResolutionContext;
     private applyResolvedEnemyDamage;
     private applyResolvedCoreDamage;
     private applyResolvedTowerEntityDamage;

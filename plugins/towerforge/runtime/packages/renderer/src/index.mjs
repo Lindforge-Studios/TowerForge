@@ -20,6 +20,9 @@ import { projectElevationCues } from "./elevation-presentation.mjs";
 import { projectPhysicsPresentationCues } from "./physics-presentation.mjs";
 import { projectHeroPresentationPoint, projectHeroesPresentation } from "./heroes-presentation.mjs";
 import { projectProceduralJuicePresentation } from "./procedural-juice-presentation.mjs";
+import { projectEnemyComponentsPresentation } from "./enemy-components-presentation.mjs";
+import { projectEnemyFormationsPresentation } from "./enemy-formations-presentation.mjs";
+import { projectVanguardProtectionPresentation } from "./vanguard-protection-presentation.mjs";
 import {
   createProceduralJuicePresentationRuntime,
   createProceduralJuiceWorldSnapshotBuffer
@@ -37,6 +40,9 @@ export * from "./director-presentation.mjs";
 export * from "./quest-presentation.mjs";
 export * from "./procedural-juice-presentation.mjs";
 export * from "./procedural-juice-runtime.mjs";
+export * from "./enemy-components-presentation.mjs";
+export * from "./enemy-formations-presentation.mjs";
+export * from "./vanguard-protection-presentation.mjs";
 export { projectLogisticsPresentation } from "./logistics-power-presentation.mjs";
 
 function ownDataValue(record, key) {
@@ -73,6 +79,8 @@ export class TowerForgeCanvasRenderer {
     this.prevEnemyPos = new Map();
     this.prevTowerPos = new Map();
     this.prevCombat = null;
+    this.enemyComponentsByEnemyId = new Map();
+    this.enemyFormationsByEnemyId = new Map();
     this.prevJuiceSnapshot = null;
     this.proceduralJuiceRuntime = null;
     this.proceduralJuiceWorldSnapshots = null;
@@ -150,6 +158,20 @@ export class TowerForgeCanvasRenderer {
     }
     const towerPositions = new Map();
     for (const tower of snapshot.towers ?? []) towerPositions.set(tower.id, this.center(tower.coord, geom));
+    this.enemyComponentsByEnemyId = new Map();
+    for (const row of projectEnemyComponentsPresentation(snapshot).rows) {
+      const existing = this.enemyComponentsByEnemyId.get(row.enemyId);
+      if (existing) existing.push(row);
+      else this.enemyComponentsByEnemyId.set(row.enemyId, [row]);
+    }
+    this.enemyFormationsByEnemyId = new Map(
+      projectEnemyFormationsPresentation(snapshot).rows.map((row) => [row.enemyId, row])
+    );
+    const vanguardDamageInterceptedCues = projectVanguardProtectionPresentation(snapshot).cues;
+    this.vanguardProtectionCueEnemyIds = new Set(vanguardDamageInterceptedCues.flatMap((cue) => [
+      cue.protectedEnemyId,
+      cue.vanguardEnemyId
+    ]));
 
     this.spawnEffects(presentationSnapshot, geom, positions, towerPositions);
     this.advanceEffects(dt);
@@ -919,6 +941,37 @@ export class TowerForgeCanvasRenderer {
     this.ctx.fillRect(p.x - geom.r * 0.45, p.y - geom.r * 0.62, geom.r * 0.9 * hpRatio, 4);
     const shield = resolveShieldPresentation(snapshot, "enemy", enemy.id);
     if (shield) this.drawShieldRing(p, geom.r * 0.52, shield);
+    const formation = this.enemyFormationsByEnemyId.get(enemy.id);
+    if (formation) {
+      const color = formation.role === "vanguard" ? "#f0b45b"
+        : formation.role === "support" ? "#73bfe8" : "#a79bdc";
+      this.ctx.beginPath();
+      this.ctx.arc(p.x, p.y, geom.r * 0.46, 0, Math.PI * 2);
+      this.ctx.strokeStyle = color;
+      this.ctx.lineWidth = Math.max(1, geom.r * 0.07);
+      this.ctx.stroke();
+    }
+    if (this.vanguardProtectionCueEnemyIds?.has(enemy.id)) {
+      this.ctx.beginPath();
+      this.ctx.arc(p.x, p.y, geom.r * 0.58, 0, Math.PI * 2);
+      this.ctx.strokeStyle = "#f7d774";
+      this.ctx.lineWidth = Math.max(1, geom.r * 0.09);
+      this.ctx.stroke();
+    }
+    const components = this.enemyComponentsByEnemyId.get(enemy.id) ?? [];
+    if (components.length > 0) {
+      const width = geom.r * 0.9;
+      const cellWidth = width / components.length;
+      for (let index = 0; index < components.length; index += 1) {
+        const row = components[index];
+        const x = p.x - width / 2 + index * cellWidth;
+        const y = p.y + geom.r * 0.48;
+        this.ctx.fillStyle = "#1b1d18";
+        this.ctx.fillRect(x, y, Math.max(1, cellWidth - 1), 3);
+        this.ctx.fillStyle = row.destroyed ? this.theme.danger : this.theme.tower;
+        this.ctx.fillRect(x, y, Math.max(0, cellWidth - 1) * row.hpRatio, 3);
+      }
+    }
     this.drawExposureBadges(p, geom, resolveExposurePresentation(snapshot, enemy.id));
     this.drawMarkBadges(p, geom, resolveMarkPresentation(snapshot, enemy.id));
   }

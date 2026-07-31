@@ -329,6 +329,11 @@ export function createTowerScriptNodeCatalog(descriptor) {
     }
     const entries = (names) => names.map((name) => ({ name }));
     const actionDescriptors = descriptor.actions;
+    const completion = isRecord(descriptor.completion) ? descriptor.completion : undefined;
+    const completionCatalog = isRecord(completion?.catalog) ? completion.catalog : undefined;
+    const eventEntries = Array.isArray(completionCatalog?.events)
+        ? completionCatalog.events
+        : entries(descriptor.events);
     return clone({
         schemaVersion: 2,
         towerScriptSchemaVersion: descriptor.schemaVersion,
@@ -344,7 +349,7 @@ export function createTowerScriptNodeCatalog(descriptor) {
             "script", "binding", "handler", "condition", "action", "raw", "behavior_tree", "behavior_selector",
             "behavior_sequence", "behavior_condition", "behavior_action", "state_machine", "state", "transition"
         ],
-        events: entries(descriptor.events),
+        events: eventEntries,
         actions: Object.keys(actionDescriptors).sort(compareBinary).map((name) => ({ name, descriptor: actionDescriptors[name] })),
         operators: entries(descriptor.expression.operators),
         scopes: entries(descriptor.scopes)

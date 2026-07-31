@@ -16,7 +16,7 @@ export type DamageSourceRef =
   | { readonly kind: "leak"; readonly enemyId: string; readonly enemyTypeId: string };
 
 export type DamageTargetRef =
-  | { readonly kind: "enemy"; readonly enemyId: string; readonly enemyTypeId: string }
+  | { readonly kind: "enemy"; readonly enemyId: string; readonly enemyTypeId: string; readonly componentId?: string }
   | { readonly kind: "tower"; readonly towerId: string; readonly towerTypeId: string }
   | { readonly kind: "hero"; readonly heroId: string; readonly heroDefinitionId: string }
   | { readonly kind: "core" };
@@ -332,6 +332,7 @@ function validateTarget(target: DamageTargetRef): void {
     case "enemy":
       validateId(target.enemyId, "Enemy target enemyId");
       validateId(target.enemyTypeId, "Enemy target enemyTypeId");
+      if (target.componentId !== undefined) validateId(target.componentId, "Enemy target componentId");
       return;
     case "tower":
       validateId(target.towerId, "Tower target towerId");

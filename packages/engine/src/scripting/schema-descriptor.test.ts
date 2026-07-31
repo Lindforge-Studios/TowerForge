@@ -14,7 +14,9 @@ describe("TowerScript schema descriptor", () => {
     const v4OnlyEvents = new Set<string>(["enemyMarkChanged"]);
     const v5OnlyEvents = new Set<string>(["enemyExposureChanged", "enemyReactionTriggered"]);
     const v6OnlyEvents = new Set<string>(["elevationChanged"]);
-    const v7OnlyEvents = new Set<string>(["stateMachineTransitioned"]);
+    const v7OnlyEvents = new Set<string>([
+      "stateMachineTransitioned", "bossComponentDamaged", "bossComponentDestroyed"
+    ]);
     const legacyHandlers = Object.fromEntries(TOWER_SCRIPT_EVENTS.filter((event) => (
       !v3OnlyEvents.has(event) && !v4OnlyEvents.has(event) && !v5OnlyEvents.has(event)
       && !v6OnlyEvents.has(event) && !v7OnlyEvents.has(event)

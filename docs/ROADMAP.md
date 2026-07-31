@@ -53,6 +53,9 @@ service. Нет соответствующего выбора или локал�
 | R9 — TowerScript DX 3.0 | Завершён и слит; code + constructor sign-off; ADR Accepted | TowerScript v7 Behavior Tree/HFSM, Graph/Trace/Debugger v2, guarded Studio/MCP surfaces и неизменный v1–v6 legacy path прошли обязательные gates |
 | R10 — Persona QA и Procedural Quests | Завершён; code + constructor sign-off; ADR Accepted | Pure три-persona QA + opt-in `quests` v1 с CLI/Studio/MCP, renderer/player, packages и fixture; merge/release не входят в R10 |
 | R11 — Procedural Juice Engine | Завершён; ADR Accepted | Opt-in visuals v3: deterministic particle/audio/camera plans, shared Canvas/Phaser surfaces, Studio/MCP authoring и неизменный gameplay/legacy path |
+| R12.1 — targetable boss components | В работе; ADR Proposed | Opt-in `enemyBehaviors` v1, component damage/state, guarded Studio/MCP authoring, shared presentation и absent/disabled legacy path |
+| R12.2 — component-driven boss phases | В работе; ADR Proposed | Schema-v7 component events, exact read-only HFSM context, unchanged Graph/Trace v2 grammar и guarded AI authoring |
+| R12.3 — bounded formation steering | В работе; engine GREEN, ADR Proposed | Dynamic-flow-only cohorts, three roles, bounded shared-field steering, active-only snapshot/checkpoint и isolated constructor surfaces |
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Поставленные версии `combat`, `reactions`, `navigation` и `elevation` уже прошли полные вертикальные срезы. Остальные модули Mechanics Hub остаются planned, а preview/apply отклоняют их включение без записи.
 
@@ -709,6 +712,62 @@ add/edit/save/reload/remove/re-add; AI `describe → read → preview → guarde
 preview`; Canvas/Phaser × hex/square; full/reduced/off motion; audio unavailable/suspended; PWA,
 single-file, web package, `.tdpack`, desktop и plugin parity. Starter/goldens и legacy audio/render
 path не меняются. Финал требует всех затронутых gates и двух независимых sign-off.
+
+### R12 — Advanced Enemy Behaviors
+
+R12 добавляет mission-selected `enemyBehaviors` v1 без замены shared navigation,
+combat resolver и HFSM. Модуль остаётся полностью opt-in: absent, disabled, unsupported
+или unselected профиль не добавляет snapshot/checkpoint state, UI, player work или
+новый replay digest.
+
+1. **R12.1 — targetable boss components.** Корневой enemy имеет до 32 компонентов со
+   stable ID, HP, optional combat shield/armor, circular hit region, tags и точечным
+   отключением allowlisted boss abilities. Existing acquisition сначала выбирает root;
+   authored `priorityTags` затем маршрутизируют tower damage в живую компоненту.
+   Overflow не перетекает в root HP, component destruction не выдаёт награду, а root
+   death/leak по-прежнему settles exactly once.
+2. **R12.2 — boss phases/HFSM.** TowerScript schema v7 получает typed
+   `bossComponentDamaged`/`bossComponentDestroyed` и exact read-only `component` root только
+   во время этих events. HFSM сохраняет R9 semantics и common budgets. Graph v2
+   и Trace v2 используют существующие handler/transition nodes и event -> transition
+   provenance без нового grammar, layout version или write-tool.
+3. **R12.3 — formation steering.** Authored cohorts назначают enemy types роли
+   `vanguard | body | support` и активны только вместе с выбранным для той
+   же mission Navigation v1 `dynamic_flow`. Shared flow field остаётся авторитетным;
+   deterministic spatial buckets дают не более 16 binary-ordered neighbours на
+   enemy без per-enemy A* и O(n²) full scan. Результат публикуется только в
+   active `snapshot.enemyBehaviors.formations`/checkpoint state; renderer не считает
+   steering.
+4. **R12.4 — vanguard protection.** Optional `protection { radius, sourceKinds }` в
+   formation cohort требует в той же mission `dynamic_flow`, active
+   `enemyBehaviors` и root Combat shield у vanguard. Engine проверяет не более
+   16 stable candidates на packet и допускает не более 512 redirects за public
+   tick. Interception всегда one-hop, после чего packet идёт через общий
+   resolver без подмены armor/resistances и exact-once settlement.
+
+R12.1 authoring идёт через Mechanics Hub и общий agent flow
+`describe_schema(enemyBehaviors) -> get_capabilities -> get_recipe(basic_targetable_boss_components)
+-> preview_mechanics_module -> apply_mechanics_module(ifRevision) -> validate_project`. Recipe
+выбирает binary-first authored enemy/tower только для detached candidate и ничего не
+включает сам. См. [ADR 0053](adr/0053-r12-advanced-enemy-behaviors.md) и
+`docs/examples/opt-in-targetable-boss-components/`.
+
+R12.2 AI authoring начинается с `describe_schema(scripts).controllerRecipes` и inert
+`component_driven_boss_phase`. После подстановки точных authored enemy/component
+IDs агент использует только прежний `get_tower_script -> upsert_tower_script(dryRun)
+-> guarded upsert(ifRevision) -> validate_project -> preview_tower_script_trace` flow.
+
+R12.3 authoring идёт только через общий guarded mechanics flow:
+`describe_schema(enemyBehaviors) -> get_capabilities -> get_recipe(basic_formation_steering)
+-> preview_mechanics_module -> apply_mechanics_module(ifRevision) -> validate_project`. Recipe
+ничего не включает и не создаёт Navigation; `dynamic_flow` нужно явно выбрать
+для той же mission. См. `docs/examples/opt-in-formation-steering/`.
+
+R12.4 использует тот же flow и inert recipe `basic_vanguard_protection`;
+recipe не включает Navigation/Combat/enemyBehaviors и не создаёт shield.
+Active metadata читается из `snapshot.enemyBehaviors.formations.protection`, а
+`vanguardDamageIntercepted` — только read-only GameEvent, не TowerScript event.
+См. `docs/examples/opt-in-vanguard-protection/`.
 
 ## TDD и роли
 

@@ -24,6 +24,8 @@ export type TowerScriptEventName =
   | "towerShieldChanged"
   | "enemyHit"
   | "enemyShieldChanged"
+  | "bossComponentDamaged"
+  | "bossComponentDestroyed"
   | "enemyMarkChanged"
   | "enemyExposureChanged"
   | "enemyReactionTriggered"

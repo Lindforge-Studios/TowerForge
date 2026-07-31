@@ -1,5 +1,7 @@
+import type { TowerScriptEventName } from "./types.js";
 export declare const TOWER_SCRIPT_SCOPES: readonly ("map" | "global" | "mission" | "wave" | "tower" | "enemy" | "ability" | "terrain")[];
-export declare const TOWER_SCRIPT_EVENTS: readonly ("gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "towerShieldChanged" | "enemyHit" | "enemyShieldChanged" | "enemyMarkChanged" | "enemyExposureChanged" | "enemyReactionTriggered" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "elevationChanged" | "stateMachineTransitioned" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal")[];
+export declare const TOWER_SCRIPT_EVENTS: readonly ("gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "towerShieldChanged" | "enemyHit" | "enemyShieldChanged" | "bossComponentDamaged" | "bossComponentDestroyed" | "enemyMarkChanged" | "enemyExposureChanged" | "enemyReactionTriggered" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "elevationChanged" | "stateMachineTransitioned" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal")[];
+export declare const TOWER_SCRIPT_EVENT_MINIMUM_SCHEMA_VERSION: Readonly<Partial<Record<TowerScriptEventName, number>>>;
 export declare const TOWER_SCRIPT_OPERATORS: readonly ("eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "and" | "or" | "not" | "add" | "sub" | "mul" | "div" | "min" | "max" | "coalesce")[];
 export declare const TOWER_SCRIPT_TARGETS: Readonly<{
     entity: ("self" | "eventEnemy" | "eventTower" | "allEnemies" | "allTowers")[];
@@ -167,6 +169,8 @@ export declare const TOWER_SCRIPT_EVENT_FIELDS: Readonly<{
     towerShieldChanged: string[];
     enemyHit: string[];
     enemyShieldChanged: string[];
+    bossComponentDamaged: string[];
+    bossComponentDestroyed: string[];
     enemyMarkChanged: string[];
     enemyExposureChanged: string[];
     enemyReactionTriggered: string[];
@@ -263,6 +267,14 @@ export declare const TOWER_SCRIPT_STATE_MACHINE_DESCRIPTOR: Readonly<{
     transitionLimit: "one_per_machine_context_event";
     selfTransition: "full_exit_entry";
     actionPhases: readonly ["exit", "transition", "entry"];
+    contextRoots: readonly ["event", "self", "state", "game", "machine", "component"];
+    componentContext: Readonly<{
+        schemaVersion: 1;
+        availableForEvents: readonly ["bossComponentDamaged", "bossComponentDestroyed"];
+        source: "captured_post_resolution_event";
+        fields: readonly ["schemaVersion", "enemyId", "enemyTypeId", "id", "label", "hp", "maxHp", "hpRatio", "destroyed", "tags", "disablesAbilities", "shield"];
+        shieldFields: readonly ["current", "capacity", "ratio"];
+    }>;
     features: Readonly<{
         parallelRegions: false;
         historyStates: false;
@@ -363,6 +375,40 @@ export declare const TOWER_SCRIPT_CONTROLLER_RECIPES: readonly (Readonly<{
             }>)[];
         }>[];
     }>;
+}> | Readonly<{
+    id: "component_driven_boss_phase";
+    controller: "state_machine";
+    schemaVersion: 1;
+    minimumTowerScriptSchemaVersion: 7;
+    parameters: Readonly<{
+        enemyTypeId: "existing composite enemy type id";
+        componentId: "existing component id from the mission-selected enemyBehaviors profile";
+    }>;
+    template: Readonly<{
+        schemaVersion: 1;
+        id: "component_phase";
+        bindings: readonly {
+            scope: string;
+            ids: readonly string[];
+        }[];
+        initial: "intact";
+        states: readonly (Readonly<{
+            id: "intact";
+            transitions: readonly Readonly<{
+                id: "component_destroyed";
+                event: "bossComponentDestroyed";
+                target: "/exposed";
+                when: Readonly<{
+                    $op: "eq";
+                    args: readonly (string | Readonly<{
+                        $get: "component.id";
+                    }>)[];
+                }>;
+            }>[];
+        }> | Readonly<{
+            id: "exposed";
+        }>)[];
+    }>;
 }>)[];
 export declare const TOWER_SCRIPT_GRAPH_DESCRIPTOR: Readonly<{
     schemaVersion: 2;
@@ -404,7 +450,8 @@ export declare const TOWER_SCRIPT_COMPLETION_DESCRIPTOR: Readonly<{
     source: "engine_schema_descriptor";
     catalog: Readonly<{
         events: readonly Readonly<{
-            name: "gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "towerShieldChanged" | "enemyHit" | "enemyShieldChanged" | "enemyMarkChanged" | "enemyExposureChanged" | "enemyReactionTriggered" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "elevationChanged" | "stateMachineTransitioned" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal";
+            minimumSchemaVersion?: number | undefined;
+            name: "gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "towerShieldChanged" | "enemyHit" | "enemyShieldChanged" | "bossComponentDamaged" | "bossComponentDestroyed" | "enemyMarkChanged" | "enemyExposureChanged" | "enemyReactionTriggered" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "elevationChanged" | "stateMachineTransitioned" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal";
             fields: string[];
         }>[];
         actions: readonly Readonly<{
@@ -588,7 +635,8 @@ export declare const TOWER_SCRIPT_SCHEMA: Readonly<{
         source: "engine_schema_descriptor";
         catalog: Readonly<{
             events: readonly Readonly<{
-                name: "gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "towerShieldChanged" | "enemyHit" | "enemyShieldChanged" | "enemyMarkChanged" | "enemyExposureChanged" | "enemyReactionTriggered" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "elevationChanged" | "stateMachineTransitioned" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal";
+                minimumSchemaVersion?: number | undefined;
+                name: "gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "towerShieldChanged" | "enemyHit" | "enemyShieldChanged" | "bossComponentDamaged" | "bossComponentDestroyed" | "enemyMarkChanged" | "enemyExposureChanged" | "enemyReactionTriggered" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "elevationChanged" | "stateMachineTransitioned" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal";
                 fields: string[];
             }>[];
             actions: readonly Readonly<{
@@ -772,6 +820,14 @@ export declare const TOWER_SCRIPT_SCHEMA: Readonly<{
         transitionLimit: "one_per_machine_context_event";
         selfTransition: "full_exit_entry";
         actionPhases: readonly ["exit", "transition", "entry"];
+        contextRoots: readonly ["event", "self", "state", "game", "machine", "component"];
+        componentContext: Readonly<{
+            schemaVersion: 1;
+            availableForEvents: readonly ["bossComponentDamaged", "bossComponentDestroyed"];
+            source: "captured_post_resolution_event";
+            fields: readonly ["schemaVersion", "enemyId", "enemyTypeId", "id", "label", "hp", "maxHp", "hpRatio", "destroyed", "tags", "disablesAbilities", "shield"];
+            shieldFields: readonly ["current", "capacity", "ratio"];
+        }>;
         features: Readonly<{
             parallelRegions: false;
             historyStates: false;
@@ -867,6 +923,40 @@ export declare const TOWER_SCRIPT_SCHEMA: Readonly<{
                 }>)[];
             }>[];
         }>;
+    }> | Readonly<{
+        id: "component_driven_boss_phase";
+        controller: "state_machine";
+        schemaVersion: 1;
+        minimumTowerScriptSchemaVersion: 7;
+        parameters: Readonly<{
+            enemyTypeId: "existing composite enemy type id";
+            componentId: "existing component id from the mission-selected enemyBehaviors profile";
+        }>;
+        template: Readonly<{
+            schemaVersion: 1;
+            id: "component_phase";
+            bindings: readonly {
+                scope: string;
+                ids: readonly string[];
+            }[];
+            initial: "intact";
+            states: readonly (Readonly<{
+                id: "intact";
+                transitions: readonly Readonly<{
+                    id: "component_destroyed";
+                    event: "bossComponentDestroyed";
+                    target: "/exposed";
+                    when: Readonly<{
+                        $op: "eq";
+                        args: readonly (string | Readonly<{
+                            $get: "component.id";
+                        }>)[];
+                    }>;
+                }>[];
+            }> | Readonly<{
+                id: "exposed";
+            }>)[];
+        }>;
     }>)[];
     developerExperience: Readonly<{
         optIn: true;
@@ -920,7 +1010,8 @@ export declare const TOWER_SCRIPT_SCHEMA: Readonly<{
             source: "engine_schema_descriptor";
             catalog: Readonly<{
                 events: readonly Readonly<{
-                    name: "gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "towerShieldChanged" | "enemyHit" | "enemyShieldChanged" | "enemyMarkChanged" | "enemyExposureChanged" | "enemyReactionTriggered" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "elevationChanged" | "stateMachineTransitioned" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal";
+                    minimumSchemaVersion?: number | undefined;
+                    name: "gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "towerShieldChanged" | "enemyHit" | "enemyShieldChanged" | "bossComponentDamaged" | "bossComponentDestroyed" | "enemyMarkChanged" | "enemyExposureChanged" | "enemyReactionTriggered" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "elevationChanged" | "stateMachineTransitioned" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal";
                     fields: string[];
                 }>[];
                 actions: readonly Readonly<{
@@ -1065,7 +1156,7 @@ export declare const TOWER_SCRIPT_SCHEMA: Readonly<{
         otherScopes: string;
     };
     scopes: readonly ("map" | "global" | "mission" | "wave" | "tower" | "enemy" | "ability" | "terrain")[];
-    events: readonly ("gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "towerShieldChanged" | "enemyHit" | "enemyShieldChanged" | "enemyMarkChanged" | "enemyExposureChanged" | "enemyReactionTriggered" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "elevationChanged" | "stateMachineTransitioned" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal")[];
+    events: readonly ("gameStarted" | "tick" | "towerPlaced" | "towerSold" | "towerMoved" | "towerUpgraded" | "towerDestroyed" | "towerTargetModeChanged" | "towerFired" | "towerResourcesGranted" | "towerShieldChanged" | "enemyHit" | "enemyShieldChanged" | "bossComponentDamaged" | "bossComponentDestroyed" | "enemyMarkChanged" | "enemyExposureChanged" | "enemyReactionTriggered" | "enemyKilled" | "enemyLeaked" | "enemySpawnedOnDeath" | "enemyPhaseSpawned" | "waveStarted" | "waveCleared" | "resourcesGranted" | "abilityUsed" | "enemyEnteredTile" | "terrainChanged" | "elevationChanged" | "stateMachineTransitioned" | "objectiveCompleted" | "objectiveFailed" | "starEarned" | "victory" | "defeat" | "signal")[];
     eventFields: Readonly<{
         gameStarted: string[];
         tick: string[];
@@ -1080,6 +1171,8 @@ export declare const TOWER_SCRIPT_SCHEMA: Readonly<{
         towerShieldChanged: string[];
         enemyHit: string[];
         enemyShieldChanged: string[];
+        bossComponentDamaged: string[];
+        bossComponentDestroyed: string[];
         enemyMarkChanged: string[];
         enemyExposureChanged: string[];
         enemyReactionTriggered: string[];

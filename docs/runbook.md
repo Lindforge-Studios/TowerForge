@@ -529,6 +529,112 @@ Use `docs/examples/opt-in-towerscript-dx3/` as the copyable R9 fixture. It demon
 both controller arrays, disabling the script, or returning it to schema v6 restores the legacy
 targeting and editor surface.
 
+## Targetable Boss Components
+
+R12.1 is an opt-in `enemyBehaviors` v1 mission mechanic. In **Mechanics Hub**, select Enemy
+Behaviors, load `basic_targetable_boss_components` or author a closed profile, preview it, and save
+only against the revision returned by that preview. The equivalent AI sequence is:
+
+`describe_schema({domain:"enemyBehaviors"}) -> get_capabilities -> get_recipe({collection:"mechanics",recipeId:"basic_targetable_boss_components"}) -> preview_mechanics_module -> apply_mechanics_module(ifRevision=preview.revision) -> validate_project`.
+
+The recipe is a detached inert candidate. It chooses the binary-first authored enemy ID and, when
+present, tower ID so repeated materialization is deterministic; it does not enable the module,
+select a mission, or modify enemy/tower definitions. Review those IDs before apply. A profile may
+declare up to 32 components for each boss. Each component has stable ID, HP, a circular hit region,
+and optional label, tags, combat shield, armor override, and `disablesAbilities` from the closed
+`towerAttack | towerDisrupt | healAura` allowlist. A tower `priorityTags` binding routes damage only
+after normal root acquisition. Missing/no-live matches retain root targeting.
+
+At runtime, treat optional `snapshot.enemyBehaviors` v1 as the sole presentation source for
+component IDs, HP, shields, and destroyed state. Canvas and Phaser display that projection; they do
+not perform hit testing or damage routing. Component armor and shields pass through the engine
+resolver, overflow is discarded rather than transferred to root HP, and component destruction
+never grants a reward. Root death/leak still settles once and clears component state. The matching
+checkpoint section is also active-only, so restore and journal replay preserve the same digest.
+
+To disable the feature, remove the mission's `enemyBehaviors` profile selection or disable the
+module through the same preview/guarded-apply transaction. Confirm that the snapshot/checkpoint
+section and component UI disappear and ordinary root targeting returns. An absent catalog, a future
+module version, or an unselected profile must remain read-only/no-op and must not be normalized into
+an active v1 profile. See `docs/examples/opt-in-targetable-boss-components/` and Proposed
+[ADR 0053](adr/0053-r12-advanced-enemy-behaviors.md).
+
+### Component-driven boss phases
+
+R12.2 keeps boss phases inside TowerScript schema v7. Call `describe_schema({domain:"scripts"})`
+and select the inert `component_driven_boss_phase` controller recipe. Replace `$enemyTypeId` with
+an authored composite enemy and `$componentId` with one of that enemy's stable component IDs from
+the mission-selected `enemyBehaviors` profile. The descriptor does not write or enable anything.
+Use the normal canonical script transaction:
+
+`get_tower_script -> upsert_tower_script(dryRun:true) -> upsert_tower_script(ifRevision=preview.revision) -> validate_project -> preview_tower_script_trace`.
+
+Only schema-v7 scripts may bind `bossComponentDamaged` or `bossComponentDestroyed`. During those
+events, HFSM conditions/actions may read `component.id`, identity, HP/max/ratio, destroyed state,
+tags, typed disabled-ability IDs, and optional shield current/capacity/ratio. The root is a detached
+post-resolution event view: it cannot mutate component state and is not available as ambient state
+for unrelated events. Transitions retain active-leaf-to-ancestor resolution, authored order, target
+commit before actions, and the common action/transition/recursion budgets.
+
+The Visual Graph stays schema v2 and represents these names through existing handler and transition
+nodes. Do not create a component-event node kind or edit the layout schema. Use compute-only trace
+to confirm the component event and its linked HFSM transition provenance; preview writes neither
+the script nor `.towerforge` state. Schema-v1–v6 scripts and projects without an active
+`enemyBehaviors` profile keep their previous event/UI/runtime path.
+
+### Formation steering
+
+R12.3 is an independent optional block inside `enemyBehaviors` v1. It requires an enabled
+Navigation v1 `dynamic_flow` profile selected by the same mission; an authored-routes mission is an
+authoring error, not a signal to auto-enable Navigation. Start with the inert
+`basic_formation_steering` recipe, review its binary-first enemy assignments, and use:
+
+`describe_schema({domain:"enemyBehaviors"}) -> get_capabilities -> get_recipe({collection:"mechanics",recipeId:"basic_formation_steering"}) -> preview_mechanics_module -> apply_mechanics_module(ifRevision=preview.revision) -> validate_project`.
+
+The recipe creates no enemy, never enables/selects either module, and does not patch Navigation.
+Author cohorts with unique enemy-type membership and only `vanguard`, `body`, or `support` roles.
+`neighborRadius` is 1–2; cohesion, separation, and role weights are bounded by the engine descriptor.
+The shared reverse flow field remains authoritative. Local steering examines at most 16
+binary-ordered same-cohort neighbours in deterministic spatial buckets and chooses only an
+equal-optimal flow candidate. Do not add per-enemy search, unbounded Boids, or presentation-owned
+movement.
+
+At runtime, read only `snapshot.enemyBehaviors.formations` inner v1. Its `enemies` record maps a
+live enemy ID to `{cohortId, role}`; renderers display those labels and never derive or recompute
+steering. The same optional section is checkpointed, so continuous, restore, and journal replay
+must converge on one digest. Disable/unselect either required capability and verify that formation
+snapshot/UI cues disappear and ordinary shared-field movement returns. See
+`docs/examples/opt-in-formation-steering/` and Proposed
+[ADR 0053](adr/0053-r12-advanced-enemy-behaviors.md).
+
+### Vanguard protection
+
+R12.4 is an optional `protection` block on an R12.3 formation cohort. Before enabling it, verify
+that the same mission explicitly selects all three prerequisites: Navigation v1 `dynamic_flow`,
+Combat with a root Combat shield on every authored vanguard type, and the `enemyBehaviors` v1
+formation profile. Component shields are not substitutes for that root shield. Start from the inert
+`basic_vanguard_protection` recipe and keep the common transaction:
+
+`describe_schema({domain:"enemyBehaviors"}) -> get_capabilities -> get_recipe({collection:"mechanics",recipeId:"basic_vanguard_protection"}) -> preview_mechanics_module -> apply_mechanics_module(ifRevision=preview.revision) -> validate_project`.
+
+The recipe supplies only a detached formation candidate. It never enables/selects the three
+modules, edits Combat, or invents shields. `sourceKinds` is a closed subset of
+`tower | ability | tower_script | status | reaction | enemy`; leak damage cannot be intercepted.
+At runtime the engine examines at most 16 binary-stable same-cohort vanguard candidates for an
+eligible body/support packet and permits at most 512 successful redirects per public tick. The
+redirect is one-hop, uses the first living candidate with remaining root shield, and continues
+through the common `DamageResolver`. It must not bypass armor/resistance or root exact-once death,
+reward, and resource settlement.
+
+Read protection only from `snapshot.enemyBehaviors.formations.protection`. Treat
+`vanguardDamageIntercepted` as a read-only GameEvent for presentation/diagnostics; it is not a
+TowerScript or Visual Graph event and must not be added to a script binding. Canvas and Phaser may
+display the authoritative event but may not select an interceptor. Continuous, checkpoint restore,
+and journal replay must converge on the same digest. Disable or unselect any prerequisite and
+confirm that the protection snapshot/checkpoint/UI disappears while ordinary dynamic-flow combat
+returns. See `docs/examples/opt-in-vanguard-protection/` and Proposed
+[ADR 0053](adr/0053-r12-advanced-enemy-behaviors.md).
+
 ## Desktop Studio Navigation
 
 The packaged Studio uses a native application menu. macOS exposes `TowerForge`, `File`, `Edit`, `View`, `Project`, `Window`, and `Help` in the system menu bar. Windows and Linux expose the equivalent menu on the application window, with Exit and About in their conventional menus.

@@ -1,0 +1,9 @@
+{
+  "mechanics": {
+    "profiles": {
+      "navigation": "basic_dynamic_navigation",
+      "combat": "vanguard_root_shields",
+      "enemyBehaviors": "basic_vanguard_protection"
+    }
+  }
+}

@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "navigation": {
+      "schemaVersion": 1,
+      "enabled": true,
+      "profiles": {
+        "basic_dynamic_navigation": {
+          "mode": "dynamic_flow",
+          "defaultMovementProfileId": "ground",
+          "movementProfiles": {
+            "ground": {
+              "label": "Ground",
+              "terrainMode": "respect_walkable",
+              "towerOccupancy": "blocked",
+              "defaultTerrainCost": 1000
+            },
+            "floating": {
+              "label": "Floating",
+              "terrainMode": "respect_walkable",
+              "towerOccupancy": "ignored",
+              "defaultTerrainCost": 1000
+            },
+            "burrowing": {
+              "label": "Burrowing",
+              "terrainMode": "ignore_walkable",
+              "towerOccupancy": "ignored",
+              "defaultTerrainCost": 1000
+            },
+            "flying": {
+              "label": "Flying",
+              "terrainMode": "ignore_walkable",
+              "towerOccupancy": "ignored",
+              "defaultTerrainCost": 1000
+            }
+          }
+        }
+      }
+    },
+    "combat": {
+      "schemaVersion": 1,
+      "enabled": true,
+      "profiles": {
+        "vanguard_root_shields": {
+          "shields": {
+            "enemies": {
+              "armored_brute": {
+                "capacity": 60,
+                "regeneration": {
+                  "ratePerUnit": 1,
+                  "delayAfterDamage": 3
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "enemyBehaviors": {
+      "schemaVersion": 1,
+      "enabled": true,
+      "profiles": {
+        "basic_vanguard_protection": {
+          "formations": {
+            "cohorts": {
+              "main": {
+                "members": {
+                  "armored_brute": "vanguard",
+                  "basic_grunt": "body",
+                  "swift_runner": "support"
+                },
+                "steering": {
+                  "neighborRadius": 2,
+                  "cohesionWeight": 600,
+                  "separationWeight": 800,
+                  "roleWeight": 400
+                },
+                "protection": {
+                  "radius": 2,
+                  "sourceKinds": [
+                    "tower",
+                    "ability",
+                    "tower_script",
+                    "status",
+                    "reaction",
+                    "enemy"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -54,6 +54,7 @@ type TowerScriptDescriptor = typeof TOWER_SCRIPT_SCHEMA | {
     readonly controllerRecipes?: unknown;
     readonly graph?: unknown;
     readonly debug?: unknown;
+    readonly completion?: unknown;
 };
 export declare function towerScriptAstToGraph(source: TowerScriptDefinition | Record<string, unknown>): TowerScriptGraphV2;
 export declare function towerScriptGraphToAst(graph: TowerScriptGraph): TowerScriptDefinition;
@@ -71,9 +72,7 @@ export declare function createTowerScriptNodeCatalog(descriptor: TowerScriptDesc
     };
     controllerRecipes: unknown;
     nodeKinds: string[];
-    events: {
-        name: string;
-    }[];
+    events: any[];
     actions: {
         name: string;
         descriptor: unknown;

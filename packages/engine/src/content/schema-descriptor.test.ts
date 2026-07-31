@@ -224,11 +224,12 @@ describe("schema-descriptor: combat resolution contracts", () => {
       marks: { limits: (Engine as unknown as { MARK_LIMITS?: unknown }).MARK_LIMITS }
     });
     expect(DAMAGE_PACKET_SCHEMA).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       requiredFields: ["amount", "source", "target"],
       optionalFields: ["damageType", "tags", "modifiers"],
       sourceKinds: ["tower", "ability", "tower_script", "status", "enemy", "leak", "reaction"],
       targetKinds: ["enemy", "tower", "hero", "core"],
+      enemyTargetOptionalFields: ["componentId"],
       tags: ["area", "over_time", "armor_piercing", "reaction"],
       pipelineOrder: [
         "modifiers",

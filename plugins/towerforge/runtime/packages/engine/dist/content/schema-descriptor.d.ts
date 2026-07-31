@@ -64,6 +64,90 @@ export declare const QUEST_MECHANICS_SCHEMA: Readonly<{
         labelUtf8Bytes: 256;
     }>;
 }>;
+export declare const ENEMY_BEHAVIORS_MECHANICS_SCHEMA: Readonly<{
+    schemaVersion: 1;
+    moduleId: "enemyBehaviors";
+    supportedModuleSchemaVersions: readonly [1];
+    profile: {
+        requiredFields: readonly [];
+        optionalFields: readonly ["bosses", "targeting", "formations"];
+        atLeastOneFields: readonly ["bosses", "formations"];
+        dependencies: {
+            targeting: readonly ["bosses"];
+        };
+        additionalProperties: boolean;
+    };
+    boss: {
+        requiredFields: readonly ["components"];
+        optionalFields: readonly [];
+        additionalProperties: boolean;
+    };
+    component: {
+        requiredFields: readonly ["maxHp", "hitRegion"];
+        optionalFields: readonly ["label", "tags", "shield", "armorTypeId", "disablesAbilities"];
+        additionalProperties: boolean;
+    };
+    hitRegion: {
+        kinds: readonly ["circle"];
+        requiredFields: readonly ["kind", "offsetX", "offsetY", "radius"];
+        optionalFields: readonly [];
+        additionalProperties: boolean;
+    };
+    disablesAbilities: ("towerAttack" | "towerDisrupt" | "healAura")[];
+    targeting: {
+        requiredFields: readonly ["towers"];
+        optionalFields: readonly [];
+        additionalProperties: boolean;
+        towerBinding: {
+            requiredFields: readonly ["priorityTags"];
+            optionalFields: readonly [];
+            additionalProperties: boolean;
+        };
+    };
+    formations: {
+        requiredFields: readonly ["cohorts"];
+        optionalFields: readonly [];
+        additionalProperties: boolean;
+    };
+    formationCohort: {
+        requiredFields: readonly ["members", "steering"];
+        optionalFields: readonly ["protection"];
+        additionalProperties: boolean;
+    };
+    formationProtection: {
+        requiredFields: readonly ["radius", "sourceKinds"];
+        optionalFields: readonly [];
+        additionalProperties: boolean;
+        sourceKinds: readonly ["tower", "ability", "tower_script", "status", "reaction", "enemy"];
+    };
+    formationSteering: {
+        requiredFields: readonly ["neighborRadius", "cohesionWeight", "separationWeight", "roleWeight"];
+        optionalFields: readonly [];
+        additionalProperties: boolean;
+    };
+    formationRoles: readonly ["vanguard", "body", "support"];
+    limits: Readonly<{
+        bossesPerProfile: 256;
+        componentsPerRoot: 32;
+        towerBindingsPerProfile: 256;
+        cohortsPerProfile: 64;
+        membersPerCohort: 256;
+        formationAssignmentsPerProfile: 4096;
+        neighborRadius: 2;
+        steeringWeight: 1000;
+        protectionRadius: 4;
+        protectionSourceKinds: 6;
+        protectionCandidatesPerPacket: 16;
+        protectionTransactionsPerTick: 512;
+        tagsPerComponent: 32;
+        priorityTagsPerBinding: 32;
+        idOrTagUtf8Bytes: 128;
+        labelUtf8Bytes: 256;
+        maxHp: 1000000000000;
+        hitRegionOffset: 4;
+        hitRegionRadius: 8;
+    }>;
+}>;
 /**
  * A machine-readable description of the content schema's closed sets and per-shape field
  * constraints — the single source of truth for what `validateGameContentRegistry` (validate.ts)
@@ -144,11 +228,12 @@ export declare const MODIFIER_SPEC_SCHEMA: Readonly<{
  * resistances; shields and HP remain at the entity mutation boundary.
  */
 export declare const DAMAGE_PACKET_SCHEMA: Readonly<{
-    schemaVersion: 1;
+    schemaVersion: 2;
     requiredFields: readonly ["amount", "source", "target"];
     optionalFields: readonly ["damageType", "tags", "modifiers"];
     sourceKinds: readonly ["tower", "ability", "tower_script", "status", "enemy", "leak", "reaction"];
     targetKinds: readonly ["enemy", "tower", "hero", "core"];
+    enemyTargetOptionalFields: readonly ["componentId"];
     tags: ("reaction" | "area" | "over_time" | "armor_piercing")[];
     pipelineOrder: readonly ["modifiers", "marks", "armor_matrix", "entity_resistance", "legacy_pierce_only", "shield", "entity_hp", "reactions"];
 }>;

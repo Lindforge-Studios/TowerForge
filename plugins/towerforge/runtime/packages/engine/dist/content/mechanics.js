@@ -11,6 +11,7 @@ export const MECHANICS_MODULE_IDS = [
     "logistics",
     "director",
     "quests",
+    "enemyBehaviors",
     "scriptingDx",
     "multiplayer"
 ];
@@ -27,6 +28,7 @@ export const IMPLEMENTED_MECHANICS_MODULE_IDS = [
     "logistics",
     "director",
     "quests",
+    "enemyBehaviors",
     "multiplayer"
 ];
 export const SHIELD_LIMITS = Object.freeze({

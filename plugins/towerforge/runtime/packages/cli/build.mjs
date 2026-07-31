@@ -729,7 +729,7 @@ function playerTemplate(includeMultiplayer = false) {
 } from "./engine/index.js";
 ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multiplayer/index.js";' : ""}
 import { createPlayerProfileStore, derivePlayerProfileStorageKey } from "./player-runtime/index.mjs";
-import { createCanvasRenderer, hitTestHeroesPresentation, projectCampaignPresentation, projectDirectorDecisionCues, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectProceduralJuicePresentation, projectQuestPresentation, projectRoguelitePresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
+import { createCanvasRenderer, hitTestHeroesPresentation, projectCampaignPresentation, projectDirectorDecisionCues, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectProceduralJuicePresentation, projectQuestPresentation, projectRoguelitePresentation, projectVanguardProtectionPresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
 import { createAudioPlayer } from "./renderer/audio.mjs";
 import project from "./project-data.js";
 
@@ -833,6 +833,7 @@ window.__towerforgeInspect = () => {
 };
 window.render_game_to_text = () => {
   const snapshot = window.__towerforgeInspect();
+  const vanguardProtection = projectVanguardProtectionPresentation(snapshot);
   return JSON.stringify({
     coordinateSystem: "tile coordinates: q increases right/east; r increases down/south",
     missionId: snapshot.missionId,
@@ -846,7 +847,8 @@ window.render_game_to_text = () => {
     enemies: snapshot.enemies.map((enemy) => ({
       id: enemy.id, typeId: enemy.typeId, hp: enemy.hp,
       coord: enemy.navigation?.currentCoord ?? null, routeProgress: enemy.pathProgress
-    }))
+    })),
+    ...(vanguardProtection.active ? { vanguardProtection } : {})
   });
 };
 window.__towerforgeCampaignInspect = () => ({
@@ -1999,6 +2001,9 @@ import {
   projectDirectorDecisionCues,
   projectElevationCues,
   projectEnemyNavigationPoint,
+  projectEnemyComponentsPresentation,
+  projectEnemyFormationsPresentation,
+  projectVanguardProtectionPresentation,
   projectLegacyPresentationEvents,
   projectExposurePresentationCues,
   projectMarkPresentationCues,
@@ -2921,6 +2926,20 @@ class PlayScene extends Phaser.Scene {
 
     const seenMarkLabels = new Set();
     const seenExposureLabels = new Set();
+    const componentRowsByEnemyId = new Map();
+    for (const row of projectEnemyComponentsPresentation(snap).rows) {
+      const existing = componentRowsByEnemyId.get(row.enemyId);
+      if (existing) existing.push(row);
+      else componentRowsByEnemyId.set(row.enemyId, [row]);
+    }
+    const enemyFormationsByEnemyId = new Map(
+      projectEnemyFormationsPresentation(snap).rows.map((row) => [row.enemyId, row])
+    );
+    const vanguardDamageInterceptedCues = projectVanguardProtectionPresentation(snap).cues;
+    const vanguardProtectionCueEnemyIds = new Set(vanguardDamageInterceptedCues.flatMap((cue) => [
+      cue.protectedEnemyId,
+      cue.vanguardEnemyId
+    ]));
     for (const en of snap.enemies) {
       const p = this.enemyPos(en, snap, g);
       if (!p) continue;
@@ -2931,6 +2950,27 @@ class PlayScene extends Phaser.Scene {
       this.entG.fillStyle(0x1b1d18, 1); this.entG.fillRect(p.x - g.r * 0.45, p.y - g.r * 0.62, g.r * 0.9, 4);
       this.entG.fillStyle(ratio > 0.35 ? 0x8ac783 : 0xdf6a59, 1); this.entG.fillRect(p.x - g.r * 0.45, p.y - g.r * 0.62, g.r * 0.9 * ratio, 4);
       this.shieldRing(this.entG, p.x, p.y, g.r * 0.52, resolveShieldPresentation(snap, "enemy", en.id));
+      const formation = enemyFormationsByEnemyId.get(en.id);
+      if (formation) {
+        const formationColor = formation.role === "vanguard" ? 0xf0b45b
+          : formation.role === "support" ? 0x73bfe8 : 0xa79bdc;
+        this.entG.lineStyle(Math.max(1, g.r * 0.07), formationColor, 1);
+        this.entG.strokeCircle(p.x, p.y, g.r * 0.46);
+      }
+      if (vanguardProtectionCueEnemyIds.has(en.id)) {
+        this.entG.lineStyle(Math.max(1, g.r * 0.09), 0xf7d774, 1);
+        this.entG.strokeCircle(p.x, p.y, g.r * 0.58);
+      }
+      const components = componentRowsByEnemyId.get(en.id) ?? [];
+      if (components.length > 0) {
+        const width = g.r * 0.9, cellWidth = width / components.length;
+        for (let index = 0; index < components.length; index += 1) {
+          const row = components[index], x = p.x - width / 2 + index * cellWidth, y = p.y + g.r * 0.48;
+          this.entG.fillStyle(0x1b1d18, 1); this.entG.fillRect(x, y, Math.max(1, cellWidth - 1), 3);
+          this.entG.fillStyle(row.destroyed ? 0xdf6a59 : 0x8ac783, 1);
+          this.entG.fillRect(x, y, Math.max(0, cellWidth - 1) * row.hpRatio, 3);
+        }
+      }
       const exposurePresentation = resolveExposurePresentation(snap, en.id);
       const exposureBadges = exposurePresentation.entries.map((entry) => ({ key: entry.exposureId, label: String(entry.stacks) }));
       if (exposurePresentation.overflowCount > 0) exposureBadges.push({ key: "overflow", label: "+" + exposurePresentation.overflowCount });
@@ -3091,6 +3131,7 @@ window.__towerforgeInspect = () => {
 };
 window.render_game_to_text = () => {
   const snapshot = window.__towerforgeInspect();
+  const vanguardProtection = projectVanguardProtectionPresentation(snapshot);
   return JSON.stringify({
     coordinateSystem: "tile coordinates: q increases right/east; r increases down/south",
     missionId: snapshot.missionId,
@@ -3104,7 +3145,8 @@ window.render_game_to_text = () => {
     enemies: snapshot.enemies.map((enemy) => ({
       id: enemy.id, typeId: enemy.typeId, hp: enemy.hp,
       coord: enemy.navigation?.currentCoord ?? null, routeProgress: enemy.pathProgress
-    }))
+    })),
+    ...(vanguardProtection.active ? { vanguardProtection } : {})
   });
 };
 window.__towerforgeCampaignInspect = () => ({

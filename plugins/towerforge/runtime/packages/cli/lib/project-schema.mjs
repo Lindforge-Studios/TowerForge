@@ -22,6 +22,7 @@ const MECHANICS_MODULE_IDS = new Set([
   "logistics",
   "director",
   "quests",
+  "enemyBehaviors",
   "scriptingDx",
   "multiplayer"
 ]);

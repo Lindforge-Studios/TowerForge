@@ -1,0 +1,7 @@
+{
+  "mechanics": {
+    "profiles": {
+      "enemyBehaviors": "basic_targetable_boss_components"
+    }
+  }
+}

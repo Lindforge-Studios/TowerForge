@@ -93,6 +93,7 @@ const MECHANICS_MODULES = [
   { id: "logistics", title: "Logistics", description: "Power grids, inventories, ammunition, and production." },
   { id: "director", title: "AI Wave Director", description: "Optional opt-in deterministic adaptation from an authored counter pool with explicit threat budgets and fairness caps." },
   { id: "quests", title: "Challenges / Procedural Quests", description: "Opt-in deterministic battle-local objectives selected from an authored weighted pool." },
+  { id: "enemyBehaviors", title: "Advanced Enemy Behaviors", description: "Opt-in targetable boss components and bounded dynamic-flow formations." },
   { id: "scriptingDx", title: "TowerScript DX", description: "Visual graphs, structured traces, and step debugging." },
   { id: "multiplayer", title: "Multiplayer", description: "Deterministic matches, replay, and local transport." }
 ];
@@ -109,6 +110,11 @@ const TERRAFORMING_RECIPE_IDS = new Set(["tagged_flood", "tagged_moat", "tagged_
 const ROGUELITE_RECIPE_IDS = new Set(["basic_elemental_synergy", "basic_boss_artifact_loot"]);
 const DIRECTOR_RECIPE_IDS = new Set(["basic_adaptive_wave_director"]);
 const QUEST_RECIPE_IDS = new Set(["basic_procedural_quests"]);
+const ENEMY_BEHAVIORS_RECIPE_IDS = new Set([
+  "basic_targetable_boss_components",
+  "basic_formation_steering",
+  "basic_vanguard_protection"
+]);
 const MULTIPLAYER_RECIPE_IDS = new Set([
   "basic_local_coop", "basic_partitioned_local_coop", "basic_asymmetric_send_vs_build"
 ]);
@@ -757,6 +763,7 @@ function mechanicsSelectedProfile() {
 }
 
 function normalizeMechanicsDraft(profile) {
+  if (MechanicsUI.selectedModuleId === "enemyBehaviors") return normalizeEnemyBehaviorsMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "quests") return normalizeQuestMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "multiplayer") {
     return normalizeMultiplayerMechanicsDraft(profile, mechanicsProjectModuleVersion());
@@ -812,6 +819,74 @@ function normalizeMechanicsDraft(profile) {
       && !Array.isArray(draft.marks.bindings[sourceKind])
       ? draft.marks.bindings[sourceKind]
       : {};
+  }
+  return draft;
+}
+
+function normalizeEnemyBehaviorsMechanicsDraft(profile) {
+  const draft = deep(profile ?? { bosses: {} });
+  if (!draft || typeof draft !== "object" || Array.isArray(draft)) return { bosses: {} };
+  if (draft.bosses !== undefined) {
+    if (!draft.bosses || typeof draft.bosses !== "object" || Array.isArray(draft.bosses)) draft.bosses = {};
+    for (const boss of Object.values(draft.bosses)) {
+      if (!boss || typeof boss !== "object" || Array.isArray(boss)) continue;
+      if (!boss.components || typeof boss.components !== "object" || Array.isArray(boss.components)) boss.components = {};
+    }
+  } else if (draft.formations === undefined) {
+    draft.bosses = {};
+  }
+  if (draft.targeting !== undefined) {
+    if (!draft.targeting || typeof draft.targeting !== "object" || Array.isArray(draft.targeting)) {
+      draft.targeting = { towers: {} };
+    }
+    if (!draft.targeting.towers || typeof draft.targeting.towers !== "object" || Array.isArray(draft.targeting.towers)) {
+      draft.targeting.towers = {};
+    }
+    for (const binding of Object.values(draft.targeting.towers)) {
+      if (!binding || typeof binding !== "object" || Array.isArray(binding)) continue;
+      binding.priorityTags = Array.isArray(binding.priorityTags)
+        ? binding.priorityTags.filter((tag) => typeof tag === "string")
+        : [];
+    }
+  }
+  if (draft.formations !== undefined) {
+    if (!draft.formations || typeof draft.formations !== "object" || Array.isArray(draft.formations)) {
+      draft.formations = { cohorts: {} };
+    }
+    if (!draft.formations.cohorts || typeof draft.formations.cohorts !== "object"
+      || Array.isArray(draft.formations.cohorts)) draft.formations.cohorts = {};
+    const formationRoles = new Set(["vanguard", "body", "support"]);
+    for (const cohort of Object.values(draft.formations.cohorts)) {
+      if (!cohort || typeof cohort !== "object" || Array.isArray(cohort)) continue;
+      if (!cohort.members || typeof cohort.members !== "object" || Array.isArray(cohort.members)) {
+        cohort.members = {};
+      }
+      for (const [enemyTypeId, role] of Object.entries(cohort.members)) {
+        if (!formationRoles.has(role)) delete cohort.members[enemyTypeId];
+      }
+      if (!cohort.steering || typeof cohort.steering !== "object" || Array.isArray(cohort.steering)) {
+        cohort.steering = {
+          neighborRadius: 2,
+          cohesionWeight: 600,
+          separationWeight: 800,
+          roleWeight: 400
+        };
+      }
+      if (cohort.protection !== undefined) {
+        if (!cohort.protection || typeof cohort.protection !== "object" || Array.isArray(cohort.protection)) {
+          delete cohort.protection;
+          continue;
+        }
+        const sourceKinds = ["tower", "ability", "tower_script", "status", "reaction", "enemy"];
+        const selected = new Set(Array.isArray(cohort.protection.sourceKinds)
+          ? cohort.protection.sourceKinds.filter((kind) => sourceKinds.includes(kind))
+          : []);
+        cohort.protection.radius = Number.isInteger(cohort.protection.radius)
+          ? cohort.protection.radius
+          : 2;
+        cohort.protection.sourceKinds = sourceKinds.filter((kind) => selected.has(kind));
+      }
+    }
   }
   return draft;
 }
@@ -1136,6 +1211,7 @@ function mechanicsAuthoredMatrixEntryCount() {
 }
 
 function mechanicsEffectiveModuleSchemaVersion() {
+  if (MechanicsUI.selectedModuleId === "enemyBehaviors") return 1;
   if (MechanicsUI.selectedModuleId === "quests") return 1;
   if (MechanicsUI.selectedModuleId === "director") return 1;
   if (MechanicsUI.selectedModuleId === "multiplayer") {
@@ -1255,6 +1331,8 @@ function initializeMechanicsDraft() {
                   ? "basic_adaptive_wave_director"
                 : MechanicsUI.selectedModuleId === "quests"
                   ? "basic_procedural_quests"
+                : MechanicsUI.selectedModuleId === "enemyBehaviors"
+                  ? "basic_targetable_boss_components"
                 : MechanicsUI.selectedModuleId === "multiplayer"
                   ? "basic_local_coop"
                   : "basic_regenerating_shields");
@@ -1269,7 +1347,7 @@ function initializeMechanicsDraft() {
 async function loadMechanicsRecipe() {
   if (MechanicsUI.recipes.length) return MechanicsUI.recipe;
   const result = await apiGet("/api/recipes?collection=mechanics");
-  MechanicsUI.recipes = Array.isArray(result.recipes) ? result.recipes.slice(0, 32) : [];
+  MechanicsUI.recipes = Array.isArray(result.recipes) ? result.recipes.slice() : [];
   MechanicsUI.recipe = MechanicsUI.recipes.find((recipe) => recipe.id === MechanicsUI.recipeId)
     ?? MechanicsUI.recipes.find((recipe) => recipe.id === "basic_regenerating_shields")
     ?? MechanicsUI.recipes.find((recipe) => recipe.id === "basic_vulnerability_marks")
@@ -1361,6 +1439,9 @@ async function newMechanicsProfile() {
   try {
     if (MechanicsUI.selectedModuleId === "quests" && mechanicsProjectModuleVersion() > 1) {
       throw new Error("Future quests schemaVersion 2+ modules are preserved losslessly and read-only.");
+    }
+    if (MechanicsUI.selectedModuleId === "enemyBehaviors" && mechanicsProjectModuleVersion() > 1) {
+      throw new Error("Future enemyBehaviors schemaVersion 2+ modules are preserved losslessly and read-only.");
     }
     if (MechanicsUI.selectedModuleId === "multiplayer" && mechanicsProjectModuleVersion() > 2) {
       throw new Error("Future Multiplayer schemaVersion 3+ modules are preserved losslessly and read-only.");
@@ -5583,6 +5664,94 @@ function renderMultiplayerMechanicsEditor() {
   }
 }
 
+function updateEnemyBehaviorsMechanicsDraft() {
+  const input = $("mechanics-enemy-behaviors-profile-json");
+  if (!input) return false;
+  try {
+    const parsed = JSON.parse(input.value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Use one JSON object.");
+    MechanicsUI.draft = normalizeEnemyBehaviorsMechanicsDraft(parsed);
+    input.setCustomValidity("");
+    MechanicsUI.preview = null;
+    return true;
+  } catch {
+    input.setCustomValidity("Enemy behaviors must be a valid JSON object with bosses/components and optional targeting.priorityTags.");
+    input.reportValidity();
+    return false;
+  }
+}
+
+function updateEnemyFormationsMechanicsDraft() {
+  const input = $("mechanics-enemy-formations-profile-json");
+  if (!input) return false;
+  try {
+    const parsed = JSON.parse(input.value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Use one JSON object.");
+    const next = deep(MechanicsUI.draft ?? { bosses: {} });
+    next.formations = parsed;
+    MechanicsUI.draft = normalizeEnemyBehaviorsMechanicsDraft(next);
+    input.setCustomValidity("");
+    MechanicsUI.preview = null;
+    return true;
+  } catch {
+    input.setCustomValidity("Formations must be valid JSON with cohorts, members, and bounded steering fields.");
+    input.reportValidity();
+    return false;
+  }
+}
+
+function renderEnemyFormationsMechanicsEditor() {
+  if (MechanicsUI.selectedModuleId !== "enemyBehaviors") return;
+  const input = $("mechanics-enemy-formations-profile-json");
+  if (!input) return;
+  const supportedVersion = mechanicsProjectModuleVersion() === 1;
+  input.value = JSON.stringify(MechanicsUI.draft?.formations ?? { cohorts: {} }, null, 2);
+  input.disabled = !supportedVersion;
+  input.onchange = () => {
+    if (updateEnemyFormationsMechanicsDraft()) {
+      renderEnemyBehaviorsMechanicsEditor();
+      renderMechanicsPreviewResult();
+    }
+  };
+}
+
+function renderEnemyFormationProtectionEditor() {
+  if (MechanicsUI.selectedModuleId !== "enemyBehaviors") return;
+  const input = $("mechanics-enemy-formations-profile-json");
+  const help = $("mechanics-enemy-formation-protection-help");
+  if (!input || !help) return;
+  const descriptor = MechanicsUI.schemas?.enemyBehaviors?.authoring?.formationProtection;
+  const sourceKinds = descriptor?.sourceKinds
+    ?? ["tower", "ability", "tower_script", "status", "reaction", "enemy"];
+  const radius = MechanicsUI.schemas?.enemyBehaviors?.authoring?.limits?.protectionRadius ?? 4;
+  help.textContent = `Optional cohort protection uses radius 1..${radius} and sourceKinds: ${sourceKinds.join(", ")}. Edit the shared Formation cohorts JSON; Preview remains authoritative.`;
+}
+
+function renderEnemyBehaviorsMechanicsEditor() {
+  if (MechanicsUI.selectedModuleId !== "enemyBehaviors") return;
+  const capability = MechanicsUI.capabilities?.enemyBehaviors;
+  const schemaVersion = mechanicsProjectModuleVersion();
+  const supportedVersion = schemaVersion === 1;
+  const label = $("mechanics-enemy-behaviors-capability");
+  if (label) label.textContent = capability?.selectedProfileId
+    ? `Profile ${capability.selectedProfileId} · schema v${schemaVersion}`
+    : "No enemyBehaviors profile is selected for this mission.";
+  const readOnly = $("mechanics-enemy-behaviors-read-only");
+  readOnly?.classList.toggle("hidden", supportedVersion);
+  if (readOnly) readOnly.textContent = supportedVersion
+    ? ""
+    : `Future enemyBehaviors schema v${schemaVersion} is preserved losslessly and read-only.`;
+  const input = $("mechanics-enemy-behaviors-profile-json");
+  if (!input) return;
+  input.value = JSON.stringify(MechanicsUI.draft ?? { bosses: {} }, null, 2);
+  input.disabled = !supportedVersion;
+  input.onchange = () => {
+    if (updateEnemyBehaviorsMechanicsDraft()) renderMechanicsPreviewResult();
+  };
+  renderEnemyFormationsMechanicsEditor();
+  renderEnemyFormationProtectionEditor();
+}
+
 function mechanicsRequest(enabled) {
   if (MechanicsUI.selectedModuleId === "quests" && mechanicsProjectModuleVersion() > 1) {
     throw new Error("Future quests schemaVersion 2+ modules are preserved losslessly and read-only.");
@@ -5592,6 +5761,9 @@ function mechanicsRequest(enabled) {
   }
   if (MechanicsUI.selectedModuleId === "director" && mechanicsProjectModuleVersion() > 1) {
     throw new Error("Future Director schemaVersion 2+ modules are preserved losslessly and read-only.");
+  }
+  if (MechanicsUI.selectedModuleId === "enemyBehaviors" && mechanicsProjectModuleVersion() > 1) {
+    throw new Error("Future enemyBehaviors schemaVersion 2+ modules are preserved losslessly and read-only.");
   }
   if (MechanicsUI.selectedModuleId === "heroes" && mechanicsProjectModuleVersion() > 7) {
     throw new Error("Future heroes schemaVersion 8+ modules are read-only in this Studio version.");
@@ -5713,6 +5885,8 @@ function renderMechanicsHub() {
               ? "Author a deterministic counter pool with explicit threat budgets and fairness caps, then opt this mission into the profile."
             : MechanicsUI.selectedModuleId === "quests"
               ? "Author a weighted quest pool, then explicitly opt this mission into deterministic battle-local challenges."
+            : MechanicsUI.selectedModuleId === "enemyBehaviors"
+              ? "Author targetable boss components and tower tag priorities without changing ordinary enemy or tower forms."
             : MechanicsUI.selectedModuleId === "multiplayer"
               ? "Author a deterministic local co-op v1 or asymmetric Send-vs-Build v2 profile without loading multiplayer into legacy single-player projects."
             : MechanicsUI.selectedModuleId === "roguelite"
@@ -5768,6 +5942,7 @@ function renderMechanicsHub() {
         && (selectedModuleId !== "roguelite" || ROGUELITE_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "director" || DIRECTOR_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "quests" || QUEST_RECIPE_IDS.has(recipe.id))
+        && (selectedModuleId !== "enemyBehaviors" || ENEMY_BEHAVIORS_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "multiplayer" || MULTIPLAYER_RECIPE_IDS.has(recipe.id)));
       MechanicsUI.recipe = availableRecipes[0] ?? null;
       MechanicsUI.recipeId = MechanicsUI.recipe?.id ?? "";
@@ -5804,6 +5979,7 @@ function renderMechanicsHub() {
   $("mechanics-logistics-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "logistics");
   $("mechanics-director-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "director");
   $("mechanics-quests-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "quests");
+  $("mechanics-enemy-behaviors-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "enemyBehaviors");
   $("mechanics-multiplayer-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "multiplayer");
   const state = $("mechanics-hub-state");
   if (state) state.textContent = MechanicsUI.loading ? "Loading capabilities…"
@@ -5830,8 +6006,9 @@ function renderMechanicsHub() {
       const moduleRecipes = MechanicsUI.recipes.filter((recipe) => mechanicsRecipeModuleId(recipe) === MechanicsUI.selectedModuleId
         && (MechanicsUI.selectedModuleId !== "director" || DIRECTOR_RECIPE_IDS.has(recipe.id))
         && (MechanicsUI.selectedModuleId !== "quests" || QUEST_RECIPE_IDS.has(recipe.id))
+        && (MechanicsUI.selectedModuleId !== "enemyBehaviors" || ENEMY_BEHAVIORS_RECIPE_IDS.has(recipe.id))
         && (MechanicsUI.selectedModuleId !== "multiplayer" || MULTIPLAYER_RECIPE_IDS.has(recipe.id)));
-      recipeSelect.innerHTML = moduleRecipes.slice(0, 32).map((recipe) =>
+      recipeSelect.innerHTML = moduleRecipes.map((recipe) =>
         `<option value="${esc(recipe.id)}">${esc(recipe.label ?? recipe.id)}</option>`).join("");
       if (moduleRecipes.some((recipe) => recipe.id === MechanicsUI.recipeId)) recipeSelect.value = MechanicsUI.recipeId;
       recipeSelect.onchange = () => {
@@ -5878,6 +6055,8 @@ function renderMechanicsHub() {
       renderDirectorMechanicsEditor();
     } else if (MechanicsUI.selectedModuleId === "quests") {
       renderQuestMechanicsEditor();
+    } else if (MechanicsUI.selectedModuleId === "enemyBehaviors") {
+      renderEnemyBehaviorsMechanicsEditor();
     } else if (MechanicsUI.selectedModuleId === "multiplayer") {
       renderMultiplayerMechanicsEditor();
     }
@@ -5895,10 +6074,12 @@ function renderMechanicsHub() {
   const supportedLogisticsVersion = MechanicsUI.selectedModuleId !== "logistics" || mechanicsProjectModuleVersion() <= 3;
   const supportedDirectorVersion = MechanicsUI.selectedModuleId !== "director" || mechanicsProjectModuleVersion() === 1;
   const supportedQuestVersion = MechanicsUI.selectedModuleId !== "quests" || mechanicsProjectModuleVersion() === 1;
+  const supportedEnemyBehaviorsVersion = MechanicsUI.selectedModuleId !== "enemyBehaviors" || mechanicsProjectModuleVersion() === 1;
   const supportedMultiplayerVersion = MechanicsUI.selectedModuleId !== "multiplayer" || mechanicsProjectModuleVersion() <= 2;
   const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion
     && supportedRogueliteVersion && supportedHeroesVersion && supportedLogisticsVersion
-    && supportedDirectorVersion && supportedQuestVersion && supportedMultiplayerVersion && !busy;
+    && supportedDirectorVersion && supportedQuestVersion && supportedEnemyBehaviorsVersion
+    && supportedMultiplayerVersion && !busy;
   const dirtyWriteGuard = Boolean(S.dirty);
   if ($("btn-mechanics-preview")) $("btn-mechanics-preview").disabled = !writable;
   if (MechanicsUI.selectedModuleId === "logistics" && mechanicsProjectModuleVersion() > 3) {
@@ -5912,6 +6093,7 @@ function renderMechanicsHub() {
     || ((MechanicsUI.selectedModuleId === "terraforming" || MechanicsUI.selectedModuleId === "roguelite"
       || MechanicsUI.selectedModuleId === "heroes" || MechanicsUI.selectedModuleId === "logistics"
       || MechanicsUI.selectedModuleId === "director" || MechanicsUI.selectedModuleId === "quests"
+      || MechanicsUI.selectedModuleId === "enemyBehaviors"
       || MechanicsUI.selectedModuleId === "multiplayer") && !writable);
   if ($("mechanics-recipe-select")) $("mechanics-recipe-select").disabled = busy || MechanicsUI.recipes.length === 0;
   if ($("btn-mechanics-add-damage-type")) $("btn-mechanics-add-damage-type").disabled = !writable;
@@ -9939,7 +10121,11 @@ function towerScriptGraphPointerChild(path, field) {
 }
 
 function towerScriptGraphCatalogNames(group) {
+  const root = TowerScriptGraphUI.graph?.nodes?.find((node) => node.kind === "script" && node.astPath === "");
+  const schemaVersion = Number(root?.raw?.schemaVersion ?? TowerScriptGraphUI.schemaDescriptor?.schemaVersion ?? 1);
   return (TowerScriptGraphUI.nodeCatalog?.[group] ?? [])
+    .filter((entry) => !entry || typeof entry === "string" || entry.minimumSchemaVersion === undefined
+      || (Number.isInteger(schemaVersion) && schemaVersion >= Number(entry.minimumSchemaVersion)))
     .map((entry) => typeof entry === "string" ? entry : entry?.name)
     .filter((name) => typeof name === "string" && name);
 }
@@ -10339,7 +10525,9 @@ function renderTowerScriptGraph() {
       eventSelect.setAttribute("data-graph-event", node.id);
       eventSelect.setAttribute("aria-label", "Handler event");
       const eventName = towerScriptGraphPathTokens(node.astPath)[1];
-      eventSelect.innerHTML = (TowerScriptGraphUI.nodeCatalog?.events ?? []).map((entry) => {
+      const supportedEventNames = new Set(towerScriptGraphCatalogNames("events"));
+      eventSelect.innerHTML = (TowerScriptGraphUI.nodeCatalog?.events ?? [])
+        .filter((entry) => supportedEventNames.has(typeof entry === "string" ? entry : entry?.name)).map((entry) => {
         const name = typeof entry === "string" ? entry : entry?.name;
         return `<option value="${esc(name ?? "")}"${name === eventName ? " selected" : ""}>${esc(name ?? "")}</option>`;
       }).join("");

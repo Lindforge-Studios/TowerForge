@@ -188,3 +188,278 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   Rust/Tauri 7/7 are GREEN.
 - The tree is now ready for an exact-commit Code Verifier and Constructor Integration Verifier
   re-freeze. Any subsequent source change invalidates those sign-offs.
+
+## 2026-07-31 — S0 complete and R12.1 contract freeze
+
+- The exact R9–R11 integration commit `917bcb5` passed GitHub CI, Code Verifier, Constructor
+  Integration Verifier, and the independent source/plugin/docs audit with no new P0–P3 findings.
+  PR #22 was merged to `main` as `e505e4f`; R12 starts from that source in
+  `codex/r12-advanced-enemies`.
+- ADR 0053 freezes the opt-in `enemyBehaviors` v1 boundary. The first R12.1 slice is content-only:
+  capability, closed normalizer, hostile-data budgets, active/inactive semantic references, and a
+  fail-closed resolver. DamagePacket routing and runtime component state are a separate RED.
+- Program Architect, Contract/Test Designer, and Constructor Surface Architect are separate roles.
+  The production author will not perform either final verification sign-off.
+- R12.1a RED is recorded with
+  `npm run test -- packages/engine/src/content/enemy-behaviors-mechanics.contract.test.ts`:
+  1 failed file, 6/6 expected failures. The baseline lacks the module/capability and descriptor,
+  reports `Unknown mechanics module "enemyBehaviors"`, exports no closed normalizer/resolver, and
+  cannot emit module-specific active-error/inactive-warning cross-reference diagnostics. No
+  production file was changed before this evidence.
+- R12.1a GREEN adds the pure engine-owned `enemyBehaviors` v1 types, closed normalizer, schema
+  descriptor, capability resolution, semantic cross-reference validation, and fail-closed active
+  resolver. The original contract is GREEN at 6/6; the compatibility content suite is 179/179 and
+  the complete engine suite is 2,039/2,039 across 118 files. Typecheck is GREEN. Runtime component
+  HP/shields, DamagePacket targeting, snapshots, and checkpoint state remain intentionally absent
+  until the next independent RED.
+### R12.1b RED evidence — boss component runtime
+
+- Contract/Test Designer added `packages/engine/src/simulation/r12-boss-components-runtime.contract.test.ts` against `4c29f6c`.
+- Command: `npx vitest run packages/engine/src/simulation/r12-boss-components-runtime.contract.test.ts --maxWorkers=1`.
+- Expected RED: 1 file failed; 6 tests total; 3 failed / 3 passed. Missing active `enemyBehaviors` snapshot/checkpoint sections and component-target damage incorrectly mutated root HP. Absent, disabled, and unselected compatibility controls passed.
+
+### R12.1b GREEN evidence — boss component runtime
+
+- Runtime state is active-only and detached in snapshots/checkpoints; inactive shapes remain byte-free of `enemyBehaviors`.
+- Component packets use the shared `DamageResolver`, preserve root HP, consume root shield before component shield, discard component HP overflow, and reject incoherent component ids before resolution.
+- Checkpoint validation is closed and authored-state aware; restore preserves the state digest. DamagePacket descriptor v2 exposes optional enemy `componentId` without changing command/journal versions.
+- Descriptor RED: `packages/engine/src/content/schema-descriptor.test.ts` failed 1/34 before the v2 metadata was added.
+- GREEN: focused runtime 9/9; focused engine/content 171/171; `npm run typecheck` PASS; `npm run build:engine` PASS; full `npm run test` 3172/3172 across 285 files.
+
+### R12.1c RED evidence — tower routing and ability suppression
+
+- Focused command: `npx vitest run packages/engine/src/simulation/r12-boss-components-runtime.contract.test.ts --maxWorkers=1`.
+- Expected RED: 12 tests total; 2 failed / 10 passed. Tower-origin damage still hit root HP instead of the binary-first live component selected by authored `priorityTags`; therefore component skip/fallback behavior was absent.
+
+### R12.1c GREEN evidence — tower routing and ability suppression
+
+- Tower-origin packets now select the first live component by authored tag order and binary component id; destroyed matches are skipped and exhausted bindings fall back to root HP.
+- Destroyed components suppress only the allowlisted authored boss abilities (`towerAttack`, `towerDisrupt`, `healAura`); component destruction itself grants no kill, reward, or root damage.
+- GREEN: R12 runtime/routing 12/12; focused TowerDefenseGame compatibility 66/66; `npm run typecheck` PASS; `npm run build:engine` PASS.
+
+### R12.1d RED evidence — constructor and AI surfaces
+
+- Independent CLI/MCP contract designers ran `npx vitest run packages/cli/lib/r12-enemy-behaviors-authoring.contract.test.mjs packages/mcp/r12-enemy-behaviors-authoring.contract.test.mjs --maxWorkers=1`: 2 files failed, 6/6 tests failed. The module was absent from loader authoring views, schema domains, capability output, and guarded preview/apply workflows.
+- Independent Studio contract designer ran `npx vitest run packages/studio/public/r12-enemy-behaviors-surface.contract.test.mjs --maxWorkers=1`: 3/3 failed. Mechanics Hub had no isolated card/editor or draft helpers, and its hard 32-recipe truncation hid the new recipe.
+- Independent renderer/player contract designer ran `npx vitest run packages/renderer/src/enemy-components-presentation.contract.test.mjs --maxWorkers=1`: 5/5 failed. No fail-closed shared component projector or Canvas/Phaser wiring existed.
+- The project-bound recipe contract ran with `npx vitest run packages/cli/lib/r12-enemy-behaviors-recipe.contract.test.mjs --maxWorkers=1`: 4/4 failed because `basic_targetable_boss_components` and its typed missing-context error did not exist.
+
+### R12.1d GREEN evidence — constructor and AI surfaces
+
+- CLI and MCP now expose the same engine-owned `enemyBehaviors` v1 descriptor, active capability, compact authoring view, and existing revision-guarded preview/apply transaction.
+- Mechanics Hub owns an isolated JSON editor with future-version read-only preservation; the ordinary enemy/tower forms remain unchanged. The recipe list is no longer truncated at 32 entries.
+- `basic_targetable_boss_components` materializes a deterministic binary-first authored enemy/tower candidate and remains inert until explicit guarded enablement.
+- Canvas and Phaser consume one bounded fail-closed projection of the authoritative optional snapshot; they only draw component bars while the module is active and do not own targeting or damage rules.
+- Focused GREEN command covering engine routing, recipe, CLI/MCP, Studio, and renderer/player contracts: 6 files, 23/23 tests passed.
+
+### R12.2 contract freeze and RED evidence — component events / HFSM
+
+- Public v7-only events `bossComponentDamaged` and `bossComponentDestroyed` carry the same closed captured post-resolution payload: enemy/type/component/source, previous/current/max HP, HP delta, previous/current/capacity component shield, and component-local absorbed delta. Root-shield absorption is excluded.
+- A packet emits damage only for an effective component-local decrease and destruction only for the first positive-to-zero crossing. Stable order is root `enemyShieldChanged` (when applicable) -> component damaged -> component destroyed -> caller legacy `enemyHit`. Regeneration and dead-component repeats emit neither lifecycle event.
+- HFSM alone receives an optional detached/frozen `component` expression root built from the captured event payload plus authored metadata. Ordinary handlers and non-component events do not gain that root. Existing leaf-to-ancestor resolution, target-before-actions, action/event/transition budgets and all version domains remain unchanged.
+- Independent schema/runtime RED command: `npx vitest run packages/engine/src/scripting/r12-boss-component-events-schema.contract.test.ts packages/engine/src/simulation/r12-boss-component-events.contract.test.ts --maxWorkers=1` -> 2 files failed, 13 expected failures / 1 negative control passed. Events, exact fields, v7 gate, runtime ordering, all seven source kinds and handler dispatch were absent.
+- Independent HFSM/checkpoint RED command: `npx vitest run packages/engine/src/simulation/r12-boss-component-hfsm.contract.test.ts packages/engine/src/simulation/r12-boss-component-checkpoint.contract.test.ts --maxWorkers=1` -> 2 files failed, 11 expected failures / 4 inactive compatibility controls passed. Machines remained in their initial state and no component lifecycle events existed to validate or replay.
+
+### R12.2 GREEN engine evidence — component events / HFSM
+
+- The engine emits the two schema-v7 lifecycle events from resolved component-local HP/shield deltas, before the legacy `enemyHit` caller event, and never emits them for root-only absorption, regeneration, or repeated damage to an already destroyed component.
+- HFSM transition planning and exit/transition/entry actions receive one detached frozen component snapshot captured from the triggering event; ordinary handlers retain their previous expression roots.
+- Checkpoint restore validates the closed event shape, authored enemy/component references, source kind, scaled capacities, arithmetic deltas, and destruction crossing without requiring a historical event to match the latest live component state.
+- Focused GREEN: the four new contracts plus existing scripting validation, HFSM, checkpoint and replay coverage passed 110/110. `npm run typecheck` and `npm run build:engine` are the next exact engine gates before surface integration.
+
+### R12.2 RED/GREEN surface evidence
+
+- Independent surface RED added exact descriptor, Graph, MCP trace, and Studio picker contracts. Focused RED was 3 failed / 3 passed: the engine descriptor lacked component field metadata and event minimum versions, while the Studio picker offered v7 events to legacy scripts. Existing Graph v2 lossless round-trip and compute-only event-to-transition trace provenance already passed without a new grammar.
+- GREEN publishes exact detached component/shield fields and minimum event schema versions, keeps Graph/Trace v2, and filters Studio handler/transition choices against the canonical script AST version using descriptor metadata rather than hardcoded R12 names. Focused engine + MCP + Studio surface contracts pass 6/6.
+- A follow-up regression RED proved that the generated Studio node catalog dropped `minimumSchemaVersion`; the catalog now carries the engine completion entries losslessly, so actual UI filtering and descriptor discovery use the same metadata.
+- Independent docs/AI RED was 2/2 expected failures for the missing component-phase recipe and guide v38. GREEN adds the inert `component_driven_boss_phase` descriptor and guide v39 without a write tool or Graph grammar change; its focused docs/agent suite passed 38/38.
+- Exact slice gates: typecheck, engine build, project validation, tutorial simulation, web build, plugin build/validate/smoke, and the combined R12.1/R12.2 focused suite pass. The first parallel full-unit run passed 3,234/3,236 and exposed two unrelated MCP concurrency flakes; their immediate serial rerun passed 97/97. A clean full-unit rerun remains required on the frozen commit.
+
+## 2026-07-31 — R12.3 formation steering
+
+### R12.3a contract freeze / RED / GREEN — formation content
+
+- Formation steering extends the same opt-in `enemyBehaviors` v1 profile; it does not add a module or version bump. A profile may contain bosses, formations, or both, while targeting still requires bosses. Formation-only activation requires mission-selected dynamic-flow Navigation.
+- Authored cohorts bind each enemy type to one role (`vanguard | body | support`) and one closed steering tuple. Bounds are 64 cohorts, 256 members per cohort, 4,096 assignments, radius 1..2, integer weights 0..1,000 with at least one positive weight. Vanguard protection remains outside this slice.
+- Independent content RED added 28 tests: 9 expected failures / 19 negative controls passed. Missing contracts were descriptor/profile support, formation-only normalization, canonical freezing, early budgets, dynamic-flow dependency and enemy references.
+- GREEN accepts detached binary-canonical formation-only or mixed profiles, preserves the exact boss-only normalized byte shape, rejects hostile/accessor/sparse/cyclic and over-budget data before reading a tail value, and reports active semantic errors versus inactive warnings. Focused content/component compatibility is 55/55; typecheck and engine build pass.
+
+### R12.3b RED/GREEN — pure formation planner
+
+- Independent planner RED added 33/33 expected failures against the missing exported pure API. Contracts pin the closed request/result, square/hex topology, exact safe-integer cohesion/separation/role score, host-candidate confinement, canonical/direction tie-breaks, permutation invariance, 16-neighbor bound, detached freeze, hostile inputs and overflow rejection.
+- GREEN adds `selectFormationSteeringNextV1` as a pure engine-only chooser over an already host-proven equal-optimal candidate set. It does not read maps, fields, entities, RNG or renderer state and cannot invent a navigation step. Focused planner/navigation compatibility passes 52/52; typecheck and engine build pass.
+
+### R12.3c RED/GREEN — formation runtime, checkpoint, determinism, and scale
+
+- Independent runtime RED command: `npx vitest run packages/engine/src/simulation/r12-formation-steering-runtime.contract.test.ts --maxWorkers=1` -> 4/4 expected failures. Active formation membership, checkpoint state, shared-field steering integration, and frozen bounded counters were absent.
+- Independent scale RED command: `npx vitest run packages/engine/src/simulation/r12-formation-steering-runtime-scale.contract.test.ts --maxWorkers=1` -> 7/7 expected failures. Checkpoint formation validation, replay/restore parity, cohort/profile/goal partitions, live-order invariance, edge-progress gating, and bounded 500/1,000-enemy work were absent.
+- GREEN builds immutable once-per-tick spatial observations partitioned by authored cohort, movement profile, and field goal. It inspects at most 32 bucket entries and passes at most 16 same-partition neighbors to the pure planner. Steering runs only at `edgeProgress === 0` and may choose only topology-adjacent equal-optimal field cells; mid-edge state is never replanned.
+- Active snapshots/checkpoints publish binary-canonical live membership while absent, disabled, unselected, authored-route, and boss-only paths perform no formation work and publish no formation section. Restore validates exact authored cohort/role membership and accepts a non-canonical navigation link only when it is equal-optimal for an active formation enemy.
+- GREEN evidence: the two new runtime suites pass 11/11; focused navigation/checkpoint/replay/TowerDefenseGame compatibility passes 190/190; `npm run typecheck` passes. Diagnostic counters are detached/frozen and excluded from checkpoint and digest state.
+
+### R12.3d RED/GREEN — constructor, AI, renderer, and player surfaces
+
+- Independent surface RED added four contracts and produced 12/12 expected failures: the inert recipe and dynamic-flow prerequisite were missing; MCP omitted the formations snapshot vocabulary and guide; Mechanics Hub had no isolated cohort editor; Canvas/Phaser had no shared active-only presentation projector.
+- GREEN adds `basic_formation_steering` without enabling Navigation or Enemy Behaviors, reuses the existing preview/revision-guarded apply transaction, publishes the engine-owned closed descriptor and guide v40, and keeps formation editing inside Mechanics Hub. No broad or formation-specific writer was added.
+- One fail-closed bounded renderer projector turns authoritative `snapshot.enemyBehaviors.formations` membership into detached binary-stable role rows. Canvas and generated Phaser only draw role cues; neither path reads mechanics content or recomputes movement.
+- Focused surface GREEN passes 12/12. Renderer/Studio compatibility passes 362/362; related recipe and agent-guide suites pass 53/53; the production web build passes. Browser verification opened Advanced Enemy Behaviors, confirmed both recipes and the isolated Formation cohorts editor, exercised scrolling, and reported zero console errors. Evidence screenshot: `/private/tmp/towerforge-r12-formation-editor-detail.png`.
+
+## 2026-07-31 — R12.4 vanguard protection
+
+### R12.4a contract freeze / RED / GREEN — protected cohort content
+
+- Vanguard protection extends an authored formation cohort with the optional closed object
+  `{ radius, sourceKinds }`. Radius is bounded to 1..4 and source kinds are a non-empty canonical
+  subset of `tower | ability | tower_script | status | reaction | enemy`; leak damage is excluded.
+  Runtime budgets are frozen at 16 inspected candidates per packet and 512 successful redirects
+  per public tick.
+- Active semantic validation requires at least one vanguard and one body/support type and an active
+  root Combat shield for every authored vanguard. Disabled or unselected Enemy Behaviors retains
+  structural validation but downgrades those cross-module dependencies to warnings.
+- Independent RED command:
+  `npx vitest run packages/engine/src/content/r12-vanguard-protection-mechanics.contract.test.ts`
+  produced 16/16 expected failures against the missing protection schema, limits, normalizer and
+  semantic validation. Production code was unchanged when the evidence was captured.
+- GREEN implements detached, deeply frozen, binary-canonical normalization and closed own-data
+  validation, including accessor/proxy/sparse/cyclic/duplicate/future-source/over-budget cases.
+  Focused content contract is GREEN at 16/16; the R12.3 content compatibility contract remains
+  GREEN. Runtime interception and its event/snapshot/checkpoint state remain a separate RED slice.
+
+### R12.4b RED/GREEN — bounded runtime interception
+
+- Independent runtime RED command:
+  `npx vitest run packages/engine/src/simulation/r12-vanguard-protection-runtime.contract.test.ts --maxWorkers=1`
+  produced 8/8 expected failures against the missing redirect, event, metadata, checkpoint validator,
+  diagnostics and budgets. A test-only follow-up corrected the fixture's distinction between an
+  omitted component argument and explicit root targeting; production was not changed for that fix.
+- GREEN redirects one complete eligible packet to the nearest then binary-first live same-cohort
+  vanguard with a positive root Combat shield. The component target is cleared, overflow remains on
+  that vanguard, no second interception is possible, and the shared DamageResolver recomputes the
+  chosen vanguard's armor, resistance, marks and legacy pierce adapter before shield/HP mutation.
+- A lazy spatial index avoids a per-packet live-enemy scan. Candidate collection is topology-bounded
+  and capped at 16; successful transactions are capped at 512 per public tick. Read-only cumulative
+  diagnostics are detached from snapshot/checkpoint/digest state, while only active authored
+  protection metadata and the exact interception event enter snapshot/checkpoint state.
+- Focused runtime is GREEN at 8/8. Checkpoint/replay/damage/formation compatibility is GREEN at
+  127/127; `npm run typecheck` and `npm run build:engine` pass. Constructor surfaces remain a
+  separate RED/GREEN slice.
+
+### R12.4b independent audit regression — target attribution and runtime cleanup
+
+- The pre-freeze architecture audit identified three production risks. An independent test designer
+  captured them in a six-test regression contract before production changes: all 6/6 tests failed for
+  post-interception hit/status attribution, armor-block attribution, stale reset diagnostics/cache,
+  spawn-time cache invalidation, and interception occurring before exact target/component validation.
+- GREEN keeps `towerFired` attached to the tower's acquired target but attaches `enemyHit`,
+  `enemyArmorBlocked`, and legacy on-hit status to the actual vanguard that received the packet.
+  Damage target identity and authored component existence are now validated before interception.
+- Reset, TowerScript spawn, phase spawn, and death/replacement paths invalidate the lazy protection
+  index; reset also clears all protection counters. Focused regression plus original runtime contracts
+  pass 14/14 and `npm run typecheck` passes.
+
+### R12.4c RED/GREEN — constructor, AI, renderer, and player surfaces
+
+- Independent surface RED added four contracts and produced 12/12 expected failures: the inert
+  recipe and explicit prerequisites were missing; MCP omitted the closed protection vocabulary and
+  read-only GameEvent; Mechanics Hub had no isolated protection guidance; Canvas/Phaser had no
+  shared active-only presentation projector.
+- GREEN adds `basic_vanguard_protection` without enabling or selecting Navigation, Combat, or Enemy
+  Behaviors; guide v41 and schema discovery reuse the existing guarded mechanics transaction and add
+  no dedicated writer. Mechanics Hub keeps protection inside the formation JSON editor.
+- Canvas and generated Phaser consume one bounded fail-closed projector over authoritative active
+  snapshot metadata/events and do not own interceptor selection. Focused surface GREEN passes 12/12;
+  Renderer/Studio compatibility passes 379/379 and related guide/descriptor compatibility passes
+  83/83.
+- A separate projector-hardening RED found 5 fail-open own-data cases for extra/symbol array fields
+  and a cyclic event value. Closed dense-array validation and event-shape screening make the expanded
+  projector contract GREEN at 14/14 without changing gameplay state.
+- The first full browser gate exposed a recipe-list regression after a Combat profile without root
+  enemy shields was authored: two existing Mechanics Hub lifecycles reached `Mechanics unavailable`.
+  An independent focused RED pinned both the leaked empty shield-fact array and whole-list failure.
+  The project context now omits unavailable shield facts, preserving the inert binary-first recipe
+  candidate while authoritative preview still rejects the unmet prerequisite. Focused CLI is GREEN
+  at 5/5 and both affected Studio E2E lifecycles pass 2/2 in serial.
+- Independent browser acceptance then recorded 2 RED / 1 GREEN: Studio injected `bosses: {}` into a
+  valid formations-only profile, while Canvas/Phaser headless text omitted the already-authoritative
+  protection projection; absent/disabled controls were already GREEN. The lossless Studio normalizer
+  now preserves omitted bosses and both player templates expose the shared active-only projector in
+  `render_game_to_text`. Full Studio lifecycle, Canvas/Phaser × hex/square, and absent/disabled paths
+  pass 3/3 Playwright scenarios.
+- The active package contract passes 2/2 and covers Canvas/Phaser × hex/square, PWA, single-file,
+  portable web ZIP, `.tdpack`, exact project selection, bundled engine/renderer projection, and an
+  untouched starter without synthesized protection snapshot/checkpoint state.
+
+### R12.4d RED/GREEN — documentation and opt-in fixture
+
+- Independent docs/fixture RED command:
+  `npx vitest run packages/mcp/r12-vanguard-protection-docs.contract.test.mjs` produced 3/3
+  expected failures because the `opt-in-vanguard-protection` catalog, mission selection, and README
+  did not exist. Production runtime was unchanged when the evidence was captured.
+- GREEN adds one detached fixture that explicitly composes Navigation v1 `dynamic_flow`, a Combat
+  root shield, and an `enemyBehaviors` protected formation. Architecture, ADR, roadmap, and runbook
+  freeze one-hop interception, 16 candidates per packet, 512 redirects per public tick, and the
+  read-only non-TowerScript `vanguardDamageIntercepted` GameEvent.
+- Focused docs/fixture contract is GREEN at 3/3. The combined agent-guide/docs check is GREEN at
+  7/7; both fixture JSON documents parse successfully and the scoped diff check passes.
+
+### R12 final verifier repair — mission-scoped armor and checkpointed protection budget
+
+- The first frozen R12 commit `b65dc7c` did not receive Code Verifier sign-off. The independent
+  review found two P1 defects: component armor validation accepted an armor type from an unrelated
+  unselected Combat profile, and the gameplay-affecting 512-interception public-tick counter was
+  not restored from checkpoints. The earlier freeze, gates, and integration sign-off were therefore
+  invalidated before the branch was published.
+- Independent RED added mission-selected active/disabled/unselected armor reference cases and a
+  checkpoint-only closed `protectionRuntime` v1 contract. The initial focused command
+  `npx vitest run packages/engine/src/content/enemy-behaviors-mechanics.contract.test.ts packages/engine/src/simulation/r12-vanguard-protection-runtime.contract.test.ts --maxWorkers=1`
+  failed 10/24 for the missing checks and state. A first GREEN attempt left 4/24 failures: two
+  diagnostic contracts, one inactive-field rejection, and a test-only navigation fixture whose
+  manually placed enemy lacked a valid `nextCoord` for restore.
+- GREEN validates component armor against every mission-selected Combat profile that can activate
+  the Enemy Behaviors profile. Inactive references remain warnings. Checkpoints now preserve only
+  `{ schemaVersion: 1, transactionsThisTick }` when authored protection is active; snapshots and
+  inactive checkpoints remain unchanged. The independent test designer repaired only the invalid
+  navigation fixture and did not alter production or the 511 -> restore -> 2 packet boundary.
+- Focused repair is GREEN at 24/24. The linked R12 content, components, HFSM, formation, protection,
+  checkpoint, navigation, journal, replay, and damage set is GREEN at 332/332; `npm run typecheck`
+  and `npm run build:engine` pass. A new exact-commit freeze, complete gates, and two new independent
+  sign-offs remain required.
+
+### R12 second verifier repair — event-bound budget and hostile own-data reads
+
+- The second frozen commit `55e8150` passed the complete local gates and Constructor Integration
+  Verifier, but did not receive Code Verifier sign-off. That audit confirmed one P1 checkpoint
+  budget bypass and two P2 hostile-accessor paths. The integration sign-off and all freeze evidence
+  were invalidated before publication.
+- Independent checkpoint RED added 17 successful interceptions, a pristine restore, then a forged
+  `transactionsThisTick: 0` with a recomputed digest. The focused suite failed 1/16 because restore
+  accepted a state whose retained `vanguardDamageIntercepted` events proved that 17 of the 512
+  transactions had already been consumed. Positive pristine and tick-reset controls passed.
+- Independent hostile-data RED added a sibling Combat-module accessor and accessors for R12 recipe
+  context fields `defaultMissionId`, `missionIds`, `enemyIds`, and `towerIds`. Engine validation
+  failed 1/10 and recipe materialization failed 4/9 because each getter was executed once.
+- GREEN requires the checkpoint transaction counter to equal this public tick's validated
+  interception-event count. Enemy Behaviors cross-reference validation now continues only through
+  descriptor-safe detached Combat/profile/armor records. Recipe context fields use a closed
+  enumerable own-data reader and reject accessors with stable code `mechanics_recipe_context_invalid`.
+- The three repair suites are GREEN at 35/35; the broader CLI recipe, engine content,
+  checkpoint/navigation/journal/replay/damage/R12 compatibility set is GREEN at 1,196/1,196;
+  `npm run typecheck` passes. Another exact-commit freeze, full gates, and two new independent
+  sign-offs remain mandatory.
+
+### R12 third verifier repair — nested recipe ID catalogs
+
+- Frozen commit `926bfff` passed the complete local gates, but the next Code Verifier correctly
+  withheld sign-off: top-level context fields were descriptor-safe while nested ID arrays still
+  reached `Array.prototype.filter`, executing index accessors and Proxy traps.
+- Independent RED covers `missionIds`, `enemyIds`, and `towerIds` across accessor-backed index zero,
+  throwing Proxy, revoked Proxy, and sparse arrays. It failed 12/21: accessors/traps ran, revoked
+  proxies leaked a raw `TypeError`, and sparse arrays were silently accepted. Normal and top-level
+  own-data controls remained GREEN.
+- GREEN adds a Node-side, bounded dense own-data ID-catalog inspector. It rejects Proxy arrays before
+  reading elements, inspects ordinary arrays only through descriptors, rejects symbols, extra keys,
+  accessors, holes, non-string/empty entries, and lengths above 100,000, then sorts a detached copy.
+  R12 formation/protection and existing parameterized recipes now consume the same safe catalog.
+- The focused hostile matrix is GREEN at 21/21; the complete CLI library suite is GREEN at 359/359;
+  typecheck, engine build, plugin build/validate/smoke, generated runtime sync, and diff checks pass.
+  The source is not publishable until one more exact-commit full gate cycle and two fresh sign-offs.
