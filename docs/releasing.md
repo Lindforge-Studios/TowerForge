@@ -2,6 +2,10 @@
 
 TowerForge desktop artifacts are built and published through GitHub Actions. Until authenticated platform signing credentials are configured, every macOS and Windows artifact is an internal/alpha **Unsigned build**. macOS bundles still receive a complete Tauri ad-hoc signature so Apple Silicon and Gatekeeper can validate bundle integrity; this signature does not identify or authenticate the publisher.
 
+## Published Baseline
+
+The current public desktop artifact is [`v0.4.0`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.4.0), published as an unsigned pre-release on 2026-07-28 from tagged source commit `f07a403`. It includes the accepted R0–R8 line. R9–R11 are newer `main` source, while R12 and R13 remain open PRs; none is part of the v0.4.0 installers. A local build or GitHub Actions artifact MUST NOT be described as a release until the matching tag, public release page, installers, notes, and `SHA256SUMS` exist and have been verified.
+
 ## Release Invariants
 
 - A release MUST point to the exact git tag and commit used for the build.

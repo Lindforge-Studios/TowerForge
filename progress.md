@@ -1540,3 +1540,54 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   141/141 E2E, plugin build/validate/smoke, and mobile plus desktop packages. The first unit pass
   repeated two known first-load MCP timeouts; the isolated 28/28 controls and unchanged exact
   complete `npm run test` rerun passed.
+
+## 2026-07-31 — R13 remote CI result and roadmap pause
+
+- The published R13 head is `b3069a41353c128d7d0d459316229fe7bffbf460` in stacked PR #24;
+  local and remote branch SHAs match. PR #23 remains the green R12 base.
+- GitHub Actions run `30601422668` passed typecheck, engine build, plugin build/validate/smoke and
+  source parity, all 349 unit files / 3,693 tests, project validation, tutorial simulation, map
+  compilation, and web build. The final Playwright step failed at 140/141.
+- The failure is the legacy R4.4B Studio future-version lifecycle at
+  `tests/e2e/mechanics-roguelite-campaign-run.spec.mjs:56`: the guarded future-schema preview leaves
+  source bytes unchanged and reaches the expected read-only/newer result, but its HTTP 400 response
+  is collected as `Failed to load resource` and violates `browserErrors() === []`.
+- A sandboxed focused run was invalid because loopback bind was denied. The approved loopback rerun
+  `npx playwright test tests/e2e/mechanics-roguelite-campaign-run.spec.mjs --workers=1` reproduced
+  the actual issue at 1 failed / 2 passed, with HTTP 409 locally. This supersedes the earlier claim
+  that the exact remote candidate had a green final CI gate.
+- R13 remains implemented and independently reviewed, but is not accepted until this finding gets a
+  dedicated RED/GREEN repair, all exact-commit gates are rerun, and both independent sign-offs are
+  renewed. No source fix, merge, tag, or release is part of this documentation update.
+- The owner explicitly paused the roadmap after R13. R14–R17 are planned only and must not be
+  started, exposed as capabilities, merged, tagged, or released without a new owner command.
+
+## 2026-07-31 — agent harness documentation refresh
+
+- `harness-project-setup` classified the repository as an existing project with every required
+  baseline document present. `AGENTS.md` remains the sole policy gateway; no duplicate `CLAUDE.md`
+  was introduced.
+- README RU/EN now distinguishes published v0.4.0, R9–R11 on `main`, green open R12 PR #23, red
+  stacked R13 PR #24, and the explicit pause before unimplemented R14–R17.
+- `ARCHITECTURE.md` and the product architecture now include the implemented Weather version domain,
+  Ballistics checkpoint v1–v4 progression, R13.4 transactional destructibles, and current agent
+  descriptors without presenting planned R14–R17 contracts as available.
+- ROADMAP, runbook, release baseline, quality gaps, engine review, reference examples, PR template,
+  and chronological evidence were synchronized with the same delivery state and TDD/sign-off rules.
+- Verification: harness audit reports no missing baseline docs; local Markdown links pass in 11
+  canonical files; the placeholder scan found no `TODO(user)`, `TBD`, `FIXME`, or `[TODO`; docs-related
+  Vitest is 8 files / 33 tests green; `npm run validate` passes; and the documented Persona QA smoke
+  command runs three deterministic personas successfully. Runtime production code was not changed.
+
+## 2026-08-01 — R13 release-gate race repaired
+
+- RED evidence: the focused Studio campaign lifecycle repeated 12 times failed once because an
+  in-flight `POST /api/mechanics/apply` returned `409 Conflict` after the fixture edited
+  `content/mechanics.json` directly. The product transaction had already written the expected data;
+  the test observed the file before the guarded HTTP request completed.
+- GREEN: the E2E contract now awaits the exact mechanics apply response and asserts that it succeeded
+  before introducing the future-version fixture. Twenty serial repetitions passed without a browser
+  error.
+- This repairs the reproducible PR #24 CI symptom without weakening stale-revision handling or
+  future-version read-only preservation. Full exact-commit CI and both R13 sign-offs remain required
+  before merge.

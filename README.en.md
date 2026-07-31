@@ -19,6 +19,10 @@ TowerForge is an open-source, content-agnostic constructor for 2D tower-defense 
 
 Desktop builds are published on [GitHub Releases](https://github.com/Lindforge-Studios/TowerForge/releases). Current alpha builds are explicitly marked **Unsigned build**. Verify the downloaded installer against the attached `SHA256SUMS` file before opening it. macOS installation notes and the unsigned-distribution policy live in [docs/releasing.md](docs/releasing.md).
 
+## Current status
+
+The current public desktop version is [v0.4.0](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.4.0), an unsigned pre-release published on July 28, 2026. `main` already contains R9–R11: Behavior Trees/HFSM, Persona QA with procedural quests, and Procedural Juice. R12 is implemented in open [PR #23](https://github.com/Lindforge-Studios/TowerForge/pull/23) with green CI. Stacked [PR #24](https://github.com/Lindforge-Studios/TowerForge/pull/24) contains R13 and the RED/GREEN repair for its browser-gate race, but still awaits exact-commit CI and renewed sign-off. R14 is the next owner-authorized milestone. The exact delivery status, boundaries, and next milestones live in the [roadmap](docs/ROADMAP.md).
+
 ## Product surface
 
 | Product | What it is | Where |
@@ -55,6 +59,7 @@ Studio opens at `http://localhost:5174` and edits `examples/starter.tdproj` by d
 | Simulate starter mission | `npm run sim tutorial_01 60` |
 | Simulate as JSON | `npm run sim tutorial_01 60 -- --json` |
 | Run balance sweep | `npm run balance -- --project examples/starter.tdproj` |
+| Run Persona QA | `npm run persona-qa -- --project examples/starter.tdproj --mission tutorial_01 --seed smoke --seconds 20` |
 | Compile map sources | `npm run maps:compile -- --project examples/starter.tdproj` |
 | Write schema migrations | `npm run migrate -- --project examples/starter.tdproj --write` |
 | Typecheck engine | `npm run typecheck` |
@@ -93,16 +98,16 @@ A `.tdproj` directory is the source of a game:
 - `content/balance.json` stores constants, the typed terrain registry, difficulties, meta progression/rewards, abilities, enemies, towers, waves, and missions.
 - `content/mechanics.json` is an optional versioned catalog of opt-in mechanics; without it the project retains legacy behavior.
 - `content/world-map.json` stores regions and mission nodes.
-- `content/visuals.json` stores the v2 visual catalog: atlases, sprites, tilesets, Wang/signature rules, weights, transforms, and map/grid bindings.
+- `content/visuals.json` stores the v2 visual catalog; schema v3 optionally adds declarative `proceduralJuice` v1 particles, synthesized audio, and camera cues without changing gameplay digests.
 - `content/story-comics.json` stores mission-linked narrative panels.
 - `content/battle-backgrounds.json` stores mission colors and optional sprite backdrops.
 - `maps/src/*.tmj` stores editable hex/odd-r or square/cardinal map sources.
 - `maps/compiled/maps.json` stores runtime map definitions generated from source maps.
-- `scripts/**/*.tower.json` stores deterministic custom gameplay, including terrain scope, tile events, and controlled runtime terrain changes.
+- `scripts/**/*.tower.json` stores deterministic custom gameplay; TowerScript v7 optionally adds Behavior Trees and HFSM while v1–v6 keep their previous path.
 - `build-targets.json` stores output targets.
 - `.towerforge/` stores local editor state and backups and MUST NOT be committed.
 
-A mission selects catalog profiles through `mission.mechanics`; defining a profile does not activate it. Combat module v1 adds opt-in shields, v2 adds authored damage/armor types, and v3 adds vulnerability marks. Independent `reactions` v1 adds exposures and bounded secondary effects only when a mission explicitly selects a compatible combat v2/v3 profile. `navigation` v1 enables dynamic flow independently from legacy routes. `elevation` v1 enables authored heights only, v2 may opt into deterministic LoS, and v3 adds an independent bounded high-ground profile with pairwise range and immediate tower-damage bonuses; the elevation snapshot remains v1. Mechanics Hub and AI/MCP show recipe prerequisites but never patch dependent combat, terrain, or map data automatically. Ordinary starter projects omit `content/mechanics.json` and preserve the legacy path. See [ADR 0011](docs/adr/0011-opt-in-versioned-mechanics.md), [ADR 0021](docs/adr/0021-opt-in-elemental-reactions.md), [ADR 0022](docs/adr/0022-opt-in-dynamic-flow-navigation.md), [ADR 0023](docs/adr/0023-opt-in-authored-elevation-foundation.md), [ADR 0024](docs/adr/0024-opt-in-deterministic-elevation-line-of-sight.md), [ADR 0025](docs/adr/0025-opt-in-authored-high-ground-modifiers.md), and the [roadmap](docs/ROADMAP.md).
+A mission selects catalog profiles through `mission.mechanics`; defining a profile does not activate it. Implemented independent profiles cover combat/reactions, navigation/elevation/physics/terraforming, roguelite, heroes, logistics, director, quests, multiplayer, enemy behaviors, ballistics, and weather. Mechanics Hub and AI/MCP expose recipe prerequisites but never activate dependencies or auto-patch terrain, map, tower, or ability data. Ordinary starter projects do not contain `content/mechanics.json` and retain the legacy path. Exact versions, dependencies, and checkpoint/snapshot contracts live in [ARCHITECTURE.md](ARCHITECTURE.md); authoring workflows live in the [runbook](docs/runbook.md) and [reference examples](docs/examples/README.md).
 
 ## Architecture
 

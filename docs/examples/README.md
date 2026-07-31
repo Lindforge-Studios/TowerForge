@@ -38,6 +38,16 @@ Reference examples show expected project and code patterns.
 | Opt-in ammunition supply | `docs/examples/opt-in-ammunition-supply/` | R5.8B Logistics v3 reference with producer/storage compartments, bounded deterministic transfers, same-instance refill, authoritative progress/links, and no manual routing or raw-material layer. |
 | Opt-in adaptive Wave Director | `docs/examples/opt-in-adaptive-director/` | R7 Director v1 reference with an authored counter pool, deterministic priority/severity/binary-ID selection, threat budget, fairness caps, and no generated or implicit enemies. |
 | Opt-in local multiplayer | `docs/examples/opt-in-local-multiplayer/` | R8 Multiplayer v1 local co-op reference with fixed tick, explicit ownership, checksummed command replay, local transports, and conditional player packaging; hosted auth/lobbies/matchmaking are excluded. |
+| TowerScript DX 3.0 controllers | `docs/examples/opt-in-towerscript-dx3/` | R9 TowerScript v7 fixture for scripted boss-priority targeting plus nested HFSM phases; removing the controllers restores the saved target mode and legacy script path. |
+| Procedural quests | `docs/examples/opt-in-procedural-quests/` | R10 mission-selected quests v1 reference with deterministic selection and no reward/profile/campaign coupling. Persona QA itself is compute-only and uses the starter project through the CLI/Studio/MCP surfaces. |
+| Procedural Juice | `docs/examples/opt-in-procedural-juice/` | R11 visuals-v3 fragment for deterministic particle/audio/camera presentation; it never enters simulation checkpoints, journals, or gameplay digests. |
+| Targetable boss components | `docs/examples/opt-in-targetable-boss-components/` | R12.1 `enemyBehaviors` v1 reference with bounded component HP/shield/armor and exact tower routing. |
+| Formation steering | `docs/examples/opt-in-formation-steering/` | R12.3 bounded cohort/role reference that requires an independently selected dynamic-flow Navigation profile. |
+| Vanguard protection | `docs/examples/opt-in-vanguard-protection/` | R12.4 one-hop interception recipe that composes formation cohorts with existing root Combat shields. |
+| Projectile Ballistics | `docs/examples/opt-in-projectile-ballistics/` | R13.1/R13.2 direct/arc projectile and clearance reference; unbound attacks retain immediate legacy damage. |
+| Projectile ricochet | `docs/examples/opt-in-projectile-ricochet/` | R13.3 bounded terrain/armor-surface recipe using topology-owned reflection and common damage resolution. |
+| Destructible environment | `docs/examples/opt-in-destructible-environment/` | R13.4 five-file reference for object durability plus route-safe atomic terrain/elevation mutation. |
+| Deterministic Weather | `docs/examples/opt-in-weather/` | R13.5 independent seeded Weather profile and mission selection; Blizzard, Acid Rain, and Sandstorm remain inert recipes until explicitly applied. |
 | Headless smoke sim | `packages/cli/sim.mjs` | CLI wrapper for engine-backed mission smoke runs. |
 | Static web build | `packages/cli/build.mjs` | Generates the playable web bundle from project data, compiled engine modules, renderer, and safe assets. |
 | Native packaging | `packages/cli/lib/packaging.mjs` | Canonical Capacitor/Tauri scaffold generation around a built web bundle. |
@@ -61,4 +71,5 @@ Reference examples show expected project and code patterns.
 - Balance fixtures for misleading placement strategies, boss-heavy waves, flying-heavy waves, idle economy, roguelike variants, and multi-currency projects.
 - MCP fixtures for malformed input, invalid-write rollback, stale revisions, concurrent writers, permission denial, provider protocol drift, and agent-authored maps/scripts.
 - Renderer fixtures that prove sprite/atlas parity and enforce swarm-scale performance budgets.
-- TowerScript examples for terrain bindings, `enemyEnteredTile`, `terrainChanged`, bounded `setTileTerrain`, v3 shield actions, and v4 mark actions; split/reaction actions remain future work.
+- A focused R13/R4.4B browser regression fixture proving expected guarded 400/409 responses do not become uncaught application errors.
+- R14–R17 reference fixtures only when their contracts enter RED/GREEN implementation; planned schemas must not be presented as available authoring examples.

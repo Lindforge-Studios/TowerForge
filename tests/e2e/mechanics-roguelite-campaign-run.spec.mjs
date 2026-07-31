@@ -98,7 +98,12 @@ test.describe("R4.4B Studio campaign lifecycle", () => {
     const towerTags = page.locator('[data-roguelite-tower="arrow_tower"] [data-role="tower-tags"]');
     await expect(towerTags).toBeEnabled();
     await towerTags.fill("campaign, sniper");
+    const mechanicsApply = page.waitForResponse((response) => (
+      response.request().method() === "POST"
+      && new URL(response.url()).pathname === "/api/mechanics/apply"
+    ));
     await page.locator("#btn-mechanics-save").click();
+    expect((await mechanicsApply).ok()).toBe(true);
     await expect.poll(() => readJson(path.join(projectDir, "content", "balance.json")).towers.arrow_tower.tags)
       .toEqual(["campaign", "sniper"]);
     expect(campaignState(projectDir)).toMatchObject({ authored: true, active: true });

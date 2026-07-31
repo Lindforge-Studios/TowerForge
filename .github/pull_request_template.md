@@ -2,6 +2,19 @@
 
 - 
 
+## Scope And Compatibility
+
+- [ ] This PR contains one roadmap R or one explicitly scoped maintenance change.
+- [ ] New gameplay is opt-in; absent/disabled/unselected and unsupported-future paths are covered.
+- [ ] Public version-domain changes, migrations, package boundaries, and forbidden scope are documented.
+
+## TDD Evidence
+
+- RED command / expected failure:
+- GREEN focused command:
+- Regression added for every verifier finding:
+- Evidence recorded in `progress.md` (roadmap increments only):
+
 ## Verification
 
 - [ ] `npm run typecheck`
@@ -13,7 +26,16 @@
 - [ ] `npm run maps:compile -- --project examples/starter.tdproj` (map/compiler changes)
 - [ ] `npm run build`
 - [ ] `npm run test:e2e`
+- [ ] `npm run plugin:build && npm run plugin:validate && npm run plugin:smoke` (MCP/CLI/engine dist/renderer/plugin changes)
+- [ ] Mobile/desktop scaffold commands (packaging changes)
 - [ ] `cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml` (desktop shell changes)
+
+## Independent Sign-Off (Roadmap Increments)
+
+- [ ] Exact candidate frozen after final source change.
+- [ ] Code Verifier: PASS, reviewer did not author production code.
+- [ ] Constructor Integration Verifier: PASS, reviewer did not author production code.
+- [ ] Both sign-offs were repeated after any later source change.
 
 ## Boundaries
 
