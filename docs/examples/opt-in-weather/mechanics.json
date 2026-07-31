@@ -1,0 +1,116 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "weather": {
+      "schemaVersion": 1,
+      "enabled": true,
+      "profiles": {
+        "basic_blizzard_weather": {
+          "zones": {
+            "all": {
+              "kind": "all_map"
+            }
+          },
+          "definitions": {
+            "blizzard": {
+              "label": "Blizzard",
+              "effects": {
+                "reduced_visibility": {
+                  "kind": "visibility_range",
+                  "multiplier": 0.8
+                },
+                "slowed_enemies": {
+                  "kind": "enemy_speed",
+                  "multiplier": 0.85
+                }
+              }
+            }
+          },
+          "schedule": {
+            "calmWeight": 2,
+            "choices": {
+              "blizzard_all": {
+                "weatherId": "blizzard",
+                "zoneId": "all",
+                "weight": 1
+              }
+            }
+          }
+        },
+        "basic_acid_rain_weather": {
+          "zones": {
+            "all": {
+              "kind": "all_map"
+            }
+          },
+          "definitions": {
+            "acid_rain": {
+              "label": "Acid Rain",
+              "effects": {
+                "acid_damage": {
+                  "kind": "periodic_damage",
+                  "target": "enemies",
+                  "amount": 2,
+                  "intervalUnits": 1,
+                  "damageType": "acid"
+                }
+              }
+            }
+          },
+          "schedule": {
+            "calmWeight": 2,
+            "choices": {
+              "acid_rain_all": {
+                "weatherId": "acid_rain",
+                "zoneId": "all",
+                "weight": 1
+              }
+            }
+          }
+        },
+        "basic_sandstorm_weather": {
+          "zones": {
+            "gate": {
+              "kind": "tiles",
+              "tiles": [
+                {
+                  "q": 1,
+                  "r": 1
+                },
+                {
+                  "q": 2,
+                  "r": 1
+                }
+              ]
+            }
+          },
+          "definitions": {
+            "sandstorm": {
+              "label": "Sandstorm",
+              "effects": {
+                "reduced_range": {
+                  "kind": "visibility_range",
+                  "multiplier": 0.75
+                },
+                "slower_fire": {
+                  "kind": "tower_fire_rate",
+                  "multiplier": 0.8
+                }
+              }
+            }
+          },
+          "schedule": {
+            "calmWeight": 2,
+            "choices": {
+              "sandstorm_gate": {
+                "weatherId": "sandstorm",
+                "zoneId": "gate",
+                "weight": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

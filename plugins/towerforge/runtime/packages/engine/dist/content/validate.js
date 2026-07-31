@@ -17,6 +17,8 @@ import { LogisticsProfileValidationError, normalizeLogisticsProfileV1, normalize
 import { DirectorProfileValidationError, normalizeDirectorProfileV1 } from "./director-mechanics.js";
 import { QuestProfileValidationError, normalizeQuestProfileV1 } from "./quest-mechanics.js";
 import { EnemyBehaviorsProfileValidationError, normalizeEnemyBehaviorsProfileV1 } from "./enemy-behaviors-mechanics.js";
+import { ARC_CLEARANCE_LIMITS, BallisticsProfileValidationError, DESTRUCTIBLE_ENVIRONMENT_LIMITS, normalizeBallisticsProfileV1 } from "./ballistics-mechanics.js";
+import { WEATHER_LIMITS, WeatherProfileValidationError, normalizeWeatherProfileV1 } from "./weather-mechanics.js";
 import { resolveActiveCombatMechanics } from "./combat-mechanics.js";
 import { resolveActiveReactionsMechanics } from "./reaction-mechanics.js";
 import { MultiplayerProfileValidationError, normalizeMultiplayerProfileV1, normalizeMultiplayerProfileV2 } from "./multiplayer-mechanics.js";
@@ -3375,6 +3377,459 @@ export function validateGameContentRegistry(content) {
         }
     };
     validateEnemyBehaviorsMechanics();
+    const validateBallisticsMechanics = () => {
+        const inspect = (value, entityId, fieldPath, label) => {
+            if (value === null || typeof value !== "object" || Array.isArray(value)) {
+                err("mechanics", entityId, fieldPath, `${label} must be a plain object.`);
+                return undefined;
+            }
+            try {
+                const prototype = Object.getPrototypeOf(value);
+                const descriptors = Object.getOwnPropertyDescriptors(value);
+                if (prototype !== Object.prototype && prototype !== null) {
+                    err("mechanics", entityId, fieldPath, `${label} must be a plain object.`);
+                    return undefined;
+                }
+                if (Object.getOwnPropertySymbols(descriptors).length > 0) {
+                    err("mechanics", entityId, fieldPath, `${label} must not contain symbol fields.`);
+                }
+                const detached = Object.create(null);
+                for (const key of Object.keys(descriptors)) {
+                    const descriptor = descriptors[key];
+                    if (!descriptor?.enumerable || !("value" in descriptor)) {
+                        err("mechanics", entityId, `${fieldPath}.${key}`, `${label} fields must be enumerable own data properties.`);
+                        continue;
+                    }
+                    Object.defineProperty(detached, key, { value: descriptor.value, enumerable: true });
+                }
+                return detached;
+            }
+            catch {
+                err("mechanics", entityId, fieldPath, `${label} could not be inspected safely.`);
+                return undefined;
+            }
+        };
+        const modules = inspect(content.mechanics.modules, "ballistics", "mechanics.modules", "Mechanics modules");
+        const moduleValue = modules?.ballistics;
+        if (moduleValue === undefined)
+            return;
+        const module = inspect(moduleValue, "ballistics", "modules.ballistics", "Ballistics module");
+        if (!module)
+            return;
+        const moduleFields = new Set(["schemaVersion", "enabled", "profiles"]);
+        for (const key of Object.keys(module)) {
+            if (!moduleFields.has(key)) {
+                err("mechanics", "ballistics", `modules.ballistics.${key}`, `Ballistics module is closed; unsupported field "${key}".`);
+            }
+        }
+        for (const key of moduleFields) {
+            if (!Object.prototype.hasOwnProperty.call(module, key)) {
+                err("mechanics", "ballistics", `modules.ballistics.${key}`, `Ballistics module field "${key}" is required.`);
+            }
+        }
+        if (typeof module.enabled !== "boolean") {
+            err("mechanics", "ballistics", "modules.ballistics.enabled", "Ballistics enabled must be boolean.");
+        }
+        const selectedByProfile = new Map();
+        for (const [missionId, mission] of Object.entries(content.missions)) {
+            const profileId = mission.mechanics?.profiles?.ballistics;
+            if (typeof profileId !== "string")
+                continue;
+            const selected = selectedByProfile.get(profileId) ?? [];
+            selected.push(missionId);
+            selectedByProfile.set(profileId, selected);
+        }
+        const ownDataValue = (value, key) => {
+            if (value === null || typeof value !== "object")
+                return undefined;
+            try {
+                const descriptor = Object.getOwnPropertyDescriptor(value, key);
+                return descriptor?.enumerable === true && "value" in descriptor
+                    ? descriptor.value
+                    : undefined;
+            }
+            catch {
+                return undefined;
+            }
+        };
+        const destructiblePlacementsForMap = (mapId, map) => {
+            const authored = ownDataValue(map, "destructibleObjects");
+            if (authored === undefined || !Array.isArray(authored))
+                return [];
+            let descriptors;
+            try {
+                if (Object.getPrototypeOf(authored) !== Array.prototype)
+                    return [];
+                descriptors = Object.getOwnPropertyDescriptors(authored);
+            }
+            catch {
+                return [];
+            }
+            const lengthDescriptor = descriptors.length;
+            const length = lengthDescriptor && "value" in lengthDescriptor ? lengthDescriptor.value : undefined;
+            if (!Number.isSafeInteger(length) || length < 0
+                || length > DESTRUCTIBLE_ENVIRONMENT_LIMITS.placementsPerMap)
+                return [];
+            const references = [];
+            for (let index = 0; index < length; index += 1) {
+                const itemDescriptor = descriptors[String(index)];
+                if (!itemDescriptor?.enumerable || !("value" in itemDescriptor))
+                    continue;
+                const definitionId = ownDataValue(itemDescriptor.value, "definitionId");
+                if (typeof definitionId !== "string")
+                    continue;
+                references.push({ mapId, index, definitionId });
+            }
+            return references;
+        };
+        const destructiblePlacementsForMissions = (missionIds) => {
+            const mapIds = new Set();
+            for (const missionId of missionIds) {
+                const mapId = content.missions[missionId]?.mapId;
+                if (mapId !== undefined)
+                    mapIds.add(mapId);
+            }
+            const references = [];
+            for (const mapId of [...mapIds].sort()) {
+                references.push(...destructiblePlacementsForMap(mapId, content.maps[mapId]));
+            }
+            return references;
+        };
+        const allDestructiblePlacements = () => {
+            const references = [];
+            for (const mapId of Object.keys(content.maps).sort()) {
+                references.push(...destructiblePlacementsForMap(mapId, content.maps[mapId]));
+            }
+            return references;
+        };
+        if (module.schemaVersion !== 1) {
+            const selected = [...selectedByProfile.values()].some((missionIds) => missionIds.length > 0);
+            (selected && module.enabled === true ? err : warn)("mechanics", "ballistics", "modules.ballistics.schemaVersion", `Ballistics mechanics schemaVersion ${String(module.schemaVersion)} is unsupported; supported schemaVersion is 1.`);
+            return;
+        }
+        const profiles = inspect(module.profiles, "ballistics", "modules.ballistics.profiles", "Ballistics profiles");
+        if (!profiles)
+            return;
+        for (const [profileId, missionIds] of selectedByProfile) {
+            if (Object.prototype.hasOwnProperty.call(profiles, profileId))
+                continue;
+            (module.enabled === true ? err : warn)("mission", missionIds[0] ?? profileId, `missions.${missionIds[0] ?? profileId}.mechanics.profiles.ballistics`, `Mission selects unknown ballistics profile "${profileId}".`);
+        }
+        for (const profileId of Object.keys(profiles).sort()) {
+            const root = `modules.ballistics.profiles.${profileId}`;
+            const active = module.enabled === true && (selectedByProfile.get(profileId)?.length ?? 0) > 0;
+            const report = active ? err : warn;
+            let profile;
+            try {
+                profile = normalizeBallisticsProfileV1(profiles[profileId]);
+            }
+            catch (error) {
+                const message = error instanceof BallisticsProfileValidationError || error instanceof Error
+                    ? error.message
+                    : "Ballistics profile is invalid.";
+                report("mechanics", profileId, root, message);
+                continue;
+            }
+            for (const towerId of Object.keys(profile.projectiles.towers)) {
+                const tower = content.towers[towerId];
+                if (!tower) {
+                    report("mechanics", profileId, `${root}.projectiles.towers.${towerId}`, `Ballistics references unknown tower "${towerId}".`);
+                    continue;
+                }
+                if (tower.attack.kind !== "single" || tower.attack.chain !== undefined) {
+                    report("mechanics", profileId, `${root}.projectiles.towers.${towerId}`, `Ballistics tower "${towerId}" must use an unchained single attack in schema v1.`);
+                }
+            }
+            const clearance = profile.projectiles.clearance;
+            if (clearance !== undefined) {
+                const terrainDefinitions = Object.values(content.terrainTypes);
+                if (terrainDefinitions.length > ARC_CLEARANCE_LIMITS.terrainDefinitions) {
+                    report("mechanics", profileId, `${root}.projectiles.clearance.terrainBlockerHeights`, `Ballistics arc clearance terrain definitions exceed the ${ARC_CLEARANCE_LIMITS.terrainDefinitions} definition budget.`);
+                }
+                const authoredTerrainTags = new Set();
+                let totalTerrainTags = 0;
+                for (const terrain of terrainDefinitions) {
+                    totalTerrainTags += terrain.tags.length;
+                    if (terrain.tags.length > ARC_CLEARANCE_LIMITS.terrainTagsPerDefinition) {
+                        report("mechanics", profileId, `${root}.projectiles.clearance.terrainBlockerHeights`, `Ballistics arc clearance terrain "${terrain.id}" exceeds the `
+                            + `${ARC_CLEARANCE_LIMITS.terrainTagsPerDefinition} tag-per-definition budget.`);
+                    }
+                    for (const tag of terrain.tags)
+                        authoredTerrainTags.add(tag);
+                }
+                if (totalTerrainTags > ARC_CLEARANCE_LIMITS.terrainTagsAcrossDefinitions) {
+                    report("mechanics", profileId, `${root}.projectiles.clearance.terrainBlockerHeights`, `Ballistics arc clearance terrain tags exceed the `
+                        + `${ARC_CLEARANCE_LIMITS.terrainTagsAcrossDefinitions} aggregate tag budget.`);
+                }
+                for (const tag of Object.keys(clearance.terrainBlockerHeights)) {
+                    if (authoredTerrainTags.has(tag))
+                        continue;
+                    report("mechanics", profileId, `${root}.projectiles.clearance.terrainBlockerHeights.${tag}`, `Ballistics arc clearance references unknown terrain tag "${tag}".`);
+                }
+            }
+            const ricochet = profile.projectiles.ricochet;
+            if (ricochet?.armorTypes !== undefined) {
+                const selectedMissionIds = selectedByProfile.get(profileId) ?? [];
+                for (const missionId of selectedMissionIds) {
+                    let combat;
+                    try {
+                        combat = resolveActiveCombatMechanics(content, missionId);
+                    }
+                    catch {
+                        combat = undefined;
+                    }
+                    for (const armorTypeId of Object.keys(ricochet.armorTypes)) {
+                        if (Object.prototype.hasOwnProperty.call(combat?.armorTypes ?? {}, armorTypeId))
+                            continue;
+                        report("mechanics", profileId, `${root}.projectiles.ricochet.armorTypes.${armorTypeId}`, `Ricochet armor surface "${armorTypeId}" is unavailable in the active Combat profile for mission "${missionId}".`);
+                    }
+                }
+                if (selectedMissionIds.length === 0) {
+                    const availableArmorTypeIds = new Set();
+                    for (const missionId of Object.keys(content.missions).sort()) {
+                        try {
+                            const combat = resolveActiveCombatMechanics(content, missionId);
+                            for (const armorTypeId of Object.keys(combat?.armorTypes ?? {})) {
+                                availableArmorTypeIds.add(armorTypeId);
+                            }
+                        }
+                        catch {
+                            // An unselected Ballistics profile is warning-only; invalid Combat is reported by its own validator.
+                        }
+                    }
+                    for (const armorTypeId of Object.keys(ricochet.armorTypes)) {
+                        if (availableArmorTypeIds.has(armorTypeId))
+                            continue;
+                        report("mechanics", profileId, `${root}.projectiles.ricochet.armorTypes.${armorTypeId}`, `Ricochet armor surface "${armorTypeId}" is unavailable in any mission-active Combat profile.`);
+                    }
+                }
+            }
+            const destructibles = profile.projectiles.destructibles;
+            if (destructibles !== undefined) {
+                const selectedMissionIds = [...(selectedByProfile.get(profileId) ?? [])].sort();
+                const placementReferences = selectedMissionIds.length > 0
+                    ? destructiblePlacementsForMissions(selectedMissionIds)
+                    : allDestructiblePlacements();
+                for (const reference of placementReferences) {
+                    if (Object.prototype.hasOwnProperty.call(destructibles.definitions, reference.definitionId))
+                        continue;
+                    report("map", reference.mapId, `maps.${reference.mapId}.destructibleObjects[${reference.index}].definitionId`, `Destructible placement references unknown definition "${reference.definitionId}" in Ballistics profile "${profileId}".`);
+                }
+                if (selectedMissionIds.length > 0) {
+                    for (const missionId of selectedMissionIds) {
+                        let combat;
+                        try {
+                            combat = resolveActiveCombatMechanics(content, missionId);
+                        }
+                        catch {
+                            combat = undefined;
+                        }
+                        const transitionIds = activeTerraformingTransitionIdsByMission.get(missionId);
+                        for (const [definitionId, definition] of Object.entries(destructibles.definitions)) {
+                            if (definition.armorTypeId !== undefined
+                                && !Object.prototype.hasOwnProperty.call(combat?.armorTypes ?? {}, definition.armorTypeId)) {
+                                report("mechanics", profileId, `${root}.projectiles.destructibles.definitions.${definitionId}.armorTypeId`, `Destructible definition "${definitionId}" references unknown armor type "${definition.armorTypeId}" for mission "${missionId}".`);
+                            }
+                            const transitionId = definition.onDestroyed?.terrainTransitionId;
+                            if (transitionId !== undefined && !transitionIds?.has(transitionId)) {
+                                report("mechanics", profileId, `${root}.projectiles.destructibles.definitions.${definitionId}.onDestroyed.terrainTransitionId`, `Destructible definition "${definitionId}" references unknown Terraforming transition "${transitionId}" for mission "${missionId}".`);
+                            }
+                        }
+                    }
+                }
+                else {
+                    const availableArmorTypeIds = new Set();
+                    for (const missionId of Object.keys(content.missions).sort()) {
+                        try {
+                            const combat = resolveActiveCombatMechanics(content, missionId);
+                            for (const armorTypeId of Object.keys(combat?.armorTypes ?? {})) {
+                                availableArmorTypeIds.add(armorTypeId);
+                            }
+                        }
+                        catch {
+                            // Invalid Combat profiles are reported by their own validator.
+                        }
+                    }
+                    const availableTransitionIds = new Set();
+                    for (const transitionIds of activeTerraformingTransitionIdsByMission.values()) {
+                        for (const transitionId of transitionIds)
+                            availableTransitionIds.add(transitionId);
+                    }
+                    for (const [definitionId, definition] of Object.entries(destructibles.definitions)) {
+                        if (definition.armorTypeId !== undefined
+                            && !availableArmorTypeIds.has(definition.armorTypeId)) {
+                            report("mechanics", profileId, `${root}.projectiles.destructibles.definitions.${definitionId}.armorTypeId`, `Destructible definition "${definitionId}" references unknown armor type "${definition.armorTypeId}" in mission-active Combat profiles.`);
+                        }
+                        const transitionId = definition.onDestroyed?.terrainTransitionId;
+                        if (transitionId !== undefined && !availableTransitionIds.has(transitionId)) {
+                            report("mechanics", profileId, `${root}.projectiles.destructibles.definitions.${definitionId}.onDestroyed.terrainTransitionId`, `Destructible definition "${definitionId}" references unknown Terraforming transition "${transitionId}" in mission-active profiles.`);
+                        }
+                    }
+                }
+            }
+        }
+    };
+    validateBallisticsMechanics();
+    const validateWeatherMechanics = () => {
+        const safeRecord = (value, fieldPath, label) => {
+            let prototype;
+            let descriptors;
+            try {
+                if (value === null || typeof value !== "object" || Array.isArray(value))
+                    throw new Error();
+                prototype = Object.getPrototypeOf(value);
+                descriptors = Object.getOwnPropertyDescriptors(value);
+            }
+            catch {
+                err("mechanics", "weather", fieldPath, `${label} must be safely inspectable plain own data.`);
+                return undefined;
+            }
+            if ((prototype !== Object.prototype && prototype !== null) || Object.getOwnPropertySymbols(descriptors).length > 0) {
+                err("mechanics", "weather", fieldPath, `${label} must be a plain object.`);
+                return undefined;
+            }
+            const result = Object.create(null);
+            for (const key of Object.keys(descriptors)) {
+                const descriptor = descriptors[key];
+                if (!descriptor?.enumerable || !("value" in descriptor)) {
+                    err("mechanics", "weather", `${fieldPath}.${key}`, `${label}.${key} must be own data.`);
+                    return undefined;
+                }
+                Object.defineProperty(result, key, { value: descriptor.value, enumerable: true });
+            }
+            return result;
+        };
+        const modules = safeRecord(content.mechanics.modules, "mechanics.modules", "Mechanics modules");
+        const moduleValue = modules?.weather;
+        if (moduleValue === undefined)
+            return;
+        const module = safeRecord(moduleValue, "modules.weather", "Weather module");
+        if (!module)
+            return;
+        const required = new Set(["schemaVersion", "enabled", "profiles"]);
+        for (const key of Object.keys(module)) {
+            if (!required.has(key))
+                err("mechanics", "weather", `modules.weather.${key}`, `Weather module is closed; unsupported field "${key}".`);
+        }
+        for (const key of required) {
+            if (!Object.prototype.hasOwnProperty.call(module, key))
+                err("mechanics", "weather", `modules.weather.${key}`, `Weather module field "${key}" is required.`);
+        }
+        if (typeof module.enabled !== "boolean")
+            err("mechanics", "weather", "modules.weather.enabled", "Weather enabled must be boolean.");
+        const selectedByProfile = new Map();
+        for (const missionId of Object.keys(content.missions).sort()) {
+            const profileId = content.missions[missionId]?.mechanics?.profiles?.weather;
+            if (typeof profileId !== "string")
+                continue;
+            const entries = selectedByProfile.get(profileId) ?? [];
+            entries.push(missionId);
+            selectedByProfile.set(profileId, entries);
+        }
+        if (module.schemaVersion !== 1) {
+            const active = module.enabled === true && selectedByProfile.size > 0;
+            (active ? err : warn)("mechanics", "weather", "modules.weather.schemaVersion", "Weather schemaVersion is unsupported; supported version is 1.");
+            return;
+        }
+        const profiles = safeRecord(module.profiles, "modules.weather.profiles", "Weather profiles");
+        if (!profiles)
+            return;
+        const readPlainRecord = (value) => {
+            try {
+                if (value === null || typeof value !== "object" || Array.isArray(value))
+                    return undefined;
+                const prototype = Object.getPrototypeOf(value);
+                const descriptors = Object.getOwnPropertyDescriptors(value);
+                if ((prototype !== Object.prototype && prototype !== null) || Object.getOwnPropertySymbols(descriptors).length > 0)
+                    return undefined;
+                const result = Object.create(null);
+                for (const key of Object.keys(descriptors)) {
+                    const descriptor = descriptors[key];
+                    if (!descriptor?.enumerable || !("value" in descriptor))
+                        return undefined;
+                    Object.defineProperty(result, key, { value: descriptor.value, enumerable: true });
+                }
+                return result;
+            }
+            catch {
+                return undefined;
+            }
+        };
+        const readDenseArray = (value) => {
+            try {
+                if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype)
+                    return undefined;
+                const descriptors = Object.getOwnPropertyDescriptors(value);
+                const length = descriptors.length && "value" in descriptors.length ? descriptors.length.value : undefined;
+                if (!Number.isSafeInteger(length) || length < 0 || length > WEATHER_LIMITS.tilesPerZone
+                    || Object.getOwnPropertySymbols(descriptors).length > 0)
+                    return undefined;
+                const result = new Array(length);
+                for (let index = 0; index < length; index += 1) {
+                    const descriptor = descriptors[String(index)];
+                    if (!descriptor?.enumerable || !("value" in descriptor))
+                        return undefined;
+                    result[index] = descriptor.value;
+                }
+                if (Object.keys(descriptors).some((key) => key !== "length" && !/^(0|[1-9][0-9]*)$/.test(key)))
+                    return undefined;
+                return result;
+            }
+            catch {
+                return undefined;
+            }
+        };
+        for (const [profileId, missionIds] of selectedByProfile) {
+            if (!Object.prototype.hasOwnProperty.call(profiles, profileId)) {
+                (module.enabled === true ? err : warn)("mission", missionIds[0] ?? profileId, `missions.${missionIds[0] ?? profileId}.mechanics.profiles.weather`, `Mission selects unknown weather profile "${profileId}".`);
+            }
+        }
+        for (const profileId of Object.keys(profiles).sort()) {
+            const missionIds = selectedByProfile.get(profileId) ?? [];
+            const active = module.enabled === true && missionIds.length > 0;
+            const report = active ? err : warn;
+            // Map-bound diagnostics are independent of definition/schedule cross-references.
+            // Inspect them before full normalization so authors receive every actionable
+            // semantic issue in one preview without executing hostile accessors.
+            const rawProfile = readPlainRecord(profiles[profileId]);
+            const rawZones = readPlainRecord(rawProfile?.zones);
+            if (rawZones) {
+                for (const missionId of missionIds) {
+                    const mission = content.missions[missionId];
+                    const map = mission ? content.maps[mission.mapId] : undefined;
+                    if (!map)
+                        continue;
+                    for (const zoneId of Object.keys(rawZones).sort()) {
+                        const rawZone = readPlainRecord(rawZones[zoneId]);
+                        if (rawZone?.kind !== "tiles")
+                            continue;
+                        const rawTiles = readDenseArray(rawZone.tiles);
+                        if (!rawTiles)
+                            continue;
+                        rawTiles.forEach((rawTile, index) => {
+                            const tile = readPlainRecord(rawTile);
+                            if (!tile || typeof tile.q !== "number" || typeof tile.r !== "number")
+                                return;
+                            if (tile.q >= 0 && tile.r >= 0 && tile.q < map.width && tile.r < map.height)
+                                return;
+                            report("mechanics", profileId, `modules.weather.profiles.${profileId}.zones.${zoneId}.tiles.${index}`, `Weather zone "${zoneId}" contains a tile out of bounds for mission map "${map.id}".`);
+                        });
+                    }
+                }
+            }
+            let profile;
+            try {
+                profile = normalizeWeatherProfileV1(profiles[profileId]);
+            }
+            catch (error) {
+                report("mechanics", profileId, `modules.weather.profiles.${profileId}`, error instanceof WeatherProfileValidationError || error instanceof Error
+                    ? error.message : "Weather profile is invalid.");
+                continue;
+            }
+            void profile;
+        }
+    };
+    validateWeatherMechanics();
     const validateMultiplayerMechanics = () => {
         const inspect = (value, entityId, fieldPath, label) => {
             if (value === null || typeof value !== "object" || Array.isArray(value)) {

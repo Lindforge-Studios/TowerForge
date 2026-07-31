@@ -1,4 +1,8 @@
-import { compileMapSources, normalizeElevationOverrides } from "./map-compiler.mjs";
+import {
+  compileMapSources,
+  normalizeDestructibleObjects,
+  normalizeElevationOverrides
+} from "./map-compiler.mjs";
 
 export const PROJECT_SCHEMA_VERSION = 3;
 
@@ -16,6 +20,8 @@ const MECHANICS_MODULE_IDS = new Set([
   "navigation",
   "elevation",
   "physics",
+  "ballistics",
+  "weather",
   "terraforming",
   "roguelite",
   "heroes",
@@ -747,7 +753,8 @@ export const PROCEDURAL_JUICE_SUPPORTED_EVENTS = Object.freeze([
   "towerPlaced", "towerUpgraded", "towerFired", "enemyHit", "enemyKilled", "enemyLeaked",
   "areaPulse", "waveStarted", "waveCleared", "victory", "defeat", "enemyShieldChanged",
   "towerShieldChanged", "enemyMarkChanged", "enemyExposureChanged", "enemyReactionTriggered",
-  "enemyDisplacementResolved", "enemyFell", "heroAbilityUsed", "objectiveCompleted", "objectiveFailed"
+  "enemyDisplacementResolved", "enemyFell", "heroAbilityUsed", "objectiveCompleted", "objectiveFailed",
+  "destructibleObjectDamaged", "destructibleObjectDestroyed"
 ]);
 const PROCEDURAL_JUICE_EVENTS = new Set(PROCEDURAL_JUICE_SUPPORTED_EVENTS);
 
@@ -1071,6 +1078,23 @@ function validateMaps(maps, err) {
           normalizeElevationOverrides(elevationDescriptor.value, map.width, map.height, `maps.${mapId}.elevationOverrides`);
         } catch (error) {
           err("map", mapId, "elevationOverrides", error.message);
+        }
+      }
+    }
+    const destructibleDescriptor = Object.getOwnPropertyDescriptor(map, "destructibleObjects");
+    if (destructibleDescriptor) {
+      if (!("value" in destructibleDescriptor)) {
+        err("map", mapId, "destructibleObjects", "destructibleObjects must be an own data property; accessors are not allowed.");
+      } else {
+        try {
+          normalizeDestructibleObjects(
+            destructibleDescriptor.value,
+            map.width,
+            map.height,
+            `maps.${mapId}.destructibleObjects`
+          );
+        } catch (error) {
+          err("map", mapId, "destructibleObjects", error.message);
         }
       }
     }

@@ -1,0 +1,7 @@
+{
+  "mechanics": {
+    "profiles": {
+      "weather": "basic_blizzard_weather"
+    }
+  }
+}

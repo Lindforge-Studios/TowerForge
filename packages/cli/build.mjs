@@ -1998,7 +1998,13 @@ import {
   createProceduralJuicePresentationRuntime,
   createProceduralJuiceWorldSnapshotBuffer,
   projectCampaignPresentation,
+  projectBallisticsEventPresentation,
+  projectBallisticsPresentation,
+  projectBallisticsPresentationPoint,
+  projectBallisticsRicochetEventPresentation,
   projectDirectorDecisionCues,
+  projectDestructibleEnvironmentPresentation,
+  projectWeatherPresentation,
   projectElevationCues,
   projectEnemyNavigationPoint,
   projectEnemyComponentsPresentation,
@@ -2730,6 +2736,38 @@ class PlayScene extends Phaser.Scene {
     }
 
     this.fxG.clear();
+    const ballisticsPresentation = projectBallisticsPresentation(presentationSnapshot);
+    if (ballisticsPresentation.active) {
+      this.fxG.fillStyle(0xffd27a, 1);
+      this.fxG.lineStyle(Math.max(1, g.r * 0.08), 0xfff4c4, 0.72);
+      for (const projectile of ballisticsPresentation.projectiles) {
+        const point = projectBallisticsPresentationPoint(
+          projectile,
+          (coord) => this.center(coord, g),
+          Math.max(1, g.r * 0.18)
+        );
+        if (!point) continue;
+        this.fxG.fillCircle(point.x, point.y, Math.max(2, g.r * 0.13));
+        this.fxG.strokeCircle(point.x, point.y, Math.max(2, g.r * 0.13));
+      }
+    }
+    const ballisticsEvents = projectBallisticsEventPresentation(presentationSnapshot);
+    for (const event of ballisticsEvents) {
+      const point = this.center(event.blockerCoord, g);
+      const radius = Math.max(3, g.r * 0.32);
+      this.fxG.lineStyle(Math.max(2, g.r * 0.11), 0xff8b5c, 0.95);
+      this.fxG.lineBetween(point.x - radius, point.y - radius, point.x + radius, point.y + radius);
+      this.fxG.lineBetween(point.x + radius, point.y - radius, point.x - radius, point.y + radius);
+    }
+    const ballisticsRicochetEvents = projectBallisticsRicochetEventPresentation(presentationSnapshot);
+    for (const event of ballisticsRicochetEvents) {
+      const collision = this.center(event.collisionCoord, g);
+      const target = this.center(event.nextTargetCoord, g);
+      this.fxG.lineStyle(Math.max(2, g.r * 0.1), 0x76e6ff, 0.95);
+      this.fxG.lineBetween(collision.x, collision.y, target.x, target.y);
+      this.fxG.fillStyle(0xd6f9ff, 1);
+      this.fxG.fillCircle(collision.x, collision.y, Math.max(2, g.r * 0.12));
+    }
     const presentationEvents = projectLegacyPresentationEvents(presentationSnapshot);
     const placedTowerPositions = new Map();
     for (const ev of presentationEvents) {
@@ -2830,6 +2868,43 @@ class PlayScene extends Phaser.Scene {
     }
 
     this.entG.clear();
+    const weatherPresentation = projectWeatherPresentation(snap);
+    if (weatherPresentation.active) {
+      const weatherTiles = weatherPresentation.zoneKind === "all_map" ? (snap.tiles ?? []) : weatherPresentation.tiles;
+      for (const tile of weatherTiles) {
+        const p = this.center(tile, g);
+        this.entG.fillStyle(0x6ca1be, 0.14);
+        if (g.grid.kind === "square") {
+          const size = g.r * 1.52;
+          this.entG.fillRect(p.x - size / 2, p.y - size / 2, size, size);
+        } else {
+          this.entG.fillCircle(p.x, p.y, g.r * 0.76);
+        }
+      }
+    }
+    const destructibleEnvironmentPresentation = projectDestructibleEnvironmentPresentation(snap);
+    if (destructibleEnvironmentPresentation.active) {
+      for (const row of destructibleEnvironmentPresentation.rows) {
+        const p = this.center(row.coord, g);
+        const radius = Math.max(3, g.r * 0.38);
+        const alpha = row.destroyed ? 0.42 : 0.95;
+        this.entG.fillStyle(row.destroyed ? 0x605d55 : 0x9b7653, alpha);
+        this.entG.fillRect(p.x - radius, p.y - radius, radius * 2, radius * 2);
+        this.entG.lineStyle(Math.max(1, g.r * 0.08), row.destroyed ? 0xa5a095 : 0xf0d3a8, alpha);
+        this.entG.strokeRect(p.x - radius, p.y - radius, radius * 2, radius * 2);
+        if (row.destroyed) {
+          this.entG.lineBetween(p.x - radius, p.y - radius, p.x + radius, p.y + radius);
+          this.entG.lineBetween(p.x + radius, p.y - radius, p.x - radius, p.y + radius);
+        } else if (row.hpRatio < 1) {
+          const barHeight = Math.max(2, g.r * 0.08);
+          const top = p.y + radius + barHeight;
+          this.entG.fillStyle(0x1b1d18, 1);
+          this.entG.fillRect(p.x - radius, top, radius * 2, barHeight);
+          this.entG.fillStyle(row.hpRatio > 0.35 ? 0xd7b06f : 0xdf6a59, 1);
+          this.entG.fillRect(p.x - radius, top, radius * 2 * row.hpRatio, barHeight);
+        }
+      }
+    }
     const seen = new Set();
     for (const tw of snap.towers) {
       const p = this.center(tw.coord, g); seen.add(tw.id);

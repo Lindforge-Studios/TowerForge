@@ -108,7 +108,7 @@ export interface ReactionPlannerInput {
     readonly afterModifiers: number;
     readonly resolvedFinalAmount: number;
     readonly depth: number;
-    readonly sourceKind: "tower" | "ability" | "tower_script" | "status" | "enemy" | "leak" | "reaction";
+    readonly sourceKind: "tower" | "ability" | "tower_script" | "status" | "enemy" | "leak" | "reaction" | "weather";
     readonly tags: readonly string[];
     readonly allowReactions: boolean;
     readonly aliveAfterPrimary: boolean;

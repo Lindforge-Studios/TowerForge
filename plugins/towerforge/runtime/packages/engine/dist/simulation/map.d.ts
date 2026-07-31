@@ -6,10 +6,19 @@ export interface GridMapTerrainOverride extends GridCoord {
 export interface GridMapElevationOverride extends GridCoord {
     elevation: number;
 }
+export interface GridMapDestructibleObjectV1 {
+    readonly id: string;
+    readonly definitionId: string;
+    readonly coord: GridCoord;
+}
 export declare const ELEVATION_LIMITS: Readonly<{
     overridesPerMap: 65536;
     minimum: -1000000;
     maximum: 1000000;
+}>;
+export declare const GRID_DESTRUCTIBLE_OBJECT_LIMITS: Readonly<{
+    placementsPerMap: 4096;
+    idUtf8Bytes: 128;
 }>;
 export declare class GridElevationValidationError extends Error {
     readonly fieldPath: string;
@@ -29,11 +38,17 @@ export interface GridMapDefinition {
     terrainOverrides: GridMapTerrainOverride[];
     /** Sparse, signed authored elevation. Omitted and zero-valued cells both resolve to 0. */
     elevationOverrides?: GridMapElevationOverride[];
+    /** Optional authored environment objects. Runtime activation remains capability-owned. */
+    destructibleObjects?: readonly GridMapDestructibleObjectV1[];
 }
 /** Read the optional top-level field without evaluating accessors or inherited data. */
 export declare function inspectGridElevationOverrides(definition: unknown): unknown;
 /** Safely detaches and canonicalizes the closed sparse elevation representation. */
 export declare function normalizeGridElevationOverrides(value: unknown, width: number, height: number): GridMapElevationOverride[];
+/** Read the optional placement field without invoking authored accessors. */
+export declare function inspectGridDestructibleObjects(definition: unknown): unknown;
+/** Canonicalize the closed, bounded placement list without invoking hostile authored code. */
+export declare function normalizeGridDestructibleObjects(value: unknown, width: number, height: number): GridMapDestructibleObjectV1[];
 export declare class GridMap {
     readonly id: string;
     readonly width: number;
@@ -56,6 +71,7 @@ export declare class GridMap {
     getBaseElevation(coord: GridCoord): number | undefined;
     getElevationOverrides(): GridMapElevationOverride[];
     getEffectiveElevationOverrides(): GridMapElevationOverride[];
+    getDestructibleObjects(): GridMapDestructibleObjectV1[];
     /** Attach the authoritative simulation-owned runtime projection without copying it. */
     useRuntimeElevationOverrides(overrides: ReadonlyMap<string, GridMapElevationOverride>): void;
     setTerrain(coord: GridCoord, terrain: Terrain): boolean;

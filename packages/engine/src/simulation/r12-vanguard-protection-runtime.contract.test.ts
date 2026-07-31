@@ -29,6 +29,7 @@ const SOURCES: Readonly<Record<DamageSourceRef["kind"], DamageSourceRef>> = {
   tower_script: { kind: "tower_script", scriptId: "test" },
   status: { kind: "status", statusId: "poison" },
   reaction: { kind: "reaction", reactionId: "combustion" },
+  weather: { kind: "weather", profileId: "weather", weatherId: "storm", zoneId: "field", effectId: "acid" },
   enemy: { kind: "enemy", enemyId: "enemy_source", enemyTypeId: "grunt" },
   leak: { kind: "leak", enemyId: "enemy_source", enemyTypeId: "grunt" }
 };

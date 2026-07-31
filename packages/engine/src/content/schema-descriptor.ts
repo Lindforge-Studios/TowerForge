@@ -11,6 +11,8 @@ import { ARMOR_MATRIX_LIMITS, MARK_LIMITS, REACTION_LIMITS, SHIELD_LIMITS } from
 import { DIRECTOR_LIMITS } from "./director-mechanics.js";
 import { QUEST_LIMITS } from "./quest-mechanics.js";
 import { BOSS_COMPONENT_ABILITY_IDS, ENEMY_BEHAVIORS_LIMITS } from "./enemy-behaviors-mechanics.js";
+export { BALLISTICS_MECHANICS_SCHEMA } from "./ballistics-mechanics.js";
+export { WEATHER_MECHANICS_SCHEMA } from "./weather-mechanics.js";
 export { NAVIGATION_MECHANICS_SCHEMA } from "./navigation-mechanics.js";
 export { ELEVATION_MECHANICS_SCHEMA } from "./elevation-mechanics.js";
 export { TERRAFORMING_MECHANICS_SCHEMA } from "./terraforming-mechanics.js";

@@ -87,6 +87,8 @@ const MECHANICS_MODULES = [
   { id: "navigation", title: "Dynamic Navigation", description: "Flow fields, movement layers, and route-safe placement." },
   { id: "elevation", title: "Elevation", description: "Authored tile elevation with optional deterministic line of sight and bounded high-ground bonuses." },
   { id: "physics", title: "Physics", description: "Bounded push/pull displacement, immunities, and explicit fall hazards." },
+  { id: "ballistics", title: "Projectile Ballistics", description: "Engine-authoritative direct and arc projectiles with fixed travel time and projected altitude." },
+  { id: "weather", title: "Dynamic Weather", description: "Seeded mission weather zones and bounded engine-owned effects." },
   { id: "terraforming", title: "Terraforming", description: "Transactional terrain transitions and bounded elevation edits authored as an independent opt-in profile." },
   { id: "roguelite", title: "Rogue-lite", description: "Synergies, artifacts, draft choices, and campaign runs." },
   { id: "heroes", title: "Heroes", description: "Optional opt-in hero roster spawning at the core; later versions add movement, durability, an ability, skill tree, aura, and explicit dynamic-navigation blocking." },
@@ -106,6 +108,14 @@ const ELEVATION_RECIPE_IDS = new Set([
   "basic_elevation_high_ground"
 ]);
 const PHYSICS_RECIPE_IDS = new Set(["basic_displacement_physics", "tagged_fall_hazards"]);
+const BALLISTICS_RECIPE_IDS = new Set([
+  "basic_projectile_ballistics",
+  "basic_projectile_ricochet",
+  "basic_destructible_environment"
+]);
+const WEATHER_RECIPE_IDS = new Set([
+  "basic_blizzard_weather", "basic_acid_rain_weather", "basic_sandstorm_weather"
+]);
 const TERRAFORMING_RECIPE_IDS = new Set(["tagged_flood", "tagged_moat", "tagged_destructible_bridge"]);
 const ROGUELITE_RECIPE_IDS = new Set(["basic_elemental_synergy", "basic_boss_artifact_loot"]);
 const DIRECTOR_RECIPE_IDS = new Set(["basic_adaptive_wave_director"]);
@@ -142,6 +152,9 @@ const MechanicsUI = {
   towerTags: {},
   terraformingSnippet: null,
   terraformingRecipeLoading: false,
+  destructibleMapId: null,
+  destructiblePlacements: [],
+  destructibleStatus: null,
   questGeneration: null,
   questGenerationRevision: null,
   questGenerationLoading: false
@@ -779,6 +792,12 @@ function normalizeMechanicsDraft(profile) {
       : deep(profile ?? {});
   }
   if (MechanicsUI.selectedModuleId === "physics") return normalizePhysicsMechanicsDraft(profile);
+  if (MechanicsUI.selectedModuleId === "ballistics") {
+    return mechanicsProjectModuleVersion() === 1
+      ? normalizeBallisticsMechanicsDraft(deep(profile ?? {}))
+      : deep(profile ?? {});
+  }
+  if (MechanicsUI.selectedModuleId === "weather") return normalizeWeatherMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "elevation") return normalizeElevationLineOfSightDraft(profile);
   if (MechanicsUI.selectedModuleId === "navigation") return normalizeNavigationMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "reactions") return normalizeReactionMechanicsDraft(profile);
@@ -1022,6 +1041,109 @@ function normalizePhysicsMechanicsDraft(profile) {
   if (fallImmuneEnemyTypeIds.length) draft.fallImmuneEnemyTypeIds = fallImmuneEnemyTypeIds;
   if (fallHazardTerrainTags.length) draft.fallHazardTerrainTags = fallHazardTerrainTags;
   return draft;
+}
+
+function normalizeBallisticsMechanicsDraft(profile) {
+  const defineData = (record, key, value) => Object.defineProperty(record, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true
+  });
+  const normalizeRicochetSurfaceCatalog = (record) => {
+    if (record === null || typeof record !== "object" || Array.isArray(record)) return null;
+    let descriptors;
+    try { descriptors = Object.getOwnPropertyDescriptors(record); } catch { return null; }
+    const normalized = {};
+    for (const key of Reflect.ownKeys(descriptors)) {
+      if (typeof key !== "string") return null;
+      const descriptor = descriptors[key];
+      if (!descriptor.enumerable) continue;
+      if (!("value" in descriptor) || descriptor.value !== true) return null;
+      defineData(normalized, key, true);
+    }
+    return normalized;
+  };
+  const normalizeTowerRicochet = (record) => {
+    if (record === null || typeof record !== "object" || Array.isArray(record)) return null;
+    let descriptors;
+    try { descriptors = Object.getOwnPropertyDescriptors(record); } catch { return null; }
+    const normalized = {};
+    for (const key of Reflect.ownKeys(descriptors)) {
+      if (typeof key !== "string") return null;
+      const descriptor = descriptors[key];
+      if (!descriptor.enumerable) continue;
+      if (!("value" in descriptor) || !["maxBounces", "rangeCells"].includes(key)) return null;
+      defineData(normalized, key, descriptor.value);
+    }
+    return normalized;
+  };
+  const normalizeTowerBindings = (record) => {
+    if (record === null || typeof record !== "object" || Array.isArray(record)) return {};
+    let descriptors;
+    try { descriptors = Object.getOwnPropertyDescriptors(record); } catch { return {}; }
+    const normalized = {};
+    for (const towerId of Reflect.ownKeys(descriptors)) {
+      if (typeof towerId !== "string") continue;
+      const towerDescriptor = descriptors[towerId];
+      if (!towerDescriptor.enumerable || !("value" in towerDescriptor)) continue;
+      const binding = towerDescriptor.value;
+      if (binding === null || typeof binding !== "object" || Array.isArray(binding)) continue;
+      let bindingDescriptors;
+      try { bindingDescriptors = Object.getOwnPropertyDescriptors(binding); } catch { continue; }
+      const normalizedBinding = {};
+      let valid = true;
+      for (const key of Reflect.ownKeys(bindingDescriptors)) {
+        if (typeof key !== "string") { valid = false; break; }
+        const descriptor = bindingDescriptors[key];
+        if (!descriptor.enumerable) continue;
+        if (!("value" in descriptor) || !["trajectory", "travelTimeUnits", "maxAltitude", "ricochet"].includes(key)) {
+          valid = false;
+          break;
+        }
+        if (key === "ricochet") {
+          const normalizedRicochet = normalizeTowerRicochet(descriptor.value);
+          if (!normalizedRicochet) { valid = false; break; }
+          defineData(normalizedBinding, key, normalizedRicochet);
+        } else {
+          defineData(normalizedBinding, key, descriptor.value);
+        }
+      }
+      if (valid) defineData(normalized, towerId, normalizedBinding);
+    }
+    return normalized;
+  };
+  const source = profile && typeof profile === "object" && !Array.isArray(profile) ? profile : {};
+  const projectiles = ownDataValue(source, "projectiles");
+  const towers = ownDataValue(projectiles, "towers");
+  const clearance = ownDataValue(projectiles, "clearance");
+  const terrainBlockerHeights = ownDataValue(clearance, "terrainBlockerHeights");
+  const ricochet = ownDataValue(projectiles, "ricochet");
+  const destructibles = ownDataValue(projectiles, "destructibles");
+  const destructibleDefinitions = ownDataValue(destructibles, "definitions");
+  const terrainTags = ownDataValue(ricochet, "terrainTags");
+  const armorTypes = ownDataValue(ricochet, "armorTypes");
+  const result = {
+    projectiles: {
+      towers: towers && typeof towers === "object" && !Array.isArray(towers)
+        ? normalizeTowerBindings(towers)
+        : {}
+    }
+  };
+  if (terrainBlockerHeights && typeof terrainBlockerHeights === "object" && !Array.isArray(terrainBlockerHeights)) {
+    result.projectiles.clearance = { terrainBlockerHeights: deep(terrainBlockerHeights) };
+  }
+  const normalizedTerrainTags = normalizeRicochetSurfaceCatalog(terrainTags);
+  const normalizedArmorTypes = normalizeRicochetSurfaceCatalog(armorTypes);
+  if (normalizedTerrainTags || normalizedArmorTypes) {
+    result.projectiles.ricochet = {};
+    if (normalizedTerrainTags) result.projectiles.ricochet.terrainTags = normalizedTerrainTags;
+    if (normalizedArmorTypes) result.projectiles.ricochet.armorTypes = normalizedArmorTypes;
+  }
+  if (destructibleDefinitions && typeof destructibleDefinitions === "object" && !Array.isArray(destructibleDefinitions)) {
+    result.projectiles.destructibles = { definitions: deep(destructibleDefinitions) };
+  }
+  return result;
 }
 
 function normalizeHeroesMechanicsDraft(profile) {
@@ -1335,8 +1457,15 @@ function initializeMechanicsDraft() {
                   ? "basic_targetable_boss_components"
                 : MechanicsUI.selectedModuleId === "multiplayer"
                   ? "basic_local_coop"
+                : MechanicsUI.selectedModuleId === "weather"
+                  ? "basic_blizzard_weather"
                   : "basic_regenerating_shields");
   MechanicsUI.draft = normalizeMechanicsDraft(selectedProfile ?? mechanicsRecipeProfile());
+  if (MechanicsUI.selectedModuleId === "ballistics") {
+    MechanicsUI.destructibleMapId = null;
+    MechanicsUI.destructiblePlacements = [];
+    MechanicsUI.destructibleStatus = null;
+  }
   if (MechanicsUI.selectedModuleId === "roguelite") initializeRogueliteTowerTags();
   MechanicsUI.preview = null;
   MechanicsUI.terraformingSnippet = null;
@@ -1417,6 +1546,11 @@ function loadMechanicsProfile() {
       : MechanicsUI.selectedModuleId === "multiplayer"
         ? normalizeMultiplayerMechanicsDraft(profile, authoredVersion)
     : normalizeMechanicsDraft(profile);
+  if (MechanicsUI.selectedModuleId === "ballistics") {
+    MechanicsUI.destructibleMapId = null;
+    MechanicsUI.destructiblePlacements = [];
+    MechanicsUI.destructibleStatus = null;
+  }
   if (MechanicsUI.selectedModuleId === "roguelite") initializeRogueliteTowerTags();
   MechanicsUI.preview = null;
   MechanicsUI.terraformingSnippet = null;
@@ -1437,6 +1571,9 @@ function nextMechanicsProfileId(suggestedId) {
 
 async function newMechanicsProfile() {
   try {
+    if (MechanicsUI.selectedModuleId === "weather" && mechanicsProjectModuleVersion() > 1) {
+      throw new Error("Future Weather schemaVersion 2+ modules are preserved losslessly and read-only.");
+    }
     if (MechanicsUI.selectedModuleId === "quests" && mechanicsProjectModuleVersion() > 1) {
       throw new Error("Future quests schemaVersion 2+ modules are preserved losslessly and read-only.");
     }
@@ -3092,6 +3229,280 @@ function renderPhysicsMechanicsEditor() {
       renderMechanicsPreviewResult();
     };
   }
+}
+
+function normalizeWeatherMechanicsDraft(profile) {
+  const draft = deep(profile ?? {});
+  draft.zones = draft.zones && typeof draft.zones === "object" && !Array.isArray(draft.zones)
+    ? draft.zones : {};
+  draft.definitions = draft.definitions && typeof draft.definitions === "object" && !Array.isArray(draft.definitions)
+    ? draft.definitions : {};
+  draft.schedule = draft.schedule && typeof draft.schedule === "object" && !Array.isArray(draft.schedule)
+    ? draft.schedule : { calmWeight: 1, choices: {} };
+  if (!Number.isInteger(draft.schedule.calmWeight)) draft.schedule.calmWeight = 1;
+  draft.schedule.choices = draft.schedule.choices && typeof draft.schedule.choices === "object"
+    && !Array.isArray(draft.schedule.choices) ? draft.schedule.choices : {};
+  return draft;
+}
+
+function updateWeatherMechanicsDraftSection(section, inputId) {
+  const input = $(inputId);
+  if (!input || mechanicsProjectModuleVersion() !== 1) return;
+  input.setCustomValidity("");
+  try {
+    const value = JSON.parse(input.value);
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error(`${section} must be a JSON object.`);
+    }
+    MechanicsUI.draft[section] = deep(value);
+    MechanicsUI.draft = normalizeWeatherMechanicsDraft(MechanicsUI.draft);
+    MechanicsUI.preview = null;
+    MechanicsUI.error = null;
+    renderMechanicsPreviewResult();
+  } catch (error) {
+    input.setCustomValidity(error.message || `Invalid Weather ${section} JSON.`);
+  }
+}
+
+function renderWeatherMechanicsEditor() {
+  if (MechanicsUI.selectedModuleId !== "weather" || !MechanicsUI.draft) return;
+  const schemaVersion = mechanicsProjectModuleVersion();
+  const supportedVersion = schemaVersion === 1;
+  const editor = $("mechanics-weather-editor");
+  if (editor) editor.dataset.supportedVersion = String(supportedVersion);
+  $("mechanics-weather-read-only")?.classList.toggle("hidden", supportedVersion);
+  const capability = mechanicsSelectedCapability();
+  if ($("mechanics-weather-capability")) {
+    $("mechanics-weather-capability").textContent = capability?.active
+      ? "Weather v1 active · seeded schedule · authoritative zone state"
+      : "Weather v1 available · all_map/tiles · calmWeight/choices";
+  }
+  const help = $("mechanics-weather-effect-help");
+  if (help) help.textContent = "Effect kinds: periodic_damage, status, visibility_range, enemy_speed, tower_fire_rate.";
+  const draft = supportedVersion ? normalizeWeatherMechanicsDraft(MechanicsUI.draft) : deep(MechanicsUI.draft);
+  const sections = [
+    ["zones", "mechanics-weather-zone-rows"],
+    ["definitions", "mechanics-weather-definition-rows"],
+    ["schedule", "mechanics-weather-schedule-rows"]
+  ];
+  for (const [section, inputId] of sections) {
+    const input = $(inputId);
+    if (!input) continue;
+    input.disabled = !supportedVersion;
+    input.value = JSON.stringify(draft[section] ?? {}, null, 2);
+    input.oninput = () => updateWeatherMechanicsDraftSection(section, inputId);
+  }
+}
+
+function updateBallisticsMechanicsDraft() {
+  const input = $("mechanics-ballistics-profile-json");
+  if (!input) return;
+  input.setCustomValidity("");
+  try {
+    MechanicsUI.draft = normalizeBallisticsMechanicsDraft(JSON.parse(input.value));
+    MechanicsUI.preview = null;
+    MechanicsUI.error = null;
+    renderMechanicsPreviewResult();
+  } catch (error) {
+    input.setCustomValidity(error.message || "Invalid Ballistics profile JSON.");
+  }
+}
+
+function renderBallisticsMechanicsEditor() {
+  const input = $("mechanics-ballistics-profile-json");
+  const capability = mechanicsSelectedCapability();
+  const schemaVersion = mechanicsProjectModuleVersion();
+  const supportedVersion = schemaVersion === 1;
+  const readOnly = !supportedVersion;
+  $("mechanics-ballistics-read-only")?.classList.toggle("hidden", !readOnly);
+  if ($("mechanics-ballistics-capability")) {
+    $("mechanics-ballistics-capability").textContent = capability?.active
+      ? `Ballistics v${schemaVersion} active · direct/arc · travelTimeUnits · maxAltitude · ricochet maxBounces/rangeCells`
+      : `Ballistics v${schemaVersion} available · direct/arc · travelTimeUnits · maxAltitude · optional clearance terrainBlockerHeights · ricochet terrainTags/armorTypes`;
+  }
+  if (!input) return;
+  input.disabled = readOnly;
+  input.value = JSON.stringify(readOnly
+    ? deep(MechanicsUI.draft ?? {})
+    : normalizeBallisticsMechanicsDraft(MechanicsUI.draft), null, 2);
+  input.oninput = updateBallisticsMechanicsDraft;
+}
+
+function renderDestructibleEnvironmentEditor() {
+  if (MechanicsUI.selectedModuleId !== "ballistics" || !MechanicsUI.draft) return;
+  const schemaVersion = mechanicsProjectModuleVersion();
+  const supportedVersion = schemaVersion === 1;
+  const editor = $("mechanics-destructibles-editor");
+  if (editor) editor.dataset.supportedVersion = String(supportedVersion);
+  if (supportedVersion) {
+    MechanicsUI.draft.projectiles ??= { towers: {} };
+    MechanicsUI.draft.projectiles.towers ??= {};
+    MechanicsUI.draft.projectiles.destructibles ??= { definitions: {} };
+    MechanicsUI.draft.projectiles.destructibles.definitions ??= {};
+  }
+  const definitions = MechanicsUI.draft?.projectiles?.destructibles?.definitions ?? {};
+  const definitionIds = Object.keys(definitions).sort();
+  const definitionRows = $("mechanics-destructibles-definition-rows");
+  if (definitionRows) {
+    definitionRows.innerHTML = definitionIds.map((definitionId) => {
+      const definition = definitions[definitionId] ?? {};
+      const hitRegion = definition.hitRegion ?? { kind: "tile", blockerHeight: 0, blocksLineOfSight: false };
+      const terrainTransitionId = definition.onDestroyed?.terrainTransitionId ?? "";
+      return `<div class="mechanics-destructible-definition-row" data-destructible-definition-row="${esc(definitionId)}">
+        <label>Definition ID<input data-destructible-definition-id type="text" value="${esc(definitionId)}" autocomplete="off" spellcheck="false"></label>
+        <label>Maximum HP<input data-destructible-max-hp type="number" min="0.000001" step="1" value="${esc(definition.maxHp ?? 50)}"></label>
+        <label>Armor type ID<input data-destructible-armor-type-id type="text" value="${esc(definition.armorTypeId ?? "")}" autocomplete="off" spellcheck="false" placeholder="optional"></label>
+        <label>Hit region<select data-destructible-hit-region-kind><option value="tile" ${hitRegion.kind === "tile" ? "selected" : ""}>tile</option></select></label>
+        <label>Blocker height<input data-destructible-blocker-height type="number" min="0" step="0.01" value="${esc(hitRegion.blockerHeight ?? 0)}"></label>
+        <label><input data-destructible-blocks-line-of-sight type="checkbox" ${hitRegion.blocksLineOfSight ? "checked" : ""}> Blocks line of sight</label>
+        <label>Terrain transition ID<input data-destructible-terrain-transition-id type="text" value="${esc(terrainTransitionId)}" autocomplete="off" spellcheck="false" placeholder="optional"></label>
+        <button data-remove-destructible-definition class="btn btn-danger" type="button">Remove</button>
+      </div>`;
+    }).join("") || `<div class="mechanics-empty">No destructible definitions.</div>`;
+    definitionRows.querySelectorAll("[data-destructible-definition-row]").forEach((row) => {
+      const definitionId = row.dataset.destructibleDefinitionRow;
+      const definition = definitions[definitionId];
+      if (!definition) return;
+      const controls = row.querySelectorAll("input, select, button");
+      for (const control of controls) control.disabled = !supportedVersion;
+      row.querySelector("[data-destructible-definition-id]").onchange = (event) => {
+        const nextId = event.currentTarget.value.trim();
+        if (!nextId || (nextId !== definitionId && Object.hasOwn(definitions, nextId))) {
+          event.currentTarget.setCustomValidity("Use a unique non-empty definition ID.");
+          event.currentTarget.reportValidity();
+          return;
+        }
+        event.currentTarget.setCustomValidity("");
+        if (nextId === definitionId) return;
+        const nextDefinitions = {};
+        for (const [id, value] of Object.entries(definitions)) nextDefinitions[id === definitionId ? nextId : id] = value;
+        MechanicsUI.draft.projectiles.destructibles.definitions = nextDefinitions;
+        MechanicsUI.destructiblePlacements = MechanicsUI.destructiblePlacements.map((placement) => (
+          placement.definitionId === definitionId ? { ...placement, definitionId: nextId } : placement
+        ));
+        MechanicsUI.preview = null;
+        renderDestructibleEnvironmentEditor();
+      };
+      row.querySelector("[data-destructible-max-hp]").oninput = (event) => {
+        definition.maxHp = Number(event.currentTarget.value);
+        MechanicsUI.preview = null;
+      };
+      row.querySelector("[data-destructible-armor-type-id]").oninput = (event) => {
+        const armorTypeId = event.currentTarget.value.trim();
+        if (armorTypeId) definition.armorTypeId = armorTypeId;
+        else delete definition.armorTypeId;
+        MechanicsUI.preview = null;
+      };
+      row.querySelector("[data-destructible-hit-region-kind]").onchange = () => {
+        definition.hitRegion ??= {};
+        definition.hitRegion.kind = "tile";
+        MechanicsUI.preview = null;
+      };
+      row.querySelector("[data-destructible-blocker-height]").oninput = (event) => {
+        definition.hitRegion ??= { kind: "tile" };
+        definition.hitRegion.blockerHeight = Number(event.currentTarget.value);
+        MechanicsUI.preview = null;
+      };
+      row.querySelector("[data-destructible-blocks-line-of-sight]").onchange = (event) => {
+        definition.hitRegion ??= { kind: "tile" };
+        definition.hitRegion.blocksLineOfSight = event.currentTarget.checked;
+        MechanicsUI.preview = null;
+      };
+      row.querySelector("[data-destructible-terrain-transition-id]").oninput = (event) => {
+        const terrainTransitionId = event.currentTarget.value.trim();
+        if (terrainTransitionId) definition.onDestroyed = { terrainTransitionId };
+        else delete definition.onDestroyed;
+        MechanicsUI.preview = null;
+      };
+      row.querySelector("[data-remove-destructible-definition]").onclick = () => {
+        delete definitions[definitionId];
+        MechanicsUI.destructiblePlacements = MechanicsUI.destructiblePlacements
+          .filter((placement) => placement.definitionId !== definitionId);
+        MechanicsUI.preview = null;
+        renderDestructibleEnvironmentEditor();
+      };
+    });
+  }
+
+  const availableMaps = S.project?.maps ?? {};
+  const mapIds = Object.keys(availableMaps).sort();
+  if (!MechanicsUI.destructibleMapId || !Object.hasOwn(availableMaps, MechanicsUI.destructibleMapId)) {
+    MechanicsUI.destructibleMapId = mapIds[0] ?? null;
+    MechanicsUI.destructiblePlacements = deep(availableMaps[MechanicsUI.destructibleMapId]?.destructibleObjects ?? []);
+  }
+  const mapSelect = $("mechanics-destructibles-map-select");
+  if (mapSelect) {
+    mapSelect.innerHTML = mapIds.map((mapId) => `<option value="${esc(mapId)}" ${mapId === MechanicsUI.destructibleMapId ? "selected" : ""}>${esc(mapId)}</option>`).join("");
+    mapSelect.disabled = !supportedVersion;
+    mapSelect.onchange = () => {
+      const mapId = mapSelect.value;
+      MechanicsUI.destructibleMapId = mapId;
+      MechanicsUI.destructiblePlacements = deep(availableMaps[mapId]?.destructibleObjects ?? []);
+      MechanicsUI.preview = null;
+      renderDestructibleEnvironmentEditor();
+    };
+  }
+  const placementRows = $("mechanics-destructibles-placement-rows");
+  if (placementRows) {
+    placementRows.innerHTML = MechanicsUI.destructiblePlacements.map((placement, index) => `<div class="mechanics-destructible-placement-row" data-destructible-placement-index="${index}">
+      <label>Placement ID<input data-destructible-placement-id type="text" value="${esc(placement.id)}" autocomplete="off" spellcheck="false"></label>
+      <label>Definition<select data-destructible-placement-definition-id>${definitionIds.map((definitionId) => `<option value="${esc(definitionId)}" ${definitionId === placement.definitionId ? "selected" : ""}>${esc(definitionId)}</option>`).join("")}</select></label>
+      <label>q<input data-destructible-placement-q type="number" min="0" step="1" value="${esc(placement.coord?.q ?? 0)}"></label>
+      <label>r<input data-destructible-placement-r type="number" min="0" step="1" value="${esc(placement.coord?.r ?? 0)}"></label>
+      <button data-remove-destructible-placement class="btn btn-danger" type="button">Remove</button>
+    </div>`).join("") || `<div class="mechanics-empty">No placements on this map.</div>`;
+    placementRows.querySelectorAll("[data-destructible-placement-index]").forEach((row) => {
+      const placement = MechanicsUI.destructiblePlacements[Number(row.dataset.destructiblePlacementIndex)];
+      if (!placement) return;
+      for (const control of row.querySelectorAll("input, select, button")) control.disabled = !supportedVersion;
+      row.querySelector("[data-destructible-placement-id]").oninput = (event) => { placement.id = event.currentTarget.value.trim(); MechanicsUI.preview = null; };
+      row.querySelector("[data-destructible-placement-definition-id]").onchange = (event) => { placement.definitionId = event.currentTarget.value; MechanicsUI.preview = null; };
+      row.querySelector("[data-destructible-placement-q]").oninput = (event) => { placement.coord ??= {}; placement.coord.q = Number(event.currentTarget.value); MechanicsUI.preview = null; };
+      row.querySelector("[data-destructible-placement-r]").oninput = (event) => { placement.coord ??= {}; placement.coord.r = Number(event.currentTarget.value); MechanicsUI.preview = null; };
+      row.querySelector("[data-remove-destructible-placement]").onclick = () => {
+        MechanicsUI.destructiblePlacements.splice(Number(row.dataset.destructiblePlacementIndex), 1);
+        MechanicsUI.preview = null;
+        renderDestructibleEnvironmentEditor();
+      };
+    });
+  }
+  const addDefinition = $("btn-mechanics-add-destructible-definition");
+  if (addDefinition) {
+    addDefinition.disabled = !supportedVersion;
+    addDefinition.onclick = () => {
+      let suffix = Object.keys(definitions).length + 1;
+      let definitionId = `destructible_${suffix}`;
+      while (Object.hasOwn(definitions, definitionId)) definitionId = `destructible_${++suffix}`;
+      definitions[definitionId] = { maxHp: 50, hitRegion: { kind: "tile", blockerHeight: 0, blocksLineOfSight: false } };
+      MechanicsUI.preview = null;
+      renderDestructibleEnvironmentEditor();
+    };
+  }
+  const addPlacement = $("btn-mechanics-add-destructible-placement");
+  if (addPlacement) {
+    addPlacement.disabled = !supportedVersion || !definitionIds.length || !MechanicsUI.destructibleMapId;
+    addPlacement.onclick = () => {
+      let suffix = MechanicsUI.destructiblePlacements.length + 1;
+      let id = `destructible_${suffix}`;
+      const used = new Set(MechanicsUI.destructiblePlacements.map((placement) => placement.id));
+      while (used.has(id)) id = `destructible_${++suffix}`;
+      MechanicsUI.destructiblePlacements.push({ id, definitionId: definitionIds[0], coord: { q: 0, r: 0 } });
+      MechanicsUI.preview = null;
+      renderDestructibleEnvironmentEditor();
+    };
+  }
+  const status = $("mechanics-destructibles-status");
+  if (status) status.textContent = supportedVersion
+    ? MechanicsUI.destructibleStatus ?? "Ballistics destructibles are opt-in; preview validates definitions, placements and all five candidate files."
+    : `Future Ballistics schemaVersion ${schemaVersion} is preserved read-only; this Studio supports destructibles v1.`;
+  const busy = MechanicsUI.applying;
+  for (const id of ["btn-mechanics-destructibles-enable", "btn-mechanics-destructibles-save", "btn-mechanics-destructibles-disable"]) {
+    if ($(id)) $(id).disabled = !supportedVersion || busy || S.dirty;
+  }
+  $("btn-mechanics-destructibles-enable").onclick = () => void applyDestructibleEnvironment(true);
+  $("btn-mechanics-destructibles-save").onclick = () => void applyDestructibleEnvironment(true);
+  $("btn-mechanics-destructibles-disable").onclick = () => void applyDestructibleEnvironment(false);
+  $("btn-mechanics-destructibles-reload").onclick = () => void reloadDestructibleEnvironment();
 }
 
 function mechanicsHeroBlockingNavigationState(movementProfileIds) {
@@ -5752,7 +6163,94 @@ function renderEnemyBehaviorsMechanicsEditor() {
   renderEnemyFormationProtectionEditor();
 }
 
+function destructibleEnvironmentRequest(enabled) {
+  const schemaVersion = mechanicsProjectModuleVersion();
+  if (schemaVersion !== 1) {
+    throw new Error(`Future Ballistics schemaVersion ${schemaVersion} is read-only in this Studio version.`);
+  }
+  const profile = deep(MechanicsUI.draft ?? {});
+  profile.projectiles ??= {};
+  profile.projectiles.towers ??= {};
+  profile.projectiles.destructibles ??= { definitions: {} };
+  profile.projectiles.destructibles.definitions ??= {};
+  const profileId = MechanicsUI.profileId.trim();
+  const placements = deep(MechanicsUI.destructiblePlacements ?? []);
+  const request = {
+    moduleSchemaVersion: 1,
+    missionId: mechanicsMissionId(),
+    profileId,
+    mapId: MechanicsUI.destructibleMapId,
+    enabled: Boolean(enabled),
+    profile,
+    placements
+  };
+  if (!enabled) {
+    return { ...request, profileId, profile, placements };
+  }
+  return request;
+}
+
+async function previewDestructibleEnvironment(requestSnapshot = Object.freeze(destructibleEnvironmentRequest(true))) {
+  MechanicsUI.error = null;
+  try {
+    const preview = await apiPost("/api/mechanics/destructibles/preview", requestSnapshot);
+    MechanicsUI.preview = preview;
+    MechanicsUI.destructibleStatus = preview.validation?.ok
+      ? `Candidate valid · revision ${preview.revision?.slice(0, 12) ?? "pending"}`
+      : "Destructible environment candidate is invalid.";
+    renderDestructibleEnvironmentEditor();
+    return preview;
+  } catch (error) {
+    MechanicsUI.preview = null;
+    MechanicsUI.error = error;
+    MechanicsUI.destructibleStatus = error.message;
+    renderDestructibleEnvironmentEditor();
+    return null;
+  }
+}
+
+async function applyDestructibleEnvironment(enabled) {
+  if (MechanicsUI.applying || S.dirty) return;
+  const requestSnapshot = Object.freeze(destructibleEnvironmentRequest(enabled));
+  MechanicsUI.applying = true;
+  renderDestructibleEnvironmentEditor();
+  const preview = await previewDestructibleEnvironment(requestSnapshot);
+  if (!preview) {
+    MechanicsUI.applying = false;
+    renderDestructibleEnvironmentEditor();
+    return;
+  }
+  try {
+    await apiPost("/api/mechanics/destructibles/apply", {
+      ...requestSnapshot,
+      ifRevision: preview.revision
+    });
+    MechanicsUI.destructibleStatus = enabled ? "Destructible environment saved." : "Ballistics disabled; authored profile preserved.";
+    await load();
+    await reloadDestructibleEnvironment();
+  } catch (error) {
+    MechanicsUI.error = error;
+    MechanicsUI.destructibleStatus = error.message;
+    toast(error.message, "err");
+  } finally {
+    MechanicsUI.applying = false;
+    if (S.activeTab === "mechanics") renderMechanicsHub();
+  }
+}
+
+async function reloadDestructibleEnvironment() {
+  MechanicsUI.capabilities = null;
+  MechanicsUI.preview = null;
+  MechanicsUI.error = null;
+  MechanicsUI.destructibleMapId = null;
+  MechanicsUI.destructiblePlacements = [];
+  if (S.project && MechanicsUI.selectedModuleId === "ballistics") await loadMechanicsCapabilities();
+}
+
 function mechanicsRequest(enabled) {
+  if (MechanicsUI.selectedModuleId === "weather" && mechanicsProjectModuleVersion() > 1) {
+    throw new Error("Future Weather schemaVersion 2+ modules are preserved losslessly and read-only.");
+  }
   if (MechanicsUI.selectedModuleId === "quests" && mechanicsProjectModuleVersion() > 1) {
     throw new Error("Future quests schemaVersion 2+ modules are preserved losslessly and read-only.");
   }
@@ -5847,6 +6345,9 @@ async function applyMechanics(enabled) {
     MechanicsUI.preview = null;
     MechanicsUI.error = null;
     MechanicsUI.terraformingSnippet = null;
+    MechanicsUI.destructibleMapId = null;
+    MechanicsUI.destructiblePlacements = [];
+    MechanicsUI.destructibleStatus = null;
     invalidateQuestGeneration();
     await load();
     await refreshNavigationOverlay();
@@ -5875,6 +6376,10 @@ function renderMechanicsHub() {
         ? "Author a sparse map layer separately, then opt into elevation v1 or deterministic line of sight with a v2 profile."
         : MechanicsUI.selectedModuleId === "physics"
           ? "Author a closed physics v1 profile for bounded push/pull immunity and explicit fall hazards."
+          : MechanicsUI.selectedModuleId === "ballistics"
+            ? "Author closed fixed-travel direct or arc projectile bindings without changing ordinary tower forms."
+          : MechanicsUI.selectedModuleId === "weather"
+            ? "Author seeded zones, bounded effects and per-wave choices in a separate opt-in Weather profile."
           : MechanicsUI.selectedModuleId === "terraforming"
             ? "Author detached terrain transitions and optional bounded elevation mutation, then explicitly enable the profile for this mission."
             : MechanicsUI.selectedModuleId === "heroes"
@@ -5938,6 +6443,8 @@ function renderMechanicsHub() {
         && (selectedModuleId !== "reactions" || REACTION_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "elevation" || ELEVATION_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "physics" || PHYSICS_RECIPE_IDS.has(recipe.id))
+        && (selectedModuleId !== "ballistics" || BALLISTICS_RECIPE_IDS.has(recipe.id))
+        && (selectedModuleId !== "weather" || WEATHER_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "terraforming" || TERRAFORMING_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "roguelite" || ROGUELITE_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "director" || DIRECTOR_RECIPE_IDS.has(recipe.id))
@@ -5947,6 +6454,9 @@ function renderMechanicsHub() {
       MechanicsUI.recipe = availableRecipes[0] ?? null;
       MechanicsUI.recipeId = MechanicsUI.recipe?.id ?? "";
       MechanicsUI.terraformingSnippet = null;
+      MechanicsUI.destructibleMapId = null;
+      MechanicsUI.destructiblePlacements = [];
+      MechanicsUI.destructibleStatus = null;
       invalidateQuestGeneration();
       MechanicsUI.loadedProfileId = null;
       if (selectedModuleId === "elevation") loadElevationMap(null);
@@ -5973,6 +6483,9 @@ function renderMechanicsHub() {
   $("mechanics-navigation-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "navigation");
   $("mechanics-elevation-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "elevation");
   $("mechanics-physics-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "physics");
+  $("mechanics-ballistics-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "ballistics");
+  $("mechanics-weather-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "weather");
+  $("mechanics-destructibles-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "ballistics");
   $("mechanics-terraforming-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "terraforming");
   $("mechanics-roguelite-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "roguelite");
   $("mechanics-heroes-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "heroes");
@@ -6041,6 +6554,11 @@ function renderMechanicsHub() {
       renderElevationEditor();
     } else if (MechanicsUI.selectedModuleId === "physics") {
       renderPhysicsMechanicsEditor();
+    } else if (MechanicsUI.selectedModuleId === "ballistics") {
+      renderBallisticsMechanicsEditor();
+      renderDestructibleEnvironmentEditor();
+    } else if (MechanicsUI.selectedModuleId === "weather") {
+      renderWeatherMechanicsEditor();
     } else if (MechanicsUI.selectedModuleId === "terraforming") {
       renderTerraformingMechanicsEditor();
     } else if (MechanicsUI.selectedModuleId === "roguelite") {
@@ -6066,6 +6584,8 @@ function renderMechanicsHub() {
   }
   const busy = MechanicsUI.loading || MechanicsUI.applying || MechanicsUI.terraformingRecipeLoading;
   const supportedTerraformingVersion = MechanicsUI.selectedModuleId !== "terraforming" || mechanicsProjectModuleVersion() === 1;
+  const supportedBallisticsVersion = MechanicsUI.selectedModuleId !== "ballistics" || mechanicsProjectModuleVersion() === 1;
+  const supportedWeatherVersion = MechanicsUI.selectedModuleId !== "weather" || mechanicsProjectModuleVersion() === 1;
   const supportedRogueliteVersion = MechanicsUI.selectedModuleId !== "roguelite" || (
     mechanicsProjectModuleVersion() <= 4
     && !hasUnsupportedRogueliteCampaignMarker(MechanicsUI.draft)
@@ -6076,7 +6596,8 @@ function renderMechanicsHub() {
   const supportedQuestVersion = MechanicsUI.selectedModuleId !== "quests" || mechanicsProjectModuleVersion() === 1;
   const supportedEnemyBehaviorsVersion = MechanicsUI.selectedModuleId !== "enemyBehaviors" || mechanicsProjectModuleVersion() === 1;
   const supportedMultiplayerVersion = MechanicsUI.selectedModuleId !== "multiplayer" || mechanicsProjectModuleVersion() <= 2;
-  const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion
+  const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion && supportedBallisticsVersion
+    && supportedWeatherVersion
     && supportedRogueliteVersion && supportedHeroesVersion && supportedLogisticsVersion
     && supportedDirectorVersion && supportedQuestVersion && supportedEnemyBehaviorsVersion
     && supportedMultiplayerVersion && !busy;
@@ -6094,6 +6615,8 @@ function renderMechanicsHub() {
       || MechanicsUI.selectedModuleId === "heroes" || MechanicsUI.selectedModuleId === "logistics"
       || MechanicsUI.selectedModuleId === "director" || MechanicsUI.selectedModuleId === "quests"
       || MechanicsUI.selectedModuleId === "enemyBehaviors"
+      || MechanicsUI.selectedModuleId === "ballistics"
+      || MechanicsUI.selectedModuleId === "weather"
       || MechanicsUI.selectedModuleId === "multiplayer") && !writable);
   if ($("mechanics-recipe-select")) $("mechanics-recipe-select").disabled = busy || MechanicsUI.recipes.length === 0;
   if ($("btn-mechanics-add-damage-type")) $("btn-mechanics-add-damage-type").disabled = !writable;
@@ -13242,6 +13765,7 @@ function updatePlaytestHud(s = PT.game.getSnapshot()) {
   set("pt-objectives", `${objectiveCount}/${objectives.length}${stars.length ? ` | ${starCount}/${stars.length} stars` : ""}`);
   renderPlaytestLogistics(s);
   renderPlaytestQuests(s);
+  renderPlaytestBallistics(s);
   if (PT.artifactUiDirty) {
     renderPlaytestArtifacts(s);
     PT.artifactUiDirty = false;
@@ -13253,6 +13777,40 @@ function updatePlaytestHud(s = PT.game.getSnapshot()) {
     const cost = btn.querySelector(".pt-tcost");
     if (cost) cost.textContent = cd > 0 ? cd + "s" : "r" + (a?.radius ?? "");
     if (btn.disabled && PT.armed === btn.dataset.aid) { PT.armed = null; btn.classList.remove("active"); }
+  }
+}
+
+function renderPlaytestBallistics(snapshot) {
+  const panel = $("pt-ballistics");
+  if (!panel || !PT.rmod?.projectBallisticsPresentation) return;
+  const presentation = PT.rmod.projectBallisticsPresentation(snapshot);
+  panel.hidden = !presentation.active;
+  panel.replaceChildren();
+  if (!presentation.active) return;
+  const heading = document.createElement("strong");
+  heading.textContent = `Projectiles (${presentation.projectiles.length})`;
+  panel.append(heading);
+  for (const projectile of presentation.projectiles) {
+    const point = PT.rmod.projectBallisticsPresentationPoint(
+      projectile,
+      (coord) => ({ x: coord.q, y: coord.r }),
+      1
+    );
+    const row = document.createElement("span");
+    row.textContent = `${projectile.id} · ${projectile.trajectory} · ${Math.round(projectile.progress * 100)}% · altitude ${point?.altitude ?? projectile.altitude}`;
+    panel.append(row);
+  }
+  const blockedEvents = PT.rmod.projectBallisticsEventPresentation(snapshot);
+  for (const blocked of blockedEvents) {
+    const row = document.createElement("span");
+    row.textContent = `${blocked.projectileId} blocked at ${blocked.blockerCoord.q},${blocked.blockerCoord.r} by ${blocked.blockerTag}`;
+    panel.append(row);
+  }
+  const ricochetEvents = PT.rmod.projectBallisticsRicochetEventPresentation(snapshot);
+  for (const ricochet of ricochetEvents) {
+    const row = document.createElement("span");
+    row.textContent = `${ricochet.projectileId} bounce ${ricochet.bounceCount} from ${ricochet.surfaceKind}:${ricochet.surfaceId} at ${ricochet.collisionCoord.q},${ricochet.collisionCoord.r} toward ${ricochet.nextSourceCoord.q},${ricochet.nextSourceCoord.r} → ${ricochet.nextTargetCoord.q},${ricochet.nextTargetCoord.r}`;
+    panel.append(row);
   }
 }
 function ptMsg(result, success = "Action completed.") { const el = $("pt-msg"); if (el) el.textContent = result.ok ? success : (result.reason || "Action rejected."); }

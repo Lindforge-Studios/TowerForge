@@ -463,3 +463,1009 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - The focused hostile matrix is GREEN at 21/21; the complete CLI library suite is GREEN at 359/359;
   typecheck, engine build, plugin build/validate/smoke, generated runtime sync, and diff checks pass.
   The source is not publishable until one more exact-commit full gate cycle and two fresh sign-offs.
+
+## 2026-07-31 — R13.1 projectile foundation
+
+### Contract freeze and RED evidence
+
+- R13.1 introduces a separate mission-selected `ballistics` v1 profile and does not extend the
+  existing tile-displacement `physics` module. Only explicitly bound, unchained `single` attacks
+  become projectiles; unbound single attacks and every other attack kind stay on the immediate
+  legacy path.
+- `maxAltitude` is additional height over the linear source-to-target elevation baseline. Direct
+  flight uses the baseline; arc flight uses
+  `baseline + 4 * maxAltitude * progress * (1 - progress)`. Source/target coordinates, endpoint
+  elevations, component target, and a detached launch-time `DamagePacket` are immutable in flight.
+- The first pre-production command
+  `npx vitest run packages/engine/src/content/r13-ballistics-mechanics.contract.test.ts packages/engine/src/simulation/r13-projectile-foundation.contract.test.ts --maxWorkers=1`
+  produced 15 expected failures / 5 passing legacy-negative controls. The test designer then
+  corrected only time expectations to preserve the existing public-tick clamp of 0.2; typecheck
+  remained GREEN and the corrected/expanded contract remained RED at 15 failures / 8 passes while
+  content/runtime support was absent or incomplete.
+- Frozen exclusions: arc clearance, ricochet, destructibles, weather, homing, chain/pipeline/splash
+  projectile delivery, new commands, TowerScript events/actions, Visual Graph nodes, and renderer-
+  owned collision or damage rules.
+
+### GREEN engine evidence
+
+- The pure engine now owns closed own-data profile normalization, active capability resolution,
+  fixed-tick projectile launch/advance/impact, stable projectile IDs, scalar altitude, fixed-point
+  misses, and exactly-once impact through the shared `DamageResolver` boundary. Target armor,
+  resistance, marks, shields, vanguard interception, reactions, status and death settlement remain
+  impact-time engine work; source modifiers and target component identity are captured at launch.
+- Active projects receive optional inner-v1 snapshot/checkpoint state. Inactive/disabled/unselected
+  projects synthesize no state. Checkpoint validation rejects inactive/future/malformed/duplicate/
+  over-budget state, and checkpoint restore plus command-journal replay preserve the continuous
+  digest.
+- Focused GREEN: the content/runtime R13.1 contracts pass 23/23; damage-routing and R13 runtime pass
+  27/27; the broader affected engine compatibility set passes 200/200; `npm run typecheck` passes.
+  Constructor/AI/renderer/player surfaces remain a separate RED/GREEN slice.
+
+### Surface RED evidence
+
+- Before surface production, the isolated command
+  `npx vitest run packages/mcp/r13-ballistics-authoring.contract.test.mjs packages/renderer/src/ballistics-presentation.contract.test.mjs packages/studio/public/r13-ballistics-surface.contract.test.mjs --maxWorkers=1`
+  failed all 11 tests for the intended missing contracts: complete MCP descriptors and inert recipe,
+  guide v42 workflow, a shared fail-closed presentation projector, Mechanics Hub editor, Playtest
+  overlay, and generated Canvas/Phaser consumption.
+- The RED explicitly forbids renderer-owned altitude/gameplay calculation and keeps the editor out of
+  ordinary tower/mission forms. Production implementation and final GREEN are recorded only after
+  that independent test design.
+
+### Surface GREEN evidence
+
+- The shared renderer now fail-closes absent/future/malformed/hostile/over-budget ballistics state,
+  returns detached binary-stable presentation rows, and interpolates pixels from engine-owned
+  altitude without implementing flight or collision. Canvas, Studio Playtest, and generated Phaser
+  use the same projector and hide all ballistics work when the optional snapshot section is absent.
+- Mechanics Hub owns the closed JSON editor and active/read-only state; ordinary tower and mission
+  forms remain unchanged. MCP publishes the v1 descriptor, inert
+  `basic_projectile_ballistics` recipe, guarded preview/apply flow, and guide v42 without adding a
+  broad ballistics write/analyze tool. Generated plugin runtime is synchronized from source.
+- The exact pre-production RED command is GREEN at 11/11. Engine contracts remain GREEN at 23/23,
+  and `npm run typecheck` passes. Full frozen-commit gates and independent sign-offs remain pending.
+
+## 2026-07-31 — R13.2 arc clearance
+
+### Contract freeze and RED evidence
+
+- Ballistics remains module schema v1. R13.2 adds optional
+  `projectiles.clearance.terrainBlockerHeights`, keyed by authored terrain tags rather than terrain
+  IDs. Absence preserves the exact R13.1 profile/checkpoint path. Clearance samples the canonical
+  topology line once at launch, excludes endpoints, and blocks when projectile altitude is less
+  than or equal to effective tile elevation plus the highest matching authored blocker height;
+  equal-height tag provenance uses binary-min order.
+- The launch-time trace is immutable. A blocked projectile reaches its captured collision time,
+  consumes the existing terminal-resolution budget, emits exactly one read-only
+  `projectileBlocked` GameEvent, and performs no damage/reward/reaction work. Ray or operation budget
+  failure happens before `towerFired`, ammunition, cooldown, or allocation.
+- Clearance uses optional ballistics checkpoint inner schema v2 and stores only sufficient immutable
+  blocker provenance; the outer checkpoint, snapshot v1, GameCommand/Journal, TowerScript, and Graph
+  versions do not change. R13.2 excludes ricochet, destructibles, dynamic mid-flight collision,
+  entity blockers, weather, homing, enemy projectiles, and new commands/script nodes.
+- Pre-production command
+  `npx vitest run packages/engine/src/content/r13-arc-clearance-mechanics.contract.test.ts packages/engine/src/simulation/r13-arc-clearance.contract.test.ts --maxWorkers=1`
+  proved RED at 13 expected failures / 7 legacy-negative controls. Content-only RED was independently
+  reproduced at 4 failures / 4 controls; `npm run typecheck` remained GREEN before production.
+
+### Engine GREEN and pre-freeze regression
+
+- Engine content/runtime now normalizes the closed tag-height map, traces the canonical line once at
+  launch, clamps terminal flight to the captured collision, emits `projectileBlocked`, and persists
+  active-clearance checkpoint inner v2 while preserving exact v1 without clearance. The original
+  R13.2 contract is GREEN at 20/20; combined R13.1/R13.2 runtime is GREEN at 27/27; typecheck and
+  engine build pass.
+- A manual pre-freeze audit then proved a forged-checkpoint gap: v2 could claim a later line cell
+  while skipping an immutable earlier blocker. The new regression first failed 1/12 for exactly
+  that reason. Validation now rejects an earlier immutable authored blocker while allowing cells
+  whose persisted terrain/elevation override may legitimately postdate launch. The regression and
+  R13.1 compatibility are GREEN at 27/27; this source change invalidated the earlier gate evidence.
+
+### Surface RED/GREEN and presentation regression
+
+- The isolated R13.2 surface contract began RED at 9/9 for the missing descriptor/checkpoint/event
+  metadata, inert clearance recipe, guide v43, Studio optional editor, and shared Canvas/Phaser
+  blocked-event projection. It is now GREEN at 9/9; combined R13.1/R13.2 surface compatibility is
+  GREEN at 34/34, and Studio/CLI build contracts pass 234/234.
+- Manual surface audit proved that the R13.1 projector incorrectly rejected a direct projectile on
+  non-zero terrain elevation. A test first failed 1/4 with authoritative altitude `3`; the projector
+  now forbids only `maxAltitude` on a direct trajectory and accepts bounded engine altitude. The
+  complete 34-test surface matrix, typecheck, build, and plugin build/validate/smoke pass after the
+  repair; previous surface gate evidence was invalidated and rerun.
+
+## 2026-07-31 — R13.3 bounded ricochet
+
+### Contract freeze
+
+- Ballistics remains schema v1. Optional global surface catalogs use existing terrain tags and
+  mission-active Combat armor type IDs; a tower binding opts into safe-integer `maxBounces` 1..4
+  and `rangeCells` 1..256. Terrain surfaces require the same R13.2 clearance tag. No arbitrary
+  normals, restitution, attenuation, or code are authored.
+- Reflection is topology-owned deterministic backscatter: the incoming canonical edge selects the
+  opposite direction, a bounded ray chooses the first occupied tile, and at most 16 enemies there
+  are binary-sorted. The reflected root target is fixed for its segment. Any landed packet retains
+  the launch amount/source/modifiers and changes only detached target identity before using the
+  common resolver.
+- Public snapshot remains v1; ricochet-enabled checkpoint state uses inner v3 and emits only a
+  read-only `projectileRicocheted` GameEvent. Destructibles, weather, enemy projectiles, commands,
+  TowerScript/Graph nodes, homing, and renderer collision remain forbidden scope.
+
+### RED evidence
+
+- Before production, the exact command
+  `npx vitest run packages/engine/src/content/r13-ricochet-mechanics.contract.test.ts packages/engine/src/simulation/r13-ricochet-topology.contract.test.ts packages/engine/src/simulation/r13-ricochet-runtime.contract.test.ts --maxWorkers=1`
+  proved RED at 18 expected failures / 3 legacy controls passing. The failures cover the absent
+  closed schema/normalizer/cross-references, pure topology ray planner, terrain/root/component
+  reflection, bounce cap, fixed reflected target, bounded candidate choice, active-only checkpoint
+  inner v3, and replay equivalence. `npm run typecheck` remained GREEN and no production source was
+  changed before this evidence.
+
+### Engine GREEN and bounded-lookup regression
+
+- The original content/topology/runtime contracts reached GREEN at 21/21; the combined R13.1–R13.3
+  engine matrix reached 64/64 with typecheck and engine build passing.
+- A manual pre-freeze audit then proved that candidate truncation happened only after a full enemy
+  scan for every reflected-ray cell. The new 1,000-enemy regression failed 1/9 with 11,001
+  `enemyCoord` inspections against the bounded ceiling of 1,100. Production must build one
+  deterministic per-tick spatial lookup and inspect at most 16 binary-ordered candidates per cell
+  before R13.3 can return to GREEN; all earlier gate evidence is invalidated.
+- The regression is GREEN at 9/9 after moving candidate discovery to a lazy deterministic coord
+  index built once on the first terminal reflective collision of a tick. Per-cell rows are sorted
+  and capped at 16 once, then reused by all remaining projectiles. Combined R13.1–R13.3 engine
+  runtime is GREEN at 41/41; typecheck and engine build pass after the repair.
+
+### Surface RED evidence
+
+- After freezing the additive authoring/presentation contract, the exact command
+  `npx vitest run packages/mcp/r13-ricochet-authoring.contract.test.mjs packages/renderer/src/r13-ricochet-presentation.contract.test.mjs packages/studio/public/r13-ricochet-surface.contract.test.mjs --maxWorkers=1 --reporter=dot`
+  failed all 10 tests across three files. Expected missing contracts are the checkpoint-v3/event
+  descriptor, inert `basic_projectile_ricochet` recipe, guide v44, fail-closed shared event
+  projector, Mechanics Hub preservation, and shared Playtest/Canvas/Phaser consumption. Typecheck
+  remained GREEN and no production surface changed before this evidence.
+- The first surface implementation reached 10/10 GREEN, then manual hostile-data review added a
+  separate regression: a nested `terrainTags` accessor was executed by the Studio draft deep clone.
+  The regression failed 1/4 with exactly one getter invocation. The imported-project normalizer must
+  descriptor-inspect the new nested records and omit an invalid branch without executing it; the
+  earlier surface GREEN and build evidence is invalidated until this test passes.
+
+### Surface GREEN
+
+- MCP now exposes the closed terrain/armor surface catalogs, per-tower ricochet binding, checkpoint
+  inner v3, `projectileRicocheted`, inert `basic_projectile_ricochet`, and agent guide v44 through
+  the existing guarded mechanics transaction only.
+- Studio preserves only supported global ricochet catalogs, exposes the recipe in Mechanics Hub,
+  and displays authoritative ricochet provenance in Playtest. Canvas and generated Phaser consume
+  the same fail-closed shared projector and contain no reflection, collision, or target-selection
+  gameplay rules.
+- A post-GREEN hostile-input audit added a nested-accessor regression and proved RED at 1/4 in the
+  Studio surface file: the initial catalog clone executed an enumerable getter once. The
+  normalization now inspects own property descriptors, rejects accessor/symbol/non-boolean
+  catalogs and hostile tower bindings without executing them, and copies only closed surface and
+  binding records.
+- The expanded exact surface command is GREEN at 11/11 across the same three files. `npm run build`
+  and the source-generated plugin `build/validate/smoke` pass after the repair. The remaining full
+  gates, freeze, and both independent sign-off are still required; R13 as a whole is not Accepted.
+
+## 2026-07-31 — R13.4a destructible environment content and map contract
+
+### Contract freeze and RED evidence
+
+- Ballistics remains module schema v1 and adds only optional
+  `projectiles.destructibles.definitions`. A definition is closed own data with required `maxHp`
+  and tile `hitRegion { kind, blockerHeight, blocksLineOfSight }`, plus optional Combat
+  `armorTypeId` and `onDestroyed { terrainTransitionId }`. Maps add only canonical
+  `destructibleObjects[{ id, definitionId, coord }]`; R13.4a contains no runtime damage target,
+  collision, LoS behavior, snapshot, checkpoint, event, command, TowerScript, or renderer work.
+- Frozen limits are 256 definitions per profile, 4,096 placements per map, 128 UTF-8 bytes per ID,
+  max HP 1,000,000,000, blocker height 1,000,000, and one placement per cell. Definitions sort by
+  binary ID; placements sort by `(r,q,id)`. Active broken definition/Combat armor/Terraforming
+  transition references are errors, while disabled or unselected authored references are warnings.
+- The map source contract accepts exactly one top-level or documented Tiled JSON property,
+  canonicalizes it during compile, preserves it through project loading and `GridMap` clones, and
+  omits the field exactly when absent.
+- Before production, the exact command
+  `npx vitest run packages/engine/src/content/r13-destructible-environment-mechanics.contract.test.ts packages/engine/src/simulation/r13-destructible-map.contract.test.ts packages/cli/lib/r13-destructible-map-loader.contract.test.mjs --maxWorkers=1 --reporter=dot`
+  proved RED at 11 expected failures / 2 legacy controls passing. Missing contracts are the schema
+  and limits, hostile-safe definition/placement normalization, reference severity, TMJ compile
+  preservation, loader parity, and `GridMap` clone access. `npm run typecheck` remained GREEN and no
+  production source changed before this evidence.
+- Post-GREEN contract audit found that placement `id` and `definitionId` accepted leading/trailing
+  whitespace and embedded ASCII control characters. The focused regression command
+  `npx vitest run packages/engine/src/simulation/r13-destructible-map.contract.test.ts packages/cli/lib/r13-destructible-map-loader.contract.test.mjs --maxWorkers=1 --reporter=dot`
+  is RED at 32/38: all eight unsafe identifier cases are accepted independently by the engine map
+  normalizer, exported CLI normalizer, top-level compile path, and documented Tiled-property compile
+  path, while the six existing R13.4a controls remain GREEN. No production source changed for this
+  audit evidence.
+
+### GREEN content/map evidence
+
+- Ballistics v1 now owns a closed, deeply frozen destructible definition catalog, while the shared
+  grid-map contract owns canonical detached placements. TMJ top-level and Tiled-property authoring,
+  compiled maps, project loading, and `GridMap` clones preserve the same `(r,q,id)` ordering and
+  omit the optional field exactly when absent. Active cross-reference failures are errors;
+  disabled or unselected profiles remain warning-only.
+- The identifier regression was repaired only in the shared engine and CLI placement validators:
+  both now reject surrounding whitespace and ASCII control characters consistently with the
+  Ballistics catalog ID contract. The complete R13.4a focused command is GREEN at 45/45 after the
+  repair. Runtime collision, damage, LoS, terrain mutation, events, snapshots and checkpoints
+  remain deliberately absent from this slice.
+
+## 2026-07-31 — R13.4b1 pure destructible collision and damage planning
+
+### Contract freeze and RED evidence
+
+- This slice is pure engine groundwork only. It adds an immutable body index, a fixed launch-time
+  collision trace, `DamageTargetRef { kind: "map_object", objectId, definitionId }`, and a
+  non-mutating map-object damage plan. It does not wire `TowerDefenseGame`, events, snapshots,
+  checkpoints, LoS, terrain mutation, destruction settlement, TowerScript, Studio, MCP, renderer,
+  or player surfaces.
+- The collision contract follows the topology-owned square/hex line, excludes the source and
+  includes the target, selects the earliest object independent of body input order, and gives a
+  map object priority over a supplied terrain collision at the same cell/time. Direct and arc
+  altitude use the existing projectile formula and block at equality; only strictly greater
+  altitude clears. The independent ceilings are a 256-cell ray and 1,048,576 cell inspections per
+  tick. Indexes and traces are detached, deeply frozen, and reject hostile, sparse, cyclic, or
+  duplicate bodies without invoking accessors.
+- The damage planner accepts the original projectile `DamagePacket`, delegates arithmetic to
+  `DamageResolver`, replaces only its target with the validated map-object identity, and preserves a
+  detached packet including source/tags/modifiers. It validates object HP/identity and armor-context
+  coherence, never mutates HP, and returns exactly `no_effect`, `nonlethal`, or
+  `requires_atomic_destruction`. The final outcome deliberately leaves exactly-once destruction and
+  transactional terrain adoption to a later runtime slice.
+- Before production, the exact command
+  `npx vitest run packages/engine/src/simulation/r13-destructible-collision-damage.contract.test.ts --maxWorkers=1 --reporter=dot`
+  proved RED at 10/10. Missing contracts are the independent limits, exported body index and trace,
+  `map_object` target validation, and pure damage planner. `npm run typecheck` is GREEN, and no
+  production source changed before this evidence.
+- The first pure implementation reached GREEN at 10/10. A manual contract audit then found three
+  independent trust-boundary gaps: collision-body and damage-state IDs accepted surrounding
+  whitespace/ASCII controls; object damage accepted general resolver `resistances`, `legacyArmor`,
+  and `marks` despite the b1 armor-matrix-only contract; and caller-supplied terrain provenance was
+  trusted without proving its coordinate/time against the topology line. Before any repair, the
+  expanded exact command above is RED at 22/32 while all original 10 controls remain GREEN. The 22
+  failures comprise eight body-ID cases, eight state-ID cases, three forbidden contexts, and three
+  forged terrain collisions (off-ray, source cell, and mismatched elapsed time). `npm run typecheck`
+  remains GREEN and no production source changed for this audit evidence.
+
+### GREEN pure collision/damage evidence
+
+- The engine now exports an opaque frozen O(1) collision index, a topology-owned fixed collision
+  trace, the additive `map_object` damage target, and a non-mutating DamageResolver-backed plan.
+  IDs use the same whitespace/control/UTF-8 policy as the authored catalog and map placements;
+  object damage accepts only the matching armor matrix; supplied terrain provenance is proved
+  against the source-exclusive ray and deterministic elapsed formula before it can affect priority.
+- The expanded b1 contract and base DamageResolver suite are GREEN at 40/40. Typecheck and engine
+  build pass. `TowerDefenseGame`, events, snapshot/checkpoint state, LoS, destruction settlement and
+  terrain mutation remain absent by contract.
+
+## 2026-07-31 — R13.4b2 pure dynamic destructible line of sight
+
+### Contract freeze and RED evidence
+
+- This is a separate pure foundation after R13.4b1. It adds
+  `buildDynamicAuthoredLineOfSightIndexV1` over live
+  `{ objectId, definitionId, coord, blockerHeight }` rows and a generalized
+  `traceLineOfSightV2`. The index never caches elevation: every trace reads current
+  `GridMap.elevationAt`, so a Terraforming runtime elevation projection changes the result without
+  rebuilding authored blocker data. There is no `TowerDefenseGame`, event, snapshot, checkpoint,
+  LoS-state persistence, Studio, MCP, renderer, or player integration in this slice.
+- The generalized tracer accepts the legacy terrain/elevation policy and dynamic index as
+  independent optional inputs. It uses the topology-owned square/hex line, ignores source and target
+  cells, evaluates the closest cell first, and resolves same-cell blockers in the fixed order
+  terrain tag → destructible → elevation. A dynamic object blocks at exact ray-height equality and
+  exposes detached provenance with current elevation, object/definition IDs, and blocker height.
+  With no dynamic index, the existing `traceLineOfSight` wrapper and result remain exact.
+- Index input is canonical and permutation-invariant, accepts exactly 4,096 live blockers, rejects
+  4,097, duplicate IDs/cells, sparse/cyclic/hostile inputs and accessors without execution. Existing
+  LoS ceilings remain 256 cells per ray and 1,048,576 cell inspections per operation.
+- Before production, the exact command
+  `npx vitest run packages/engine/src/simulation/r13-dynamic-destructible-los.contract.test.ts --maxWorkers=1 --reporter=dot`
+  proved RED at 8/8 because both new pure exports are absent. `npm run typecheck` is GREEN. No
+  production source changed before this evidence.
+- The first pure implementation reached GREEN at 8/8. A manual policy-boundary audit then proved
+  that `traceLineOfSightV2` still applied authored tile elevation when a dynamic index was present
+  but the independent legacy terrain/elevation policy was absent. The focused command above is RED
+  at exactly 1/11: a high interior tile incorrectly returns `elevation` instead of `clear`. The two
+  controls remain GREEN: a zero-height live blocker on that tile returns `destructible`, while an
+  explicitly supplied legacy policy with empty terrain tags returns `elevation`. `npm run typecheck`
+  remains GREEN and no production source changed for this audit evidence.
+
+### GREEN pure LoS evidence
+
+- The engine now exports a canonical hostile-safe dynamic blocker index and a generalized trace
+  that shares one topology walk, reads current effective elevation, and preserves the fixed
+  same-cell priority. The legacy tracer remains the exact implementation when no dynamic index is
+  supplied.
+- A post-GREEN audit proved RED for one policy leak: a dynamic index with no legacy policy still
+  activated elevation-only blocking. The regression failed 1/11 while both boundary controls
+  passed. Elevation-only blocking now requires the explicit legacy policy; a destructible object
+  still uses current cell elevation for its own obstacle top. The expanded b2 contract plus existing
+  LoS suite are GREEN at 40/40; typecheck and engine build pass. No live game wiring or persistence
+  is part of b2.
+
+## 2026-07-31 — R13.4c2 internal persistent terrain transaction kernel
+
+### Contract freeze and RED evidence
+
+- R13.4c2 extracts only an internal opaque `preparePersistentTerrainTransaction` /
+  `adoptPersistentTerrainTransaction` kernel. It is not exported from the engine index and does not
+  import or reference projectile/destructible runtime code. Prepare is mutation-free; the first
+  adopt exposes one complete precomputed publication through a single callback and returns
+  `{adopted:true}`; repeated or foreign adoption is a no-throw no-op returning `{adopted:false}`.
+- The kernel preserves existing authored-order terrain semantics: transitions and source tags,
+  direct terrain IDs, restore and previous-override restoration, sources, legacy timed ownership,
+  the 512 override cap, and stable ordered events. Authored routes distinguish baseline breakage
+  from an unrepaired candidate and allow repair. Dynamic flow invokes one proof callback during
+  prepare, never during adopt; a failed proof mutates nothing. Effective no-op skips proof and
+  publishes empty changes.
+- Before production, the exact command
+  `npx vitest run packages/engine/src/simulation/persistent-terrain-transaction.test.ts --maxWorkers=1 --reporter=dot`
+  proved RED at 7 failures / 1 internal-boundary control passing because the direct internal module
+  and both kernel functions are absent. `npm run typecheck` is GREEN. No production,
+  `TowerDefenseGame`, projectile, or destructible source changed before this evidence.
+
+### GREEN internal transaction evidence
+
+- The internal module now prepares a detached frozen terrain candidate without touching the map or
+  live overrides, preserves authored operation/event order, enforces transition/source/ownership/
+  override and route-safety failures, and runs a dynamic navigation proof exactly once during
+  prepare. The first adoption publishes the complete precomputed value and returns
+  `{adopted:true}`; repeated or foreign adoption does not invoke the callback and returns
+  `{adopted:false}`.
+- The focused R13.4c2 contract is GREEN at 8/8. The module remains absent from the engine index,
+  imports no projectile/destructible runtime, and does not wire `TowerDefenseGame`, events,
+  snapshots, checkpoints, collision, or terrain mutation.
+- A post-GREEN compatibility audit added two regressions before repair: authored-route safety must
+  include the spawn/core endpoints exactly like the existing runtime, and publication events must
+  be sorted by their stable authored `order` even when internal operation input is permuted. The
+  expanded focused command is RED at 2/10 while the original eight controls remain GREEN; no
+  production source changed for this audit evidence.
+- The compatibility regressions are repaired by checking every authored route coordinate and by
+  sorting the detached publication events by authored order. The expanded focused contract is
+  GREEN at 10/10; the internal/public and ballistics/destructible boundaries remain unchanged.
+
+## 2026-07-31 — R13.4c3 authoritative destructible runtime integration
+
+### Contract freeze and RED evidence
+
+- This slice wires only already-authored Ballistics v1 destructibles into the public
+  `TowerDefenseGame` runtime. Active state is nested under Ballistics snapshot v2 and checkpoint
+  v4 with a destructibles schema v1 section; disabled, unselected and absent Ballistics retain the
+  exact legacy shape. Project, command, journal and outer checkpoint versions do not change.
+- A fixed launch-time map-object collision redirects the existing `DamagePacket` away from the
+  original enemy. Nonlethal damage settles once. Lethal damage and an optional persistent terrain
+  transition form one atomic transaction: successful publication orders damage, terrain and
+  destruction events; failed reachability rolls back HP, destroyed state, terrain and events.
+  Destroyed objects no longer participate in later collision. Reset restores authored HP/terrain.
+- Checkpoint rows are complete, canonical and hostile-safe: future nested versions, duplicate or
+  unknown IDs, missing authored rows, out-of-range HP and incoherent HP/destroyed pairs are rejected
+  before restore. Continuous execution, checkpoint resume and command-journal replay must produce
+  the same state digest and snapshot.
+- Scope exclusions are dynamic LoS, ricochet/surface changes, TowerScript events/actions, Studio,
+  renderers and new debug APIs. The contract uses only public `TowerDefenseGame`, checkpoint and
+  journal APIs plus fixture builders.
+- Before production, the exact command
+  `npx vitest run packages/engine/src/simulation/r13-destructible-runtime.contract.test.ts --maxWorkers=1 --reporter=dot`
+  proved RED at 6/6: the current runtime still publishes Ballistics snapshot v1/checkpoint v1 and
+  has no authoritative destructible state, collision damage, atomic destruction or restore/reset
+  contract. `npm run typecheck` is GREEN. No production source changed before this evidence.
+
+### Post-GREEN adversarial audit RED evidence
+
+- After the original six c3 contracts reached GREEN, three compact regressions audited only fixed
+  collision timing, canonical checkpoint order and hostile nested rows. The stored collision for
+  the fixture ray `q0 → q4` through `q2` records `elapsedUnits: 0.2`; settlement must occur at that
+  time rather than waiting for the full `0.4` target travel time. Destructible checkpoint rows must
+  be strictly binary-ordered by object ID, just like projectile rows. Sparse arrays and accessor-
+  backed rows/fields must be rejected without invoking a getter.
+- The exact focused command above is RED at 2 failures / 7 passes: all original six controls and
+  the hostile nested-row regression remain GREEN, while collision still settles at full travel
+  time (`hp 50` instead of `30` at `0.2`) and a valid reversed `gate_2, gate_1` checkpoint is
+  accepted. `npm run typecheck` remains GREEN. No production source changed for this audit.
+- After the elapsed-time repair, the shared test `impact()` helper was aligned to advance exactly
+  one `0.2` tick: that is now the authoritative collision boundary for the fixture. A second public
+  tick would correctly clear `lastEvents` and would make the event-order assertions observe the
+  wrong transaction boundary. The later unobstructed enemy projectile still advances its authored
+  full `0.4` travel time explicitly. The focused c3 contract is GREEN at 9/9 and typecheck passes;
+  no production or exactly-once expectation changed during this test alignment.
+
+### Final ownership and elevation boundary RED evidence
+
+- Two final c3 regressions exercise boundaries already owned by native Terraforming. A lethal
+  destructible transition must not overwrite a terrain cell owned by
+  `pendingTerraformExpiryGroups`; the projectile is consumed while object HP/destroyed state,
+  effective terrain and destructible/terrain events remain unchanged. Separately, an in-flight
+  fixed collision launched against an active runtime elevation override must persist that effective
+  `blockerElevation` and round-trip through checkpoint restore.
+- The exact focused command is RED at 2 failures / 9 passes. All previous nine controls remain
+  GREEN. The current runtime destroys the timed-owned object (`hp 0`, `destroyed:true`) and its
+  checkpoint validator compares collision elevation only with authored base elevation, rejecting
+  the valid runtime-elevation checkpoint as incoherent. `npm run typecheck` is GREEN. The fixtures
+  use a narrow runtime-internals cast solely to construct otherwise valid native state; no
+  production source, timed expiry semantics or elevation validation was weakened.
+
+### Reflected-segment destructible integration RED evidence
+
+- A compact ricochet regression requires every newly created reflected segment to run the same
+  bounded destructible trace as an initial launch. The authored gate at the reflected target
+  `q5,r1` is temporarily destroyed for the inbound segment and restored to a valid live runtime
+  state before the terrain bounce; this is necessary because the square-grid reflection retraces
+  the inbound ray. After the bounce, the fixed checkpoint projectile must carry
+  `destructibleCollision`; impact damages the gate from 50 to 30 exactly once and leaves the enemy
+  at 100 HP.
+- The combined focused command for ricochet plus c3 is RED at 1 failure / 20 passes. All 11 c3
+  controls and the previous nine ricochet controls remain GREEN. The reflected projectile has the
+  canonical `q4 → q5` segment but lacks `destructibleCollision`, proving that `reflectProjectile`
+  does not trace the new segment. `npm run typecheck` is GREEN. Only the test fixture and this
+  evidence changed; production remains untouched.
+
+### C3/C4 fixture dependency alignment
+
+- Once c4 made authored `blocksLineOfSight:true` authoritative, the c3 gate between its tower and
+  enemy correctly prevented target acquisition and therefore projectile launch. C3 explicitly
+  excludes dynamic LoS and tests collision plus atomic persistence, so its fixture now authors
+  `blocksLineOfSight:false`; blocker height and every collision/destruction assertion are unchanged.
+- The combined c3, c4 runtime and ricochet focused suites are GREEN at 27/27, and typecheck passes.
+  This is a test dependency alignment only; production behavior and c4 LoS coverage are unchanged.
+
+## 2026-07-31 — R13.4d1 guarded destructible authoring and MCP
+
+### Contract freeze and RED evidence
+
+- D1 adds one narrow authoring transaction over exactly five owned sources: `project.json`,
+  `content/mechanics.json`, `content/balance.json`, the selected `maps/src/<mapId>.tmj`, and
+  `maps/compiled/maps.json`. Preview is write-free and returns the complete validated candidate;
+  apply requires its composite revision, creates a five-file backup and rolls back already-replaced
+  owned files on failure. Existing loader, map compiler and project validation remain canonical.
+- The request carries one Ballistics v1 profile plus exact map placements and mission/map IDs.
+  Definition references, bounds and confined map IDs are validated before writes. The
+  `basic_destructible_environment` recipe may bind existing project mission/map IDs, but remains
+  inert: it writes nothing, contains no `enabled` flag and supplies no placement or coordinate.
+- MCP exposes only `preview_destructible_environment` and `apply_destructible_environment` with
+  compute-only/write-local metadata, closed schemas, revision/backup/rollback guidance and the
+  existing `validate_project` follow-up. No broad destructible writer, TowerScript action or
+  surface-owned collision/damage/LoS/terrain rule is introduced. Source CLI/MCP/guide files must be
+  byte-identical to the generated plugin runtime.
+- Before production, the exact command
+  `npx vitest run packages/cli/lib/r13-destructible-environment-authoring.contract.test.mjs packages/mcp/r13-destructible-environment-authoring.contract.test.mjs --maxWorkers=1 --reporter=dot`
+  proved RED at 8/8: the narrow CLI module and tools are absent, the recipe is unknown, the schema
+  lacks placement/transaction descriptors, the guide remains v44, and the new source/plugin file
+  is absent. `npm run typecheck` is GREEN. Studio, renderer, package, documentation fixture and all
+  production sources remain outside this RED slice.
+
+### Engine ruling for placement-inert recipes
+
+- A Ballistics v1 profile with `projectiles.towers:{}` is structurally and semantically valid only
+  when it also contains a non-empty valid destructible definition catalog. This lets the guarded
+  recipe author definitions before an explicit map placement without inventing a tower binding.
+  A profile with empty towers and no destructibles remains invalid, preserving the pre-R13.4 empty
+  profile guard.
+- The focused content command
+  `npx vitest run packages/engine/src/content/r13-destructible-environment-mechanics.contract.test.ts --maxWorkers=1 --reporter=dot`
+  is RED at 1 failure / 8 passes: the new inert-profile case is rejected by the unconditional empty
+  towers guard, while the explicit empty-profile control and all prior destructible content
+  contracts remain GREEN. `npm run typecheck` is GREEN. Production is untouched.
+
+### GREEN guarded authoring and plugin parity evidence
+
+- Ballistics v1 normalization now accepts `projectiles.towers:{}` only after a valid non-empty
+  destructible definition catalog has normalized; the same empty tower catalog without
+  destructibles remains rejected. The focused destructible content contract is GREEN at 9/9, and
+  `npm run typecheck` plus `npm run build:engine` are GREEN.
+- The source CLI now owns the exact five-file preview/apply transaction using the existing
+  mechanics authoring, map compiler, project normalization and content validation primitives.
+  Preview is write-free; apply rejects stale revisions, backs up all five owned paths, validates
+  the combined candidate and restores original bytes after an injected partial replacement
+  failure. The inert `basic_destructible_environment` recipe binds the selected mission/map but
+  creates no placement and activates no capability.
+- MCP now exposes the two narrow tools with closed schemas and compute-only/write-local metadata,
+  publishes Ballistics checkpoint schema v4 plus destructible placement/transaction/event
+  descriptors, and teaches the guarded workflow in agent guide v45. The exact CLI+MCP contract is
+  GREEN at 8/8. `npm run plugin:build` regenerated the mirror from source; source-to-plugin parity,
+  `npm run plugin:validate` and `npm run plugin:smoke` are GREEN. No Studio, renderer, gameplay or
+  TowerScript authoring surface was added in this slice.
+- The final focused mechanics/map/recipe/MCP regression batch is GREEN at 107/107 across 12 files,
+  including the additive R13.2/R13.3 descriptor and guide alignment. Final `npm run typecheck`,
+  `npm run build:engine` and source diff checks are GREEN on the same working source.
+
+### R13 authoring descriptor dependency alignment
+
+- C3 added Ballistics checkpoint inner schema v4 without removing v1-v3, so the additive R13.2 arc
+  clearance and R13.3 ricochet MCP assertions now accept `[1,2,3,4]`. D1 advances the shared agent
+  guide from v44 to v45, so the prior ricochet guide assertion follows that exact version. No other
+  clearance, ricochet, recipe, workflow or exclusion expectation changed.
+- The combined arc-clearance, ricochet and destructible-environment MCP suites are GREEN at 11/11;
+  typecheck passes. This is test dependency alignment only, with no production change.
+
+### Post-GREEN hostile-input and revision-closure RED evidence
+
+- Two compact CLI regressions freeze the remaining d1 trust boundaries. Preview must reject
+  accessor-bearing, proxy and non-plain request objects as unsafe own-data without invoking a
+  getter/trap or changing any owned byte. The composite preview revision must cover every raw map
+  source consumed by `compileMapSources`, not only the selected placement source, so a later change
+  to an otherwise valid second source makes guarded apply conflict before any write.
+- The exact command
+  `npx vitest run packages/cli/lib/r13-destructible-environment-authoring.contract.test.mjs --maxWorkers=1 --reporter=verbose`
+  is RED at 2 failures / 4 controls passing. The hostile accessor currently executes and rejects
+  with `HOSTILE_REQUEST_GETTER`; changing `maps/src/other.tmj` after preview leaves the revision
+  unchanged and guarded apply incorrectly returns `ok:true, written:true` instead of a no-write
+  conflict. The original preview, apply/rollback, malformed-reference/traversal and inert-recipe
+  contracts remain GREEN. `npm run typecheck` is GREEN. This audit changed only the focused CLI
+  contract and this evidence; production source remains untouched.
+
+### Post-GREEN audit repair evidence
+
+- The CLI now inspects the complete request as detached ordinary own-data before any request value
+  is read. Prototype and property descriptors are obtained inside the guarded inspection; Proxy,
+  accessors, symbols, non-enumerable/extra array properties, custom prototypes, sparse/cyclic data
+  and inspection-budget overflow fail closed as structured `input_unsafe` validation. No hostile
+  accessor or Proxy `get` trap executes, and downstream validators receive detached plain records.
+- Composite revision input is now the binary-sorted union of the exact five transaction files and
+  every raw `maps/src/*.tmj` byte represented in the map-source set consumed by
+  `compileMapSources`. Candidate writes and backups remain exactly the selected five owned files;
+  changing a sibling map source after preview returns a no-write revision conflict.
+- The repaired CLI contract is GREEN at 6/6. The focused mechanics/map/recipe/MCP regression batch
+  is GREEN at 109/109 across 12 files after `npm run plugin:build`; direct CLI source/plugin parity,
+  `npm run plugin:validate`, `npm run plugin:smoke`, `npm run typecheck` and source diff checks are
+  GREEN.
+
+### GREEN authoritative runtime evidence
+
+- Active Ballistics destructibles now initialize complete authored runtime rows, publish snapshot
+  v2/checkpoint v4 only when selected, and retain fixed launch collision provenance through
+  checkpoint restore and command-journal replay. Damage is planned through the common
+  `DamageResolver`; nonlethal settlement is single-shot, while lethal HP/destruction and the
+  optional persistent terrain transition are committed together only after reachability succeeds.
+  Failed terrain preparation consumes the projectile without mutating the object, enemy, terrain,
+  overrides, or events. Destroyed objects are removed from future launch collision and reset
+  restores authored object HP and terrain.
+- The frozen R13.4c3 contract is GREEN at 6/6. The focused regression batch covering projectile
+  foundation, ricochet runtime/topology, checkpoint, the persistent terrain transaction kernel,
+  Terraforming runtime/path-water/dynamic/duration/checkpoint, and Ballistics/Ricochet content is
+  GREEN at 220/220 across 13 files. Dynamic LoS, surfaces, TowerScript/Graph and outer project,
+  command, journal and checkpoint versions remain unchanged.
+- The adversarial timing/order repair now uses the stored destructible collision `elapsedUnits` as
+  the projectile terminal time and rejects restored projectiles that have advanced beyond it.
+  Complete destructible checkpoint rows additionally require strict binary object-ID order. The
+  aligned focused contract is GREEN at 9/9; the same 13-file regression batch is GREEN at 223/223.
+  `npm run typecheck` and `npm run build:engine` are GREEN on the repaired source.
+- Two boundary regressions now preserve ownership and launch provenance: lethal destruction does
+  not prepare or publish an `onDestroyed` terrain transition while a native timed terrain group
+  owns that cell, and checkpoint restore accepts the stored finite blocker elevation for a cell
+  carrying an active runtime elevation mutation while immutable cells still require authored
+  elevation equality. The focused c3 contract is GREEN at 11/11 and the 13-file regression batch
+  is GREEN at 225/225; typecheck and the engine build remain GREEN.
+- Reflected ricochet segments now run the same live destructible trace and per-tick inspection
+  accounting as initial launch, combine terrain/object terminal collisions with the same stable
+  priority, and replace rather than retain the previous segment's terminal provenance. Exhausted
+  clearance or destructible budget rejects the reflection before publishing its event/state. The
+  focused ricochet+c3 pair is GREEN at 21/21 and the 13-file regression batch is GREEN at 226/226;
+  typecheck and the engine build remain GREEN.
+
+## 2026-07-31 — R13.4c4 live dynamic destructible LoS wiring
+
+### Contract freeze and RED evidence
+
+- This slice derives an immutable dynamic LoS index only from active, live Ballistics
+  destructibles whose authored hit region has `blocksLineOfSight:true`. Tower acquisition uses the
+  generalized engine trace even when Elevation LoS is absent; `single` and the direct `pulse`
+  consumer share the same visibility decision. Destroyed objects are excluded after checkpoint
+  restore, while objects with the flag disabled remain collision-capable but do not block LoS.
+- Compute-only diagnostics retain the exact legacy schema v1 path when only Elevation LoS is
+  active. Active dynamic blockers use schema v2 with Ballistics profile identity and stable
+  object/definition/height provenance. The index is derived from the existing Ballistics v4
+  checkpoint state and is not persisted; no renderer, Studio, MCP, event, command, journal,
+  snapshot or checkpoint shape changes are part of c4.
+- Before production, the exact command
+  `npx vitest run packages/engine/src/simulation/r13-dynamic-destructible-los-runtime.contract.test.ts --maxWorkers=1 --reporter=dot`
+  proved RED at 5 failures / 1 compatibility control passing. Square and hex single acquisition,
+  the shared single/pulse gateway, live-versus-destroyed blockage, dynamic diagnostic provenance,
+  and checkpoint-derived targeting all fail because the live runtime does not yet build or route
+  through the dynamic index. The `blocksLineOfSight:false` compatibility control passes.
+  `npm run typecheck` is GREEN. This Contract/Test Designer changed only the new focused test and
+  this evidence; production source remained untouched for the RED proof.
+
+### GREEN live dynamic LoS evidence
+
+- The runtime now rebuilds one derived immutable LoS index alongside the live destructible
+  collision index, including only non-destroyed objects whose authored hit region enables LoS
+  blocking. It is reconstructed after initialization, reset, checkpoint restore and destruction;
+  no LoS index or result is added to snapshots or checkpoints.
+- Existing single/sniper/splash/antiair/pipeline acquisition and the direct pulse consumer share
+  the generalized trace whenever a live dynamic index exists. When only Elevation LoS is active,
+  targeting and diagnostics retain the direct legacy trace/analyzer path and exact schema v1
+  result. Dynamic diagnostics publish compute-only schema v2 Ballistics provenance.
+- The focused c4 contract is GREEN at 6/6. After the collision-only c3 fixture explicitly disabled
+  LoS blocking per its frozen scope exclusion, the c4/pure-LoS/legacy-LoS/consumer/high-ground/c3
+  regression matrix is GREEN at 101/101 across six files. `npm run typecheck` and
+  `npm run build:engine` are GREEN.
+- A boundary regression separated authored dynamic-LoS capability from the current live blocker
+  count. A selected destructible profile with at least one authored blocking placement now retains
+  an empty derived index after every such object is destroyed, so compute-only diagnostics remain
+  schema v2 and report a clear row. Projects with no authored blocking placement keep the exact
+  undefined/legacy fast path. The focused c4 contract is GREEN at 7/7 and the same six-file matrix
+  is GREEN at 102/102; typecheck and the engine build remain GREEN.
+
+### Post-GREEN empty-live-index diagnostic RED evidence
+
+- One regression freezes the capability/runtime distinction after checkpoint restore. When the
+  authored Ballistics destructible LoS capability remains selected but every authored blocker is
+  destroyed, the derived index is empty rather than inactive: compute-only analysis must remain
+  schema v2 with `profiles.ballistics`, return a visible `clear` row, and still persist no LoS
+  index in the checkpoint.
+- The exact focused c4 command is RED at 1 failure / 6 controls passing. The restored game returns
+  `undefined` because the current runtime drops the derived index when there are no live blockers;
+  all prior square/hex targeting, shared gateway, false-flag, live/destroyed, provenance and restore
+  controls remain GREEN. `npm run typecheck` is GREEN. Only the focused contract and this evidence
+  changed; production source remained untouched for this post-GREEN RED proof.
+
+## 2026-07-31 — R13.4d2 Studio Destructibles Hub RED contract
+
+- The Studio contract freezes one separate Destructibles section inside Mechanics Hub. It authors
+  every closed v1 definition field, binds an explicit authored map and exact placement IDs/tile
+  coordinates, and never moves those fields into ordinary tower or mission forms. Preview and apply
+  must use the narrow d1 destructible-environment routes with one detached request and the exact
+  preview revision; generic mechanics writes are forbidden for this five-file boundary.
+- The same contract requires reload after writes, explicit disable/re-enable without discarding the
+  profile or placements, and lossless read-only handling of future Ballistics module data. The
+  Studio/server surface may delegate to the d1 tools but must not import simulation, collision,
+  DamageResolver, topology, map compilation or persistent terrain transaction rules.
+- Before production, the exact focused command
+  `npx vitest run packages/studio/public/r13-destructible-environment-surface.contract.test.mjs --maxWorkers=1 --reporter=dot`
+  is RED at 6/6 expected failures: the section IDs, definition/placement editor, narrow lifecycle
+  functions and Studio routes do not exist yet. The adjacent static R13 command covering
+  Ballistics foundation, arc clearance, ricochet and this new contract reports 11/11 existing
+  controls GREEN and only the same six d2 failures. This Contract/Test Designer changed only the
+  new public contract and this evidence; Studio/server production, renderer and packaging remain
+  untouched.
+
+### GREEN Studio and server evidence
+
+- Mechanics Hub now contains one dedicated Destructibles editor for the complete closed v1
+  definition fields and explicit authored-map placements. Its detached draft remains separate from
+  ordinary project dirtiness and tower/mission editors. Future Ballistics versions retain their
+  loaded profile losslessly and expose the dedicated controls read-only.
+- Preview and apply capture one detached request and use only
+  `/api/mechanics/destructibles/preview` plus `/api/mechanics/destructibles/apply` with the preview
+  revision. Disable submits the same profile and placements, then reload/re-enable restores the
+  authored candidate. The two Studio server routes delegate to the d1 MCP/CLI tools, require the
+  apply revision and sanitize filesystem/backup details before returning browser data; no gameplay,
+  renderer, topology, collision or map-compiler implementation is imported into the surface.
+- The exact d2 contract is GREEN at 6/6. Adjacent Ballistics/arc/ricochet/d2 static and Studio
+  server suites are GREEN at 37/37, and the AI server suite is GREEN at 7/7. `npm run build` and
+  `npm run typecheck` pass. Full Playwright reached 137/138 with one pre-existing Heroes
+  skill-effect timing failure; its isolated rerun is GREEN at 1/1, so no out-of-scope Heroes source
+  was changed.
+
+## 2026-07-31 — R13.4d3a shared renderer and opt-in Juice RED contract
+
+- One pure `projectDestructibleEnvironmentPresentation` contract consumes only active Ballistics
+  snapshot v2/destructibles v1 state and returns detached deeply frozen rows in binary object-ID
+  order. Absent/legacy/future, malformed HP coherence, accessor/proxy, sparse, duplicate and more
+  than 4,096 rows fail closed to the one inactive shape without executing authored traps. Canvas
+  and generated Phaser must consume this shared projection; the projector imports no simulation,
+  collision, navigation, LoS, terrain-transition or targeting rules.
+- Procedural Juice remains independently opt-in. `destructibleObjectDamaged` and
+  `destructibleObjectDestroyed` can produce cues only through exact authored event bindings, with
+  the presentation origin taken from the authoritative `event.coord`. A valid catalog without a
+  matching binding remains active but emits no particle, audio or camera instruction.
+- Before renderer production, the exact command
+  `npx vitest run packages/renderer/src/r13-destructible-environment-presentation.contract.test.mjs packages/renderer/src/procedural-juice-presentation.contract.test.mjs packages/renderer/src/ballistics-presentation.contract.test.mjs packages/renderer/src/r13-arc-clearance-presentation.contract.test.mjs packages/renderer/src/r13-ricochet-presentation.contract.test.mjs --maxWorkers=1 --reporter=verbose`
+  is RED at 6 failures / 22 controls passing. Five failures identify the absent pure projector,
+  source export and Canvas/Phaser adapters; the sixth returns inactive because the two authored
+  destructible event types are not yet allowlisted. The new no-binding control and all existing
+  R11/R13 renderer controls remain GREEN. `npm run typecheck` is GREEN. Only the two renderer
+  contracts and this evidence changed; renderer/CLI production, Studio, packages and docs remain
+  untouched.
+
+### GREEN shared presentation evidence
+
+- The renderer now exports one pure fail-closed destructible-environment projector. It accepts
+  only Ballistics snapshot v2/destructibles v1, validates the complete closed object/coordinate
+  own-data shape, HP/destroyed coherence, duplicate IDs and the 4,096-row budget, then returns
+  detached deeply frozen rows in binary object-ID order. Hostile, accessor, sparse, malformed,
+  legacy and future inputs return the single inactive presentation without executing traps.
+- Canvas and generated Phaser consume that same projector and draw only its presentation rows;
+  neither adapter derives collision, damage, navigation, LoS, terrain mutation or targeting.
+  Procedural Juice adds only the two destructible event IDs to its shared validation/presentation
+  allowlist. Cues remain authored-binding driven and use authoritative `event.coord`; a catalog
+  without a matching binding emits no automatic debris, particle, audio or camera instruction.
+- The exact focused R13/R11 renderer command is GREEN at 28/28. The adjacent renderer, player
+  template and Procedural Juice schema/authoring batch is GREEN at 93/93 across 11 files.
+  `npm run build`, `npm run plugin:build`, `npm run plugin:validate` and
+  `npm run plugin:smoke` are GREEN; generated plugin renderer parity comes only from the source
+  build workflow. Full Playwright is GREEN at 138/138; direct source/plugin byte parity for the
+  projector, renderer entrypoint, Juice projector, build template and visuals schema plus source
+  diff checks also pass.
+
+### Post-GREEN destructible presentation identifier RED evidence
+
+- One compact malformed-state regression aligns presentation IDs with the engine/map 128-byte
+  safe-ID policy: both `objectId` and `definitionId` must reject leading/trailing whitespace and
+  embedded ASCII newline/NUL characters, returning the single inactive projection.
+- The exact command
+  `npx vitest run packages/renderer/src/r13-destructible-environment-presentation.contract.test.mjs --maxWorkers=1 --reporter=verbose`
+  is RED at 1 failure / 5 controls passing. The current projector accepts the first hostile value,
+  `objectId:" gate_1"`, and returns an active row; all canonical/frozen, malformed-state,
+  accessor/proxy/sparse/duplicate, over-budget and Canvas/Phaser boundary controls remain GREEN.
+  `npm run typecheck` is GREEN. Only the focused renderer contract and this evidence changed;
+  production remains untouched for this audit proof.
+
+### Post-GREEN destructible presentation identifier GREEN evidence
+
+- The shared renderer projector now enforces the engine/map safe-ID boundary before creating any
+  presentation row: identifiers must already be trimmed and cannot contain ASCII control
+  characters. Invalid `objectId` or `definitionId` values therefore fail closed without leaking a
+  partially active destructible presentation into Canvas or Phaser.
+- The exact focused command
+  `npx vitest run packages/renderer/src/r13-destructible-environment-presentation.contract.test.mjs --maxWorkers=1 --reporter=dot`
+  is GREEN at 6/6, including whitespace, newline and NUL regressions.
+
+## 2026-07-31 — R13.4d3b generated packages, fixture and docs RED contract
+
+- One static package contract freezes the generated-player integration without running a build in
+  RED. Canvas must consume the shared presentation-only adapter through the renderer, while Phaser
+  imports and consumes the same projector directly; the composed paths cover Canvas/Phaser ×
+  hex/square. The adapter may read only snapshot presentation data and may not import or reproduce
+  DamageResolver, simulation, collision, navigation, LoS, terrain-transition or targeting rules.
+- Runtime presentation remains inactive for absent/disabled/unselected state, while authored
+  mechanics continue through the existing PWA, single-file, portable web and `.tdpack` carriers.
+  The canonical starter source must remain free of mechanics/destructible placement data. A new
+  `docs/examples/opt-in-destructible-environment` fixture freezes the intentionally empty tower
+  binding plus one `basic_crate` definition/placement and the
+  `basic_destructible_environment` mission selection.
+- Documentation must record R13.4 snapshot Ballistics v2 and checkpoint Ballistics v4 domains, both
+  destructible events, the narrow `preview_destructible_environment` → guarded
+  `apply_destructible_environment` five-file backup/rollback workflow, package matrix and exact
+  legacy/TowerScript/broad-write exclusions.
+- Before package/docs production, the exact command
+  `npx vitest run packages/cli/build.r13-destructible-environment-package-docs.contract.test.mjs --maxWorkers=1 --reporter=verbose`
+  is RED at 3 expected failures / 1 starter compatibility control passing across four cases. The
+  failures identify the missing shared projector/package wiring and absent opt-in
+  fixture/documentation; the untouched starter control is GREEN. Full builds were intentionally
+  deferred to final gates. This
+  Contract/Test Designer changed only the focused static contract and this evidence; renderer,
+  CLI/package, fixture and documentation production remained untouched for the RED proof.
+
+### GREEN package, fixture and documentation evidence
+
+- The frozen four-case d3b contract is GREEN at 4/4. The Canvas/Phaser × hex/square shared
+  projector and active-only package carriers were already complete in d3a, so d3b required no
+  production source change. The canonical starter project data remains free of R13.4 mechanics and
+  destructible placements; only generated package output was refreshed by the package smoke.
+- `docs/examples/opt-in-destructible-environment` now provides the complete inert-capable reference:
+  one `basic_destructible_environment` Ballistics profile with empty tower projectile bindings, one
+  bounded `basic_crate` definition, one explicit map placement and the matching mission selection.
+- ROADMAP, runbook and ADR 0054 now freeze Ballistics snapshot v2, checkpoint inner v4, both
+  destructible events, the narrow `preview_destructible_environment` → guarded
+  `apply_destructible_environment` five-file transaction, backup/rollback semantics, Canvas/Phaser
+  and PWA/single-file/web-package/`.tdpack` carriers, and absent/disabled/unselected legacy
+  behavior. They also state the TowerScript/Visual Graph and broad-write exclusions.
+- The package/docs plus packaging/templates/`.tdpack` static regression batch is GREEN at 19/19
+  across four files. `npm run build`, `npm run package:web`, `npm run validate` and
+  `npm run sim tutorial_01 60` are GREEN. Plugin gates were not repeated because this d3b slice
+  changes no source or plugin input; the exact d3a source-to-plugin parity evidence remains valid.
+
+## 2026-07-31 — R13.5a Weather v1 frozen architecture contract
+
+- **Capability boundary.** Weather is a new independent `weather` mechanics module, schema v1,
+  selected only by `mission.mechanics.profiles.weather`. The closed profile is
+  `{ zones, definitions, schedule }`; it has no Ballistics, Elevation, Terraforming, Procedural
+  Juice or Combat dependency. `MECHANICS_MODULE_IDS`, implemented capabilities, validation and the
+  shared descriptor gain `weather`, while the catalog remains schema v1. Structural validation is
+  safe for disabled data; map bounds and definition/zone references are semantic enable/preview
+  errors. Missing, disabled, unselected, missing-profile and future-version modules are inert.
+- **Zones and weather definitions.** `zones` is a record of stable zone IDs. A zone is exactly
+  `{ kind:"all_map" }` or `{ kind:"tiles", tiles:[{q,r}, ...] }`; tile lists are dense, unique,
+  detached and canonicalized by `(q,r)`, and selected tiles must exist on the mission map.
+  `definitions` maps weather IDs to `{ label, effects }`, where `effects` is a binary-ID-ordered
+  record of the following closed union only:
+  `{kind:"periodic_damage",target:"enemies",amount,intervalUnits,damageType?}`,
+  `{kind:"status",target:"enemies",intervalUnits,status:StatusEffectSpec}`,
+  `{kind:"visibility_range",multiplier}`, `{kind:"enemy_speed",multiplier}`, or
+  `{kind:"tower_fire_rate",multiplier}`. One definition may contain at most one of each scalar
+  multiplier kind; periodic effects may coexist. The first periodic application is one complete
+  interval after activation. Enemy membership uses its authoritative current tile; tower spatial
+  multipliers use the tower anchor tile. Damage uses a typed weather `DamagePacket` source and the
+  existing resolver/exactly-once kill and reward path; status uses the existing merge/expiry rules.
+- **Seeded schedule.** `schedule` is exactly `{ calmWeight, choices }`, where each choice record is
+  `{ weatherId, zoneId, weight }`. For every authored wave, binary-sorted choices plus the optional
+  calm weight produce zero or one selection; weather starts with the wave, ends when that wave is
+  cleared, and never overlaps another occurrence. With typed root-seed payload `p`, the exact
+  length-prefixed RNG domain is
+  `towerforge:weather:v1|<s|n>:<p.length>:<p>|m:<missionId.length>:<missionId>`; it is wholly
+  separate from simulation, draft, artifact, quest and future weather-effect RNG. Reordering
+  choices, zones, definitions or other content records cannot change the schedule; `Math.random`
+  and wall-clock time are forbidden.
+- **Public pure surface.** The engine exports `WEATHER_LIMITS`, `WEATHER_MECHANICS_SCHEMA`,
+  `WeatherProfileValidationError`, `normalizeWeatherProfileV1`, `resolveActiveWeatherMechanics`,
+  `createWeatherScheduleV1(profile,{seed,missionId,waveCount})`,
+  `createWeatherRuntimeV1(schedule)` and
+  `advanceWeatherRuntimeV1(profile,schedule,runtime,{waveIndex,elapsedUnits,waveActive})`.
+  Profile and schedule remain explicit immutable own-data inputs; there is no hidden runtime plan or
+  closure. Pure advance returns detached transition and due-effect facts only; `TowerDefenseGame`
+  owns entity lookup, DamageResolver/status application and event publication.
+- **Budgets.** V1 permits at most 64 zones, 4,096 tiles per zone / 16,384 across the profile,
+  64 definitions, 16 effects per definition / 512 total, 256 schedule choices, 4,096 scheduled
+  waves, 128 UTF-8 bytes per ID and 256 per label. Weights are integers `0..1,000,000` with a
+  positive total not exceeding `2^32-1`; `intervalUnits` is finite in `(0,1e9]`, damage in
+  `[0,1e12]`, and multipliers in `[0.05,20]`. One tick may inspect at most 16,384 zone targets and
+  apply at most 4,096 periodic effects/DamagePackets; exhaustion emits one bounded diagnostic and
+  stops remaining weather work for that tick without partial reapplication.
+- **Active runtime domains.** An active capability alone adds `snapshot.weather` schema v1 with
+  `profileId`, the current occurrence or `null`, canonical zone scope and wave-relative elapsed
+  time. Optional checkpoint `state.weather` schema v1 stores profile provenance, weather RNG
+  initial/current state, active choice/wave/elapsed state and periodic cursors. Lifecycle/effect
+  events are `weatherStarted`, `weatherEnded`, `weatherEffectApplied` and
+  `weatherBudgetExceeded`; all carry stable profile/weather/zone/choice/effect provenance as
+  applicable and exist only while Weather is active. Reset restores the initial schedule and
+  clears transient state. `GameCheckpointV1`, `towerforge-sim-v2`, project v3, map format,
+  commands/journal, profile, multiplayer, Ballistics and TowerScript version domains do not bump.
+- **Acceptance.** RED must cover closed own-data validation (accessor/proxy/sparse/cyclic/future
+  and over-budget), zone bounds/cross-references, seed and input-order invariance, calm selection,
+  wave start/clear transitions, periodic boundaries, all five effect kinds, budget exhaustion and
+  `Math.random` isolation. Runtime acceptance requires absent/disabled/unselected exact legacy
+  snapshots/checkpoints and no tick/RNG overhead; continuous = checkpoint restore = journal replay
+  digest; exact-once damage/death/reward/status settlement; reset cleanup; and equivalent
+  hex/square zone membership. Weather recipes, Studio/MCP, Canvas/Phaser and package carriers are
+  later surface slices, not part of the pure runtime RED/GREEN slice.
+- **Forbidden scope.** R13.5 does not add 3D fluid/particle physics, moving or overlapping zones,
+  arbitrary expressions/scripts, host APIs, JavaScript/eval, per-entity RNG, weather-authored
+  terrain mutation, homing/ballistic coupling, new statuses, TowerScript actions/events, Visual
+  Graph nodes, renderer-owned membership/modifiers, broad MCP writes or automatic Juice cues.
+  Blizzard, Acid Rain and Sandstorm remain disabled recipes until the authoring/surface slice.
+
+### R13.5a pure Weather RED evidence
+
+- A separate six-case pure contract freezes canonical detached profile normalization, hostile
+  own-data rejection, identifier/cross-reference/budget limits, seeded per-wave selection in the
+  independent Weather RNG domain, calm outcomes, runtime start/interval/end facts and strict
+  future-version rejection. It does not construct `TowerDefenseGame` or assert live gameplay.
+- Before production, the exact command
+  `npx vitest run packages/engine/src/content/r13-weather-mechanics.contract.test.ts --maxWorkers=1 --reporter=dot`
+  is RED because the frozen `weather-mechanics` module and its public pure exports do not yet
+  exist. No Weather production source changed before this evidence.
+
+### R13.5a pure Weather GREEN evidence
+
+- The engine now owns a closed Weather v1 normalizer, canonical zones/definitions/choices, the
+  length-prefixed independent seeded wave schedule and an explicit immutable runtime reducer that
+  emits only lifecycle and due-effect facts. It uses no host RNG, simulation entity lookup or
+  renderer state.
+- The focused pure contract is GREEN at 6/6 and `npm run typecheck` passes. Live damage, movement,
+  tower cadence, snapshot and checkpoint wiring remain isolated in the already-RED R13.5b slice.
+
+### R13.5b live Weather integration RED evidence
+
+- The focused `TowerDefenseGame` contract deliberately starts after the pure profile/schedule
+  boundary. It freezes active-only `snapshot.weather` v1, one deterministic occurrence for each
+  authored wave, exact `weatherStarted`/`weatherEnded` lifecycle, and a checkpoint-owned active
+  cursor with separate initial/current Weather RNG provenance. No normalizer, hostile-input or
+  weighted-selection primitive case is duplicated here.
+- One periodic all-map Acid effect must cross its first `0.2` boundary exactly once, submit one
+  weather-sourced `{area,over_time}` enemy `DamagePacket` through `DamageResolver`, settle HP once,
+  publish one ordinal effect event and do no additional work on `tick(0)`. Separate comparisons
+  freeze the zone-local enemy-speed multiplier before movement and the tower fire-rate multiplier
+  without mutating immutable tower definitions.
+- Checkpoint restore and command-journal replay must converge with continuous simulation after
+  another periodic boundary. Absent, disabled and unselected fixtures must omit Weather from both
+  snapshot and checkpoint, publish no weather events, and retain exact legacy enemy HP/progress.
+- Before runtime production, the exact command
+  `npx vitest run packages/engine/src/simulation/r13-weather-runtime.contract.test.ts --maxWorkers=1 --reporter=verbose`
+  is RED at 5 expected integration failures / 3 legacy controls passing across eight cases. The
+  missing active snapshot/events, zero periodic resolver calls, unchanged enemy speed/fire rate and
+  absent checkpoint section are the expected failures; all three inactive paths are GREEN.
+  `npm run typecheck` is GREEN. This Contract/Test Designer changed only the focused runtime
+  contract and this evidence; engine production remains untouched for the RED proof.
+
+### R13.5b live Weather integration GREEN evidence
+
+- `TowerDefenseGame` now resolves Weather only for the selected v1 capability, derives a schedule
+  from the root seeded state without advancing the simulation RNG, and owns the active occurrence,
+  wave lifecycle, zone membership and periodic cursors. Periodic damage uses the common
+  `DamageResolver` with a typed Weather source; status, enemy speed, visibility/range and tower
+  fire-rate effects reuse existing engine paths. Renderers receive authoritative state only.
+- Active Weather publishes snapshot v1 and checkpoint inner v1; restore and journal replay
+  converge with continuous simulation. Reset clears runtime state. Absent, disabled and
+  unselected modules omit all Weather state/events and preserve legacy movement/damage.
+- The live contract is GREEN at 8/8. The combined pure/live/damage/vanguard compatibility batch is
+  GREEN at 38/38, and `npm run typecheck` passes.
+
+### R13.5 post-GREEN audit repair
+
+- Independent engine audit first proved three RED regressions: nested accessor/proxy schedule and
+  runtime records were insufficiently inspected, a re-signed checkpoint could substitute a wider
+  active zone, and a periodic backlog above the per-call cap repeated ordinals after the second
+  advance. Production was unchanged for the RED proof.
+- Schedule/runtime decoding now reconstructs closed detached nested data, checkpoint restore proves
+  active zone bytes against the authored choice, and bounded backlog cursors advance by exactly the
+  number emitted so subsequent calls drain once without repetition. The expanded pure/live suite
+  is GREEN at 21/21 and typecheck passes.
+
+### R13.5 post-GREEN engine audit RED evidence
+
+- An independent test-only audit first reran the frozen pure/live contracts at 14/14 GREEN with
+  `npx vitest run packages/engine/src/content/r13-weather-mechanics.contract.test.ts packages/engine/src/simulation/r13-weather-runtime.contract.test.ts --maxWorkers=1 --reporter=verbose`.
+- The audit added focused acceptance coverage for exact authored tile membership on both square
+  and odd-r hex maps, status-before-movement, visibility-before-target-acquisition, reset cleanup,
+  and future checkpoint schema rejection. These controls are GREEN and confirm the intended live
+  wiring without requiring production changes.
+- Three concrete gaps are preserved as RED regressions. First, `createWeatherRuntimeV1` accepts a
+  schedule containing an accessor-backed occurrence because nested occurrence records are not
+  inspected; the paired active-runtime proxy contract also requires trap-free rejection. Second,
+  a re-signed checkpoint can replace the active authored `tiles` zone with `all_map` because zone
+  provenance is not compared with the scheduled choice. Third, after a 5,000-application backlog,
+  the 4,096-cap first pass and 904-item second pass leave the cursor at 4,096, so a third zero-delta
+  advance repeats ordinals 4,097..5,000.
+- The exact combined audit command above is RED at 3/21 (18 controls GREEN). This audit changed
+  tests and `progress.md` only; `weather-mechanics.ts` and `TowerDefenseGame.ts` were not edited.
+
+### R13.5c constructor surfaces RED evidence
+
+- A separate eight-case contract freezes the remaining constructor surface without adding Weather
+  production: active semantic cross-reference and mission-map tile-bound failures versus disabled
+  warnings; the Weather schema descriptor; three inert Blizzard, Acid Rain and Sandstorm recipes;
+  the existing guarded single-module preview/apply transaction with revision, validation, backup,
+  rollback and stale-revision refusal; an isolated Weather Mechanics Hub editor with future-version
+  read-only state; one fail-closed snapshot projector shared by Canvas and Phaser; and an opt-in docs
+  fixture while the canonical starter remains unchanged.
+- Before surface production, the exact command
+  `npx vitest run packages/engine/src/content/r13-weather-authoring-validation.contract.test.ts packages/mcp/r13-weather-surfaces.contract.test.mjs --maxWorkers=1 --reporter=verbose`
+  is RED at 8/8 for the intended missing boundaries: no Weather semantic/map-bounds validator, schema
+  domain, recipes, Studio editor, renderer projector or reference fixture exists yet. The failures
+  are contract assertions or explicit unknown-domain/unknown-recipe/module-not-found errors; no
+  Weather production source changed for this evidence.
+
+### R13.5c Studio and renderer GREEN evidence
+
+- Studio now exposes Weather as a separate Mechanics Hub module with isolated zone, definition and
+  schedule editors. It preserves future module versions read-only and reuses the existing detached
+  Preview/Enable/Save/Disable revision-guarded lifecycle instead of copying engine rules into the UI.
+- A single fail-closed `projectWeatherPresentation` adapter validates the authoritative optional
+  Weather v1 snapshot. Canvas and generated Phaser paths consume that shared projection for
+  presentation-only zone tinting; neither path computes schedules, membership or gameplay effects.
+- The focused command
+  `npx vitest run packages/mcp/r13-weather-surfaces.contract.test.mjs --maxWorkers=1 --reporter=verbose -t "keeps Weather|uses one fail-closed"`
+  is GREEN at 2/2 with four unrelated R13.5c cases skipped. `node --check` passes for the Studio app,
+  renderer projector/index and generated-player build source, and the focused diff check is clean.
+
+### R13.5c documentation and opt-in fixture GREEN evidence
+
+- `docs/examples/opt-in-weather` now contains a complete Weather v1 catalog plus explicit mission
+  selection. It documents and demonstrates `basic_blizzard_weather`,
+  `basic_acid_rain_weather` and `basic_sandstorm_weather` without changing the mechanics-free
+  canonical starter.
+- ROADMAP, runbook, both architecture documents and ADR 0054 now record the independent Weather
+  RNG/runtime boundary, `snapshot.weather` v1 and lifecycle/effect events, the guarded
+  `preview_mechanics_module` → `apply_mechanics_module(ifRevision)` workflow with backup/rollback,
+  shared Canvas/Phaser projection and absent/disabled/unselected legacy behavior.
+- The exact docs-focused R13.5c case is GREEN at 1/1 with five non-doc surface cases skipped.
+  Both fixture JSON files parse successfully and the documentation/fixture diff check is clean.
+  This slice changes no production code.
+
+### R13.5d browser acceptance GREEN evidence
+
+- A dedicated Playwright contract covers the complete Weather Mechanics Hub lifecycle:
+  enable, edit, preview, save, reload, disable and re-enable through the existing guarded flow.
+- Generated-player acceptance builds and boots active Weather on Canvas/Phaser × hex/square,
+  proves the authoritative `snapshot.weather` payload, consumes the shared fail-closed projector
+  and observes the visible presentation tint. Separate absent and disabled controls prove the
+  Weather-free legacy path.
+- `npx playwright test tests/e2e/weather.spec.mjs --workers=1` is GREEN at 3/3. The first restricted
+  sandbox attempt could not bind loopback (`EPERM`); the same test passed under the approved local
+  loopback permission. No production source changed for this acceptance slice.
+
+### R13 final gate evidence
+
+- Engine/content gates on the frozen candidate are GREEN: `npm run typecheck`,
+  `npm run build:engine`, `npm run test` (349 files, 3680 tests), `npm run validate`,
+  `npm run sim tutorial_01 60`, `npm run balance -- --project examples/starter.tdproj`,
+  and `npm run maps:compile -- --project examples/starter.tdproj`.
+- Studio/player gates are GREEN: `npm run build` and `npm run test:e2e` (141/141), including
+  the dedicated Weather lifecycle and Canvas/Phaser × hex/square matrix. A first full E2E pass
+  exposed a test-only early-read race plus an unrelated transient campaign 409; the regression
+  was fixed by polling an explicit absent state, the focused six-case rerun passed, and the exact
+  complete command then passed at 141/141.
+- Public authoring/runtime parity and packaging gates are GREEN: `npm run plugin:build`,
+  `npm run plugin:validate`, `npm run plugin:smoke`, and both mobile and desktop package commands.
+  No macOS release artifact, tag or release is produced by R13.

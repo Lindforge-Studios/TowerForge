@@ -1,4 +1,6 @@
 import { type TowerAttackKind } from "../simulation/types.js";
+export { BALLISTICS_MECHANICS_SCHEMA } from "./ballistics-mechanics.js";
+export { WEATHER_MECHANICS_SCHEMA } from "./weather-mechanics.js";
 export { NAVIGATION_MECHANICS_SCHEMA } from "./navigation-mechanics.js";
 export { ELEVATION_MECHANICS_SCHEMA } from "./elevation-mechanics.js";
 export { TERRAFORMING_MECHANICS_SCHEMA } from "./terraforming-mechanics.js";

@@ -14,6 +14,8 @@ const SUPPORTED_MODULE_IDS = [
   "navigation",
   "elevation",
   "physics",
+  "ballistics",
+  "weather",
   "terraforming",
   "roguelite",
   "heroes",
@@ -68,7 +70,7 @@ describe("mechanics capability resolution", () => {
 
   it("implements the shipped mechanics while leaving later modules unavailable", () => {
     expect(IMPLEMENTED_MECHANICS_MODULE_IDS).toEqual([
-      "combat", "reactions", "navigation", "elevation", "physics", "terraforming", "roguelite", "heroes",
+      "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "heroes",
       "logistics", "director", "quests", "enemyBehaviors", "multiplayer"
     ]);
 

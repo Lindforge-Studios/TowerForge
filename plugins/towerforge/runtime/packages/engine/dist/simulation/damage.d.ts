@@ -18,6 +18,12 @@ export type DamageSourceRef = {
     readonly kind: "reaction";
     readonly reactionId: string;
 } | {
+    readonly kind: "weather";
+    readonly profileId: string;
+    readonly weatherId: string;
+    readonly zoneId: string;
+    readonly effectId: string;
+} | {
     readonly kind: "enemy";
     readonly enemyId: string;
     readonly enemyTypeId: string;
@@ -39,6 +45,10 @@ export type DamageTargetRef = {
     readonly kind: "hero";
     readonly heroId: string;
     readonly heroDefinitionId: string;
+} | {
+    readonly kind: "map_object";
+    readonly objectId: string;
+    readonly definitionId: string;
 } | {
     readonly kind: "core";
 };
@@ -101,3 +111,5 @@ export interface DamageResolution {
 export declare class DamageResolver {
     static resolve(packet: DamagePacket, context?: DamageResolutionContext): DamageResolution;
 }
+/** Validate and normalize every closed DamagePacket field without mutating an entity. */
+export declare function validateDamagePacket(packet: DamagePacket): void;

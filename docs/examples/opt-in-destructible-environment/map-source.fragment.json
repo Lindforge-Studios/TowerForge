@@ -1,0 +1,12 @@
+{
+  "destructibleObjects": [
+    {
+      "id": "basic_crate_1",
+      "definitionId": "basic_crate",
+      "coord": {
+        "q": 6,
+        "r": 2
+      }
+    }
+  ]
+}

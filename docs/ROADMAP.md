@@ -53,9 +53,13 @@ service. Нет соответствующего выбора или локал�
 | R9 — TowerScript DX 3.0 | Завершён и слит; code + constructor sign-off; ADR Accepted | TowerScript v7 Behavior Tree/HFSM, Graph/Trace/Debugger v2, guarded Studio/MCP surfaces и неизменный v1–v6 legacy path прошли обязательные gates |
 | R10 — Persona QA и Procedural Quests | Завершён; code + constructor sign-off; ADR Accepted | Pure три-persona QA + opt-in `quests` v1 с CLI/Studio/MCP, renderer/player, packages и fixture; merge/release не входят в R10 |
 | R11 — Procedural Juice Engine | Завершён; ADR Accepted | Opt-in visuals v3: deterministic particle/audio/camera plans, shared Canvas/Phaser surfaces, Studio/MCP authoring и неизменный gameplay/legacy path |
-| R12.1 — targetable boss components | В работе; ADR Proposed | Opt-in `enemyBehaviors` v1, component damage/state, guarded Studio/MCP authoring, shared presentation и absent/disabled legacy path |
-| R12.2 — component-driven boss phases | В работе; ADR Proposed | Schema-v7 component events, exact read-only HFSM context, unchanged Graph/Trace v2 grammar и guarded AI authoring |
-| R12.3 — bounded formation steering | В работе; engine GREEN, ADR Proposed | Dynamic-flow-only cohorts, three roles, bounded shared-field steering, active-only snapshot/checkpoint и isolated constructor surfaces |
+| R12 — Advanced Enemy Behaviors | Завершён; PR #23; code + constructor sign-off; ADR Accepted | Targetable boss components, schema-v7 component events/HFSM context, bounded formation steering, vanguard protection и unchanged legacy path |
+| R13.1 — projectile foundation | Завершён; ADR Accepted | Separate opt-in `ballistics` v1, authoritative fixed-tick direct/arc projectiles, active-only state and shared Canvas/Phaser projection |
+| R13.2 — arc clearance | Завершён; ADR Accepted | Optional tag/height blockers, canonical launch-time topology trace, checkpoint inner v2 and authoritative blocked-event projection |
+| R13.3 — bounded ricochet | Завершён; ADR Accepted | Closed terrain/armor surfaces, topology-owned bounded reflection, checkpoint inner v3 and shared authoritative event projection |
+| R13.4 — destructible environment | Завершён; ADR Accepted | Targetable map-object HP/armor, atomic persistent terrain mutation, Ballistics snapshot v2/checkpoint inner v4, guarded five-file authoring and shared Canvas/Phaser projection |
+| R13.5 — deterministic Weather | Завершён; ADR Accepted | Independent opt-in `weather` v1, seeded schedule, bounded effects, active-only state and shared Canvas/Phaser projection |
+| R13 | Завершён; code + constructor sign-off; ADR Accepted | Deterministic 2.5D ballistics, clearance, ricochet, destructibles and independent Weather retain the unchanged legacy path |
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Поставленные версии `combat`, `reactions`, `navigation` и `elevation` уже прошли полные вертикальные срезы. Остальные модули Mechanics Hub остаются planned, а preview/apply отклоняют их включение без записи.
 
@@ -768,6 +772,64 @@ recipe не включает Navigation/Combat/enemyBehaviors и не созда
 Active metadata читается из `snapshot.enemyBehaviors.formations.protection`, а
 `vanguardDamageIntercepted` — только read-only GameEvent, не TowerScript event.
 См. `docs/examples/opt-in-vanguard-protection/`.
+
+### R13 — Deterministic 2.5D Ballistics, Destructibles & Weather
+
+R13 не добавляет 3D physics runtime. Авторитетная карта остаётся 2D, а engine
+добавляет только deterministic scalar altitude и typed world mutations. Все срезы
+opt-in; выключенный модуль не меняет legacy attack, snapshot, checkpoint, digest, UI и
+player bundle.
+
+1. **R13.1 — projectile foundation.** Separate `ballistics` v1 может связать только
+   unchained `single` tower attack с `direct | arc`, positive bounded `travelTimeUnits` и
+   arc-only `maxAltitude`. Engine фиксирует launch packet, component/target point и endpoint
+   elevations, не делает projectile homing и разрешает impact через общий
+   `DamageResolver`. Shared renderer projector только переводит авторитетный
+   snapshot в pixels.
+2. **R13.2 — arc clearance.** Topology line, elevation и authored blocker height решают,
+   пройдёт ли дуга над препятствием; слайс не добавляет ricochet.
+3. **R13.3 — ricochet.** Authored terrain/entity surfaces и topology-owned fixed tie-breaks,
+   не более четырёх отскоков; каждый урон идёт через resolver.
+4. **R13.4 — destructibles.** Map object HP/armor и exactly-once destruction; влияющая
+   на LoS/navigation мутация проходит candidate -> reachability proof -> atomic commit/rollback.
+   Активный контракт публикует Ballistics snapshot v2 и checkpoint inner v4; read-only events
+   `destructibleObjectDamaged` / `destructibleObjectDestroyed` доступны presentation-слою.
+   Canvas и Phaser используют один fail-closed projector. Procedural Juice создаёт cue только
+   при явном authored binding и не добавляет автоматический debris.
+5. **R13.5 — weather.** Separate mission-selected `weather` v1 с closed
+   `{zones,definitions,schedule}` profile, zones `all_map | tiles`, пятью typed effect
+   kinds и отдельным seeded RNG-domain. Каждая волна получает не более
+   одного authored occurrence либо calm result; Ballistics и Weather не
+   объединяются в один RED/GREEN срез. Active-only `snapshot.weather` v1 и
+   events `weatherStarted`, `weatherEnded`, `weatherEffectApplied`, `weatherBudgetExceeded`
+   создаются engine; Canvas/Phaser получают только fail-closed projection.
+
+R13.1–R13.3 authoring идёт через guarded flow
+`describe_schema(ballistics) -> get_capabilities -> get_recipe(basic_projectile_ballistics) ->
+preview_mechanics_module -> apply_mechanics_module(ifRevision) -> validate_project`. См.
+[ADR 0054](adr/0054-r13-deterministic-2-5d-ballistics.md) и
+`docs/examples/opt-in-projectile-ballistics/`. Для R13.3 используется отдельный inert recipe
+`basic_projectile_ricochet` и fixture `docs/examples/opt-in-projectile-ricochet/`.
+
+R13.4 использует отдельную narrow transaction:
+`get_recipe(basic_destructible_environment) -> preview_destructible_environment ->
+apply_destructible_environment(ifRevision) -> validate_project`. Она валидирует и атомарно
+записывает five files с backup/rollback; broad write не добавляется. Complete opt-in fixture:
+`docs/examples/opt-in-destructible-environment/`. Absent, disabled и mission-unselected profiles
+не меняют legacy snapshots, checkpoint/replay, UI или PWA/single-file/web package/`.tdpack` carrier.
+TowerScript actions/events для destructibles в R13.4 не добавляются. Весь R13 остаётся в работе до
+R13.5, финальных gates и двух независимых sign-off.
+
+R13.5 возвращается к общему guarded mechanics flow:
+`describe_schema(weather) -> get_capabilities -> get_recipe(basic_blizzard_weather) ->
+preview_mechanics_module -> apply_mechanics_module(ifRevision) -> validate_project`.
+`basic_blizzard_weather`, `basic_acid_rain_weather` и `basic_sandstorm_weather` — inert
+candidates: recipe не включает модуль и не выбирает mission. Guarded apply проверяет
+revision, создаёт backup и делает rollback при ошибке; отдельный broad
+`write_weather` не добавляется. Complete opt-in reference:
+`docs/examples/opt-in-weather/`. Absent, disabled и unselected Weather не меняет
+legacy snapshot/checkpoint/replay/UI/player path; R13.5 не расширяет TowerScript
+и не создаёт automatic Procedural Juice cues.
 
 ## TDD и роли
 

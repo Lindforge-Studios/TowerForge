@@ -635,6 +635,108 @@ confirm that the protection snapshot/checkpoint/UI disappears while ordinary dyn
 returns. See `docs/examples/opt-in-vanguard-protection/` and Proposed
 [ADR 0053](adr/0053-r12-advanced-enemy-behaviors.md).
 
+## Projectile Ballistics
+
+R13.1 is an opt-in `ballistics` v1 mission mechanic. In **Mechanics Hub**, select Ballistics, load
+`basic_projectile_ballistics` or author a closed profile, preview it, and save only against the
+revision returned by preview. The equivalent AI sequence is:
+
+`describe_schema({domain:"ballistics"}) -> get_capabilities -> get_recipe({collection:"mechanics",recipeId:"basic_projectile_ballistics"}) -> preview_mechanics_module -> apply_mechanics_module(ifRevision=preview.revision) -> validate_project`.
+
+For R13.3 ricochet, use the same guarded sequence with recipe ID
+`basic_projectile_ricochet`. It selects no module or mission and materializes a candidate only when
+both an eligible authored tower ID and terrain tag exist. The profile uses closed
+`projectiles.ricochet.terrainTags` / `armorTypes` surface catalogs and a per-tower
+`ricochet { maxBounces, rangeCells }` binding; do not invent missing IDs.
+
+The inert recipe chooses the binary-first authored unchained `single` tower, supplies an arc with
+`travelTimeUnits: 0.4` and `maxAltitude: 2`, and, when terrain tags exist, adds the binary-first tag
+to optional R13.2 `clearance.terrainBlockerHeights`. It never enables the module or selects a mission.
+A profile may bind at most 256 eligible tower types. `direct` accepts no `maxAltitude`; `arc`
+requires it. Both travel time and altitude are positive finite values bounded by the schema
+descriptor. Remove `clearance` to keep exact R13.1 travel without obstacle checks.
+
+At runtime, treat optional `snapshot.ballistics` v1 as the sole presentation source. The engine has
+already fixed the target point and calculated authoritative altitude. Canvas and Phaser use the
+shared projector only for screen interpolation. A moved, removed, or incompatible target produces
+one `projectileMissed` event and no retargeting. With R13.2 clearance, the engine combines the
+canonical topology line, launch-time effective tile elevation, and the highest matching authored
+terrain-tag height. Equality blocks; the first blocker produces one `projectileBlocked` event and
+no hidden damage. A landed packet enters the common damage resolver,
+so impact-time armor, resistance, marks, shields, reactions, component/root death, and rewards keep
+their normal exactly-once rules.
+For selected R13.3 ricochet, display `projectileRicocheted` only through the shared presentation
+projector. Its `collisionCoord`, `nextSourceCoord`, and `nextTargetCoord` are authoritative; Canvas,
+Phaser, Studio, and agents must not derive reflection vectors or choose a new target.
+
+To disable the feature, remove the mission's `ballistics` selection or disable the module through
+the same preview/guarded-apply transaction. Confirm that the optional snapshot/checkpoint panel
+disappears and the same tower attacks immediately again. Remove only the ricochet binding/catalogs
+to retain ordinary projectile travel and clearance. Homing and weather remain later independent
+slices. Use `docs/examples/opt-in-projectile-ballistics/` and
+`docs/examples/opt-in-projectile-ricochet/` with Proposed
+[ADR 0054](adr/0054-r13-deterministic-2-5d-ballistics.md) as the copyable reference.
+
+### R13.4 destructible environment
+
+Use the separate **Destructibles** section in Mechanics Hub or the narrow agent flow:
+
+`describe_schema({domain:"ballistics"}) -> get_capabilities -> get_recipe({collection:"mechanics",recipeId:"basic_destructible_environment"}) -> preview_destructible_environment -> apply_destructible_environment(ifRevision=preview.revision) -> validate_project`.
+
+The complete request supplies the Ballistics v1 profile, mission/profile/map IDs and exact
+`destructibleObjects` placements. Preview writes nothing. Apply owns exactly five files —
+`project.json`, `content/mechanics.json`, `content/balance.json`, the selected authored `.tmj`, and
+`maps/compiled/maps.json` — and creates a backup before replacement. A stale revision, invalid map
+reference, failed reachability proof or post-write validation prevents partial state; write failure
+uses rollback. Do not use a generic broad write for this boundary.
+
+An active R13.4 mission exposes Ballistics snapshot v2 and checkpoint inner v4. Present object HP,
+destroyed state and `destructibleObjectDamaged` / `destructibleObjectDestroyed` through the shared
+Canvas/Phaser projection only. Procedural Juice may attach particles/audio/camera cues at the
+authoritative event coordinate, but only through an authored binding; there is no automatic debris.
+R13.4 adds no TowerScript action or event.
+
+Verify Canvas and Phaser on hex and square, then `npm run build`, the PWA, single-file output,
+`npm run package:web` web package and `.tdpack` carrier. An absent, disabled or mission-unselected
+module must have no destructible snapshot/UI/work and preserve legacy replay behavior. Copy the
+minimal reference from `docs/examples/opt-in-destructible-environment/`; the canonical starter must
+remain mechanics-free.
+
+### R13.5 Weather
+
+Weather is an independent mission-selected `weather` v1 module; it is not a Ballistics profile and
+does not inherit projectile, elevation or terrain rules. In **Mechanics Hub**, start from one of
+the inert recipes and explicitly enable/select it only after preview. The equivalent AI flow is:
+
+`describe_schema({domain:"weather"}) -> get_capabilities -> get_recipe({collection:"mechanics",recipeId:"basic_blizzard_weather"}) -> preview_mechanics_module -> apply_mechanics_module(ifRevision=preview.revision) -> validate_project`.
+
+`basic_blizzard_weather`, `basic_acid_rain_weather` and `basic_sandstorm_weather` return detached
+candidates only. `preview_mechanics_module` performs no write. `apply_mechanics_module` requires
+the exact `ifRevision`, validates before replacement, creates a backup and uses rollback on write
+or post-write validation failure. Do not add or use a broad `write_weather` tool.
+
+A profile is exactly `{zones,definitions,schedule}`. Zones are `all_map` or bounded canonical
+`tiles`; definitions contain only `periodic_damage`, `status`, `visibility_range`, `enemy_speed`
+and `tower_fire_rate` effects. The engine samples at most one choice per authored wave, including a
+possible `calmWeight` result, through the separate deterministic
+`towerforge:weather:v1` RNG domain. Weather selection never advances simulation, draft, artifact
+or quest RNG and never uses wall-clock or host random state.
+
+Read presentation only from optional `snapshot.weather` schema v1 and the read-only events
+`weatherStarted`, `weatherEnded`, `weatherEffectApplied` and `weatherBudgetExceeded`. Canvas and
+Phaser use the shared fail-closed projector; neither renderer computes tile membership, damage,
+status merging, enemy speed, visibility/range, tower fire rate or schedule selection. Weather adds
+no TowerScript action/event, Visual Graph node, terrain mutation, Ballistics coupling or automatic
+Procedural Juice cue.
+
+To disable Weather, remove the mission's `weather` selection or apply the module with
+`enabled:false` through the same preview/revision-guarded flow. Reload and confirm that the Weather
+editor remains available for retained authored data while `snapshot.weather`, checkpoint state and
+presentation disappear. Absent, disabled and unselected projects must preserve legacy simulation,
+replay digest and player performance. Verify Canvas and Phaser on both hex and square, plus PWA,
+single-file, web package and `.tdpack` carriers. Use
+`docs/examples/opt-in-weather/` as the complete copyable reference.
+
 ## Desktop Studio Navigation
 
 The packaged Studio uses a native application menu. macOS exposes `TowerForge`, `File`, `Edit`, `View`, `Project`, `Window`, and `Help` in the system menu bar. Windows and Linux expose the equivalent menu on the application window, with Exit and About in their conventional menus.

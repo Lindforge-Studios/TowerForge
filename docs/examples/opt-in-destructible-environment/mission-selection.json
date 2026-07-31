@@ -1,0 +1,7 @@
+{
+  "mechanics": {
+    "profiles": {
+      "ballistics": "basic_destructible_environment"
+    }
+  }
+}

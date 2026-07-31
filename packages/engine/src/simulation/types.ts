@@ -57,6 +57,46 @@ export interface GridCoord {
   r: number;
 }
 
+export type ProjectileTrajectoryV1 = "direct" | "arc";
+
+export interface ProjectileSnapshotV1 {
+  readonly id: string;
+  readonly sourceCoord: GridCoord;
+  readonly targetCoord: GridCoord;
+  readonly trajectory: ProjectileTrajectoryV1;
+  readonly elapsedUnits: number;
+  readonly travelTimeUnits: number;
+  readonly altitude: number;
+  readonly maxAltitude?: number;
+}
+
+export interface BallisticsStateV1 {
+  readonly schemaVersion: 1;
+  readonly projectiles: readonly ProjectileSnapshotV1[];
+}
+
+export interface DestructibleObjectStateV1 {
+  readonly objectId: string;
+  readonly definitionId: string;
+  readonly coord: GridCoord;
+  readonly hp: number;
+  readonly maxHp: number;
+  readonly destroyed: boolean;
+}
+
+export interface DestructibleStateV1 {
+  readonly schemaVersion: 1;
+  readonly objects: readonly DestructibleObjectStateV1[];
+}
+
+export interface BallisticsStateV2 {
+  readonly schemaVersion: 2;
+  readonly projectiles: readonly ProjectileSnapshotV1[];
+  readonly destructibles: DestructibleStateV1;
+}
+
+export type BallisticsState = BallisticsStateV1 | BallisticsStateV2;
+
 export type GridDefinition =
   | { kind: "hex"; layout: "odd-r" }
   | { kind: "square"; adjacency: "cardinal" };
@@ -712,6 +752,33 @@ export type GameEvent =
       amount: number;
     }
   | { type: "towerTargetModeChanged"; towerId: string; mode: TowerTargetMode }
+  | {
+      type: "projectileMissed";
+      projectileId: string;
+      targetEnemyId: string;
+      targetCoord: GridCoord;
+      reason: "target_missing" | "target_moved" | "component_unavailable";
+    }
+  | {
+      type: "projectileBlocked";
+      projectileId: string;
+      targetCoord: GridCoord;
+      blockerCoord: GridCoord;
+      terrainId: string;
+      blockerTag: string;
+      projectileAltitude: number;
+      obstacleTop: number;
+    }
+  | {
+      type: "projectileRicocheted";
+      projectileId: string;
+      bounceCount: number;
+      surfaceKind: "terrain" | "armor";
+      surfaceId: string;
+      collisionCoord: GridCoord;
+      nextSourceCoord: GridCoord;
+      nextTargetCoord: GridCoord;
+    }
   | { type: "enemyKilled"; enemyId: string; enemyTypeId: string; coins: number; resources: ResourceBag }
   | {
       type: "artifactDropped";
@@ -772,6 +839,10 @@ export type GameEvent =
       terrainTag: string;
     }
   | { type: "waveStarted"; waveIndex: number }
+  | { type: "weatherStarted"; profileId: string; waveIndex: number; choiceId: string; weatherId: string; zoneId: string }
+  | { type: "weatherEnded"; profileId: string; waveIndex: number; choiceId: string; weatherId: string; zoneId: string; reason: "wave_cleared" | "wave_changed" }
+  | { type: "weatherEffectApplied"; profileId: string; waveIndex: number; choiceId: string; weatherId: string; zoneId: string; effectId: string; kind: "periodic_damage" | "status"; applicationOrdinal: number; affectedCount: number }
+  | { type: "weatherBudgetExceeded"; profileId: string; waveIndex: number; limit: number }
   | {
       type: "directorDecision";
       waveIndex: number;
@@ -846,6 +917,8 @@ export type GameEvent =
       fromStatePath: string;
       toStatePath: string;
     }
+  | { type: "destructibleObjectDamaged"; projectileId: string; objectId: string; definitionId: string; coord: GridCoord; fromHp: number; toHp: number; damage: number }
+  | { type: "destructibleObjectDestroyed"; projectileId: string; objectId: string; definitionId: string; coord: GridCoord }
   | { type: "scriptSignal"; scriptId: string; signal: string; payload: import("../scripting/types.js").TowerScriptJson }
   | { type: "scriptDiagnostic"; diagnostic: import("../scripting/types.js").TowerScriptDiagnostic }
   | { type: "victory" }
@@ -1365,6 +1438,12 @@ export interface GameSnapshot {
   director?: DirectorSnapshotV1;
   quests?: QuestSnapshotV1;
   enemyBehaviors?: EnemyBehaviorsStateV1;
+  ballistics?: BallisticsState;
+  weather?: {
+    readonly schemaVersion: 1;
+    readonly profileId: string;
+    readonly active: import("../content/weather-mechanics.js").WeatherRuntimeOccurrenceV1 | null;
+  };
   scriptState: import("../scripting/types.js").TowerScriptStateSnapshot;
   lastEvents: GameEvent[];
 }

@@ -1,5 +1,7 @@
 import type { TowerScriptDiagnostic, TowerScriptJson, TowerScriptMachineRuntimeStateV1 } from "../scripting/types.js";
-import type { EnemyState, DirectorSnapshotV1, EnemyBehaviorsStateV1, GameEvent, GameSnapshot, ResourceBag, RuntimeTerrainOverride, TowerState, WaveState } from "./types.js";
+import type { EnemyState, DirectorSnapshotV1, EnemyBehaviorsStateV1, ProjectileSnapshotV1, DestructibleStateV1, GameEvent, GameSnapshot, ResourceBag, RuntimeTerrainOverride, TowerState, WaveState } from "./types.js";
+import type { DamagePacket } from "./damage.js";
+import type { ProjectileClearanceCollisionV1 } from "./projectile-clearance.js";
 import type { QuestSnapshotV1 } from "./types.js";
 import type { SeededRngStateV1 } from "./rng.js";
 import type { CombatState } from "./shields.js";
@@ -222,6 +224,79 @@ export interface EnemyBehaviorsCheckpointStateV1 extends EnemyBehaviorsStateV1 {
         readonly transactionsThisTick: number;
     };
 }
+export interface ProjectileCheckpointV1 extends Omit<ProjectileSnapshotV1, "targetCoord"> {
+    readonly sourceElevation: number;
+    readonly impact: {
+        readonly targetCoord: ProjectileSnapshotV1["targetCoord"];
+        readonly targetElevation: number;
+        readonly damagePacket: DamagePacket;
+    };
+}
+export interface ProjectileCheckpointV2 extends ProjectileCheckpointV1 {
+    readonly clearanceCollision?: ProjectileClearanceCollisionV1;
+}
+export interface ProjectileRicochetCollisionV1 {
+    readonly kind: "terrain" | "armor";
+    readonly surfaceId: string;
+    readonly collisionCoord: ProjectileSnapshotV1["targetCoord"];
+    readonly incomingFromCoord: ProjectileSnapshotV1["targetCoord"];
+}
+export interface ProjectileRicochetCheckpointV1 {
+    readonly schemaVersion: 1;
+    readonly maxBounces: number;
+    readonly rangeCells: number;
+    readonly bounceCount: number;
+    readonly segmentHasTarget: boolean;
+    readonly lastCollision?: ProjectileRicochetCollisionV1;
+}
+export interface ProjectileCheckpointV3 extends ProjectileCheckpointV2 {
+    readonly ricochet?: ProjectileRicochetCheckpointV1;
+}
+export interface ProjectileDestructibleCollisionCheckpointV1 {
+    readonly kind: "map_object";
+    readonly objectId: string;
+    readonly definitionId: string;
+    readonly collisionCoord: ProjectileSnapshotV1["targetCoord"];
+    readonly blockerElevation: number;
+    readonly blockerHeight: number;
+    readonly elapsedUnits: number;
+}
+export interface ProjectileCheckpointV4 extends ProjectileCheckpointV3 {
+    readonly destructibleCollision?: ProjectileDestructibleCollisionCheckpointV1;
+}
+export type ProjectileCheckpoint = ProjectileCheckpointV1 | ProjectileCheckpointV2 | ProjectileCheckpointV3 | ProjectileCheckpointV4;
+export interface BallisticsCheckpointStateV1 {
+    readonly schemaVersion: 1;
+    readonly nextProjectileSequence: number;
+    readonly projectiles: readonly ProjectileCheckpointV1[];
+}
+export interface BallisticsCheckpointStateV2 {
+    readonly schemaVersion: 2;
+    readonly nextProjectileSequence: number;
+    readonly projectiles: readonly ProjectileCheckpointV2[];
+}
+export interface BallisticsCheckpointStateV3 {
+    readonly schemaVersion: 3;
+    readonly nextProjectileSequence: number;
+    readonly projectiles: readonly ProjectileCheckpointV3[];
+}
+export interface BallisticsCheckpointStateV4 {
+    readonly schemaVersion: 4;
+    readonly nextProjectileSequence: number;
+    readonly projectiles: readonly ProjectileCheckpointV4[];
+    readonly destructibles: DestructibleStateV1;
+}
+export type BallisticsCheckpointState = BallisticsCheckpointStateV1 | BallisticsCheckpointStateV2 | BallisticsCheckpointStateV3 | BallisticsCheckpointStateV4;
+export interface WeatherCheckpointStateV1 {
+    readonly schemaVersion: 1;
+    readonly profileId: string;
+    readonly rng: {
+        readonly initial: SeededRngStateV1;
+        readonly current: SeededRngStateV1;
+    };
+    readonly active: import("../content/weather-mechanics.js").WeatherRuntimeOccurrenceV1 | null;
+    readonly periodicOrdinals: Readonly<Record<string, number>>;
+}
 /** Authoritative mutable simulation state. Map occupancy and water cues are rebuilt derivatives. */
 export interface GameCheckpointStateV1 {
     readonly coreHp: number;
@@ -266,6 +341,8 @@ export interface GameCheckpointStateV1 {
     readonly director?: DirectorSnapshotV1;
     readonly quests?: QuestSnapshotV1;
     readonly enemyBehaviors?: EnemyBehaviorsCheckpointStateV1;
+    readonly ballistics?: BallisticsCheckpointState;
+    readonly weather?: WeatherCheckpointStateV1;
 }
 export interface GameCheckpointV1 {
     readonly schemaVersion: typeof GAME_CHECKPOINT_SCHEMA_VERSION;
