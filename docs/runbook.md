@@ -672,9 +672,9 @@ Phaser, Studio, and agents must not derive reflection vectors or choose a new ta
 To disable the feature, remove the mission's `ballistics` selection or disable the module through
 the same preview/guarded-apply transaction. Confirm that the optional snapshot/checkpoint panel
 disappears and the same tower attacks immediately again. Remove only the ricochet binding/catalogs
-to retain ordinary projectile travel and clearance. Homing and weather remain later independent
-slices. Use `docs/examples/opt-in-projectile-ballistics/` and
-`docs/examples/opt-in-projectile-ricochet/` with Proposed
+to retain ordinary projectile travel and clearance. Homing remains outside R13; Weather is the
+independent R13.5 opt-in module documented below. Use `docs/examples/opt-in-projectile-ballistics/`
+and `docs/examples/opt-in-projectile-ricochet/` with Accepted
 [ADR 0054](adr/0054-r13-deterministic-2-5d-ballistics.md) as the copyable reference.
 
 ### R13.4 destructible environment

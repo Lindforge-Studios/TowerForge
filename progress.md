@@ -1469,3 +1469,29 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - Public authoring/runtime parity and packaging gates are GREEN: `npm run plugin:build`,
   `npm run plugin:validate`, `npm run plugin:smoke`, and both mobile and desktop package commands.
   No macOS release artifact, tag or release is produced by R13.
+
+### R13 final independent verification repairs
+
+- The final Code Verifier held the first frozen candidate and added five test-only RED regressions.
+  The exact focused command was
+  `npx vitest run packages/engine/src/simulation/r13-projectile-foundation.contract.test.ts packages/engine/src/content/r13-weather-mechanics.contract.test.ts packages/engine/src/simulation/r13-weather-runtime.contract.test.ts --maxWorkers=1 --reporter=verbose`:
+  3 files failed, 5 tests failed and 36 controls passed. It proved forged projectile-binding and
+  deterministic Weather-occurrence checkpoint acceptance, 4,097 live applications despite the
+  4,096 budget, a mutable normalized `slowAffectsClasses` list, and two due effects at elapsed zero
+  for a valid sub-picosecond interval.
+- The final Constructor Integration Verifier independently added two test-only RED contracts with
+  `npx vitest run packages/studio/public/r13-destructible-environment-surface.contract.test.mjs --maxWorkers=1 --reporter=verbose`:
+  2 tests failed and 6 controls passed. They proved the missing narrow preview-only control and
+  `Save candidate` implicitly enabling a disabled Ballistics module.
+- Production now proves projectile flight fields against the authored tower binding, reconstructs
+  the canonical Weather schedule from the root RNG for checkpoint provenance, bounds actual entity
+  applications per tick, uses scale-relative boundary tolerance and deep-freezes normalized status
+  lists. Destructibles preview writes nothing, while save preserves the capability's current
+  `moduleEnabled` state. The combined focused command is GREEN at 4 files / 49 tests.
+- The repaired frozen candidate is GREEN on every required gate: `npm run typecheck`,
+  `npm run build:engine`, `npm run test` (349 files / 3,687 tests), `npm run validate`,
+  `npm run sim tutorial_01 60`, `npm run balance -- --project examples/starter.tdproj`,
+  `npm run maps:compile -- --project examples/starter.tdproj`, `npm run build`,
+  `npm run test:e2e` (141/141), all three plugin build/validate/smoke commands, and mobile plus
+  desktop scaffold packaging. The first parallel unit pass produced three legacy MCP test timeouts;
+  the isolated files passed 41/41 and the exact complete `npm run test` rerun passed 3,687/3,687.

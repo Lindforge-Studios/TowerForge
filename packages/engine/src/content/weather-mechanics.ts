@@ -285,6 +285,7 @@ function normalizeStatus(value: unknown, path: string): StatusEffectSpec {
     });
     if (new Set(classes).size !== classes.length) throw new WeatherProfileValidationError(`${path}.slowAffectsClasses must be unique.`);
     result.slowAffectsClasses = classes;
+    Object.freeze(result.slowAffectsClasses);
   }
   if (Object.keys(result).length === 0) throw new WeatherProfileValidationError(`${path} must contain a status effect.`);
   return Object.freeze(result);
@@ -552,7 +553,10 @@ export function advanceWeatherRuntimeV1(
       const effect = definition.effects[effectId]!;
       if (effect.kind !== "periodic_damage" && effect.kind !== "status") continue;
       const previous = integer(ordinals[effectId] ?? 0, `weather runtime.periodicOrdinals.${effectId}`, 0, Number.MAX_SAFE_INTEGER);
-      const due = Math.floor((elapsedUnits + 1e-12) / effect.intervalUnits);
+      const boundaryTolerance = Number.EPSILON
+        * Math.max(Math.abs(elapsedUnits), effect.intervalUnits)
+        * 4;
+      const due = Math.floor((elapsedUnits + boundaryTolerance) / effect.intervalUnits);
       let emitted = 0;
       for (let ordinal = previous + 1; ordinal <= due; ordinal += 1) {
         if (dueEffects.length >= WEATHER_LIMITS.applicationsPerTick) break;

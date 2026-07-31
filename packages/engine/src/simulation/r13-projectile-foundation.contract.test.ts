@@ -474,6 +474,21 @@ describe("R13.1 authoritative projectile runtime (RED)", () => {
     expect(getterCalls).toBe(0);
   });
 
+  it("rejects a re-signed projectile whose flight fields diverge from its authored tower binding", () => {
+    const subjectContent = content({ trajectory: "arc" });
+    const checkpoint = clone(launch({ trajectory: "arc" }).createCheckpoint()) as any;
+    const projectile = checkpoint.state.ballistics.projectiles[0];
+    projectile.trajectory = "direct";
+    delete projectile.maxAltitude;
+    const progress = projectile.elapsedUnits / projectile.travelTimeUnits;
+    projectile.altitude = projectile.sourceElevation
+      + (projectile.impact.targetElevation - projectile.sourceElevation) * progress;
+    resign(checkpoint);
+
+    expect(() => TowerDefenseGame.fromCheckpoint({ content: subjectContent, checkpoint }))
+      .toThrow(/ballistics.*(?:binding|trajectory|authored|provenance)/i);
+  });
+
   it("requires active checkpoint state and rejects forged state on an inactive legacy mission", () => {
     const activeContent = content({ trajectory: "arc" });
     const missing = clone(launch({ trajectory: "arc" }).createCheckpoint()) as any;

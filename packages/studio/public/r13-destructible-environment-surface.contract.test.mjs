@@ -105,6 +105,26 @@ describe("R13.4d2 Studio destructible environment Hub surface (RED)", () => {
     expect(functionSource(app, "destructibleEnvironmentRequest")).toMatch(/if\s*\(\s*!enabled\s*\)[\s\S]*profileId[\s\S]*profile[\s\S]*placements/);
   });
 
+  it("offers a preview-only control for the exact narrow destructible candidate", () => {
+    expect(html.includes('id="btn-mechanics-destructibles-preview"')).toBe(true);
+    const render = functionSource(app, "renderDestructibleEnvironmentEditor");
+    const previewHandler = render.match(
+      /\$\(["']btn-mechanics-destructibles-preview["']\)\.onclick\s*=\s*([^;]+);/
+    )?.[1] ?? "";
+    expect(previewHandler).toMatch(/previewDestructibleEnvironment\(/);
+    expect(previewHandler).not.toMatch(/applyDestructibleEnvironment\(|\/apply/);
+  });
+
+  it("saves a disabled destructible candidate without implicitly enabling Ballistics", () => {
+    const render = functionSource(app, "renderDestructibleEnvironmentEditor");
+    const saveHandler = render.match(
+      /\$\(["']btn-mechanics-destructibles-save["']\)\.onclick\s*=\s*([^;]+);/
+    )?.[1] ?? "";
+    expect(saveHandler).toMatch(/applyDestructibleEnvironment\(/);
+    expect(saveHandler).not.toMatch(/applyDestructibleEnvironment\(true\)/);
+    expect(render).toMatch(/moduleEnabled/);
+  });
+
   it("preserves future Ballistics data read-only and delegates routes without importing gameplay", () => {
     const normalize = functionSource(app, "normalizeMechanicsDraft");
     const render = functionSource(app, "renderDestructibleEnvironmentEditor");

@@ -1774,6 +1774,7 @@ export class TowerDefenseGame {
     this.weatherRuntime = result.runtime;
     this.publishWeatherTransitions(result.transitions);
     let inspected = 0;
+    let applications = 0;
     for (const due of result.dueEffects) {
       let affectedCount = 0;
       const zone = activeProfile.zones[due.zoneId];
@@ -1788,6 +1789,13 @@ export class TowerDefenseGame {
           });
           return;
         }
+        if (applications >= WEATHER_LIMITS.applicationsPerTick) {
+          this.lastEvents.push({
+            type: "weatherBudgetExceeded", profileId: activeProfile.profileId,
+            waveIndex: due.waveIndex, limit: WEATHER_LIMITS.applicationsPerTick
+          });
+          return;
+        }
         if (due.effect.kind === "periodic_damage") {
           this.applyResolvedEnemyDamage(enemy, due.effect.amount, {
             kind: "weather", profileId: activeProfile.profileId, weatherId: due.weatherId,
@@ -1799,6 +1807,7 @@ export class TowerDefenseGame {
         } else {
           this.applyStatusEffect(enemy, due.effect.status);
         }
+        applications += 1;
         affectedCount += 1;
       }
       this.lastEvents.push({
@@ -5103,6 +5112,15 @@ export class TowerDefenseGame {
     };
 
     if (checkpointWeather && state.weather) {
+      const expectedWeatherSchedule = createWeatherScheduleV1({
+        zones: checkpointWeather.zones,
+        definitions: checkpointWeather.definitions,
+        schedule: checkpointWeather.schedule
+      }, {
+        seed: canonicalStringify(rootInitialRng),
+        missionId: identity.missionId,
+        waveCount: mission.waves.length
+      });
       const weather = closed(
         state.weather,
         "weather state",
@@ -5115,8 +5133,13 @@ export class TowerDefenseGame {
         throw new Error("Game checkpoint weather profile provenance is invalid.");
       }
       const weatherRng = closed(checkpointDataField(weather, "rng", "weather state"), "weather rng", ["initial", "current"]);
-      SeededRng.fromState(checkpointDataField(weatherRng, "initial", "weather rng") as SeededRngStateV1);
-      SeededRng.fromState(checkpointDataField(weatherRng, "current", "weather rng") as SeededRngStateV1);
+      const checkpointWeatherRng = {
+        initial: SeededRng.fromState(checkpointDataField(weatherRng, "initial", "weather rng") as SeededRngStateV1).exportState(),
+        current: SeededRng.fromState(checkpointDataField(weatherRng, "current", "weather rng") as SeededRngStateV1).exportState()
+      };
+      if (canonicalStringify(checkpointWeatherRng) !== canonicalStringify(expectedWeatherSchedule.rng)) {
+        throw new Error("Game checkpoint weather RNG provenance is invalid.");
+      }
       const activeValue = checkpointDataField(weather, "active", "weather state");
       const activeChoice = activeValue === null ? null : closed(
         activeValue,
@@ -5124,18 +5147,21 @@ export class TowerDefenseGame {
         ["waveIndex", "choiceId", "weatherId", "zoneId", "zone", "elapsedUnits"]
       );
       if (activeChoice) {
-        integer(checkpointDataField(activeChoice, "waveIndex", "weather active occurrence"), "weather waveIndex");
+        const activeWaveIndex = integer(
+          checkpointDataField(activeChoice, "waveIndex", "weather active occurrence"),
+          "weather waveIndex"
+        );
         finite(checkpointDataField(activeChoice, "elapsedUnits", "weather active occurrence"), "weather elapsedUnits");
         const choiceId = stringValue(checkpointDataField(activeChoice, "choiceId", "weather active occurrence"), "weather choiceId");
-        const choice = checkpointWeather.schedule.choices[choiceId];
-        if (!choice
-          || stringValue(checkpointDataField(activeChoice, "weatherId", "weather active occurrence"), "weather weatherId") !== choice.weatherId
-          || stringValue(checkpointDataField(activeChoice, "zoneId", "weather active occurrence"), "weather zoneId") !== choice.zoneId) {
+        const expectedOccurrence = expectedWeatherSchedule.occurrences[activeWaveIndex];
+        if (!expectedOccurrence
+          || choiceId !== expectedOccurrence.choiceId
+          || stringValue(checkpointDataField(activeChoice, "weatherId", "weather active occurrence"), "weather weatherId") !== expectedOccurrence.weatherId
+          || stringValue(checkpointDataField(activeChoice, "zoneId", "weather active occurrence"), "weather zoneId") !== expectedOccurrence.zoneId) {
           throw new Error("Game checkpoint weather active occurrence provenance is invalid.");
         }
-        const authoredZone = checkpointWeather.zones[choice.zoneId];
         const checkpointZone = checkpointDataField(activeChoice, "zone", "weather active occurrence");
-        if (!authoredZone || canonicalStringify(checkpointZone) !== canonicalStringify(authoredZone)) {
+        if (canonicalStringify(checkpointZone) !== canonicalStringify(expectedOccurrence.zone)) {
           throw new Error("Game checkpoint weather zone provenance is invalid.");
         }
       }
@@ -5620,6 +5646,12 @@ export class TowerDefenseGame {
           throw new Error("Game checkpoint ballistics damage packet has invalid authored provenance.");
         }
         const towerBinding = checkpointBallistics.projectiles.towers[packet.source.towerTypeId];
+        if (!towerBinding
+          || trajectory !== towerBinding.trajectory
+          || travelTimeUnits !== towerBinding.travelTimeUnits
+          || maxAltitude !== towerBinding.maxAltitude) {
+          throw new Error("Game checkpoint ballistics projectile binding provenance is invalid.");
+        }
         const authoredRicochet = towerBinding?.ricochet;
         const hasRicochetState = own(projectile, "ricochet");
         if (checkpointBallisticsSchemaVersion >= 3 && (authoredRicochet !== undefined) !== hasRicochetState) {

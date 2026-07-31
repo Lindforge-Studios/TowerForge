@@ -52,6 +52,29 @@ describe("R13.5 pure Weather v1 contracts (RED)", () => {
     expect(Object.isFrozen(normalized.zones.gate)).toBe(true);
   });
 
+  it("deep-freezes the detached slowAffectsClasses status list", () => {
+    const normalized = normalizeWeatherProfileV1({
+      zones: { field: { kind: "all_map" } },
+      definitions: { storm: { label: "Storm", effects: {
+        slow: {
+          kind: "status", target: "enemies", intervalUnits: 1,
+          status: {
+            slow: { factor: 0.5, duration: 1 },
+            slowAffectsClasses: ["ground"]
+          }
+        }
+      } } },
+      schedule: { calmWeight: 0, choices: {
+        always: { weatherId: "storm", zoneId: "field", weight: 1 }
+      } }
+    });
+    const classes = (normalized.definitions.storm!.effects.slow as any)
+      .status.slowAffectsClasses as string[];
+
+    expect(Object.isFrozen(classes)).toBe(true);
+    expect(() => classes.push("flying")).toThrow();
+  });
+
   it("rejects accessors, proxies, sparse arrays, cycles and unknown fields without executing traps", () => {
     let reads = 0;
     const accessor = profile() as any;
@@ -120,6 +143,27 @@ describe("R13.5 pure Weather v1 contracts (RED)", () => {
       waveIndex: 0, elapsedUnits: 0.2, waveActive: false
     });
     expect(ended.transitions).toEqual([expect.objectContaining({ kind: "ended", reason: "wave_cleared" })]);
+  });
+
+  it("does not emit or consume a sub-picosecond periodic effect at elapsed zero", () => {
+    const normalized = normalizeWeatherProfileV1({
+      zones: { field: { kind: "all_map" } },
+      definitions: { storm: { label: "Storm", effects: {
+        tiny: { kind: "periodic_damage", target: "enemies", amount: 1, intervalUnits: 5e-13 }
+      } } },
+      schedule: { calmWeight: 0, choices: {
+        always: { weatherId: "storm", zoneId: "field", weight: 1 }
+      } }
+    });
+    const schedule = createWeatherScheduleV1(normalized, {
+      seed: "tiny-interval", missionId: "weather_lab", waveCount: 1
+    });
+    const started = advanceWeatherRuntimeV1(normalized, schedule, createWeatherRuntimeV1(schedule), {
+      waveIndex: 0, elapsedUnits: 0, waveActive: true
+    });
+
+    expect(started.dueEffects).toEqual([]);
+    expect(started.runtime.periodicOrdinals).toEqual({ tiny: 0 });
   });
 
   it("rejects malformed/future schedule and runtime inputs instead of repairing them", () => {

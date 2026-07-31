@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createGameContentRegistry, type GameContentInput, type GameContentRegistry } from "../content/registry.js";
+import { WEATHER_LIMITS } from "../content/weather-mechanics.js";
 import { DamageResolver } from "./damage.js";
 import { computeCheckpointStateDigest } from "./checkpoint.js";
 import { JournaledGameSession } from "./journal.js";
@@ -463,6 +464,61 @@ describe("R13.5 live Weather integration (RED)", () => {
     );
     expect(() => TowerDefenseGame.fromCheckpoint({ content: subjectContent, checkpoint: mismatchedZone }))
       .toThrow(/weather|zone|provenance/i);
+  });
+
+  it("rejects a re-signed active choice that is not the deterministic occurrence for its wave", () => {
+    const subjectInput = input({
+      effects: { acid: { kind: "periodic_damage", target: "enemies", amount: 10, intervalUnits: 0.2 } }
+    }) as any;
+    const weatherProfile = subjectInput.mechanics.modules.weather.profiles.storm_field;
+    weatherProfile.definitions.alternate = {
+      label: "Alternate",
+      effects: { acid: { kind: "periodic_damage", target: "enemies", amount: 100, intervalUnits: 0.2 } }
+    };
+    weatherProfile.schedule.choices.alternate = {
+      weatherId: "alternate", zoneId: "field", weight: 1
+    };
+    const subjectContent = createGameContentRegistry(subjectInput);
+    const subject = new TowerDefenseGame({
+      content: subjectContent, missionId: "weather_lab", seed: "weather-choice-provenance"
+    });
+    startAndSpawn(subject);
+    const checkpoint = structuredClone(subject.createCheckpoint()) as any;
+    const actualChoiceId = checkpoint.state.weather.active.choiceId;
+    const forgedChoiceId = actualChoiceId === "always" ? "alternate" : "always";
+    const forgedChoice = weatherProfile.schedule.choices[forgedChoiceId];
+    checkpoint.state.weather.active.choiceId = forgedChoiceId;
+    checkpoint.state.weather.active.weatherId = forgedChoice.weatherId;
+    checkpoint.stateDigest = computeCheckpointStateDigest(
+      checkpoint.contentDigest, checkpoint.identity, checkpoint.rng, checkpoint.state
+    );
+
+    expect(() => TowerDefenseGame.fromCheckpoint({ content: subjectContent, checkpoint }))
+      .toThrow(/weather.*(?:schedule|occurrence|choice|provenance)/i);
+  });
+
+  it("caps live periodic DamagePacket applications per tick and emits one diagnostic", () => {
+    const subjectInput = input({
+      effects: { acid: { kind: "periodic_damage", target: "enemies", amount: 10, intervalUnits: 0.2 } }
+    }) as any;
+    subjectInput.balance.waveSets.weather_waves[0].groups[0].count = WEATHER_LIMITS.applicationsPerTick + 1;
+    const subject = new TowerDefenseGame({
+      content: createGameContentRegistry(subjectInput),
+      missionId: "weather_lab",
+      seed: "weather-application-budget"
+    });
+    expect(subject.startNextWave()).toEqual({ ok: true });
+    subject.tick(0);
+    expect(subject.enemies).toHaveLength(WEATHER_LIMITS.applicationsPerTick + 1);
+    subject.tick(0.2);
+
+    expect({
+      damaged: subject.enemies.filter((enemy) => enemy.hp === 990).length,
+      diagnostics: eventRows(subject, "weatherBudgetExceeded").length
+    }).toEqual({
+      damaged: WEATHER_LIMITS.applicationsPerTick,
+      diagnostics: 1
+    });
   });
 
   it("reset clears active weather and periodic ordinals before the next run", () => {

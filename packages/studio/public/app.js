@@ -3496,11 +3496,15 @@ function renderDestructibleEnvironmentEditor() {
     ? MechanicsUI.destructibleStatus ?? "Ballistics destructibles are opt-in; preview validates definitions, placements and all five candidate files."
     : `Future Ballistics schemaVersion ${schemaVersion} is preserved read-only; this Studio supports destructibles v1.`;
   const busy = MechanicsUI.applying;
-  for (const id of ["btn-mechanics-destructibles-enable", "btn-mechanics-destructibles-save", "btn-mechanics-destructibles-disable"]) {
+  for (const id of ["btn-mechanics-destructibles-preview", "btn-mechanics-destructibles-enable", "btn-mechanics-destructibles-save", "btn-mechanics-destructibles-disable"]) {
     if ($(id)) $(id).disabled = !supportedVersion || busy || S.dirty;
   }
+  const moduleEnabled = mechanicsSelectedCapability()?.moduleEnabled === true;
+  $("btn-mechanics-destructibles-preview").onclick = () => void previewDestructibleEnvironment(
+    Object.freeze(destructibleEnvironmentRequest(moduleEnabled))
+  );
   $("btn-mechanics-destructibles-enable").onclick = () => void applyDestructibleEnvironment(true);
-  $("btn-mechanics-destructibles-save").onclick = () => void applyDestructibleEnvironment(true);
+  $("btn-mechanics-destructibles-save").onclick = () => void applyDestructibleEnvironment(moduleEnabled);
   $("btn-mechanics-destructibles-disable").onclick = () => void applyDestructibleEnvironment(false);
   $("btn-mechanics-destructibles-reload").onclick = () => void reloadDestructibleEnvironment();
 }
