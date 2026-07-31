@@ -1625,3 +1625,21 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   macOS device access. `verify:macos-bundle` then mounted the DMG and verified both the complete
   ad-hoc app signature and the disk-image container. The artifact remains an unsigned,
   non-notarized pre-release until Developer ID credentials are configured.
+
+## 2026-08-01 — v0.5.1 Windows release-gate repair
+
+- RED evidence: tagged v0.5.0 desktop workflow `30661346389` stopped before Windows packaging at
+  `r11-procedural-juice-surface.contract.test.mjs`. The contract searched for a literal LF-only
+  route header, while the Windows checkout used CRLF and returned index `-1`. No v0.5.0 GitHub
+  release or public installer was created.
+- GREEN changes the contract to locate the route with an explicit LF/CRLF expression and runs the
+  same assertion against both the checked-out source and a synthetic CRLF copy. Product runtime
+  behavior is unchanged.
+- The already-pushed failed-build tag is not moved or reused. Package, desktop, Tauri, Cargo, MCP
+  and plugin versions advance together to v0.5.1 for the next exact-source release attempt.
+- Focused regression passed 5/5; the complete unit/contract set passed 3,716/3,716 after rerunning
+  with the loopback access required by Studio server tests. Typecheck, engine build and all plugin
+  build/validate/smoke gates are GREEN with `towerforge@0.5.1`.
+- The exact local v0.5.1 Apple-silicon build and strict bundle verifier passed. Its temporary local
+  DMG SHA-256 is `6e06ef33a7b564f06f492101b0ec137eaabbac168e1dfb29e8af8d23555dc87c`;
+  published installers will receive independent native-runner hashes in `SHA256SUMS`.

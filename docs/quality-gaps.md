@@ -22,7 +22,7 @@ Last reviewed: 2026-08-01
 
 - R12 and R13 are merged. The repaired R13 exact commit passed remote CI after its browser race was
   reproduced and fixed without weakening revision or future-version handling.
-- R14 is the v0.5.0 release candidate. It must pass the exact-commit repository, browser, plugin,
+- R14 is the v0.5.1 release candidate. It must pass the exact-commit repository, browser, plugin,
   native scaffold, Tauri and macOS bundle gates before the tag is published.
 
 ## Known Product Gaps
@@ -36,7 +36,7 @@ Last reviewed: 2026-08-01
 | P2 | Asset breadth | Theme packs and guarded generation/import hooks exist, but bundled tower/enemy sprite families and batch binding remain incomplete. | Separate content milestone |
 | P2 | Profiles | `PlayerProfileV3` persists one app-scoped profile; named save slots/loadouts and user-facing export/import/migration controls remain open. | Unscheduled |
 | P2 | Tiled coverage | Core terrain/path/object contracts are supported, but full arbitrary Tiled multi-layer/object-layer round-trip is intentionally absent. | Unscheduled |
-| P3 | Signed distribution | v0.5.0 remains an unsigned pre-release. Developer ID notarization, Windows signing, store submission, hosted auth/matchmaking, and TowerForge Cloud need external deployment decisions and credentials. | Deployment milestone |
+| P3 | Signed distribution | v0.5.1 remains an unsigned pre-release. Developer ID notarization, Windows signing, store submission, hosted auth/matchmaking, and TowerForge Cloud need external deployment decisions and credentials. | Deployment milestone |
 
 R14 is implemented as an opt-in capability. R15–R17 remain paused; their planned contracts MUST NOT
 appear in schema descriptors, recipes, Studio controls, player bundles, or agent claims.
