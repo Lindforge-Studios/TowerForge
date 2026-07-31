@@ -60,7 +60,7 @@ service. Нет соответствующего выбора или локал�
 | R13.4 — destructible environment | Реализация завершена; ADR Accepted | Targetable map-object HP/armor, atomic persistent terrain mutation, Ballistics snapshot v2/checkpoint inner v4, guarded five-file authoring and shared Canvas/Phaser projection |
 | R13.5 — deterministic Weather | Реализация завершена; ADR Accepted | Independent opt-in `weather` v1, seeded schedule, bounded effects, active-only state and shared Canvas/Phaser projection |
 | R13 | Завершён и слит; exact-commit CI green; code + constructor sign-off; ADR Accepted | PR #24 merged as `318671c`; browser-race regression прошёл 20/20 и remote CI завершился SUCCESS |
-| R14 — Gem Crafting & Modular Arsenal | Реализован; release-candidate v0.5.1 | CampaignRunV2, opt-in Arsenal v1, GameCommand/Journal v7, runtime assembly, atomic gem crafting и Studio/MCP/Canvas/Phaser surfaces |
+| R14 — Gem Crafting & Modular Arsenal | Реализован; release-candidate v0.5.2 | CampaignRunV2, opt-in Arsenal v1, GameCommand/Journal v7, runtime assembly, atomic gem crafting и Studio/MCP/Canvas/Phaser surfaces |
 | R15 — Deterministic Macro-Economy | Запланирован; пауза, работа не начата | Independent `macroEconomy` v1 slices: seeded local market, explicit deposits, atomic rituals |
 | R16 — Ghost Replay Lab | Запланирован; пауза, работа не начата | Binary replay archive, detached ghost, immutable What-If branches и отдельный reference relay |
 | R17 — Web Publish, Remix & Monetization | Запланирован; пауза, работа не начата | Reproducible publish manifest, provider adapters, licensed remix provenance и host-only monetization hooks |
@@ -69,8 +69,8 @@ service. Нет соответствующего выбора или локал�
 
 - Последний прежний desktop pre-release — [`v0.4.0`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.4.0) на source commit `f07a403`; он включает R0–R8.
 - R12 PR #23 и R13 PR #24 слиты в `main`; R13 exact-commit CI run `30655702863` завершился SUCCESS.
-- Ветка R14 готовит `v0.5.1`: CampaignRunV2, `arsenal` v1, GameCommand/Journal v7, engine-owned compiler, runtime module management, exact gem crafting и все constructor surfaces.
-- R15–R17 остаются вне `v0.5.1` и не реализуются в этой поставке.
+- Ветка R14 готовит `v0.5.2`: CampaignRunV2, `arsenal` v1, GameCommand/Journal v7, engine-owned compiler, runtime module management, exact gem crafting и все constructor surfaces.
+- R15–R17 остаются вне `v0.5.2` и не реализуются в этой поставке.
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Сейчас исполнимыми являются только
 версии, перечисленные в [ARCHITECTURE.md](../ARCHITECTURE.md): наличие planned descriptor или

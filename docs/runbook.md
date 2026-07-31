@@ -57,7 +57,7 @@ gh pr checks <number>
 ```
 
 As of 2026-08-01, R12 and R13 are merged and the repaired R13 exact commit passed remote CI. The
-`v0.5.1` release line adds R9–R14 to the previous R0–R8 public baseline. R14 remains fully opt-in:
+`v0.5.2` release line adds R9–R14 to the previous R0–R8 public baseline. R14 remains fully opt-in:
 CampaignRunV2, Arsenal v1 and GameCommand/Journal v7 do not change legacy projects. R15–R17 remain
 out of scope for this release.
 
@@ -870,7 +870,7 @@ CI is configured in `.github/workflows/ci.yml` for local-alpha quality gates. `.
 
 Public desktop releases follow [the desktop release policy](releasing.md). Until signing is configured, they remain GitHub pre-releases with `Unsigned build` in the title. To inspect a cross-platform candidate without publishing, run **Actions > Unsigned Desktop Builds > Run workflow** against the intended commit. To publish, merge the release commit, then create and push an annotated tag whose version matches all desktop manifests:
 
-The v0.5.1 release line includes R0–R14. Never describe `main` or an open PR as released merely because local installers or Actions artifacts exist; the GitHub tag and published installer assets remain authoritative.
+The v0.5.2 release line includes R0–R14. Never describe `main` or an open PR as released merely because local installers or Actions artifacts exist; the GitHub tag and published installer assets remain authoritative.
 
 ```bash
 git tag -a vX.Y.Z -m "TowerForge vX.Y.Z"
