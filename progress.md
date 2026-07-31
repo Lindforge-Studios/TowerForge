@@ -1643,3 +1643,14 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - The exact local v0.5.1 Apple-silicon build and strict bundle verifier passed. Its temporary local
   DMG SHA-256 is `6e06ef33a7b564f06f492101b0ec137eaabbac168e1dfb29e8af8d23555dc87c`;
   published installers will receive independent native-runner hashes in `SHA256SUMS`.
+
+## 2026-08-01 — v0.5.2 Windows plugin-export budget
+
+- RED evidence: tagged v0.5.1 workflow `30663472083` passed the CRLF regression but stopped before
+  Windows packaging when the complete checksummed plugin export exceeded Vitest's default
+  five-second limit. The export itself had already passed the dedicated plugin workflow. No
+  v0.5.1 GitHub release or public installer was created.
+- GREEN gives this filesystem-heavy cross-platform contract an explicit 30-second budget while
+  preserving every manifest, hash, subprocess verification and tamper-detection assertion.
+- Failed tags remain immutable. The next release attempt advances all public version domains
+  together to v0.5.2.

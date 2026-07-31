@@ -4,7 +4,7 @@ TowerForge desktop artifacts are built and published through GitHub Actions. Unt
 
 ## Published Baseline
 
-The current release line is `v0.5.1`, an unsigned pre-release containing accepted R0–R14. A local build or GitHub Actions artifact MUST NOT be described as a release until the matching tag, public release page, installers, notes, and `SHA256SUMS` exist and have been verified.
+The current release line is `v0.5.2`, an unsigned pre-release containing accepted R0–R14. A local build or GitHub Actions artifact MUST NOT be described as a release until the matching tag, public release page, installers, notes, and `SHA256SUMS` exist and have been verified.
 
 ## Release Invariants
 

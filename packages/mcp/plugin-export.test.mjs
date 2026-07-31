@@ -38,7 +38,7 @@ describe("Codex plugin repository exporter", () => {
 
     fs.appendFileSync(path.join(output, "plugins", "towerforge", "README.md"), "tampered\n");
     expect(() => verifyReleaseTree(output)).toThrow(/mismatch/);
-  });
+  }, 30_000);
 
   it("refuses to replace a directory inside the canonical source tree", () => {
     expect(() => exportPluginRepository({
