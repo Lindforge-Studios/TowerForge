@@ -75,6 +75,46 @@ describe("R13.5 pure Weather v1 contracts (RED)", () => {
     expect(() => classes.push("flying")).toThrow();
   });
 
+  it("preserves the valid own-data effect id __proto__ through cursor and due facts", () => {
+    const effects = Object.create(null) as Record<string, unknown>;
+    Object.defineProperty(effects, "__proto__", {
+      enumerable: true,
+      value: { kind: "periodic_damage", target: "enemies", amount: 1, intervalUnits: 0.2 }
+    });
+    const normalized = normalizeWeatherProfileV1({
+      zones: { field: { kind: "all_map" } },
+      definitions: { storm: { label: "Storm", effects } },
+      schedule: { calmWeight: 0, choices: {
+        always: { weatherId: "storm", zoneId: "field", weight: 1 }
+      } }
+    });
+    expect(Object.keys(normalized.definitions.storm!.effects)).toEqual(["__proto__"]);
+    const schedule = createWeatherScheduleV1(normalized, {
+      seed: "own-data-id", missionId: "weather_lab", waveCount: 1
+    });
+    const started = advanceWeatherRuntimeV1(
+      normalized, schedule, createWeatherRuntimeV1(schedule),
+      { waveIndex: 0, elapsedUnits: 0, waveActive: true }
+    );
+    expect(Object.keys(started.runtime.periodicOrdinals)).toEqual(["__proto__"]);
+    expect(Object.prototype.hasOwnProperty.call(started.runtime.periodicOrdinals, "__proto__")).toBe(true);
+    expect(started.runtime.periodicOrdinals.__proto__).toBe(0);
+
+    const due = advanceWeatherRuntimeV1(
+      normalized, schedule, started.runtime,
+      { waveIndex: 0, elapsedUnits: 0.2, waveActive: true }
+    );
+    expect(due.dueEffects).toEqual([
+      expect.objectContaining({ effectId: "__proto__", applicationOrdinal: 1 })
+    ]);
+    expect(Object.keys(due.runtime.periodicOrdinals)).toEqual(["__proto__"]);
+    expect(due.runtime.periodicOrdinals.__proto__).toBe(1);
+    expect(advanceWeatherRuntimeV1(
+      normalized, schedule, due.runtime,
+      { waveIndex: 0, elapsedUnits: 0.2, waveActive: true }
+    ).dueEffects).toEqual([]);
+  });
+
   it("rejects accessors, proxies, sparse arrays, cycles and unknown fields without executing traps", () => {
     let reads = 0;
     const accessor = profile() as any;

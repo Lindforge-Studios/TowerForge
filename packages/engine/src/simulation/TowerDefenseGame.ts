@@ -5188,7 +5188,12 @@ export class TowerDefenseGame {
         for (const effectId of Object.keys(definition?.effects ?? {}).sort(compareBinary)) {
           const effect = definition!.effects[effectId]!;
           if (effect.kind === "periodic_damage" || effect.kind === "status") {
-            expectedOrdinals[effectId] = weatherPeriodicDueOrdinalV1(activeElapsedUnits, effect.intervalUnits);
+            Object.defineProperty(expectedOrdinals, effectId, {
+              value: weatherPeriodicDueOrdinalV1(activeElapsedUnits, effect.intervalUnits),
+              enumerable: true,
+              configurable: true,
+              writable: true
+            });
           }
         }
         if (canonicalStringify(periodicOrdinals) !== canonicalStringify(expectedOrdinals)) {

@@ -466,7 +466,12 @@ export function advanceWeatherRuntimeV1(profileInput, scheduleInput, runtimeInpu
         for (const effectId of Object.keys(definition.effects)) {
             const effect = definition.effects[effectId];
             if (effect.kind === "periodic_damage" || effect.kind === "status") {
-                expectedOrdinals[effectId] = weatherPeriodicDueOrdinalV1(active.elapsedUnits, effect.intervalUnits);
+                Object.defineProperty(expectedOrdinals, effectId, {
+                    value: weatherPeriodicDueOrdinalV1(active.elapsedUnits, effect.intervalUnits),
+                    enumerable: true,
+                    configurable: true,
+                    writable: true
+                });
             }
         }
         const actualKeys = Object.keys(ordinals).sort();
@@ -506,7 +511,7 @@ export function advanceWeatherRuntimeV1(profileInput, scheduleInput, runtimeInpu
             const effect = definition.effects[effectId];
             if (effect.kind !== "periodic_damage" && effect.kind !== "status")
                 continue;
-            const previous = integer(ordinals[effectId] ?? 0, `weather runtime.periodicOrdinals.${effectId}`, 0, Number.MAX_SAFE_INTEGER);
+            const previous = integer(Object.prototype.hasOwnProperty.call(ordinals, effectId) ? ordinals[effectId] : 0, `weather runtime.periodicOrdinals.${effectId}`, 0, Number.MAX_SAFE_INTEGER);
             const due = weatherPeriodicDueOrdinalV1(elapsedUnits, effect.intervalUnits);
             for (let ordinal = previous + 1; ordinal <= due; ordinal += 1) {
                 if (dueEffects.length >= WEATHER_LIMITS.applicationsPerTick)
@@ -518,7 +523,12 @@ export function advanceWeatherRuntimeV1(profileInput, scheduleInput, runtimeInpu
             }
             // Consume the complete elapsed-time range even when bounded output drops overflow. This
             // makes the cursor canonical and prevents checkpoint restore from replaying old effects.
-            nextOrdinals[effectId] = due;
+            Object.defineProperty(nextOrdinals, effectId, {
+                value: due,
+                enumerable: true,
+                configurable: true,
+                writable: true
+            });
         }
         ordinals = nextOrdinals;
         active = Object.freeze({ ...active, elapsedUnits });

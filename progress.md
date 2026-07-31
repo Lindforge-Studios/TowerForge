@@ -1530,3 +1530,13 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   web build, 141/141 E2E, plugin build/validate/smoke, and mobile plus desktop packaging. The first
   unit pass hit two known first-load MCP timeouts; those files passed 28/28 in isolation and the
   unchanged exact `npm run test` rerun passed 3,692/3,692.
+- A final hostile-ID audit added one RED case for the valid own-data effect ID `__proto__`: the
+  normalizer preserved it, but ordinary-object cursor lookup reached `Object.prototype` and threw
+  before the first effect. Cursor reads now require an own property, and cursor construction in
+  both the pure runtime and checkpoint validator uses explicit own data properties. The pure/live
+  Weather focused suite is GREEN at 30/30 with exact `__proto__` cursor and due-fact round-trip.
+- The hostile-ID repair is GREEN on the complete matrix: typecheck, engine build, 349 unit files /
+  3,693 tests, validate, tutorial simulation, starter balance, map compilation, web build,
+  141/141 E2E, plugin build/validate/smoke, and mobile plus desktop packages. The first unit pass
+  repeated two known first-load MCP timeouts; the isolated 28/28 controls and unchanged exact
+  complete `npm run test` rerun passed.
