@@ -482,6 +482,13 @@ export function createWeatherRuntimeV1(scheduleInput: WeatherScheduleV1): Weathe
   return Object.freeze({ schemaVersion: 1, active: null, periodicOrdinals: Object.freeze({}) });
 }
 
+export function weatherPeriodicDueOrdinalV1(elapsedUnits: number, intervalUnits: number): number {
+  const elapsed = finite(elapsedUnits, "weather elapsedUnits", 0, WEATHER_LIMITS.intervalUnits);
+  const interval = finite(intervalUnits, "weather intervalUnits", 0, WEATHER_LIMITS.intervalUnits, false);
+  const boundaryTolerance = Number.EPSILON * Math.max(Math.abs(elapsed), interval) * 4;
+  return Math.min(Number.MAX_SAFE_INTEGER, Math.floor((elapsed + boundaryTolerance) / interval));
+}
+
 /** Advance only Weather timing; entity lookup and gameplay application remain caller-owned. */
 export function advanceWeatherRuntimeV1(
   profileInput: WeatherProfileV1,
@@ -553,20 +560,17 @@ export function advanceWeatherRuntimeV1(
       const effect = definition.effects[effectId]!;
       if (effect.kind !== "periodic_damage" && effect.kind !== "status") continue;
       const previous = integer(ordinals[effectId] ?? 0, `weather runtime.periodicOrdinals.${effectId}`, 0, Number.MAX_SAFE_INTEGER);
-      const boundaryTolerance = Number.EPSILON
-        * Math.max(Math.abs(elapsedUnits), effect.intervalUnits)
-        * 4;
-      const due = Math.floor((elapsedUnits + boundaryTolerance) / effect.intervalUnits);
-      let emitted = 0;
+      const due = weatherPeriodicDueOrdinalV1(elapsedUnits, effect.intervalUnits);
       for (let ordinal = previous + 1; ordinal <= due; ordinal += 1) {
         if (dueEffects.length >= WEATHER_LIMITS.applicationsPerTick) break;
         dueEffects.push(Object.freeze({
           waveIndex, choiceId: active.choiceId, weatherId: active.weatherId, zoneId: active.zoneId,
           effectId, applicationOrdinal: ordinal, effect
         }));
-        emitted += 1;
       }
-      nextOrdinals[effectId] = previous + emitted;
+      // Consume the complete elapsed-time range even when bounded output drops overflow. This
+      // makes the cursor canonical and prevents checkpoint restore from replaying old effects.
+      nextOrdinals[effectId] = due;
     }
     ordinals = nextOrdinals;
     active = Object.freeze({ ...active, elapsedUnits });

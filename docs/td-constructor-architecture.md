@@ -192,6 +192,8 @@ membership against the selected map, samples a canonical per-wave choice through
 `towerforge:weather:v1` RNG domain, and owns every damage/status/modifier application. Only an
 active selection adds `snapshot.weather` v1, optional checkpoint Weather v1 and the lifecycle/effect
 events `weatherStarted`, `weatherEnded`, `weatherEffectApplied`, and `weatherBudgetExceeded`.
+Periodic cursors are derived exactly from active elapsed time; work beyond the per-tick fact budget
+is consumed deterministically instead of becoming an ambiguous replay backlog.
 Studio and MCP reuse the revision-guarded mechanics transaction; Canvas and Phaser consume one
 fail-closed snapshot projector. Absent, disabled, unselected and future Weather modules add no
 runtime, checkpoint, UI or renderer work. Weather does not add TowerScript/Visual Graph vocabulary,

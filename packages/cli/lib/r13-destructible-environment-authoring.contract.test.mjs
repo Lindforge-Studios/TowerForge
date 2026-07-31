@@ -143,6 +143,58 @@ describe("R13.4d1 guarded destructible environment authoring (RED)", () => {
     expect(bytes(rollbackDir)).toEqual(before);
   }, 30_000);
 
+  it("saves edited destructible profile bytes while an existing Ballistics module remains disabled", async () => {
+    const authoring = await api();
+    const projectDir = fixture();
+    const enabledPreview = await authoring.previewDestructibleEnvironment(projectDir, request());
+    await authoring.applyDestructibleEnvironment(projectDir, {
+      ...request(), ifRevision: enabledPreview.revision
+    });
+    const disabledRequest = request({ enabled: false });
+    const disabledPreview = await authoring.previewDestructibleEnvironment(projectDir, disabledRequest);
+    await authoring.applyDestructibleEnvironment(projectDir, {
+      ...disabledRequest, ifRevision: disabledPreview.revision
+    });
+
+    const editedRequest = request({ enabled: false });
+    editedRequest.profile.projectiles.destructibles.definitions.basic_crate = {
+      ...definition,
+      maxHp: 99
+    };
+    const beforePreview = bytes(projectDir);
+    const editPreview = await authoring.previewDestructibleEnvironment(projectDir, editedRequest);
+    expect(bytes(projectDir)).toEqual(beforePreview);
+    expect.soft(editPreview).toMatchObject({
+      ok: true,
+      dryRun: true,
+      written: false,
+      candidate: {
+        mechanics: {
+          modules: {
+            ballistics: {
+              enabled: false,
+              profiles: {
+                destructible_environment: {
+                  projectiles: { destructibles: { definitions: { basic_crate: { maxHp: 99 } } } }
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    const applied = await authoring.applyDestructibleEnvironment(projectDir, {
+      ...editedRequest, ifRevision: editPreview.revision
+    });
+    expect(applied).toMatchObject({ ok: true, written: true, rolledBack: false });
+    const persisted = readRawProjectFiles(projectDir).mechanics.modules.ballistics;
+    expect.soft(persisted.enabled).toBe(false);
+    expect.soft(
+      persisted.profiles.destructible_environment.projectiles.destructibles.definitions.basic_crate.maxHp
+    ).toBe(99);
+  }, 30_000);
+
   it("fails malformed cross-references and traversal closed without writes or outside-project access", async () => {
     const authoring = await api();
     const cases = [

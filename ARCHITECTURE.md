@@ -133,7 +133,9 @@ These domains MUST evolve independently. A project schema bump MUST NOT rewrite 
   closed `{zones,definitions,schedule}` profiles. Engine-owned canonical selection uses the
   separate length-prefixed `towerforge:weather:v1` RNG domain and never advances the main
   simulation RNG. Engine runtime owns `all_map | tiles` membership, periodic DamageResolver/status
-  application and spatial visibility/range, enemy-speed and tower-fire-rate modifiers. Active-only
+  application and spatial visibility/range, enemy-speed and tower-fire-rate modifiers. Periodic
+  cursors are canonical functions of elapsed wave time; bounded overflow is consumed rather than
+  retained as replayable checkpoint backlog. Active-only
   `snapshot.weather` v1 and Weather checkpoint v1 are the sole presentation/replay contracts;
   Canvas and Phaser use one fail-closed projector and do not inspect mechanics. Studio/MCP reuse
   `preview_mechanics_module` and revision-guarded `apply_mechanics_module` with backup/rollback.

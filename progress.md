@@ -1495,3 +1495,24 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   `npm run test:e2e` (141/141), all three plugin build/validate/smoke commands, and mobile plus
   desktop scaffold packaging. The first parallel unit pass produced three legacy MCP test timeouts;
   the isolated files passed 41/41 and the exact complete `npm run test` rerun passed 3,687/3,687.
+
+### R13 second final-verification RED/GREEN evidence
+
+- Re-verification held `6e246ac`: the Constructor Integration Verifier added one real-transaction
+  RED test proving a disabled destructible edit previewed the old `maxHp: 50` instead of requested
+  `99` and applied no write (1 failed / 6 controls passed). The Code Verifier added two RED tests
+  proving active Weather could diverge from outer wave lifecycle and periodic cursor `1` could be
+  re-signed as `0` or `100` (2 failed / 15 controls passed).
+- The narrow five-file destructible transaction now authors the exact supplied candidate through
+  normal semantic validation and only then restores `module.enabled=false`; disabled save therefore
+  writes profile/map bytes without activating gameplay, including the first authored candidate.
+- Weather checkpoint validation now binds active state to outer `waveIndex`/`waveState`, derives the
+  exact occurrence from the root RNG, and requires periodic cursors to equal the canonical ordinal
+  for active elapsed time. Bounded due-fact overflow is consumed deterministically instead of being
+  stored as ambiguous replay backlog. The focused Weather and destructible regressions are GREEN;
+  the pre-existing first-load CLI timeout passed on an immediate isolated 7/7 rerun.
+- The second repaired candidate is GREEN on the complete final matrix: typecheck, engine build,
+  349 unit files / 3,690 tests, validate, tutorial simulation, starter balance, map compilation,
+  web build, 141/141 E2E, plugin build/validate/smoke, and both mobile and desktop scaffold packages.
+  The first full-unit attempt correctly caught stale generated plugin bytes; after `plugin:build`,
+  the focused parity contract and the exact complete `npm run test` rerun passed.

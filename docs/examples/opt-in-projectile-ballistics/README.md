@@ -25,4 +25,4 @@ to restore the instant legacy attack path and remove the optional snapshot/check
 Remove `clearance` alone to retain R13.1 projectile travel without obstacle checks. Ricochet has a
 separate `docs/examples/opt-in-projectile-ricochet/` fixture; destructibles and weather remain
 outside this R13.1/R13.2 fixture.
-See Proposed [ADR 0054](../../adr/0054-r13-deterministic-2-5d-ballistics.md).
+See Accepted [ADR 0054](../../adr/0054-r13-deterministic-2-5d-ballistics.md).

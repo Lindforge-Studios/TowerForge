@@ -497,6 +497,57 @@ describe("R13.5 live Weather integration (RED)", () => {
       .toThrow(/weather.*(?:schedule|occurrence|choice|provenance)/i);
   });
 
+  it("rejects re-signed active Weather state that diverges from the outer wave lifecycle", () => {
+    const subjectContent = content({
+      effects: { acid: { kind: "periodic_damage", target: "enemies", amount: 10, intervalUnits: 0.2 } }
+    });
+    const subject = new TowerDefenseGame({
+      content: subjectContent, missionId: "weather_lab", seed: "weather-wave-provenance"
+    });
+    startAndSpawn(subject);
+    const checkpoint = structuredClone(subject.createCheckpoint()) as any;
+    const mutations: Array<(candidate: any) => void> = [
+      (candidate) => { candidate.state.weather.active.waveIndex = 1; },
+      (candidate) => {
+        candidate.state.weather.active = null;
+        candidate.state.weather.periodicOrdinals = {};
+      }
+    ];
+
+    for (const mutate of mutations) {
+      const candidate = structuredClone(checkpoint);
+      mutate(candidate);
+      candidate.stateDigest = computeCheckpointStateDigest(
+        candidate.contentDigest, candidate.identity, candidate.rng, candidate.state
+      );
+      expect(() => TowerDefenseGame.fromCheckpoint({ content: subjectContent, checkpoint: candidate }))
+        .toThrow(/weather.*(?:active|wave|lifecycle|provenance)/i);
+    }
+  });
+
+  it("rejects re-signed Weather cursors that would repeat or suppress a settled application", () => {
+    const subjectContent = content({
+      effects: { acid: { kind: "periodic_damage", target: "enemies", amount: 10, intervalUnits: 0.2 } }
+    });
+    const subject = new TowerDefenseGame({
+      content: subjectContent, missionId: "weather_lab", seed: "weather-cursor-provenance"
+    });
+    startAndSpawn(subject);
+    subject.tick(0.2);
+    expect(subject.enemies[0]?.hp).toBe(990);
+    const checkpoint = structuredClone(subject.createCheckpoint()) as any;
+
+    for (const forgedOrdinal of [0, 100]) {
+      const candidate = structuredClone(checkpoint);
+      candidate.state.weather.periodicOrdinals.acid = forgedOrdinal;
+      candidate.stateDigest = computeCheckpointStateDigest(
+        candidate.contentDigest, candidate.identity, candidate.rng, candidate.state
+      );
+      expect(() => TowerDefenseGame.fromCheckpoint({ content: subjectContent, checkpoint: candidate }))
+        .toThrow(/weather.*(?:ordinal|cursor|application|provenance)/i);
+    }
+  });
+
   it("caps live periodic DamagePacket applications per tick and emits one diagnostic", () => {
     const subjectInput = input({
       effects: { acid: { kind: "periodic_damage", target: "enemies", amount: 10, intervalUnits: 0.2 } }

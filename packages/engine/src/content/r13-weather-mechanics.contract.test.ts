@@ -207,7 +207,7 @@ describe("R13.5 pure Weather v1 contracts (RED)", () => {
     expect(activeReads).toBe(0);
   });
 
-  it("advances a capped periodic backlog without repeating already emitted ordinals", () => {
+  it("consumes capped periodic overflow without creating a replayable checkpoint backlog", () => {
     const normalized = normalizeWeatherProfileV1({
       zones: { field: { kind: "all_map" } },
       definitions: { storm: { label: "Storm", effects: {
@@ -234,9 +234,8 @@ describe("R13.5 pure Weather v1 contracts (RED)", () => {
       elapsedUnits: WEATHER_LIMITS.applicationsPerTick + 904,
       waveActive: true
     });
-    expect(second.dueEffects).toHaveLength(904);
-    expect(second.dueEffects[0]?.applicationOrdinal).toBe(WEATHER_LIMITS.applicationsPerTick + 1);
-    expect(second.dueEffects.at(-1)?.applicationOrdinal).toBe(WEATHER_LIMITS.applicationsPerTick + 904);
+    expect(first.runtime.periodicOrdinals.acid).toBe(WEATHER_LIMITS.applicationsPerTick + 904);
+    expect(second.dueEffects).toHaveLength(0);
 
     const settled = advanceWeatherRuntimeV1(normalized, schedule, second.runtime, {
       waveIndex: 0,

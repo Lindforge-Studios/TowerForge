@@ -154,6 +154,7 @@ export declare function createWeatherScheduleV1(profileInput: WeatherProfileV1, 
     readonly waveCount: number;
 }): WeatherScheduleV1;
 export declare function createWeatherRuntimeV1(scheduleInput: WeatherScheduleV1): WeatherRuntimeV1;
+export declare function weatherPeriodicDueOrdinalV1(elapsedUnits: number, intervalUnits: number): number;
 /** Advance only Weather timing; entity lookup and gameplay application remain caller-owned. */
 export declare function advanceWeatherRuntimeV1(profileInput: WeatherProfileV1, scheduleInput: WeatherScheduleV1, runtimeInput: WeatherRuntimeV1, inputValue: {
     readonly waveIndex: number;

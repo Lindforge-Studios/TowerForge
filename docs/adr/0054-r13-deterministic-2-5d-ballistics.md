@@ -153,7 +153,9 @@ The engine alone owns zone membership and effects. Periodic damage uses a typed 
 `DamagePacket` and the common resolver/exactly-once death/reward path; status uses existing merge
 and expiry rules. Spatial visibility/range, enemy-speed and tower-fire-rate modifiers consult
 authoritative enemy tiles and tower anchor tiles. Renderer and Studio code must not reproduce
-these rules.
+these rules. Each periodic cursor is the canonical due ordinal for active elapsed time. The runtime
+publishes at most the bounded number of due facts and consumes overflow; it never persists a
+replayable backlog whose cursor could be rewound through a re-signed checkpoint.
 
 Only an active selected profile adds `snapshot.weather` schema v1 and optional checkpoint Weather
 inner v1. Lifecycle/diagnostic events are `weatherStarted`, `weatherEnded`,

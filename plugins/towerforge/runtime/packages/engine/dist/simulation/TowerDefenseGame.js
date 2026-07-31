@@ -5,7 +5,7 @@ import { NAVIGATION_LIMITS, resolveActiveNavigationMechanics } from "../content/
 import { LINE_OF_SIGHT_LIMITS, resolveActiveElevationMechanics, resolveActiveHighGroundMechanics, resolveActiveLineOfSightMechanics } from "../content/elevation-mechanics.js";
 import { PHYSICS_LIMITS, inspectOwnDataEffect, parseDisplacementEffectV1, resolveActivePhysicsMechanics } from "../content/physics-mechanics.js";
 import { ARC_CLEARANCE_LIMITS, BALLISTICS_LIMITS, RICOCHET_LIMITS, resolveActiveBallisticsMechanics } from "../content/ballistics-mechanics.js";
-import { WEATHER_LIMITS, advanceWeatherRuntimeV1, createWeatherRuntimeV1, createWeatherScheduleV1, resolveActiveWeatherMechanics } from "../content/weather-mechanics.js";
+import { WEATHER_LIMITS, advanceWeatherRuntimeV1, createWeatherRuntimeV1, createWeatherScheduleV1, resolveActiveWeatherMechanics, weatherPeriodicDueOrdinalV1 } from "../content/weather-mechanics.js";
 import { TERRAFORMING_LIMITS, resolveActiveTerraformingMechanics } from "../content/terraforming-mechanics.js";
 import { ROGUELITE_ARTIFACT_INVENTORY_LIMIT, ROGUELITE_DAMAGE_MODIFIER_RESERVE, ROGUELITE_DRAFT_LIMITS, deriveRogueliteSynergyStateV1, rogueliteSynergyWorstCaseModifierCount, resolveActiveRogueliteMechanics } from "../content/roguelite-mechanics.js";
 import { activeHeroAuraModifierReserve, heroPassiveAuraModifierIdV6, heroSkillModifierIdV5, resolveActiveHeroesMechanics } from "../content/heroes-mechanics.js";
@@ -4011,6 +4011,11 @@ export class TowerDefenseGame {
             }
             return result;
         };
+        const checkpointWaveIndex = integer(state.waveIndex, "waveIndex");
+        const checkpointWaveState = state.waveState;
+        if (!(new Set(["ready", "spawning", "between", "complete"])).has(checkpointWaveState)) {
+            throw new Error("Game checkpoint state waveState is invalid.");
+        }
         if (checkpointWeather && state.weather) {
             const expectedWeatherSchedule = createWeatherScheduleV1({
                 zones: checkpointWeather.zones,
@@ -4038,12 +4043,22 @@ export class TowerDefenseGame {
             }
             const activeValue = checkpointDataField(weather, "active", "weather state");
             const activeChoice = activeValue === null ? null : closed(activeValue, "weather active occurrence", ["waveIndex", "choiceId", "weatherId", "zoneId", "zone", "elapsedUnits"]);
+            const periodicOrdinals = checkpointDataField(weather, "periodicOrdinals", "weather state");
+            const allowedEffectIds = new Set(Object.values(checkpointWeather.definitions).flatMap((definition) => Object.keys(definition.effects)));
+            recordNumbers(periodicOrdinals, "weather periodicOrdinals", allowedEffectIds, true);
+            const expectedActiveOccurrence = checkpointWaveState === "spawning"
+                ? expectedWeatherSchedule.occurrences[checkpointWaveIndex] ?? null
+                : null;
+            if ((activeChoice === null) !== (expectedActiveOccurrence === null)) {
+                throw new Error("Game checkpoint weather active wave lifecycle provenance is invalid.");
+            }
             if (activeChoice) {
                 const activeWaveIndex = integer(checkpointDataField(activeChoice, "waveIndex", "weather active occurrence"), "weather waveIndex");
-                finite(checkpointDataField(activeChoice, "elapsedUnits", "weather active occurrence"), "weather elapsedUnits");
+                const activeElapsedUnits = finite(checkpointDataField(activeChoice, "elapsedUnits", "weather active occurrence"), "weather elapsedUnits");
                 const choiceId = stringValue(checkpointDataField(activeChoice, "choiceId", "weather active occurrence"), "weather choiceId");
-                const expectedOccurrence = expectedWeatherSchedule.occurrences[activeWaveIndex];
+                const expectedOccurrence = expectedActiveOccurrence;
                 if (!expectedOccurrence
+                    || activeWaveIndex !== checkpointWaveIndex
                     || choiceId !== expectedOccurrence.choiceId
                     || stringValue(checkpointDataField(activeChoice, "weatherId", "weather active occurrence"), "weather weatherId") !== expectedOccurrence.weatherId
                     || stringValue(checkpointDataField(activeChoice, "zoneId", "weather active occurrence"), "weather zoneId") !== expectedOccurrence.zoneId) {
@@ -4053,9 +4068,21 @@ export class TowerDefenseGame {
                 if (canonicalStringify(checkpointZone) !== canonicalStringify(expectedOccurrence.zone)) {
                     throw new Error("Game checkpoint weather zone provenance is invalid.");
                 }
+                const expectedOrdinals = {};
+                const definition = checkpointWeather.definitions[expectedOccurrence.weatherId];
+                for (const effectId of Object.keys(definition?.effects ?? {}).sort(compareBinary)) {
+                    const effect = definition.effects[effectId];
+                    if (effect.kind === "periodic_damage" || effect.kind === "status") {
+                        expectedOrdinals[effectId] = weatherPeriodicDueOrdinalV1(activeElapsedUnits, effect.intervalUnits);
+                    }
+                }
+                if (canonicalStringify(periodicOrdinals) !== canonicalStringify(expectedOrdinals)) {
+                    throw new Error("Game checkpoint weather periodic ordinal provenance is invalid.");
+                }
             }
-            const allowedEffectIds = new Set(Object.values(checkpointWeather.definitions).flatMap((definition) => Object.keys(definition.effects)));
-            recordNumbers(checkpointDataField(weather, "periodicOrdinals", "weather state"), "weather periodicOrdinals", allowedEffectIds, true);
+            else if (canonicalStringify(periodicOrdinals) !== "{}") {
+                throw new Error("Game checkpoint weather inactive periodic ordinal provenance is invalid.");
+            }
         }
         if (checkpointBallistics && state.ballistics) {
             const ballistics = closed(state.ballistics, "ballistics state", ["schemaVersion", "nextProjectileSequence", "projectiles"], checkpointBallistics.projectiles.destructibles === undefined ? [] : ["destructibles"]);
@@ -4775,13 +4802,10 @@ export class TowerDefenseGame {
         finite(state.coreHp, "coreHp");
         const currencyIds = new Set(content.currencies.map((currency) => currency.id));
         recordNumbers(state.resources, "resources", currencyIds);
-        const waveIndex = integer(state.waveIndex, "waveIndex");
+        const waveIndex = checkpointWaveIndex;
         const startedWaveCount = integer(state.startedWaveCount, "startedWaveCount");
         if (waveIndex >= Math.max(1, mission.waves.length) || startedWaveCount > mission.waves.length) {
             throw new Error("Game checkpoint state wave position is outside the mission.");
-        }
-        if (!(new Set(["ready", "spawning", "between", "complete"])).has(state.waveState)) {
-            throw new Error("Game checkpoint state waveState is invalid.");
         }
         if (!(new Set(["playing", "victory", "defeat"])).has(state.outcome)) {
             throw new Error("Game checkpoint state outcome is invalid.");

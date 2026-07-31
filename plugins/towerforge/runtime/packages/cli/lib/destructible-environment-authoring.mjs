@@ -140,11 +140,14 @@ async function buildPlan(projectDir, unsafeArgs) {
     missionId: request.missionId,
     profileId: request.profileId,
     profile: request.profile,
-    enabled: request.enabled
+    enabled: true
   });
   if (!mechanicsPreview.ok) {
     return invalid(snapshot, request, mechanicsPreview.validation.issues[0]
       ?? issue("candidate_invalid", "profile", "Mechanics candidate is invalid."));
+  }
+  if (!request.enabled) {
+    mechanicsPreview.candidate.mechanics.modules.ballistics.enabled = false;
   }
 
   const mapSource = clone(snapshot.located.source);
