@@ -1516,3 +1516,17 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   web build, 141/141 E2E, plugin build/validate/smoke, and both mobile and desktop scaffold packages.
   The first full-unit attempt correctly caught stale generated plugin bytes; after `plugin:build`,
   the focused parity contract and the exact complete `npm run test` rerun passed.
+
+### R13 pure Weather runtime final RED/GREEN evidence
+
+- The final Code Verifier held `ccb8684` and proved the exported pure runtime still accepted a
+  forged settled cursor `1 -> 0` (replay) or `1 -> 100` (silent repair), even though checkpoint
+  restore already rejected both. The test-only RED command had 2 failures and 10 controls passing.
+- `advanceWeatherRuntimeV1` now proves active occurrence provenance and requires the exact canonical
+  cursor set before any transition or due-effect emission. Both forged cases fail closed; the pure
+  plus live Weather focused suite is GREEN at 29/29.
+- After plugin regeneration, the exact final matrix is GREEN again: typecheck, engine build,
+  349 unit files / 3,692 tests, validate, tutorial simulation, starter balance, map compilation,
+  web build, 141/141 E2E, plugin build/validate/smoke, and mobile plus desktop packaging. The first
+  unit pass hit two known first-load MCP timeouts; those files passed 28/28 in isolation and the
+  unchanged exact `npm run test` rerun passed 3,692/3,692.

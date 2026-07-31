@@ -532,6 +532,36 @@ export function advanceWeatherRuntimeV1(
     id(effectId, "weather runtime periodic effect id");
     integer(ordinal, `weather runtime.periodicOrdinals.${effectId}`, 0, Number.MAX_SAFE_INTEGER);
   }
+  if (active === null) {
+    if (Object.keys(ordinals).length !== 0) {
+      throw new WeatherProfileValidationError("weather runtime periodic cursor provenance is invalid without an active occurrence.");
+    }
+  } else {
+    const occurrence = schedule.occurrences[active.waveIndex];
+    if (!occurrence
+      || active.choiceId !== occurrence.choiceId
+      || active.weatherId !== occurrence.weatherId
+      || active.zoneId !== occurrence.zoneId
+      || JSON.stringify(active.zone) !== JSON.stringify(occurrence.zone)) {
+      throw new WeatherProfileValidationError("weather runtime active occurrence provenance is invalid.");
+    }
+    const definition = profile.definitions[active.weatherId];
+    if (!definition) throw new WeatherProfileValidationError("weather runtime references missing definition.");
+    const expectedOrdinals: Record<string, number> = {};
+    for (const effectId of Object.keys(definition.effects)) {
+      const effect = definition.effects[effectId]!;
+      if (effect.kind === "periodic_damage" || effect.kind === "status") {
+        expectedOrdinals[effectId] = weatherPeriodicDueOrdinalV1(active.elapsedUnits, effect.intervalUnits);
+      }
+    }
+    const actualKeys = Object.keys(ordinals).sort();
+    const expectedKeys = Object.keys(expectedOrdinals).sort();
+    if (actualKeys.length !== expectedKeys.length
+      || actualKeys.some((effectId, index) => effectId !== expectedKeys[index]
+        || ordinals[effectId] !== expectedOrdinals[effectId])) {
+      throw new WeatherProfileValidationError("weather runtime periodic cursor provenance is non-canonical.");
+    }
+  }
 
   if ((!input.waveActive || active?.waveIndex !== waveIndex) && active !== null) {
     transitions.push(Object.freeze({

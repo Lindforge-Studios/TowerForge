@@ -207,6 +207,42 @@ describe("R13.5 pure Weather v1 contracts (RED)", () => {
     expect(activeReads).toBe(0);
   });
 
+  it.each([0, 100])(
+    "rejects non-canonical periodic cursor %i instead of replaying or repairing it",
+    (forgedOrdinal) => {
+      const normalized = normalizeWeatherProfileV1({
+        zones: { field: { kind: "all_map" } },
+        definitions: { storm: { label: "Storm", effects: {
+          acid: { kind: "periodic_damage", target: "enemies", amount: 1, intervalUnits: 0.2 }
+        } } },
+        schedule: { calmWeight: 0, choices: {
+          always: { weatherId: "storm", zoneId: "field", weight: 1 }
+        } }
+      });
+      const schedule = createWeatherScheduleV1(normalized, {
+        seed: "cursor-provenance", missionId: "weather_lab", waveCount: 1
+      });
+      const started = advanceWeatherRuntimeV1(
+        normalized, schedule, createWeatherRuntimeV1(schedule),
+        { waveIndex: 0, elapsedUnits: 0, waveActive: true }
+      );
+      const settled = advanceWeatherRuntimeV1(
+        normalized, schedule, started.runtime,
+        { waveIndex: 0, elapsedUnits: 0.2, waveActive: true }
+      );
+      expect(settled.runtime.periodicOrdinals).toEqual({ acid: 1 });
+
+      const forged = {
+        ...settled.runtime,
+        periodicOrdinals: { acid: forgedOrdinal }
+      };
+      expect(() => advanceWeatherRuntimeV1(
+        normalized, schedule, forged,
+        { waveIndex: 0, elapsedUnits: 0.2, waveActive: true }
+      )).toThrow(/weather.*(?:periodic|ordinal|cursor|provenance|canonical)/i);
+    }
+  );
+
   it("consumes capped periodic overflow without creating a replayable checkpoint backlog", () => {
     const normalized = normalizeWeatherProfileV1({
       zones: { field: { kind: "all_map" } },

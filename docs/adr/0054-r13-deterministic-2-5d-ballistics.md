@@ -156,6 +156,8 @@ authoritative enemy tiles and tower anchor tiles. Renderer and Studio code must 
 these rules. Each periodic cursor is the canonical due ordinal for active elapsed time. The runtime
 publishes at most the bounded number of due facts and consumes overflow; it never persists a
 replayable backlog whose cursor could be rewound through a re-signed checkpoint.
+The exported pure runtime validates the same occurrence and cursor provenance before advancing; it
+never replays or silently repairs a caller-supplied non-canonical cursor.
 
 Only an active selected profile adds `snapshot.weather` schema v1 and optional checkpoint Weather
 inner v1. Lifecycle/diagnostic events are `weatherStarted`, `weatherEnded`,
