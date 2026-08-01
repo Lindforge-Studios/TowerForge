@@ -24,8 +24,9 @@ Last reviewed: 2026-08-01
   reproduced and fixed with a revision-aware inert response, then received fresh Code Verifier and
   Constructor Integration Verifier sign-offs.
 - The immutable `v0.6.0` tag exposed a Windows-only CRLF pruning defect before publication, so no
-  public release was created. Cross-platform v0.6.1 publication remains a delivery action until its
-  exact tag, all six installers, `SHA256SUMS`, repeated release-note hashes and source links are verified.
+  public release was created for that tag. Cross-platform `v0.6.1` is published from exact commit
+  `db1dd07`; all six installers, `SHA256SUMS`, release-note hashes, source links and downloaded DMG
+  verification passed. R0–R17 have no remaining delivery gap.
 
 ## Known Product Gaps
 

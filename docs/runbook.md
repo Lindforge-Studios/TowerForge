@@ -57,14 +57,14 @@ gh pr checks <number>
 ```
 
 As of 2026-08-01, R12 and R13 are merged and the repaired R13 exact commit passed remote CI. The
-`v0.6.1` release candidate unifies accepted R0–R17: fully opt-in Macro-Economy v1 and
+Public unsigned pre-release `v0.6.1` unifies accepted R0–R17: fully opt-in Macro-Economy v1 and
 GameCommand/Journal v8, checksummed Ghost Replay Lab/What-If/reference relay, and the constructor-only
 Distribution Hub with reproducible publish, provider adapters, licensed Remix provenance and
 host-only monetization hooks. Legacy projects remain unchanged. R17 passed full exact-tree gates,
 remote CI and independent Code Verifier plus Constructor Integration Verifier review before merge.
 It also makes optional renderer-export pruning invariant across LF and CRLF checkouts. The immutable
-`v0.6.0` tag failed its Windows build and has no public release. The v0.6.1 line is public only after
-the matching tag and six installers plus `SHA256SUMS` are verified.
+`v0.6.0` tag failed its Windows build and has no public release. The v0.6.1 tag, six installers,
+`SHA256SUMS`, source links and downloaded macOS DMG were verified after publication.
 
 ## Opt-In Mechanics
 

@@ -21,7 +21,7 @@ Desktop builds are published on [GitHub Releases](https://github.com/Lindforge-S
 
 ## Current status
 
-The current public desktop version is [v0.5.2](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.5.2), an unsigned pre-release containing R0–R14. `main` contains the accepted R15 Macro-Economy, R16 Ghost Replay Lab, and R17 Web Distribution work. The `v0.6.0` tag is retained as immutable evidence of a Windows-only release-pipeline failure and has no public Release; `v0.6.1` is the replacement candidate with cross-platform CRLF-safe packaging. All gameplay extensions remain opt-in. The exact delivery status and boundaries live in the [roadmap](docs/ROADMAP.md).
+The current public desktop version is [v0.6.1](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.6.1), an unsigned pre-release containing accepted R0–R17 and the cross-platform CRLF-safe packaging repair. The `v0.6.0` tag is retained as immutable evidence of the Windows-only pipeline failure it exposed and has no public Release. All gameplay extensions remain opt-in. The exact delivery status and boundaries live in the [roadmap](docs/ROADMAP.md).
 
 ## Product surface
 
