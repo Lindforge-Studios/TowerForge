@@ -6,12 +6,15 @@ const root = path.resolve("packages/desktop/src-tauri");
 const buildScript = fs.readFileSync(path.join(root, "build.rs"), "utf8");
 const rustSource = fs.readFileSync(path.join(root, "src/lib.rs"), "utf8");
 const studioSource = fs.readFileSync(path.resolve("packages/studio/public/app.js"), "utf8");
+const prepareRuntimeSource = fs.readFileSync(path.resolve("packages/desktop/scripts/prepare-runtime.mjs"), "utf8");
+const remixSidecarSource = fs.readFileSync(path.resolve("packages/desktop/sidecar/import-remix.mjs"), "utf8");
 const capability = JSON.parse(fs.readFileSync(path.join(root, "capabilities/main.json"), "utf8"));
 
 const desktopCommands = [
   "desktop_sync_ui_state",
   "desktop_choose_project_parent",
   "desktop_create_project",
+  "desktop_import_remix",
   "desktop_open_project",
   "desktop_open_recent",
   "desktop_open_external",
@@ -38,5 +41,12 @@ describe("desktop custom-command ACL", () => {
       expect(rustSource).toMatch(new RegExp(`generate_handler![\\s\\S]*\\b${command}\\b`));
       expect(studioSource).toContain(`desktopInvoke("${command}"`);
     }
+  });
+
+  it("bundles the trusted CLI remix importer instead of decoding project data in Rust", () => {
+    expect(prepareRuntimeSource).toMatch(/packages["'],\s*["']distribution/);
+    expect(remixSidecarSource).toContain("importRemixSourcePackV2");
+    expect(rustSource).toContain("packages/desktop/sidecar/import-remix.mjs");
+    expect(rustSource).not.toMatch(/gunzip|gzip|publishManifest|remixProvenance/);
   });
 });

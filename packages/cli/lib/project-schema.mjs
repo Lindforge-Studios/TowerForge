@@ -3,8 +3,12 @@ import {
   normalizeDestructibleObjects,
   normalizeElevationOverrides
 } from "./map-compiler.mjs";
+import { validateDistributionConfigV1 } from "../../distribution/src/index.mjs";
 
-export const PROJECT_SCHEMA_VERSION = 3;
+export const PROJECT_SCHEMA_VERSION = 4;
+export const MECHANICS_PROJECT_SCHEMA_VERSION = 3;
+export const ELEVATION_PROJECT_SCHEMA_VERSION = 3;
+export const DISTRIBUTION_PROJECT_SCHEMA_VERSION = 4;
 
 const MECHANICS_SCHEMA_VERSION = 1;
 const COMBAT_MODULE_SCHEMA_VERSIONS = new Set([1, 2, 3]);
@@ -144,13 +148,14 @@ export function validateProjectSchemas(files) {
   }
 
   validateMechanics(files, err, warn);
+  validateDistribution(files, err);
 
-  if (files.manifest?.schemaVersion !== PROJECT_SCHEMA_VERSION && hasAuthoredElevation(files)) {
+  if (![ELEVATION_PROJECT_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION].includes(files.manifest?.schemaVersion) && hasAuthoredElevation(files)) {
     err(
       "project",
       "project.json",
       "schemaVersion",
-      `Projects that author map elevation must use project schemaVersion ${PROJECT_SCHEMA_VERSION}.`
+      `Projects that author map elevation must use project schemaVersion ${ELEVATION_PROJECT_SCHEMA_VERSION} or ${PROJECT_SCHEMA_VERSION}.`
     );
   }
 
@@ -176,12 +181,12 @@ function validateMechanics(files, err, warn) {
 
   if (authored) {
     const manifestVersion = files.manifest?.schemaVersion;
-    if (manifestVersion !== PROJECT_SCHEMA_VERSION) {
+    if (![MECHANICS_PROJECT_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION].includes(manifestVersion)) {
       err(
         "project",
         "project.json",
         "schemaVersion",
-        `Projects that author content/mechanics.json must use project schemaVersion ${PROJECT_SCHEMA_VERSION}.`
+        `Projects that author content/mechanics.json must use project schemaVersion ${MECHANICS_PROJECT_SCHEMA_VERSION} or ${PROJECT_SCHEMA_VERSION}.`
       );
     }
 
@@ -254,6 +259,29 @@ function validateMechanics(files, err, warn) {
       files.balance?.terrainTypes,
       err,
       warn
+    );
+  }
+}
+
+function validateDistribution(files, err) {
+  const authored = files.distributionAuthored ?? files.distribution !== undefined;
+  if (!authored) return;
+  if (files.manifest?.schemaVersion !== DISTRIBUTION_PROJECT_SCHEMA_VERSION) {
+    err(
+      "project",
+      "project.json",
+      "schemaVersion",
+      `Projects that author content/distribution.json must use project schema v${DISTRIBUTION_PROJECT_SCHEMA_VERSION}.`
+    );
+  }
+  try {
+    validateDistributionConfigV1(files.distribution);
+  } catch (error) {
+    err(
+      "distribution",
+      "content/distribution.json",
+      "root",
+      error instanceof Error ? error.message : "Invalid distribution configuration."
     );
   }
 }

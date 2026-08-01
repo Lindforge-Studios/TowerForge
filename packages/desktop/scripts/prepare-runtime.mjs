@@ -147,6 +147,7 @@ fs.copyFileSync(path.join(repoRoot, "package.json"), path.join(runtimeRoot, "pac
 copyDir(path.join(repoRoot, "packages", "studio"), path.join(runtimeRoot, "packages", "studio"), runtimeFilter);
 copyDir(path.join(repoRoot, "packages", "desktop", "sidecar"), path.join(runtimeRoot, "packages", "desktop", "sidecar"), runtimeFilter);
 copyDir(path.join(repoRoot, "packages", "cli"), path.join(runtimeRoot, "packages", "cli"), runtimeFilter);
+copyDir(path.join(repoRoot, "packages", "distribution"), path.join(runtimeRoot, "packages", "distribution"), runtimeFilter);
 copyDir(path.join(repoRoot, "packages", "player-runtime"), path.join(runtimeRoot, "packages", "player-runtime"), runtimeFilter);
 copyDir(path.join(repoRoot, "packages", "mcp"), path.join(runtimeRoot, "packages", "mcp"), runtimeFilter);
 copyDir(path.join(repoRoot, "packages", "renderer"), path.join(runtimeRoot, "packages", "renderer"), runtimeFilter);

@@ -1504,3 +1504,111 @@ html[data-ai-dock="closed"] .ai-dock { display: none; }
 
 .replay-ghost-tower { color: var(--accent, #75b47a); }
 .replay-ghost-enemy { color: var(--danger, #d66b6b); }
+
+/* ── Distribution Hub ── */
+.distribution-hub-body {
+  min-height: 0;
+  padding: 20px 20px 48px;
+  overflow: auto;
+}
+.distribution-intro {
+  max-width: 900px;
+  margin: 0 0 16px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.distribution-card {
+  max-width: 1120px;
+  margin-bottom: 14px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.distribution-card-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.distribution-card-head h3 { margin: 0 0 4px; font-size: 14px; }
+.distribution-card-head p,
+.distribution-note { margin: 0; color: var(--text-muted); font-size: 11px; line-height: 1.5; }
+.distribution-revision { color: var(--text-dim); font: 9px var(--mono); white-space: nowrap; }
+.distribution-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(170px, 1fr));
+  gap: 10px;
+}
+.distribution-fields > label,
+.distribution-json-label {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  color: var(--text-muted);
+  font: 9px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.distribution-fields input,
+.distribution-fields select,
+.distribution-fields textarea,
+.distribution-json-label textarea {
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: 11px/1.45 var(--mono);
+}
+.distribution-wide { grid-column: 1 / -1; }
+.distribution-source-toggle {
+  grid-template-columns: auto minmax(0, 1fr) !important;
+  align-items: center;
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-2);
+  text-transform: none !important;
+}
+.distribution-source-toggle input { width: 16px; min-height: 16px; padding: 0; accent-color: var(--accent); }
+.distribution-json-label { margin-top: 12px; }
+.distribution-json-label textarea { min-height: 130px; resize: vertical; text-transform: none; }
+.distribution-publish-fields textarea { min-height: 86px; resize: vertical; }
+.distribution-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.distribution-result {
+  max-height: 280px;
+  margin: 12px 0 0;
+  padding: 11px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text-muted);
+  font: 9.5px/1.5 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.distribution-result.error { border-color: var(--err); color: var(--err); }
+.distribution-confirmation {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--warn);
+  border-radius: 6px;
+  background: var(--warn-bg);
+  color: var(--text);
+  font: 10px/1.5 var(--mono);
+  overflow-wrap: anywhere;
+}
+@media (max-width: 880px) {
+  .distribution-fields { grid-template-columns: 1fr; }
+  .distribution-wide { grid-column: auto; }
+  .distribution-card-head { flex-direction: column; }
+}

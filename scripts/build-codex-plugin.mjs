@@ -38,6 +38,7 @@ copy(path.join(root, "packages", "mcp"), path.join(runtime, "packages", "mcp"), 
   filter: (relative) => relative !== "package.json"
 });
 copy(path.join(root, "packages", "cli"), path.join(runtime, "packages", "cli"));
+copy(path.join(root, "packages", "distribution"), path.join(runtime, "packages", "distribution"));
 copy(path.join(root, "packages", "player-runtime"), path.join(runtime, "packages", "player-runtime"));
 copy(path.join(root, "packages", "engine", "dist"), path.join(runtime, "packages", "engine", "dist"), {
   filter: (relative) => relative !== ".build-stamp"

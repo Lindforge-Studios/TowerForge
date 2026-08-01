@@ -815,6 +815,51 @@ fn is_valid_project_name(name: &str) -> bool {
         })
 }
 
+fn is_valid_remix_pack(path: &Path) -> bool {
+    path.file_stem().is_some_and(|stem| !stem.is_empty())
+        && path
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("tdpack"))
+}
+
+fn remix_project_name(pack_path: &Path, suffix: &str) -> String {
+    let stem = pack_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    let mut slug = String::new();
+    let mut separator_pending = false;
+    for character in stem.chars() {
+        if character.is_ascii_alphanumeric() {
+            if separator_pending && !slug.is_empty() {
+                slug.push('-');
+            }
+            separator_pending = false;
+            slug.push(character.to_ascii_lowercase());
+        } else {
+            separator_pending = true;
+        }
+    }
+    if slug.is_empty() {
+        slug.push_str("remixed-project");
+    }
+    let suffix = suffix
+        .chars()
+        .filter(|character| character.is_ascii_hexdigit())
+        .take(8)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    let suffix = if suffix.len() == 8 {
+        suffix
+    } else {
+        "00000000".to_string()
+    };
+    let postfix = format!("-remix-{suffix}");
+    slug.truncate(80usize.saturating_sub(postfix.len()));
+    format!("{slug}{postfix}")
+}
+
 fn apply_window_command(app: &tauri::AppHandle, id: &str) -> Result<bool, String> {
     let Some(window) = app.get_webview_window("main") else {
         return Ok(false);
@@ -1015,6 +1060,80 @@ async fn desktop_create_project(
 }
 
 #[tauri::command]
+async fn desktop_import_remix(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let Some(pack_path) = rfd::FileDialog::new()
+        .set_title("Import TowerForge Remix Source")
+        .add_filter("TowerForge Remix Source", &["tdpack"])
+        .pick_file()
+    else {
+        return Ok(None);
+    };
+    if !pack_path.is_file() || !is_valid_remix_pack(&pack_path) {
+        return Err("Select a local TowerForge .tdpack remix source file.".to_string());
+    }
+    let Some(parent) = rfd::FileDialog::new()
+        .set_title("Choose Location for Remixed Project")
+        .pick_folder()
+    else {
+        return Ok(None);
+    };
+    if !parent.is_dir() {
+        return Err("The selected project location is no longer available.".to_string());
+    }
+
+    let token = random_token()?;
+    let project_id = format!("tfp_{}", &token[..32]);
+    let name = remix_project_name(&pack_path, &token[..8]);
+    if !is_valid_project_name(&name) {
+        return Err("Could not derive a safe name for the remixed project.".to_string());
+    }
+    if parent.join(format!("{name}.tdproj")).exists() {
+        return Err("The generated remixed project destination already exists.".to_string());
+    }
+
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|error| error.to_string())?;
+    let runtime_root = resource_dir.join("runtime");
+    let wrapper = runtime_root.join("packages/desktop/sidecar/import-remix.mjs");
+    let output = app
+        .shell()
+        .sidecar("node")
+        .map_err(|error| error.to_string())?
+        .args([
+            wrapper.to_string_lossy().to_string(),
+            "--pack".to_string(),
+            pack_path.to_string_lossy().to_string(),
+            "--parent".to_string(),
+            parent.to_string_lossy().to_string(),
+            "--name".to_string(),
+            name,
+            "--project-id".to_string(),
+            project_id,
+        ])
+        .output()
+        .await
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if message.is_empty() {
+            "Remix import failed.".to_string()
+        } else {
+            message
+        });
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let result: CreatedProject =
+        serde_json::from_str(stdout.trim()).map_err(|error| error.to_string())?;
+    if !result.ok {
+        return Err("Remix import failed.".to_string());
+    }
+    restart_with_project(&app, result.project_dir.clone())?;
+    Ok(Some(result.project_dir.to_string_lossy().to_string()))
+}
+
+#[tauri::command]
 fn desktop_open_project(app: tauri::AppHandle) -> Result<Option<String>, String> {
     let Some(project_dir) = rfd::FileDialog::new()
         .set_title("Open .tdproj Project")
@@ -1120,6 +1239,7 @@ pub fn run() {
             desktop_sync_ui_state,
             desktop_choose_project_parent,
             desktop_create_project,
+            desktop_import_remix,
             desktop_open_project,
             desktop_open_recent,
             desktop_open_external,
@@ -1203,9 +1323,12 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::{
         append_complete_lines, format_window_title, is_allowed_external_url, is_valid_project_name,
-        parse_ready_line, parse_recent_menu_index, should_guard_values, startup_error_script,
+        is_valid_remix_pack, parse_ready_line, parse_recent_menu_index, remix_project_name,
+        should_guard_values, startup_error_script,
     };
 
     #[test]
@@ -1234,6 +1357,32 @@ mod tests {
         assert!(!is_valid_project_name("../tower"));
         assert!(!is_valid_project_name("tower/game"));
         assert!(!is_valid_project_name(""));
+    }
+
+    #[test]
+    fn accepts_only_local_tdpack_files_for_remix_import() {
+        assert!(is_valid_remix_pack(Path::new("/tmp/example.tdpack")));
+        assert!(is_valid_remix_pack(Path::new("/tmp/example.TDPACK")));
+        assert!(!is_valid_remix_pack(Path::new("/tmp/example.zip")));
+        assert!(!is_valid_remix_pack(Path::new("/tmp/.tdpack")));
+    }
+
+    #[test]
+    fn derives_bounded_remix_project_names_without_path_components() {
+        assert_eq!(
+            remix_project_name(Path::new("/tmp/My Great Game.tdpack"), "a1b2c3d4"),
+            "my-great-game-remix-a1b2c3d4"
+        );
+        assert_eq!(
+            remix_project_name(Path::new("/tmp/💥.tdpack"), "a1b2c3d4"),
+            "remixed-project-remix-a1b2c3d4"
+        );
+        let name = remix_project_name(
+            Path::new(&format!("/tmp/{}.tdpack", "a".repeat(200))),
+            "a1b2c3d4",
+        );
+        assert!(is_valid_project_name(&name));
+        assert!(name.len() <= 80);
     }
 
     #[test]

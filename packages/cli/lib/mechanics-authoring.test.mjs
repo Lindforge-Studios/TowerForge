@@ -889,7 +889,7 @@ describe("mechanics authoring validation boundaries", () => {
     const projectDir = fixture();
     const paths = filePaths(projectDir);
     const manifest = JSON.parse(fs.readFileSync(paths.project, "utf8"));
-    manifest.schemaVersion = 4;
+    manifest.schemaVersion = 5;
     writeJson(paths.project, manifest);
     const before = rawTransactionFiles(projectDir);
 

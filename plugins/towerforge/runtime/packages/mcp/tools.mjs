@@ -36,6 +36,13 @@ import { runAutoBalancerWorkerBatch } from "../cli/lib/auto-balancer-worker.mjs"
 import { runPersonaQaWorkerBatch } from "../cli/lib/persona-qa-worker.mjs";
 import { exportProjectPack, inspectProjectPack } from "../cli/lib/project-pack.mjs";
 import { packageProject } from "../cli/lib/packaging.mjs";
+import {
+  applyDistributionConfigV1,
+  inspectRemixSourcePackV2,
+  previewDistributionConfigV1,
+  previewPublishCandidate,
+  readDistributionConfigV1
+} from "../cli/lib/distribution/index.mjs";
 import { PROCEDURAL_JUICE_SUPPORTED_EVENTS, validateProjectSchemas } from "../cli/lib/project-schema.mjs";
 import { previewTiledTilesetImport } from "../cli/lib/tileset-importer.mjs";
 import { inspectTileSetCoverage, TILE_PRESETS } from "../renderer/src/autotile.mjs";
@@ -94,7 +101,7 @@ const BALANCE_PATCH_KEYS = [
   "enemies", "towers", "waveSets", "missions", "abilities", "constants", "currencies", "defaultMissionId",
   "defaultDifficultyId", "difficulties", "metaProgression", "terrainTypes"
 ];
-const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "arsenal", "macroEconomy", "heroes", "logistics", "director", "quests", "enemyBehaviors", "personaQa", "multiplayer", "replayLab", "proceduralJuice", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
+const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "arsenal", "macroEconomy", "heroes", "logistics", "director", "quests", "enemyBehaviors", "personaQa", "multiplayer", "replayLab", "distribution", "proceduralJuice", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
 
 // Maps an upsert_entity/delete_entity `collection` to (a) the balance.json key, (b) the shape
 // (a map keyed by id, or an array of {id,...} items — currencies only), and (c) the
@@ -895,6 +902,71 @@ export const TOOLS = [
         commands: { type: "array", maxItems: 100000, items: { type: "object" } }
       },
       required: ["archiveBase64", "forkSequence", "commands"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "read_distribution_config",
+    description: "Read the exact optional DistributionConfigV1 and its guarded revision. This never creates content/distribution.json, migrates the project, builds a bundle, or opens a network connection.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server project." }
+      },
+      additionalProperties: false
+    }
+  },
+  {
+    name: "preview_distribution_config",
+    description: "Validate an exact optional DistributionConfigV1 candidate in memory. Pass null to preview disabling it. This is compute-only and writes no project files.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server project." },
+        distribution: { oneOf: [{ type: "object" }, { type: "null" }], description: "Exact DistributionConfigV1 candidate or null." }
+      },
+      required: ["distribution"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "apply_distribution_config",
+    description: "Guardedly apply the exact previewed DistributionConfigV1 candidate with project validation, backup, and rollback. Pass null to disable Distribution.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server project." },
+        distribution: { oneOf: [{ type: "object" }, { type: "null" }], description: "Exact previewed DistributionConfigV1 candidate or null." },
+        ifRevision: IF_REVISION_PROPERTY
+      },
+      required: ["projectDir", "distribution", "ifRevision"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "preview_publish_candidate",
+    description: "Compute the provider target digest and explicit-confirmation requirements for a future PublishManifestV1 candidate. It performs no build, upload, network access, approval minting, or project write.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the saved .tdproj directory." },
+        adapterId: { type: "string", enum: ["filesystem_v1", "github_pages_v1", "cloudflare_pages_v1"] },
+        target: { type: "object", maxProperties: 8, description: "Closed provider target descriptor; credentials are forbidden." }
+      },
+      required: ["adapterId", "target"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "inspect_remix_source_pack",
+    description: "Inspect and verify one confined deterministic public source .tdpack v2 without extracting it. Returns license, remix policy, provenance, and digests; writes nothing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Active project whose private .towerforge/exports directory confines the read." },
+        fileName: { type: "string", pattern: "^[A-Za-z0-9._-]+\\.tdpack$", maxLength: 160 }
+      },
+      required: ["fileName"],
       additionalProperties: false
     }
   },
@@ -1999,6 +2071,11 @@ const TOOL_RISK = {
   inspect_replay_archive: { riskClass: "compute_only", sideEffect: "loads @towerforge/engine/replay-lab; writes no project files and performs no network access" },
   verify_replay_archive: { riskClass: "compute_only", sideEffect: "loads @towerforge/engine/replay-lab and builds engine dist if stale; writes no project files and performs no network access" },
   analyze_replay_branch: { riskClass: "compute_only", sideEffect: "loads @towerforge/engine/replay-lab; writes no project files and performs no network access" },
+  read_distribution_config: { riskClass: "read_only", sideEffect: "none" },
+  preview_distribution_config: { riskClass: "compute_only", sideEffect: "none" },
+  apply_distribution_config: { riskClass: "write_local", sideEffect: "writes project.json and optional content/distribution.json with revision guard, validation, backup, and rollback" },
+  preview_publish_candidate: { riskClass: "compute_only", sideEffect: "none" },
+  inspect_remix_source_pack: { riskClass: "read_only", sideEffect: "verifies one confined deterministic public source .tdpack v2 without extraction or project writes" },
   preview_map_elevations: { riskClass: "read_only", sideEffect: "none" },
   apply_map_elevations: { riskClass: "write_local", sideEffect: "may upgrade project.json to schema v3; writes the target map source and compiled maps with revision guard, validation, backup, and rollback" },
   preview_destructible_environment: { riskClass: "compute_only", sideEffect: "none" },
@@ -2568,6 +2645,50 @@ export async function callTool(name, args = {}, ctx = {}) {
       writesProjectFiles: false,
       opensNetworkSocket: false
     };
+    const distribution = {
+      schemaVersion: 1,
+      projectSchemaVersion: 4,
+      authoring: {
+        contract: "DistributionConfigV1",
+        schemaVersion: 1,
+        projectSchemaVersionWhenAuthored: 4,
+        optionalFile: "content/distribution.json",
+        fields: ["projectId", "license", "remix", "monetization?", "remixProvenance?"],
+        licenses: ["ARR", "MIT", "Apache-2.0", "CC0-1.0", "CC-BY-4.0", "CC-BY-SA-4.0"],
+        remixPolicies: ["forbidden", "allowed", "allowed_with_attribution"]
+      },
+      manifest: {
+        contract: "PublishManifestV1",
+        schemaVersion: 1,
+        reproducible: true,
+        digestDomains: ["engine", "content", "bundle", "capabilities", "sourcePack?"],
+        forbiddenData: ["credentials", "tokens", "timestamps", "user-local paths", "external URLs"]
+      },
+      providers: ["filesystem_v1", "github_pages_v1", "cloudflare_pages_v1"],
+      remix: { sourcePackVersion: 2, provenance: "RemixProvenanceV1", createsNewProjectId: true },
+      monetization: {
+        contract: "MonetizationHookV1",
+        hostOnly: true,
+        placements: ["banner", "interstitial", "purchase_link"],
+        excluded: ["gameplay rewards", "payment keys", "hidden telemetry", "host code"]
+      },
+      authoringTransaction: {
+        file: "content/distribution.json",
+        read: "read_distribution_config",
+        preview: "preview_distribution_config",
+        apply: "apply_distribution_config",
+        revisionGuard: "ifRevision"
+      },
+      publish: {
+        schemaVersion: 1,
+        preview: "preview_publish_candidate",
+        externalUploadAvailableToAgents: false
+      },
+      aiWorkflow: ["read_distribution_config", "preview_distribution_config", "apply_distribution_config", "preview_publish_candidate"],
+      externalUploadRequiresHumanConfirmation: true,
+      aiCanUpload: false,
+      aiCanMintApproval: false
+    };
     return {
       schemaVersion: 4,
       agentGuideVersion: TOWERFORGE_AGENT_GUIDE_VERSION,
@@ -2623,6 +2744,7 @@ export async function callTool(name, args = {}, ctx = {}) {
       ...(includes("personaQa") ? { personaQa } : {}),
       ...(includes("multiplayer") ? { multiplayer } : {}),
       ...(includes("replayLab") ? { replayLab } : {}),
+      ...(includes("distribution") ? { distribution } : {}),
       ...(includes("proceduralJuice") ? { proceduralJuice } : {}),
       ...(includes("assets") ? {
         assetAuthoring: {
@@ -3131,6 +3253,68 @@ export async function callTool(name, args = {}, ctx = {}) {
         mapIssues: mapCompile.issues ?? [],
         tileCoverage: tiles,
         revisions: { balance: computeRevision(files.balance) }
+      };
+    }
+
+    case "read_distribution_config": {
+      const read = readDistributionConfigV1(projectDir);
+      return { projectDir, ...read, distribution: read.distribution ?? null };
+    }
+
+    case "preview_distribution_config":
+      return {
+        projectDir,
+        ok: true,
+        projectSchemaVersion: 4,
+        ...previewDistributionConfigV1(projectDir, args.distribution)
+      };
+
+    case "apply_distribution_config": {
+      const before = readDistributionConfigV1(projectDir);
+      if (before.revision !== args.ifRevision) {
+        return {
+          projectDir,
+          ok: false,
+          conflict: true,
+          written: false,
+          expectedRevision: args.ifRevision,
+          actualRevision: before.revision
+        };
+      }
+      const backupRoot = path.join(projectDir, ".towerforge", "backups");
+      const beforeBackups = new Set(fs.existsSync(backupRoot) ? fs.readdirSync(backupRoot) : []);
+      const applied = applyDistributionConfigV1(projectDir, args.distribution, { ifRevision: args.ifRevision });
+      const backupName = (fs.existsSync(backupRoot) ? fs.readdirSync(backupRoot) : [])
+        .filter((name) => name.startsWith("r17-distribution-") && !beforeBackups.has(name))
+        .sort()[0];
+      return {
+        projectDir,
+        ...applied,
+        distribution: applied.distribution ?? null,
+        previousRevision: before.revision,
+        ...(backupName ? { backup: { directory: `.towerforge/backups/${backupName}` } } : {})
+      };
+    }
+
+    case "preview_publish_candidate":
+      return {
+        projectDir,
+        manifestContract: "PublishManifestV1",
+        ...(await previewPublishCandidate({
+          projectDir,
+          adapterId: args.adapterId,
+          target: args.target
+        }))
+      };
+
+    case "inspect_remix_source_pack": {
+      const packPath = confinedPackPath(projectDir, args.fileName);
+      const { entries, ...inspection } = inspectRemixSourcePackV2(packPath);
+      return {
+        projectDir,
+        fileName: args.fileName,
+        ...inspection,
+        files: entries.map(({ path: filePath, size, sha256: digest }) => ({ path: filePath, size, sha256: digest }))
       };
     }
 

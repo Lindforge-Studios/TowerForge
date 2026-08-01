@@ -7,7 +7,7 @@ import {
   readRawProjectFiles,
   validateProjectDir
 } from "./project-loader.mjs";
-import { PROJECT_SCHEMA_VERSION, validateProjectSchemas } from "./project-schema.mjs";
+import { MECHANICS_PROJECT_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION, validateProjectSchemas } from "./project-schema.mjs";
 import { mergeValidationResults } from "./trace.mjs";
 
 export const MECHANICS_AUTHORING_LIMITS = Object.freeze({
@@ -986,7 +986,7 @@ function publicPlan(plan) {
     written: false,
     revision: plan.revision,
     ...(plan.snapshot?.rawFiles?.manifest?.schemaVersion === 2
-      ? { migration: { required: true, from: 2, to: PROJECT_SCHEMA_VERSION } }
+      ? { migration: { required: true, from: 2, to: MECHANICS_PROJECT_SCHEMA_VERSION } }
       : {}),
     ...(plan.candidate ? { candidate: plan.candidate } : {}),
     validation: plan.validation

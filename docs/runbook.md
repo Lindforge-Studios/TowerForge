@@ -59,8 +59,10 @@ gh pr checks <number>
 As of 2026-08-01, R12 and R13 are merged and the repaired R13 exact commit passed remote CI. The
 `v0.5.2` release line adds R9–R14 to the previous R0–R8 public baseline. Current mainline also has
 the release-candidate R15 implementation: fully opt-in Macro-Economy v1 and GameCommand/Journal v8.
-It does not change legacy projects. R16.1–R16.4 are implementation-complete and pending full gates
-plus independent sign-offs; R17 remains planned.
+It does not change legacy projects. R16.1–R16.4 are accepted after full gates and both independent
+sign-offs. R17 is accepted after verifier-led RED/GREEN repair, full exact-tree gates and
+independent Code Verifier plus Constructor Integration Verifier PASS results. It is not released
+until the matching tag and public release assets are verified.
 
 ## Opt-In Mechanics
 
@@ -850,8 +852,64 @@ security decision. Run its focused contract with:
 npm --workspace @towerforge/reference-relay test
 ```
 
-See proposed [ADR 0057](adr/0057-r16-ghost-replay-lab.md) and
+See accepted [ADR 0057](adr/0057-r16-ghost-replay-lab.md) and
 [`packages/reference-relay/README.md`](../packages/reference-relay/README.md).
+
+### R17 Web Distribution Hub
+
+Distribution is constructor metadata, not a mission mechanic. An ordinary project has no
+`content/distribution.json`, Distribution runtime or host-placement UI in its generated player.
+Open **Distribution** in Studio only when preparing a public build. The first guarded save creates
+Distribution v1 and explicitly promotes `project.json` to schema v4; merely opening the Hub,
+previewing, validating, building, or editing mechanics/elevation does not create the file or promote
+the project.
+
+Configure the stable project ID, allowlisted SPDX license, attribution and Remix policy first.
+`ARR` requires `forbidden`; either allowed policy requires public source inclusion, and
+`allowed_with_attribution` requires non-empty attribution. Optional monetization JSON contains only
+host placement descriptors (`banner`, `interstitial`, or `purchase_link`) on allowlisted surfaces.
+Do not put URLs, scripts, provider IDs, payment keys, telemetry or gameplay rewards in those
+descriptors. Preview, then apply with the displayed exact revision; stale candidates must be
+reloaded and previewed again. The guarded writer validates `project.json` and
+`content/distribution.json`, creates a private backup, and rolls both files back on failure.
+
+Publishing is an explicit four-stage operation:
+
+1. Preview the adapter target; this does not build, write, connect or upload.
+2. Prepare a reproducible candidate in private `.towerforge/publish-staging`; inspect its
+   `PublishManifestV1` and candidate/target digests.
+3. Confirm the exact candidate, adapter and target in Studio. Approval is short-lived and
+   single-use; changing any bound value requires a new preview and confirmation.
+4. The injected `filesystem_v1`, `github_pages_v1`, or `cloudflare_pages_v1` provider runtime
+   uploads and then returns the exact remote digest for verification. A missing runtime,
+   authentication failure or digest mismatch fails closed and does not change project source.
+
+Provider credentials belong to the OS/provider runtime. They MUST NOT be pasted into
+`distribution.json`, target descriptors, publish manifests, Studio traces or generated bundles.
+The filesystem adapter refuses a destination that overlaps private staging and refuses to overwrite
+an existing destination.
+
+Public Remix uses deterministic `.tdpack` v2 and does not change the ordinary project `.tdpack` v1
+format. Export is available only when policy permits source inclusion. Inspection validates pack
+size, canonical paths, per-entry checksums, aggregate digest and publish manifest without extracting
+files. Import validates before writing, creates a new project ID and records
+`RemixProvenanceV1`; `.towerforge`, hidden caches, deployment metadata, symlinks and credentials are
+never copied. A failed import leaves no partial project.
+
+For an agent, use the bounded local workflow:
+
+`describe_schema({domain:"distribution"}) -> get_distribution -> preview_distribution -> apply_distribution(ifRevision) -> validate_project -> preview_publish_candidate`.
+
+`inspect_remix_source_pack` is a separate read-only verification tool. MCP deliberately has no tool
+to prepare an upload, mint a publish approval, upload to a provider, or open a network connection;
+the user must perform those externally consequential steps in the Studio confirmation flow.
+
+The accepted R17 gate verifies that the starter and a v1-v3 project do not gain
+`content/distribution.json`, that inactive web/PWA/single-file/native carriers omit Distribution and
+monetization runtime, and that an active host-placement build contains only inert host injection
+points. Verify deterministic manifest/source-pack bytes, secret/path scans, failed upload/import
+rollback, Studio save/reload and the MCP guarded workflow. See accepted
+[ADR 0058](adr/0058-r17-web-publish-remix.md).
 
 ## Desktop Studio Navigation
 

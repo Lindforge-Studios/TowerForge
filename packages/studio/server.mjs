@@ -23,6 +23,18 @@ import {
   validateProjectDir
 } from "../cli/lib/project-loader.mjs";
 import { importProjectAsset } from "../cli/lib/assets.mjs";
+import {
+  applyDistributionConfigV1,
+  computePublishTreeDigestV1,
+  discardPreparedPublishCandidate,
+  inspectRemixSourcePackV2,
+  mintPublishApproval,
+  preparePublishCandidate,
+  previewDistributionConfigV1,
+  previewPublishCandidate,
+  publishPreparedCandidate,
+  readDistributionConfigV1
+} from "../cli/lib/distribution/index.mjs";
 import { compileMapSources, writeCompiledMaps, writeMapSource } from "../cli/lib/map-compiler.mjs";
 import { normalizeVisuals } from "../cli/lib/project-schema.mjs";
 import { previewTiledTilesetImport } from "../cli/lib/tileset-importer.mjs";
@@ -77,6 +89,9 @@ let ACTIVE_PORT = Number.isFinite(PORT) ? PORT : 5174;
 const PUBLIC_DIR = path.join(repoRoot, "packages", "studio", "public");
 const PREVIEW_SESSIONS = new Map();
 const PREVIEW_SESSION_TTL_MS = 60 * 60 * 1000;
+const PUBLISH_CANDIDATES = new Map();
+const PUBLISH_CANDIDATE_TTL_MS = 10 * 60 * 1000;
+let PUBLISH_PREPARATION_IN_FLIGHT = false;
 
 function loadAppInfo() {
   try {
@@ -153,6 +168,7 @@ function listMutableProjectFiles() {
     path.join(CONTENT_DIR, "visuals.json"),
     path.join(CONTENT_DIR, "story-comics.json"),
     path.join(CONTENT_DIR, "battle-backgrounds.json"),
+    path.join(CONTENT_DIR, "distribution.json"),
     path.join(MAPS_DIR, "maps.json"),
     path.join(CONTENT_DIR, "world-map.json"),
     path.join(PROJECT_DIR, "build-targets.json"),
@@ -508,6 +524,58 @@ function runNodeScript(args) {
     child.on("error", (error) => resolve({ status: 1, stdout, stderr: error.message }));
     child.on("close", (code) => resolve({ status: code ?? 1, stdout, stderr }));
   });
+}
+
+async function buildStudioPublishCandidate({ projectDir, stagingDir }) {
+  const temporaryName = path.posix.join(".towerforge", `studio-publish-build-${randomBytes(12).toString("hex")}`);
+  const temporaryOutput = path.join(projectDir, temporaryName);
+  try {
+    const result = await runNodeScript([
+      path.join(repoRoot, "packages", "cli", "build.mjs"),
+      "--project", projectDir,
+      "--out", temporaryName,
+      "--single-file",
+      "--json"
+    ]);
+    let payload;
+    try { payload = JSON.parse(result.stdout); } catch { payload = null; }
+    if (result.status !== 0 || !payload?.ok) throw new Error(payload?.error || result.stderr || "Publish build failed.");
+    const bundleDir = path.join(stagingDir, "bundle");
+    fs.cpSync(temporaryOutput, bundleDir, { recursive: true, errorOnExist: true, force: false });
+    const engineRoot = path.join(bundleDir, "engine");
+    const sourcePack = path.join(bundleDir, "source.tdpack");
+    const sourcePackInspection = fs.existsSync(sourcePack) ? inspectRemixSourcePackV2(sourcePack) : null;
+    return {
+      bundleDir,
+      engine: { version: loadAppInfo().version, digest: computePublishTreeDigestV1(engineRoot) },
+      content: { digest: createHash("sha256").update(projectHash()).digest("hex") },
+      capabilities: [],
+      ...(sourcePackInspection ? {
+        publishManifest: sourcePackInspection.publishManifest,
+        sourcePack: { digest: sourcePackInspection.entriesDigest }
+      } : {})
+    };
+  } finally {
+    fs.rmSync(temporaryOutput, { recursive: true, force: true });
+  }
+}
+
+function prunePublishCandidates() {
+  const now = Date.now();
+  for (const [handle, entry] of PUBLISH_CANDIDATES) {
+    if (entry.expiresAt <= now) {
+      discardStudioPublishCandidate(handle, entry);
+    }
+  }
+}
+
+function discardStudioPublishCandidate(handle, entry = PUBLISH_CANDIDATES.get(handle)) {
+  PUBLISH_CANDIDATES.delete(handle);
+  if (entry?.prepared) discardPreparedPublishCandidate(entry.prepared);
+}
+
+function discardAllStudioPublishCandidates() {
+  for (const [handle, entry] of PUBLISH_CANDIDATES) discardStudioPublishCandidate(handle, entry);
 }
 
 // ── AI co-designer ──────────────────────────────────────────────────────────
@@ -1149,6 +1217,196 @@ const server = http.createServer(async (req, res) => {
       return jsonResp(res, 200, loadProject());
     } catch (e) {
       return jsonResp(res, 500, { error: e.message });
+    }
+  }
+
+  // Distribution is a dedicated opt-in authoring boundary. The Studio shares the exact CLI
+  // validator/revision transaction and never routes this file through the broad project save.
+  if (req.method === "GET" && pathname === "/api/distribution/read") {
+    try {
+      return jsonResp(res, 200, sanitizeMechanicsResponse(readDistributionConfigV1(PROJECT_DIR)));
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status, failure.response);
+    }
+  }
+
+  if (req.method === "POST" && ["/api/distribution/preview", "/api/distribution/apply"].includes(pathname)) {
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { code: "malformed_request", error: "Invalid JSON body" }); }
+    const applying = pathname.endsWith("/apply");
+    const allowed = applying ? new Set(["distribution", "ifRevision"]) : new Set(["distribution"]);
+    if (!body || typeof body !== "object" || Array.isArray(body)
+      || Object.keys(body).some(key => !allowed.has(key))
+      || !Object.hasOwn(body, "distribution")) {
+      return jsonResp(res, 400, { code: "invalid_request", error: "Distribution request contains unsupported fields." });
+    }
+    if (applying && (typeof body.ifRevision !== "string" || !body.ifRevision)) {
+      return jsonResp(res, 428, { code: "revision_required", error: "Distribution apply requires ifRevision returned by preview." });
+    }
+    try {
+      const result = applying
+        ? applyDistributionConfigV1(PROJECT_DIR, body.distribution, { ifRevision: body.ifRevision })
+        : previewDistributionConfigV1(PROJECT_DIR, body.distribution);
+      if (applying) writeRunTrace(PROJECT_DIR, { source: "studio", action: "distribution:apply", status: "ok" });
+      return jsonResp(res, 200, {
+        ok: true,
+        ...sanitizeMechanicsResponse(result),
+        ...(applying ? { newHash: projectHash() } : {})
+      });
+    } catch (error) {
+      if (applying) writeRunTrace(PROJECT_DIR, {
+        source: "studio", action: "distribution:apply", status: "error", error: String(error?.code ?? "apply_failed").slice(0, 128)
+      });
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
+    }
+  }
+
+  // This endpoint intentionally stops at provider-target preview. It does not build, stage,
+  // upload, open a socket, or create an approval. External publication remains a separate exact
+  // candidate + explicit human confirmation operation outside the compute-only AI surface.
+  if (req.method === "POST" && pathname === "/api/distribution/publish/preview") {
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { code: "malformed_request", error: "Invalid JSON body" }); }
+    const allowed = new Set(["contentHash", "adapterId", "target"]);
+    if (!body || typeof body !== "object" || Array.isArray(body)
+      || Object.keys(body).some(key => !allowed.has(key))
+      || typeof body.contentHash !== "string"
+      || typeof body.adapterId !== "string"
+      || !body.target || typeof body.target !== "object" || Array.isArray(body.target)) {
+      return jsonResp(res, 400, { code: "invalid_request", error: "Publish preview request is malformed or contains unsupported fields." });
+    }
+    const beforeHash = projectHash();
+    if (body.contentHash !== beforeHash) {
+      return jsonResp(res, 409, { code: "revision_conflict", error: "Project changed on disk. Reload before previewing publish.", serverHash: beforeHash });
+    }
+    try {
+      const result = await previewPublishCandidate({ projectDir: PROJECT_DIR, adapterId: body.adapterId, target: body.target });
+      const afterHash = projectHash();
+      if (afterHash !== beforeHash) {
+        return jsonResp(res, 409, { code: "revision_conflict", error: "Project changed while publish preview was running.", serverHash: afterHash });
+      }
+      return jsonResp(res, 200, sanitizeMechanicsResponse({
+        ...result,
+        canPrepare: body.adapterId === "filesystem_v1",
+        guidance: body.adapterId === "filesystem_v1"
+          ? "The local filesystem adapter can prepare an exact candidate for explicit confirmation."
+          : "This provider is preview-only until a credential-owning host runtime is configured."
+      }));
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/distribution/publish/prepare") {
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { code: "malformed_request", error: "Invalid JSON body" }); }
+    const allowed = new Set(["contentHash", "adapterId", "target", "targetDigest"]);
+    if (!body || typeof body !== "object" || Array.isArray(body)
+      || Object.keys(body).some(key => !allowed.has(key))
+      || typeof body.contentHash !== "string"
+      || body.adapterId !== "filesystem_v1"
+      || !body.target || typeof body.target !== "object" || Array.isArray(body.target)
+      || typeof body.targetDigest !== "string") {
+      return jsonResp(res, 400, { code: "invalid_request", error: "Only a closed filesystem publish preparation request is supported by this Studio runtime." });
+    }
+    const beforeHash = projectHash();
+    if (body.contentHash !== beforeHash) {
+      return jsonResp(res, 409, { code: "revision_conflict", error: "Project changed on disk. Reload before preparing publish.", serverHash: beforeHash });
+    }
+    if (PUBLISH_PREPARATION_IN_FLIGHT) {
+      return jsonResp(res, 409, { code: "publish_prepare_in_progress", error: "A publish candidate is already being prepared." });
+    }
+    PUBLISH_PREPARATION_IN_FLIGHT = true;
+    try {
+      const preview = await previewPublishCandidate({ projectDir: PROJECT_DIR, adapterId: body.adapterId, target: body.target });
+      if (preview.targetDigest !== body.targetDigest) {
+        return jsonResp(res, 409, { code: "target_digest_conflict", error: "Publish target changed since preview." });
+      }
+      const prepared = await preparePublishCandidate({
+        projectDir: PROJECT_DIR,
+        adapterId: body.adapterId,
+        target: body.target,
+        build: buildStudioPublishCandidate
+      });
+      if (projectHash() !== beforeHash) {
+        discardPreparedPublishCandidate(prepared);
+        return jsonResp(res, 409, { code: "revision_conflict", error: "Project changed while the publish candidate was built.", serverHash: projectHash() });
+      }
+      prunePublishCandidates();
+      discardAllStudioPublishCandidates();
+      const candidateHandle = randomBytes(24).toString("base64url");
+      PUBLISH_CANDIDATES.set(candidateHandle, { prepared, expiresAt: Date.now() + PUBLISH_CANDIDATE_TTL_MS });
+      writeRunTrace(PROJECT_DIR, {
+        source: "studio", action: "distribution:publish:prepare", status: "ok",
+        adapterId: prepared.adapterId, candidateDigest: prepared.candidateDigest, targetDigest: prepared.targetDigest
+      });
+      return jsonResp(res, 200, {
+        schemaVersion: 1,
+        candidateHandle,
+        candidateDigest: prepared.candidateDigest,
+        adapterId: prepared.adapterId,
+        targetDigest: prepared.targetDigest,
+        requiresExplicitConfirmation: true,
+        expiresInSeconds: PUBLISH_CANDIDATE_TTL_MS / 1000
+      });
+    } catch (error) {
+      writeRunTrace(PROJECT_DIR, { source: "studio", action: "distribution:publish:prepare", status: "error", adapterId: body.adapterId, error: String(error?.message ?? error).slice(0, 256) });
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
+    } finally {
+      PUBLISH_PREPARATION_IN_FLIGHT = false;
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/distribution/publish/confirm") {
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { code: "malformed_request", error: "Invalid JSON body" }); }
+    const allowed = new Set(["candidateHandle", "candidateDigest", "adapterId", "targetDigest", "requiresExplicitConfirmation"]);
+    if (!body || typeof body !== "object" || Array.isArray(body)
+      || Object.keys(body).some(key => !allowed.has(key))
+      || typeof body.candidateHandle !== "string"
+      || typeof body.candidateDigest !== "string"
+      || body.adapterId !== "filesystem_v1"
+      || typeof body.targetDigest !== "string"
+      || body.requiresExplicitConfirmation !== true) {
+      return jsonResp(res, 400, { code: "invalid_request", error: "Publish confirmation is malformed or contains unsupported fields." });
+    }
+    prunePublishCandidates();
+    const entry = PUBLISH_CANDIDATES.get(body.candidateHandle);
+    if (!entry) return jsonResp(res, 410, { code: "candidate_expired", error: "Publish candidate is missing, expired, or already used." });
+    PUBLISH_CANDIDATES.delete(body.candidateHandle);
+    try {
+      const prepared = entry.prepared;
+      if (prepared.candidateDigest !== body.candidateDigest
+        || prepared.adapterId !== body.adapterId
+        || prepared.targetDigest !== body.targetDigest) {
+        return jsonResp(res, 409, { code: "candidate_digest_conflict", error: "Publish confirmation does not match the prepared candidate." });
+      }
+      const approval = mintPublishApproval({
+        confirmed: true,
+        candidateDigest: body.candidateDigest,
+        adapterId: body.adapterId,
+        targetDigest: body.targetDigest
+      });
+      const result = await publishPreparedCandidate({ prepared, approval });
+      writeRunTrace(PROJECT_DIR, {
+        source: "studio", action: "distribution:publish:confirm", status: "ok",
+        adapterId: result.adapterId, candidateDigest: result.candidateDigest
+      });
+      return jsonResp(res, 200, result);
+    } catch (error) {
+      writeRunTrace(PROJECT_DIR, { source: "studio", action: "distribution:publish:confirm", status: "error", adapterId: body.adapterId, error: String(error?.message ?? error).slice(0, 256) });
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
+    } finally {
+      discardPreparedPublishCandidate(entry.prepared);
     }
   }
 
@@ -1978,6 +2236,14 @@ const server = http.createServer(async (req, res) => {
 
   // ── GET /api/balance ───────────────────────────────────────────────────────
   if (req.method === "GET" && pathname === "/api/balance") {
+    const ifRevision = url.searchParams.get("ifRevision");
+    if (ifRevision !== null && !/^[0-9a-f]{20}$/.test(ifRevision)) {
+      return jsonResp(res, 400, { code: "invalid_revision", error: "ifRevision must be a project content hash." });
+    }
+    const currentRevision = projectHash();
+    if (ifRevision && currentRevision !== ifRevision) {
+      return jsonResp(res, 200, { stale: true, contentHash: currentRevision });
+    }
     try {
       const missionId = url.searchParams.get("mission");
       const seconds = Number(url.searchParams.get("seconds"));
@@ -1985,9 +2251,17 @@ const server = http.createServer(async (req, res) => {
         missionIds: missionId ? [missionId] : [],
         simSeconds: Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 1800) : undefined
       });
+      const completedRevision = projectHash();
+      if (ifRevision && completedRevision !== ifRevision) {
+        return jsonResp(res, 200, { stale: true, contentHash: completedRevision });
+      }
       writeRunTrace(PROJECT_DIR, { source: "studio", action: "balance", status: "ok", missions: report.summary.missions, flagged: report.summary.flagged });
       return jsonResp(res, 200, report);
     } catch (e) {
+      const failedRevision = projectHash();
+      if (ifRevision && failedRevision !== ifRevision) {
+        return jsonResp(res, 200, { stale: true, contentHash: failedRevision });
+      }
       writeRunTrace(PROJECT_DIR, { source: "studio", action: "balance", status: "error", error: e.message });
       return jsonResp(res, 500, { error: e.message });
     }
@@ -2307,6 +2581,7 @@ server.listen(PORT, "127.0.0.1", () => {
 for (const signal of ["SIGTERM", "SIGINT"]) {
   process.once(signal, () => {
     agentRuntime.close();
+    discardAllStudioPublishCandidates();
     const forceExit = setTimeout(() => process.exit(0), 1_000);
     server.close(() => {
       clearTimeout(forceExit);

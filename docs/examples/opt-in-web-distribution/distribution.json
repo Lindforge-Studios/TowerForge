@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "projectId": "tfp_0123456789abcdef0123456789abcdef",
+  "license": {
+    "spdxId": "CC-BY-4.0",
+    "attribution": "TowerForge example author"
+  },
+  "remix": {
+    "policy": "allowed_with_attribution",
+    "includeSource": true
+  },
+  "monetization": {
+    "schemaVersion": 1,
+    "placements": [
+      {
+        "id": "support_link",
+        "kind": "purchase_link",
+        "surface": "menu"
+      }
+    ]
+  }
+}

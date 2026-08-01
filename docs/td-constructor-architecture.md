@@ -35,6 +35,9 @@ The current "full constructor" means:
 - Build deterministic local/self-hosted co-op or asymmetric protocol clients when a mission opts in.
 - Use AI Chat or external MCP agents to inspect, simulate, validate, patch, build, and package local projects through validation-gated tools.
 - Build a playable static web bundle.
+- Prepare a deterministic publish candidate, choose a remix/license policy, and explicitly publish
+  through an injected provider adapter without storing provider credentials in the project.
+- Export or import a permitted deterministic public remix source pack with preserved provenance.
 - Export Capacitor mobile and Tauri desktop scaffolds around the built web bundle.
 - Install TowerForge Studio itself as a native desktop app for Windows, macOS, and Linux.
 - Preview and interact with the built game in a browser.
@@ -43,9 +46,9 @@ The current "full constructor" means:
 Non-goals for this iteration:
 
 - Full Tiled-style layer authoring UI.
-- Cloud publishing or hosted gallery/remix services.
+- TowerForge-hosted publishing, gallery/remix discovery, accounts, moderation, or managed creator payouts.
 - Hosted multiplayer services, accounts, cloud saves, matchmaking, managed relays, or analytics.
-- Store submission, signing automation, and upload/publish automation.
+- Store submission, signing automation, or background publication without exact user confirmation.
 
 ## Package Architecture
 
@@ -56,7 +59,12 @@ packages/engine
 
 packages/cli
   project loading, schema normalization, migrations, map compilation,
-  engine compilation, validate/sim/build/create, project packs, packaging
+  engine compilation, validate/sim/build/create, project packs, packaging,
+  private publish staging, provider adapters, and public remix source-pack orchestration
+
+packages/distribution
+  closed Distribution/Publish/Remix/host-placement data contracts and canonical digests;
+  no gameplay, project filesystem, provider credentials, or upload client
 
 packages/studio
   local Node server and browser editor UI
@@ -90,6 +98,7 @@ my-game.tdproj/
   content/
     balance.json
     mechanics.json (optional)
+    distribution.json (optional)
     world-map.json
     visuals.json
     story-comics.json
@@ -113,6 +122,12 @@ uncommitted generated assets are not gameplay content, are ignored by the engine
 from builds, players, project packs, and `.tdpack` output.
 
 `content/mechanics.json` is an opt-in versioned catalog. A mission selects named module profiles through `mission.mechanics.profiles`; no file or selection means the established constructor behavior. Authored mechanics require project schema v3, while ordinary starter and legacy projects remain schema v2 and MUST NOT receive a synthesized catalog during read/save/build/package.
+
+`content/distribution.json` is a separate opt-in constructor policy, not gameplay content. Its first
+explicit guarded save promotes the project manifest to schema v4. Existing mechanics/elevation
+authoring keeps its v3 boundary and MUST NOT cause that promotion. Loading, validating, building or
+packaging a v1-v3 project does not synthesize Distribution state, provider code, Remix UI or host
+placements.
 
 ## Content Model
 
@@ -237,6 +252,38 @@ projection; they never derive prices, eligibility, interest or combat effects. T
 `mission.economy.interestRate`, `PlayerProfileV3`, project v3, outer checkpoint and simulation
 versions remain unchanged. See [ADR 0056](adr/0056-r15-deterministic-macro-economy.md) and
 `docs/examples/opt-in-macro-economy/`.
+
+R17 adds a constructor-only distribution boundary. Closed `DistributionConfigV1` stores a stable
+`tfp_...` project identity, allowlisted SPDX license and attribution, `forbidden | allowed |
+allowed_with_attribution` Remix policy, optional `MonetizationHookV1`, and optional inherited
+`RemixProvenanceV1`. It lives in optional `content/distribution.json`; its first guarded save uses
+preview, exact revision, project validation, backup and rollback and promotes only the project
+manifest to schema v4. It does not create a mechanics capability, simulation state, checkpoint,
+journal, profile or campaign field.
+
+`PublishManifestV1` is deterministic and contains only canonical engine/content/bundle/source-pack
+digests, a binary-sorted capability list, project identity, license and Remix policy. It deliberately
+omits timestamps, deployment URLs, provider metadata, credentials and user-local paths. CLI
+orchestration enforces `preview -> reproducible build in private .towerforge staging -> exact explicit
+confirmation -> provider upload -> remote digest verification`. The short-lived single-use approval
+is bound to the candidate, adapter and target. Filesystem/self-host, GitHub Pages and
+Cloudflare-compatible v1 adapters own no credentials; the injected provider runtime supplies them.
+
+Public remix source `.tdpack` v2 is separate from the ordinary project-pack v1 contract. Export is
+available only when the authored license/policy permits source inclusion. Entries are canonical,
+checksummed, bounded and limited to public project roots; `.towerforge`, hidden caches, symlinks,
+deployment metadata and tokens are excluded. Import validates archive, paths, checksums, manifest,
+license and policy before extraction, creates a new project ID, and writes parent manifest/source-pack
+digests plus attribution as `RemixProvenanceV1`. Failed validation leaves no partial project.
+
+`MonetizationHookV1` describes at most 16 host-injected `banner | interstitial | purchase_link`
+placements on allowlisted surfaces. The host decides how to render or resolve them; no URL, key,
+script, telemetry, rewarded gameplay effect, real-money balance or engine import is allowed. Studio
+owns the Distribution Hub and explicit confirmation UI. MCP exposes local config discovery/read/
+preview/guarded apply, compute-only publish preview and confined source-pack inspection, but no
+approval minting, upload or socket tool. Generated players receive host placement placeholders only
+when the authored Distribution config uses them; the absent path remains distribution-free. See
+[ADR 0058](adr/0058-r17-web-publish-remix.md).
 
 `content/world-map.json` owns campaign regions and mission nodes.
 
@@ -515,7 +562,7 @@ Studio writes action traces for save, sim, build, map compile, and asset import 
 
 ## Roadmap
 
-The staged R0–R17 program, TDD roles, forbidden increment combinations, compatibility baseline, and delivery status live in [ROADMAP.md](ROADMAP.md). Accepted R0–R8 establish opt-in mechanics, the common damage/modifier boundary, deterministic checkpoints/journals/profile state, navigation/elevation/terraforming, roguelite runs, heroes/logistics, TowerScript DX 2.0, generative authoring, and local multiplayer. Accepted R9 adds script-local TowerScript v7 Behavior Tree/HFSM controllers plus v2 Graph/Trace/Debugger surfaces. Accepted R10 adds compute-only Persona QA and mission-selected procedural quests. Accepted R11 independently layers deterministic JSON particle/audio/camera presentation over the authoritative event surface without changing gameplay state. Accepted R12 adds targetable boss components, schema-v7 component-driven phases, bounded formation steering and vanguard shield interception. Accepted R13 adds deterministic projectiles, arc clearance, bounded ricochet, transactional destructibles and independent seeded Weather. R14 adds CampaignRunV2, opt-in modular tower assembly and atomic gem crafting. R15 adds the opt-in deterministic local market, deposits and rituals. R16.1–R16.4 are implementation-complete behind isolated Replay Lab/relay boundaries and await full gates plus two independent sign-offs; R17 remains planned.
+The staged R0–R17 program, TDD roles, forbidden increment combinations, compatibility baseline, and delivery status live in [ROADMAP.md](ROADMAP.md). Accepted R0–R8 establish opt-in mechanics, the common damage/modifier boundary, deterministic checkpoints/journals/profile state, navigation/elevation/terraforming, roguelite runs, heroes/logistics, TowerScript DX 2.0, generative authoring, and local multiplayer. Accepted R9 adds script-local TowerScript v7 Behavior Tree/HFSM controllers plus v2 Graph/Trace/Debugger surfaces. Accepted R10 adds compute-only Persona QA and mission-selected procedural quests. Accepted R11 independently layers deterministic JSON particle/audio/camera presentation over the authoritative event surface without changing gameplay state. Accepted R12 adds targetable boss components, schema-v7 component-driven phases, bounded formation steering and vanguard shield interception. Accepted R13 adds deterministic projectiles, arc clearance, bounded ricochet, transactional destructibles and independent seeded Weather. R14 adds CampaignRunV2, opt-in modular tower assembly and atomic gem crafting. R15 adds the opt-in deterministic local market, deposits and rituals. Accepted R16 adds isolated Replay Lab and reference-relay boundaries. Accepted R17 adds opt-in Distribution v1, reproducible publish manifests, explicit-confirm provider adapters, deterministic Remix source packs and host-only monetization after full exact-tree gates and both independent sign-offs.
 
 Accepted C3A adds engine-only persistent elevation. `set_elevation` and `restore_elevation` require both an active elevation v1–v3 profile and the active terraforming profile's elevation policy; authored elevation remains the immutable restore base. Terrain/elevation operations may share a cell and commit atomically in declared event order. Each layer is bounded to 512 runtime overrides and the combined ceiling is 1,024. A pure-elevation batch performs no navigation resolver creation, read, or adoption, while `GridMap.elevationAt`, `snapshot.elevation`, LoS, and high-ground immediately use the effective value; reset discards the runtime layer. A committed change emits the real TowerScript-dispatched `elevationChanged` event, and a no-op emits nothing.
 

@@ -1971,3 +1971,231 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   regressions and no P0–P2 findings. Independent Constructor Integration Verifier sign-off: PASS,
   with 18/18 focused contracts, 2/2 browser scenarios, 30/30 package compatibility checks and no
   P0–P3 findings. R16 is complete pending its separate PR merge.
+
+## 2026-08-01 — R17.1 Distribution config and reproducible publish candidate RED
+
+- Contract freeze introduces the browser-safe, data-only `@towerforge/distribution` package. Its
+  public entrypoint exports `DISTRIBUTION_SCHEMA_VERSION`, `DISTRIBUTION_LIMITS`,
+  `validateDistributionConfigV1`, `normalizeDistributionConfigV1`, `buildPublishManifestV1`,
+  `verifyPublishManifestV1` and `computePublishCandidateDigestV1`. The package has no filesystem,
+  DOM, provider, credential or engine dependency.
+- Authoring `content/distribution.json` opts a project into schema v4. Absent projects v1-v3 remain
+  valid and expose neither a synthesized distribution config nor an authored flag. Config v1 fixes
+  a `tfp_` plus 32-lowercase-hex project ID, an allowlisted license, explicit remix policy and a
+  bounded optional monetization/provenance contract.
+- `PublishManifestV1` contains exactly schema/format/projectId, engine/content/bundle digests,
+  sorted capabilities, license, remix policy and optional source-pack digest. Equivalent input
+  order must produce byte-identical JSON and the same SHA-256 candidate digest; clocks, credentials,
+  URLs and user-local paths are not fields.
+- Pure contract RED command:
+  `npx vitest run packages/distribution/src/distribution-config.contract.test.mjs packages/distribution/src/publish-manifest.contract.test.mjs --reporter verbose`.
+  Result: two suites failed at collection because `packages/distribution/src/index.mjs` does not
+  exist. This is the expected pre-production failure for all seven frozen exports.
+- Project-loader RED command:
+  `npx vitest run packages/cli/lib/r17-distribution-project-schema.contract.test.mjs --reporter verbose`.
+  Result: 4/4 expected failures: current project schema is 3, authored distribution is ignored,
+  the optional file is not loaded, and malformed/future distribution has no validation surface.
+  No R17 production code was added in this slice.
+
+## 2026-08-01 — R17.2 provider confirmation/adapters RED
+
+- The Node-side entrypoint `packages/cli/lib/distribution/index.mjs` must export
+  `previewPublishCandidate`, `preparePublishCandidate`, `mintPublishApproval` and
+  `publishPreparedCandidate`. Supported adapter IDs are `filesystem_v1`, `github_pages_v1` and
+  `cloudflare_pages_v1`.
+- Preview is compute/read-only and never invokes the reproducible build or adapter runtime. Prepare
+  writes only private staging. Approval is minted only from `confirmed: true` and binds the exact
+  candidate digest, adapter ID and canonical target digest. Publish rejects missing or mismatched
+  approval before invoking the provider, keeps credentials runtime-only, verifies the remote result
+  and never mutates the source project, including on upload failure.
+- Provider RED command:
+  `npx vitest run packages/cli/lib/distribution/provider-adapters.contract.test.mjs --reporter verbose`.
+  Result: the suite failed at collection because the frozen Node entrypoint does not exist.
+- Static MCP safety RED is included in
+  `packages/mcp/r17-publish-safety.contract.test.mjs`: agents may inspect/preview a candidate, but
+  there is no upload/deploy tool and MCP cannot call approval minting or final publication.
+  No R17 production code was added in this slice.
+
+## 2026-08-01 — R17.3 deterministic remix source pack RED
+
+- Pure `validateRemixProvenanceV1` accepts only parent project ID, manifest/source-pack SHA-256,
+  attribution and `{kind:"published_tdpack"}`. Paths, URLs, deployment metadata, accessors, cycles
+  and future versions fail closed.
+- Node `exportRemixSourcePackV2`, `inspectRemixSourcePackV2` and `importRemixSourcePackV2` retain the
+  `.tdpack` format at version 2. Export is byte-reproducible and allowed only by license/remix/source
+  policy. It excludes `.towerforge`, root deployment/env material and cache trees. Import creates a
+  caller-supplied new valid project ID and records `RemixProvenanceV1`; malformed packs roll back
+  without a destination.
+- RED command:
+  `npx vitest run packages/distribution/src/remix-provenance.contract.test.mjs packages/cli/lib/distribution/remix-pack.contract.test.mjs --reporter verbose`.
+  Result: two suites failed at collection because the pure validator and remix-pack v2 entrypoint
+  do not exist. No R17 production code was added in this slice.
+
+## 2026-08-01 — R17.4 host-only monetization and constructor isolation RED
+
+- `validateMonetizationHookV1` permits at most 16 closed placements with kind
+  `banner | interstitial | purchase_link` and surface `top | bottom | menu | between_waves`.
+  Rewarded gameplay effects, payment material, embedded URLs, telemetry and arbitrary code are
+  outside v1 and rejected rather than passed through.
+- The static constructor contract requires a separate Distribution Hub, digest-visible preview and
+  explicit confirmation, compute-only MCP discovery, and host-player injection. The engine remains
+  free of Distribution, PublishManifest, RemixProvenance and MonetizationHook imports.
+- RED command:
+  `npx vitest run packages/distribution/src/monetization.contract.test.mjs packages/mcp/r17-publish-safety.contract.test.mjs packages/studio/r17-distribution-surface.contract.test.mjs --reporter verbose`.
+  Result: the monetization suite failed at collection, and 4/4 executable static tests failed on
+  the missing MCP descriptors, Distribution Hub and host-player hook. The negative engine/MCP
+  isolation assertions remained controls. No R17 production code was added in this slice.
+
+## 2026-08-01 — R17 constructor/package acceptance RED
+
+- Added a bounded Studio browser scenario for the optional Distribution Hub: absent file, edit,
+  compute-only preview, guarded enable/save, reload, disable and re-enable. The authoring candidate
+  fixes project schema v4, license/attribution, remix source policy and one host-only placement.
+  External provider upload and desktop ACL are deliberately outside this browser slice.
+- Added an MCP acceptance contract for
+  `describe_schema(distribution) → read_distribution_config → preview_distribution_config →
+  apply_distribution_config(ifRevision) → validate_project`, including stale-revision rejection,
+  backup/rollback metadata and clean disable. `preview_publish_candidate` remains compute-only;
+  upload/deploy/approval-minting tools are forbidden.
+- Added a package matrix for Canvas/Phaser × hex/square. Active, licensed builds must contain the
+  published relative `source.tdpack`, a Remix affordance and inert host placement descriptors.
+  Untouched starter output must contain none of the R17 runtime/manifest/provenance markers. Both
+  active and legacy scans reject provider secrets, user-local absolute paths, rewarded gameplay,
+  payment keys and hidden telemetry.
+- Static/MCP RED command:
+  `npx vitest run packages/mcp/r17-distribution-authoring.contract.test.mjs packages/studio/r17-distribution-surface.contract.test.mjs --reporter=dot`.
+  Result during the foundation handoff: 5/5 expected failures. Distribution authoring tools were
+  absent, and the partial Studio shell lacked the complete attribution/source/lifecycle controls,
+  MCP preview descriptors and host-player injection. One describe call reached the default timeout;
+  the test now has an explicit 30-second bound.
+- Package RED command:
+  `npx vitest run packages/cli/build.r17-distribution-package.contract.test.mjs --reporter=dot --maxWorkers=1`.
+  Result: active hex/Canvas failed on the first missing Remix marker; the untouched legacy carrier
+  control passed and contained no R17 source pack or runtime markers.
+- Browser command:
+  `npx playwright test tests/e2e/r17-distribution-studio.spec.mjs --reporter=line`.
+  The sandboxed attempt failed only because loopback listen was denied. The approved loopback rerun
+  passed 1/1 after concurrent GREEN Studio work landed in the shared tree, covering the complete
+  enable/edit/preview/save/reload/disable/re-enable lifecycle. No production file was edited by the
+  Contract/Test Designer in this acceptance wave.
+
+## 2026-08-01 — R17 verifier-led repair waves and integration GREEN
+
+- Browser-boundary RED caught `node:crypto`/`Buffer` in the new pure distribution package. The
+  package now uses browser-safe UTF-8 and synchronous SHA-256 helpers; Node/filesystem/provider work
+  remains in the CLI layer. The focused contract and compatibility set passed 117/117 after the
+  version-domain split kept mechanics/elevation authoring on v3 while Distribution promotes to v4.
+- Provider-integrity REDs proved that a declared bundle digest could differ from staged bytes, a
+  filesystem copy was not independently hashed, and an approval could be retried after an upload
+  failure. Prepare now requires the canonical staged digest, filesystem publication verifies the
+  copied tree and rolls back on mismatch, and approvals are consumed before every upload attempt.
+  Provider contracts passed 8/8; the full R17 pure/CLI focused set passed 41/41.
+- Remix REDs caught an implicit engine compilation at export time and retained parent project name
+  on import. Export now uses the complete already-built validator without hidden compilation, the
+  byte-identical scenario completes in about 1.3 seconds, and import writes both a new bounded name
+  and a new project ID while retaining parent identity only in immutable provenance.
+- Central Studio acceptance reproduced four integration defects after the initial handoff: the
+  saved config button remained disabled, publish prepare supplied a short content hash instead of a
+  SHA-256 digest, verified status was erased by rerender, and disable/re-enable lost its in-memory
+  draft. The same browser contract was extended through real `filesystem_v1` prepare, explicit
+  confirmation, verified output and rollback-safe re-enable; it now passes 1/1.
+- Plugin smoke RED proved the generated runtime omitted `packages/distribution`. The mirror builder
+  now copies the source package and a parity regression checks it. Plugin build/validate/smoke are
+  GREEN.
+- Frozen-tree evidence before independent sign-off: typecheck and engine build passed; focused R17
+  contracts passed 59/59; full Vitest passed 3,850/3,850 in 388 files; full Playwright passed
+  147/147. Validation, 60-unit starter simulation, balance, map compilation, web build, mobile and
+  desktop scaffold packages, and Cargo 9/9 also passed. Any further source change invalidates this
+  freeze and requires repeat gates and both verifier sign-offs.
+
+## 2026-08-01 — R17 independent-review regressions and final gate freeze
+
+- The first independent Code Verifier review rejected the candidate for root-symlink escape,
+  staged-bundle mutation, incomplete provider verification, manifest/source-pack digest drift,
+  incompatible ARR remix policy, unbounded tree hashing and incomplete staging cleanup. Each defect
+  received a focused failing regression before repair. The final Node boundary now resolves and
+  confines real paths, rejects special/oversized trees, re-hashes immediately before upload,
+  consumes one-shot approval before crossing the provider boundary, verifies every remote file,
+  preserves GitHub trees outside the deployment prefix, and deletes stale files inside it.
+- The first Constructor Integration Verifier review proved that a global text scrub could corrupt
+  legitimate authored public strings in generated HTML/JS/JSON. The scrub was removed and the
+  package contract now asserts semantic preservation while continuing to reject secrets and local
+  paths at the actual typed input boundary.
+- The full browser run then exposed a Distribution form race: disk persistence became visible before
+  the post-save reload completed, allowing a second edit to be overwritten. The same E2E scenario
+  was the RED regression. Distribution writes now hold an explicit busy boundary through guarded
+  apply and reload; a two-worker five-repeat stress run passed 5/5.
+- The Studio publish path also exposed three locale-dependent tree-digest implementations. Build,
+  Studio and publish orchestration now share one bounded, binary-stable
+  `computePublishTreeDigestV1`; the complete prepare/confirm/filesystem verification scenario is
+  GREEN.
+- Final pre-sign-off evidence on this tree: typecheck, engine build, validate, starter simulation,
+  balance, map compilation and web build passed; focused R17 contracts passed 73/73; full Vitest
+  passed 3,868/3,868 in 389 files; full Playwright passed 147/147; plugin build/validate/smoke,
+  mobile and desktop scaffold packages, and Cargo 9/9 passed. The tree is now frozen for the two
+  independent repeat reviews.
+
+## 2026-08-01 — R17 second verifier RED/GREEN integrity wave
+
+- Code Verifier supplied an end-to-end chosen-boundary collision: `a = "Xb\\0Y"` and
+  `a = "X", b = "Y"` produced the same unframed tree digest and allowed staged substitution.
+  The exact scenario failed before production repair. Publish tree v1 now uses a format-domain
+  prefix and per-file type/path-length/path/content-length/content-SHA-256 frames plus a terminal
+  file count; Build, Studio and providers continue to share that one implementation.
+- A realistic GitHub recursive-tree RED included structural `tree` entries for the deploy prefix and
+  a nested asset. Upload incorrectly scheduled directory deletion and verify counted directories as
+  stale files. GitHub upload now deletes stale non-tree leaves only; verification ignores structural
+  tree nodes while still rejecting every unexpected blob/submodule leaf.
+- Abandoned-candidate RED showed that expiry removed no CLI registry entry. Prepared candidates now
+  carry TTL plus realpath/device/inode identities, registries have hard count limits, expired or
+  missing candidates are pruned with staging cleanup, root symlink/special/replacement identities
+  fail closed, and approvals are bounded and consumed on invalid candidate use.
+- Constructor Integration Verifier supplied a double-Prepare RED. The browser now holds a busy
+  single-flight boundary across publish preview/prepare/confirm, the server rejects concurrent
+  preparation, replaces any previous prepared handle only after a successful new build, calls the
+  canonical discard API on expiry/conflict/confirm, and discards every candidate during shutdown.
+  The browser regression asserts exactly one staging directory after a synthetic double click and
+  zero after confirmed publication.
+- Focused repair evidence: provider/registry/Studio contracts passed 27/27 and the complete browser
+  publish lifecycle passed 1/1. Because production changed, the prior full-gate evidence and both
+  sign-offs are invalidated; a fresh exact-tree gate and independent review follow this entry.
+- Fresh exact-tree gate evidence after the second repair: focused R17 passed 76/76; full Vitest
+  passed 3,871/3,871 in 389 files; full Playwright passed 147/147. Typecheck, engine build,
+  validation, 60-unit simulation, balance, map compilation, web build, plugin build/validate/smoke,
+  mobile and desktop scaffold packaging, and Cargo 9/9 all passed. No production changes are
+  permitted before both repeat reviewers report on this frozen tree.
+
+## 2026-08-01 — R17 bounded concurrent preparation RED/GREEN
+
+- The third Code Verifier audit demonstrated that 33 gated asynchronous prepare calls all passed a
+  32-candidate limit because the registry slot was created only after build completion. The exact
+  33-call scenario was committed as RED: 33 fulfilled, zero rejected.
+- `preparePublishCandidate` now reserves an in-flight slot synchronously before its first `await`,
+  admits work only while `PREPARED.size + PREPARED_IN_FLIGHT < 32`, and releases the reservation in
+  `finally` on success or failure. The regression is GREEN with exactly 32 admitted candidates, one
+  rejected call and zero staging directories after canonical discard.
+- Final exact-tree evidence after this last production change: focused R17 passed 77/77; full
+  Vitest passed 3,872/3,872 in 389 files; full Playwright passed 147/147. Typecheck, engine build,
+  validation, 60-unit simulation, balance, map compilation, web build, plugin build/validate/smoke,
+  mobile and desktop scaffold packaging, and Cargo 9/9 all passed. This is the final tree submitted
+  for both independent sign-offs.
+- Final independent reviews on that exact runtime tree: Code Verifier PASS and Constructor
+  Integration Verifier PASS, with no P0–P3 findings. ADR 0058 is Accepted and R17 is complete;
+  subsequent changes in this branch are documentation-only acceptance status and the isolated
+  opt-in reference snippets under `docs/examples/opt-in-web-distribution/`.
+
+## 2026-08-01 — R17 CI passive-balance race RED/GREEN
+
+- The first PR CI run exposed an old Studio race after 146/147 browser scenarios passed: a passive
+  balance request retained the pre-edit content revision while an external editor replaced project
+  bytes, and the delayed endpoint surfaced the stale sweep as HTTP 500. The focused RED proved that
+  `/api/balance` ignored an explicit stale `ifRevision` and ran a complete report.
+- Passive balance requests now carry the exact project content hash. The server rejects malformed
+  revisions, returns an inert HTTP 200 `stale` response before or after a concurrent edit, and keeps
+  HTTP 500 for genuine failures on an unchanged revision. Studio discards the inert response rather
+  than committing a stale report.
+- The focused API regression and the original campaign lifecycle are GREEN. Fresh exact-tree gates
+  passed: typecheck, engine build, Vitest 3,873/3,873, Playwright 147/147, validation, starter
+  simulation, balance, map compilation, web build, plugin build/validate/smoke, mobile and desktop
+  scaffold packaging, and Cargo 9/9. This source change invalidates the previous sign-offs and is
+  frozen for two independent repeat reviews before merge.

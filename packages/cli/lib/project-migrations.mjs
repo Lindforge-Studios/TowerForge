@@ -289,7 +289,8 @@ export function writeMigratedProjectFiles(projectDir, files) {
     ["content/balance.json", files.balance],
     ["maps/compiled/maps.json", files.maps],
     ["build-targets.json", files.buildTargets],
-    ...(files.mechanics === undefined ? [] : [["content/mechanics.json", files.mechanics]])
+    ...(files.mechanics === undefined ? [] : [["content/mechanics.json", files.mechanics]]),
+    ...(files.distribution === undefined ? [] : [["content/distribution.json", files.distribution]])
   ];
   for (const [relPath, data] of writes) {
     const filePath = path.join(projectDir, relPath);

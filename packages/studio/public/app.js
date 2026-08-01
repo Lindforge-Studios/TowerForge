@@ -54,7 +54,7 @@ const STUDIO_TABS = [
   ["home", "Home"], ["waves", "Waves"], ["enemies", "Enemies"], ["towers", "Towers"],
   ["missions", "Missions"], ["worldmap", "World Map"], ["maps", "Maps"],
   ["playtest", "Playtest"], ["balance", "Balance"],
-  ["mechanics", "Mechanics"], ["replaylab", "Replay Lab"], ["scripts", "Scripts"], ["assets", "Assets"], ["settings", "Settings"], ["buildtargets", "Build Targets"]
+  ["mechanics", "Mechanics"], ["replaylab", "Replay Lab"], ["distribution", "Distribution"], ["scripts", "Scripts"], ["assets", "Assets"], ["settings", "Settings"], ["buildtargets", "Build Targets"]
 ];
 
 const APP_INFO = {
@@ -90,6 +90,20 @@ const ReplayLabUI = {
   ghost: null,
   frame: null,
   branch: null,
+  error: null
+};
+
+const DistributionUI = {
+  loaded: false,
+  loading: false,
+  busy: false,
+  revision: null,
+  distribution: null,
+  disabledDraft: null,
+  preview: null,
+  publishPreview: null,
+  preparedCandidate: null,
+  publishResult: null,
   error: null
 };
 
@@ -505,7 +519,8 @@ function schedulePassiveBalance(delay = 1200) {
   passiveBalanceTimer = setTimeout(async () => {
     passiveBalanceTimer = null;
     try {
-      const report = await apiGet("/api/balance");
+      const report = await apiGet(`/api/balance?ifRevision=${encodeURIComponent(revision)}`);
+      if (report?.stale === true) return;
       if (requestSerial !== balanceRequestSerial || S.dirty || S.contentHash !== revision) return;
       S.balanceReport = report;
       S.balanceReportRevision = revision;
@@ -598,6 +613,14 @@ async function load() {
     ReplayLabUI.frame = null;
     ReplayLabUI.branch = null;
     ReplayLabUI.error = null;
+    DistributionUI.loaded = false;
+    DistributionUI.loading = false;
+    DistributionUI.revision = null;
+    DistributionUI.distribution = null;
+    DistributionUI.preview = null;
+    DistributionUI.publishPreview = null;
+    DistributionUI.preparedCandidate = null;
+    DistributionUI.error = null;
     markDirty(false);
     historyInit();
     PT.dirty = true; // force playtest to rebuild from the freshly loaded project
@@ -716,6 +739,7 @@ function renderActiveTab() {
   else if (t === "balance") renderBalanceTab();
   else if (t === "mechanics") renderMechanicsHub();
   else if (t === "replaylab") renderReplayLab();
+  else if (t === "distribution") renderDistributionHub();
   else if (t === "scripts") renderScriptsTab();
   else if (t === "assets") renderAssetsTab();
   else if (t === "settings") renderSettingsTab();
@@ -6522,6 +6546,300 @@ $("btn-replay-lab-fork")?.addEventListener("click", () => {
     ReplayLabUI.error = String(error?.message ?? error);
     renderReplayLab();
   });
+});
+
+function createDistributionProjectId() {
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  return `tfp_${[...bytes].map(value => value.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function distributionConfigFromForm() {
+  const placements = JSON.parse($("distribution-monetization-placements")?.value || "[]");
+  if (!Array.isArray(placements)) throw new Error("Monetization placements must be a JSON array.");
+  const attribution = $("distribution-license-attribution")?.value.trim() ?? "";
+  const distribution = {
+    schemaVersion: 1,
+    projectId: $("distribution-project-id")?.value.trim() || createDistributionProjectId(),
+    license: {
+      spdxId: $("distribution-license")?.value ?? "ARR",
+      attribution
+    },
+    remix: {
+      policy: $("distribution-remix-policy")?.value ?? "forbidden",
+      includeSource: $("distribution-remix-source")?.checked === true
+    },
+    ...(placements.length > 0 ? { monetization: { schemaVersion: 1, placements } } : {}),
+    ...(DistributionUI.distribution?.remixProvenance
+      ? { remixProvenance: structuredClone(DistributionUI.distribution.remixProvenance) }
+      : {})
+  };
+  return distribution;
+}
+
+function populateDistributionForm(distribution) {
+  const current = distribution ?? {
+    projectId: createDistributionProjectId(),
+    license: { spdxId: "ARR", attribution: "" },
+    remix: { policy: "forbidden", includeSource: false }
+  };
+  if ($("distribution-project-id")) $("distribution-project-id").value = current.projectId ?? createDistributionProjectId();
+  if ($("distribution-license")) $("distribution-license").value = current.license?.spdxId ?? "ARR";
+  if ($("distribution-license-attribution")) $("distribution-license-attribution").value = current.license?.attribution ?? "";
+  if ($("distribution-remix-policy")) $("distribution-remix-policy").value = current.remix?.policy ?? "forbidden";
+  if ($("distribution-remix-source")) $("distribution-remix-source").checked = current.remix?.includeSource === true;
+  if ($("distribution-monetization-placements")) {
+    $("distribution-monetization-placements").value = JSON.stringify(current.monetization?.placements ?? [], null, 2);
+  }
+}
+
+async function loadDistributionHub({ force = false } = {}) {
+  if (DistributionUI.loading || (DistributionUI.loaded && !force)) return;
+  DistributionUI.loading = true;
+  DistributionUI.error = null;
+  renderDistributionHub();
+  try {
+    const result = await apiGet("/api/distribution/read");
+    DistributionUI.loaded = true;
+    DistributionUI.revision = result.revision ?? result.ifRevision ?? null;
+    DistributionUI.distribution = result.distribution ?? null;
+    if (DistributionUI.distribution) DistributionUI.disabledDraft = null;
+    DistributionUI.preview = null;
+    DistributionUI.publishPreview = null;
+    DistributionUI.preparedCandidate = null;
+    populateDistributionForm(DistributionUI.distribution ?? DistributionUI.disabledDraft);
+  } catch (error) {
+    DistributionUI.error = error;
+  } finally {
+    DistributionUI.loading = false;
+    renderDistributionHub();
+  }
+}
+
+function renderDistributionHub() {
+  if (!DistributionUI.loaded && !DistributionUI.loading) {
+    void loadDistributionHub();
+    return;
+  }
+  const status = $("distribution-status");
+  if (status) status.textContent = DistributionUI.loading
+    ? "Loading Distribution…"
+    : DistributionUI.error
+      ? "Distribution needs attention"
+      : DistributionUI.distribution
+        ? "Distribution v1 is enabled"
+        : "Opt-in publishing is not configured.";
+  if ($("distribution-revision")) {
+    $("distribution-revision").textContent = DistributionUI.revision
+      ? `Revision ${DistributionUI.revision}`
+      : "Revision pending";
+  }
+  const configResult = $("distribution-preview-result");
+  if (configResult) {
+    configResult.classList.toggle("error", Boolean(DistributionUI.error));
+    configResult.textContent = DistributionUI.error
+      ? String(DistributionUI.error.message ?? DistributionUI.error)
+      : DistributionUI.preview
+        ? JSON.stringify(DistributionUI.preview, null, 2)
+        : DistributionUI.distribution
+          ? "Saved Distribution v1 settings loaded. Preview changes before applying."
+          : "This project remains on the legacy distribution-free path until settings are previewed and saved.";
+  }
+  if ($("distribution-save")) {
+    // Existing opt-in settings may be edited and saved directly: the click handler always
+    // performs a fresh preview before the guarded apply. A draft-only project still needs an
+    // explicit preview/enable step before this control becomes available.
+    $("distribution-save").disabled = DistributionUI.busy || (!DistributionUI.distribution && !DistributionUI.preview);
+  }
+  if ($("distribution-enable")) $("distribution-enable").disabled = DistributionUI.busy || Boolean(DistributionUI.distribution);
+  if ($("distribution-disable")) $("distribution-disable").disabled = DistributionUI.busy || !DistributionUI.distribution;
+  if ($("distribution-config-preview")) $("distribution-config-preview").disabled = DistributionUI.busy;
+  if ($("distribution-publish-preview")) $("distribution-publish-preview").disabled = DistributionUI.busy;
+  if ($("distribution-publish-prepare")) {
+    $("distribution-publish-prepare").disabled = DistributionUI.busy || DistributionUI.publishPreview?.canPrepare !== true;
+    $("distribution-publish-prepare").title = DistributionUI.publishPreview?.canPrepare === true
+      ? "Prepare this exact candidate in local staging."
+      : "Local preparation is available only when a publish runtime is configured.";
+  }
+  if ($("distribution-publish-confirm")) $("distribution-publish-confirm").disabled = DistributionUI.busy || !DistributionUI.preparedCandidate;
+  document.querySelectorAll("#tab-distribution input, #tab-distribution select, #tab-distribution textarea")
+    .forEach(control => { control.disabled = DistributionUI.busy; });
+  const publishResult = $("distribution-publish-result");
+  if (publishResult) publishResult.textContent = DistributionUI.publishResult
+    ? JSON.stringify(DistributionUI.publishResult, null, 2)
+    : DistributionUI.preparedCandidate
+      ? JSON.stringify(DistributionUI.preparedCandidate, null, 2)
+      : DistributionUI.publishPreview
+        ? JSON.stringify(DistributionUI.publishPreview, null, 2)
+        : "Save Distribution settings before publishing.";
+  const confirmation = $("distribution-confirmation");
+  if (confirmation) {
+    const candidateDigest = DistributionUI.preparedCandidate?.candidateDigest;
+    confirmation.classList.toggle("hidden", !candidateDigest);
+    confirmation.textContent = candidateDigest
+      ? `Explicit confirmation required for candidate ${candidateDigest} on ${DistributionUI.preparedCandidate.adapterId ?? "the selected provider"}.`
+      : "";
+  }
+}
+
+async function previewDistributionConfig(distribution = distributionConfigFromForm()) {
+  DistributionUI.error = null;
+  DistributionUI.preview = null;
+  try {
+    DistributionUI.preview = await apiPost("/api/distribution/preview", { distribution });
+    DistributionUI.revision = DistributionUI.preview.revision ?? DistributionUI.preview.ifRevision ?? DistributionUI.revision;
+    recordActivity("Distribution preview", "ok");
+  } catch (error) {
+    DistributionUI.error = error;
+    recordActivity("Distribution preview", "error", error.message);
+  }
+  renderDistributionHub();
+}
+
+async function applyDistributionPreview() {
+  if (!DistributionUI.preview) return;
+  if (DistributionUI.busy) throw new Error("A Distribution update is already in progress.");
+  DistributionUI.busy = true;
+  renderDistributionHub();
+  try {
+    const distribution = DistributionUI.preview.disabled
+      ? null
+      : DistributionUI.preview.candidate?.distribution ?? DistributionUI.preview.distribution ?? distributionConfigFromForm();
+    const ifRevision = DistributionUI.preview.revision ?? DistributionUI.preview.ifRevision ?? DistributionUI.revision;
+    if (!ifRevision) throw new Error("Preview did not return a revision guard.");
+    if (distribution === null && DistributionUI.distribution) {
+      // Preserve a detached session draft so disable → re-enable stays reversible without
+      // persisting disabled distribution rules in the project itself.
+      DistributionUI.disabledDraft = structuredClone(DistributionUI.distribution);
+    }
+    const result = await apiPost("/api/distribution/apply", { distribution, ifRevision });
+    recordActivity("Distribution saved", "ok");
+    toast(result.disabled ? "Distribution disabled." : "Distribution settings saved.", "ok");
+    DistributionUI.loaded = false;
+    await load();
+    if (S.activeTab === "distribution") await loadDistributionHub({ force: true });
+  } finally {
+    DistributionUI.busy = false;
+    renderDistributionHub();
+  }
+}
+
+async function previewPublishCandidate() {
+  if (DistributionUI.busy) return;
+  if (!DistributionUI.distribution) {
+    await previewDistributionConfig();
+    return;
+  }
+  DistributionUI.busy = true;
+  renderDistributionHub();
+  try {
+    const target = JSON.parse($("distribution-target")?.value || "{}");
+    if (!target || typeof target !== "object" || Array.isArray(target)) throw new Error("Publish target must be a JSON object.");
+    const result = await apiPost("/api/distribution/publish/preview", {
+      contentHash: S.contentHash,
+      adapterId: $("distribution-provider")?.value,
+      target
+    });
+    DistributionUI.publishPreview = { ...result, target };
+    DistributionUI.preparedCandidate = null;
+    DistributionUI.publishResult = null;
+    DistributionUI.error = null;
+  } finally {
+    DistributionUI.busy = false;
+    renderDistributionHub();
+  }
+}
+
+async function preparePublishCandidate() {
+  if (DistributionUI.busy) return;
+  const preview = DistributionUI.publishPreview;
+  if (!preview) throw new Error("Preview the publish target first.");
+  DistributionUI.busy = true;
+  renderDistributionHub();
+  try {
+    const result = await apiPost("/api/distribution/publish/prepare", {
+      contentHash: S.contentHash,
+      adapterId: preview.adapterId,
+      target: preview.target,
+      targetDigest: preview.targetDigest
+    });
+    if (!result.requiresExplicitConfirmation || typeof result.candidateDigest !== "string") {
+      throw new Error("Prepared candidate did not request explicit confirmation.");
+    }
+    DistributionUI.preparedCandidate = result;
+    DistributionUI.publishResult = null;
+  } finally {
+    DistributionUI.busy = false;
+    renderDistributionHub();
+  }
+}
+
+async function confirmPreparedPublishCandidate() {
+  if (DistributionUI.busy) return;
+  const candidate = DistributionUI.preparedCandidate;
+  if (!candidate?.requiresExplicitConfirmation || !candidate.candidateDigest) {
+    throw new Error("Prepare an exact publish candidate first.");
+  }
+  const explicit = globalThis.confirm(
+    `Upload candidate ${candidate.candidateDigest} using ${candidate.adapterId}? This may change an external deployment.`
+  );
+  if (!explicit) return;
+  DistributionUI.busy = true;
+  renderDistributionHub();
+  try {
+    const result = await apiPost("/api/distribution/publish/confirm", {
+      candidateHandle: candidate.candidateHandle,
+      candidateDigest: candidate.candidateDigest,
+      adapterId: candidate.adapterId,
+      targetDigest: candidate.targetDigest,
+      requiresExplicitConfirmation: true
+    });
+    DistributionUI.preparedCandidate = null;
+    DistributionUI.publishPreview = null;
+    DistributionUI.publishResult = result;
+    recordActivity("Publish confirmed", "ok", result.remoteUrl ?? candidate.adapterId);
+    toast("Published candidate verified.", "ok");
+  } finally {
+    DistributionUI.busy = false;
+    renderDistributionHub();
+  }
+}
+
+$("distribution-config-preview")?.addEventListener("click", () => {
+  previewDistributionConfig().catch(error => { DistributionUI.error = error; renderDistributionHub(); });
+});
+$("distribution-enable")?.addEventListener("click", () => {
+  (async () => { await previewDistributionConfig(); await applyDistributionPreview(); })()
+    .catch(error => { DistributionUI.error = error; renderDistributionHub(); toast(error.message, "err"); });
+});
+$("distribution-save")?.addEventListener("click", () => {
+  (async () => { await previewDistributionConfig(); await applyDistributionPreview(); })()
+    .catch(error => { DistributionUI.error = error; renderDistributionHub(); toast(error.message, "err"); });
+});
+$("distribution-disable")?.addEventListener("click", () => {
+  (async () => { await previewDistributionConfig(null); await applyDistributionPreview(); })()
+    .catch(error => { DistributionUI.error = error; renderDistributionHub(); toast(error.message, "err"); });
+});
+$("distribution-publish-preview")?.addEventListener("click", () => {
+  previewPublishCandidate().catch(error => { DistributionUI.error = error; renderDistributionHub(); toast(error.message, "err"); });
+});
+$("distribution-publish-prepare")?.addEventListener("click", () => {
+  preparePublishCandidate().catch(error => { DistributionUI.error = error; renderDistributionHub(); toast(error.message, "err"); });
+});
+$("distribution-publish-confirm")?.addEventListener("click", () => {
+  confirmPreparedPublishCandidate().catch(error => { DistributionUI.error = error; renderDistributionHub(); toast(error.message, "err"); });
+});
+$("distribution-remix-import")?.addEventListener("click", async () => {
+  if (!isDesktopShell()) {
+    toast("Remix import is available in the desktop app.", "warn");
+    return;
+  }
+  if (!(await guardUnsavedChanges())) return;
+  try {
+    await desktopInvoke("desktop_import_remix");
+  } catch (error) {
+    toast("Remix import failed: " + String(error), "err");
+  }
 });
 
 function renderMechanicsHub() {
