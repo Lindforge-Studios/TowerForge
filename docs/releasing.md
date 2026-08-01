@@ -4,7 +4,7 @@ TowerForge desktop artifacts are built and published through GitHub Actions. Unt
 
 ## Published Baseline
 
-The current release line is `v0.6.0`, an unsigned pre-release containing accepted R0–R17. A local build or GitHub Actions artifact MUST NOT be described as a release until the matching tag, public release page, installers, notes, and `SHA256SUMS` exist and have been verified.
+The current release candidate is `v0.6.1`, an unsigned pre-release containing accepted R0–R17 and the cross-platform Windows package-pruning repair. The `v0.6.0` tag is retained as immutable failed-pipeline evidence and has no public release. A local build or GitHub Actions artifact MUST NOT be described as a release until the matching tag, public release page, installers, notes, and `SHA256SUMS` exist and have been verified.
 
 ## Release Invariants
 
@@ -77,12 +77,12 @@ The verifier runs `codesign --verify --deep --strict` against `TowerForge.app`, 
 1. Confirm `package.json`, desktop npm, Tauri, and Cargo versions match the intended release tag.
 2. Run the relevant quality gates from `AGENTS.md`.
 3. Merge the exact source commit intended for release and confirm required CI passes.
-4. Run `Unsigned Desktop Builds` manually on that commit when a cross-platform release candidate is needed before tagging.
-5. Create an annotated `vX.Y.Z` tag on the release commit and push it.
-6. Wait for all three native builds, release assembly, and publication to pass.
-7. Confirm the GitHub pre-release title contains `Unsigned build` and all six installer formats are attached when supported by the runners.
+4. Run `Unsigned Desktop Builds` manually on that exact merged commit before tagging. Require all three native jobs and release assembly to pass, then inspect the private candidate for all six installer formats and `SHA256SUMS`.
+5. Create an annotated `vX.Y.Z` tag on the same verified release commit and push it.
+6. Wait for all three native builds, release assembly, publication, and Codex plugin export to pass.
+7. Confirm the GitHub pre-release title contains `Unsigned build` and all six installer formats are attached.
 8. Download the published installers and `SHA256SUMS`, recalculate the checksums, and compare them with the release notes.
-9. Run the macOS bundle verifier against the built or downloaded candidate; both strict `codesign` and `hdiutil` validation must pass.
+9. Run the macOS bundle verifier against the downloaded candidate; both strict `codesign` and `hdiutil` validation must pass.
 10. Confirm the tag, tagged source, and commit links resolve to the released commit.
 
 ## Rollback
