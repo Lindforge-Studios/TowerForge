@@ -110,6 +110,10 @@
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/><path d="M12 7v5l3 2"/></svg>
         <span>Replay Lab</span>
       </button>
+      <button class="nav-tab" data-tab="distribution" role="tab" type="button" title="Prepare reproducible web publishing, remix policy, and host-only monetization hooks.">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 8 5-5 5 5"/><path d="M5 13v7h14v-7"/></svg>
+        <span>Distribution</span>
+      </button>
       <button class="nav-tab" data-tab="scripts" role="tab">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
         <span>Scripts</span>
@@ -544,6 +548,81 @@
           <div id="replay-lab-ghost-overlay" class="replay-lab-ghost-overlay" aria-live="polite"></div>
         </div>
         <pre id="replay-lab-divergence" class="code-preview">Import a checksummed archive to inspect its timeline.</pre>
+      </div>
+    </section>
+
+    <section id="tab-distribution" class="tab-panel" role="tabpanel" aria-label="Distribution Hub" data-project-write="guarded-distribution-only">
+      <div class="panel-header">
+        <h2>Distribution Hub</h2>
+        <span id="distribution-status" class="text-muted">Opt-in publishing is not configured.</span>
+      </div>
+      <div class="distribution-hub-body">
+        <p class="distribution-intro">Prepare a reproducible web candidate, control remix licensing, and expose optional host placements without adding publishing or monetization rules to the game engine.</p>
+
+        <section class="distribution-card" aria-labelledby="distribution-policy-title">
+          <div class="distribution-card-head">
+            <div><h3 id="distribution-policy-title">Publish manifest and remix policy</h3><p>The first guarded save opts this project into Distribution v1 and project schema v4.</p></div>
+            <span id="distribution-revision" class="distribution-revision">Revision pending</span>
+          </div>
+          <div class="distribution-fields">
+            <label>Project ID<input id="distribution-project-id" type="text" spellcheck="false" autocomplete="off" placeholder="tfp_0123456789abcdef0123456789abcdef"></label>
+            <label>License<select id="distribution-license">
+              <option value="ARR">All rights reserved</option>
+              <option value="MIT">MIT</option>
+              <option value="Apache-2.0">Apache 2.0</option>
+              <option value="CC0-1.0">CC0 1.0</option>
+              <option value="CC-BY-4.0">CC BY 4.0</option>
+              <option value="CC-BY-SA-4.0">CC BY-SA 4.0</option>
+            </select></label>
+            <label>Remix policy<select id="distribution-remix-policy">
+              <option value="forbidden">No remix</option>
+              <option value="allowed">Remix allowed</option>
+              <option value="allowed_with_attribution">Remix with attribution</option>
+            </select></label>
+            <label class="distribution-source-toggle"><input id="distribution-remix-source" type="checkbox"><span>Include a public source .tdpack</span></label>
+            <label class="distribution-wide">Attribution<input id="distribution-license-attribution" type="text" maxlength="4096" autocomplete="off" placeholder="Author or studio credit shown with remixes"></label>
+          </div>
+          <label class="distribution-json-label">Host-only monetization placements
+            <textarea id="distribution-monetization-placements" class="mono" spellcheck="false" aria-describedby="distribution-monetization-note">[]</textarea>
+          </label>
+          <p id="distribution-monetization-note" class="distribution-note">Only banner, interstitial, and purchase_link mount points are accepted. Hosts provide presentation; projects cannot embed URLs, keys, rewards, telemetry, or code.</p>
+          <div class="distribution-actions">
+            <button id="distribution-config-preview" class="btn btn-outline" type="button">Preview settings</button>
+            <button id="distribution-enable" class="btn btn-outline" type="button">Enable from this draft</button>
+            <button id="distribution-save" class="btn btn-save" type="button" disabled>Save opt-in settings</button>
+            <button id="distribution-disable" class="btn btn-outline" type="button">Disable Distribution</button>
+          </div>
+          <pre id="distribution-preview-result" class="distribution-result" aria-live="polite">Load the saved project to begin.</pre>
+        </section>
+
+        <section class="distribution-card" aria-labelledby="distribution-publish-title">
+          <div class="distribution-card-head">
+            <div><h3 id="distribution-publish-title">Reproducible publish candidate</h3><p>Preview is compute-only. Preparing creates a confined local candidate; uploading always requires confirmation of the exact digest and target.</p></div>
+          </div>
+          <div class="distribution-fields distribution-publish-fields">
+            <label>Provider<select id="distribution-provider">
+              <option value="filesystem_v1">Filesystem / self-host</option>
+              <option value="github_pages_v1">GitHub Pages</option>
+              <option value="cloudflare_pages_v1">Cloudflare-compatible</option>
+            </select></label>
+            <label class="distribution-wide">Target descriptor<textarea id="distribution-target" class="mono" spellcheck="false">{}</textarea></label>
+          </div>
+          <div class="distribution-actions">
+            <button id="distribution-publish-preview" class="btn btn-outline" type="button">Preview candidate</button>
+            <button id="distribution-publish-prepare" class="btn btn-outline" type="button" disabled>Prepare locally</button>
+            <button id="distribution-publish-confirm" class="btn btn-save" type="button" disabled>Confirm upload</button>
+          </div>
+          <div id="distribution-confirmation" class="distribution-confirmation hidden" role="status"></div>
+          <pre id="distribution-publish-result" class="distribution-result" aria-live="polite">Save Distribution settings before publishing.</pre>
+        </section>
+
+        <section class="distribution-card" aria-labelledby="distribution-remix-title">
+          <div class="distribution-card-head">
+            <div><h3 id="distribution-remix-title">Remix a published project</h3><p>A permitted public source pack imports as a new project ID and preserves attribution provenance, never deployment metadata or private state.</p></div>
+          </div>
+          <button id="distribution-remix-import" class="btn btn-outline" type="button">Import remix source pack…</button>
+          <p class="distribution-note">Import is available in the desktop app so the operating system chooses both the source pack and destination safely.</p>
+        </section>
       </div>
     </section>
 

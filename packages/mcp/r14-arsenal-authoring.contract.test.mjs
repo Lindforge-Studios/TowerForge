@@ -17,7 +17,7 @@ describe("R14 Arsenal MCP/AI discovery", () => {
   }, 15_000);
 
   it("teaches agents to discover, preview and guarded-apply without a broad write tool", () => {
-    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(49);
+    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(50);
     expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/describe_schema.*arsenal[\s\S]*preview_mechanics_module[\s\S]*apply_mechanics_module/);
     expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(/configureTowerModules[\s\S]*craftGem/);
   });

@@ -17,6 +17,7 @@ Reference examples show expected project and code patterns.
 | Engine validation | `packages/engine/src/content/validate.ts` | Canonical cross-reference and numeric guard implementation. |
 | Mechanics capability contract | `packages/engine/src/content/mechanics.test.ts` | Stable module IDs and read-only resolution of unavailable, disabled, unselected, missing-profile, and active states. |
 | Mechanics project boundary | `packages/cli/lib/project-schema.test.mjs`, `packages/cli/lib/project-migrations.test.mjs` | Canonical schema v3/no-file invariant, future-version rejection, and disabled-reference warning cases. |
+| Distribution project boundary | `packages/distribution/src/*.contract.test.mjs`, `packages/cli/lib/r17-distribution-project-schema.contract.test.mjs` | Optional DistributionConfigV1, explicit project schema v4 promotion, deterministic PublishManifestV1, hostile-input rejection, and unchanged v1-v3 no-file behavior. |
 | Opt-in combat shields | `docs/examples/opt-in-basic-shields/` | Copy the catalog to `content/mechanics.json`, merge the selection into `missions.<id>`, and set project schema v3; the ordinary starter remains mechanics-free. |
 | Opt-in elemental armor matrix | `docs/examples/opt-in-elemental-armor-matrix/` | Combat module v2 reference with author-defined damage/armor types and one enemy assignment; elemental IDs are recipe data and do not enable reactions. |
 | Opt-in vulnerability marks | `docs/examples/opt-in-basic-vulnerability-marks/` | Combat module v3 reference with one bounded consumable mark and one tower binding; reactions remain disabled. |
@@ -50,6 +51,9 @@ Reference examples show expected project and code patterns.
 | Deterministic Weather | `docs/examples/opt-in-weather/` | R13.5 independent seeded Weather profile and mission selection; Blizzard, Acid Rain, and Sandstorm remain inert recipes until explicitly applied. |
 | Replay Lab contracts | `packages/engine/src/replay-lab/`, `tests/e2e/r16-replay-lab.spec.mjs` | R16 checksummed archive, detached Ghost, immutable What-If branch and read-only Studio acceptance. This is an explicit inspection workflow, not project content or a mechanics fixture. |
 | Self-host reference relay | `packages/reference-relay/` | R16.4 gameplay-free invite-code relay over the existing R8 capability handshake; network server/socket ports are injected by the deployer and the package is excluded from players. |
+| Web publish provider contracts | `packages/cli/lib/distribution/` | R17 explicit-confirm pipeline for filesystem/self-host, GitHub Pages and Cloudflare-compatible adapters; credentials remain provider-owned and every remote result must match the prepared candidate digest. |
+| Deterministic Remix source pack | `packages/cli/lib/distribution/remix-pack.mjs` | Public `.tdpack` v2 with bounded checksummed entries, private-state/path exclusion, pre-extraction validation, new project identity and exact RemixProvenanceV1. Ordinary project `.tdpack` v1 remains unchanged. |
+| Distribution Hub and AI safety | `tests/e2e/r17-distribution-studio.spec.mjs`, `packages/mcp/r17-distribution-authoring.contract.test.mjs` | Studio preview/save/reload/publish-confirm lifecycle plus MCP describe/read/preview/guarded-apply/validate; MCP intentionally exposes no approval-minting or upload tool. |
 | Headless smoke sim | `packages/cli/sim.mjs` | CLI wrapper for engine-backed mission smoke runs. |
 | Static web build | `packages/cli/build.mjs` | Generates the playable web bundle from project data, compiled engine modules, renderer, and safe assets. |
 | Native packaging | `packages/cli/lib/packaging.mjs` | Canonical Capacitor/Tauri scaffold generation around a built web bundle. |
@@ -76,4 +80,4 @@ Reference examples show expected project and code patterns.
 - A focused R13/R4.4B browser regression fixture proving expected guarded 400/409 responses do not become uncaught application errors.
 - `opt-in-modular-arsenal/` — R14 Arsenal v1 plus the minimal Roguelite gem catalog needed by its exact crafting recipe.
 - `opt-in-macro-economy/` — R15 local seeded market, fixed-term deposit and atomic ritual authoring.
-- R17 reference fixtures only when its contracts enter RED/GREEN implementation; planned schemas must not be presented as available authoring examples.
+- `opt-in-web-distribution/` is the dedicated Distribution v1/project-v4 authoring reference. It remains constructor metadata and does not select mission mechanics.

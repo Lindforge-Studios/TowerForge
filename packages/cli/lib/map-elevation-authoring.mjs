@@ -12,7 +12,7 @@ import {
   readRawProjectFiles,
   validateProjectDir
 } from "./project-loader.mjs";
-import { PROJECT_SCHEMA_VERSION, validateProjectSchemas } from "./project-schema.mjs";
+import { ELEVATION_PROJECT_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION, validateProjectSchemas } from "./project-schema.mjs";
 import { mergeValidationResults } from "./trace.mjs";
 
 const SOURCE_FILE_LIMIT = 16 * 1024 * 1024;
@@ -225,7 +225,7 @@ async function buildPlan(projectDir, unsafeArgs) {
     throw new ElevationAuthoringError("map_not_found", `Map source no longer compiles as "${mapId}".`);
   }
   const manifest = cloneJson(snapshot.manifest);
-  manifest.schemaVersion = PROJECT_SCHEMA_VERSION;
+  manifest.schemaVersion = Math.max(rawVersion, ELEVATION_PROJECT_SCHEMA_VERSION);
   const candidate = {
     manifest,
     sourceName: located.sourceName,

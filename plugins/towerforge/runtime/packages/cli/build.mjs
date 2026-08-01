@@ -15,6 +15,12 @@ import {
 import { copyVisualAssets } from "./lib/assets.mjs";
 import { parseJsonFlag, printJson } from "./lib/trace.mjs";
 import { projectTileCoverage } from "./lib/tile-coverage.mjs";
+import { buildPublishManifestV1 } from "../distribution/src/index.mjs";
+import {
+  computePublishTreeDigestV1,
+  computeRemixSourcePackDigestV2,
+  exportRemixSourcePackV2
+} from "./lib/distribution/index.mjs";
 
 function parseArgs() {
   const raw = process.argv.slice(2);
@@ -88,13 +94,21 @@ try {
   const renderer = target.renderer === "phaser" ? "phaser" : "canvas";
   const multiplayerActive = hasActiveMultiplayer(files);
   const macroEconomyActive = hasActiveMacroEconomy(files);
+  const hostMonetization = files.distributionAuthored && Array.isArray(files.distribution?.monetization?.placements)
+    && files.distribution.monetization.placements.length > 0
+    ? files.distribution.monetization
+    : null;
+  const hostMonetizationActive = hostMonetization !== null;
+  const remixEnabled = files.distributionAuthored
+    && files.distribution?.remix?.includeSource === true
+    && files.distribution?.remix?.policy !== "forbidden";
   copyDir(path.join(repoRoot, "packages", "engine", "dist"), path.join(outDir, "engine"), {
     excludeRootEntries: new Set(multiplayerActive ? ["replay-lab"] : ["multiplayer", "replay-lab"])
   });
   const playerRuntimeSource = path.join(repoRoot, "packages", "player-runtime", "src");
   const playerRuntimeOutput = path.join(outDir, "player-runtime");
   fs.mkdirSync(playerRuntimeOutput, { recursive: true });
-  for (const fileName of ["index.mjs", "player-profile-store.mjs"]) {
+  for (const fileName of ["index.mjs", "player-profile-store.mjs", ...(hostMonetizationActive ? ["host-monetization.mjs"] : [])]) {
     fs.copyFileSync(path.join(playerRuntimeSource, fileName), path.join(playerRuntimeOutput, fileName));
   }
   // Renderer dir ships for both players — the canvas player needs index.mjs, both need audio.mjs.
@@ -121,14 +135,17 @@ try {
     visuals: files.visuals,
     storyComics: files.storyComics,
     battleBackgrounds: files.battleBackgrounds,
+    ...(hostMonetizationActive ? { hostMonetization } : {}),
     buildTarget: target
   });
-  fs.writeFileSync(path.join(outDir, "index.html"), htmlTemplate(files.manifest, target, renderer, initialGridKind, macroEconomyActive), "utf8");
-  fs.writeFileSync(path.join(outDir, "styles.css"), cssTemplate(target), "utf8");
+  fs.writeFileSync(path.join(outDir, "index.html"), htmlTemplate(files.manifest, target, renderer, initialGridKind, macroEconomyActive, hostMonetization, remixEnabled), "utf8");
+  fs.writeFileSync(path.join(outDir, "styles.css"), cssTemplate(target, hostMonetization, remixEnabled), "utf8");
   fs.writeFileSync(path.join(outDir, "boot.js"), bootRecoveryTemplate(files.manifest, target, files.storyComics), "utf8");
   fs.writeFileSync(
     path.join(outDir, "player.mjs"),
-    renderer === "phaser" ? phaserPlayerTemplate(multiplayerActive, macroEconomyActive) : playerTemplate(multiplayerActive, macroEconomyActive),
+    renderer === "phaser"
+      ? phaserPlayerTemplate(multiplayerActive, macroEconomyActive, hostMonetizationActive)
+      : playerTemplate(multiplayerActive, macroEconomyActive, hostMonetizationActive),
     "utf8"
   );
   fs.writeFileSync(path.join(outDir, "manifest.webmanifest"), JSON.stringify(webManifest(files.manifest, target), null, 2) + "\n", "utf8");
@@ -161,9 +178,23 @@ try {
       visuals: embedVisualAssets(PROJECT_DIR, files.visuals),
       storyComics: files.storyComics,
       battleBackgrounds: files.battleBackgrounds,
+      ...(hostMonetizationActive ? { hostMonetization } : {}),
       buildTarget: target
     };
-    fs.writeFileSync(singleFilePath, singleFileHtml(outDir, files.manifest, target, renderer, embeddedProject, initialGridKind, macroEconomyActive), "utf8");
+    fs.writeFileSync(singleFilePath, singleFileHtml(outDir, files.manifest, target, renderer, embeddedProject, initialGridKind, macroEconomyActive, hostMonetization, remixEnabled), "utf8");
+  }
+
+  if (remixEnabled) {
+    const sourcePackDigest = computeRemixSourcePackDigestV2(PROJECT_DIR);
+    const publishManifest = buildPublishManifestV1({
+      distribution: files.distribution,
+      engine: { version: readEngineVersion(), digest: computePublishTreeDigestV1(path.join(outDir, "engine")) },
+      content: { digest: digestBuildContent(files) },
+      bundle: { digest: computePublishTreeDigestV1(outDir, { excludeSourcePack: true }) },
+      capabilities: [],
+      sourcePack: { digest: sourcePackDigest }
+    });
+    await exportRemixSourcePackV2(PROJECT_DIR, path.join(outDir, "source.tdpack"), { publishManifest });
   }
 
   // Phaser now shares topology and terrain tileset resolution with Canvas. Entity sprites still use
@@ -215,6 +246,26 @@ function assertSafeOutputDir(projectDir, outDir) {
 function emptyDir(dir) {
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true });
+}
+
+function readEngineVersion() {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "packages", "engine", "package.json"), "utf8"));
+  return typeof packageJson.version === "string" && packageJson.version.length > 0 ? packageJson.version : "unknown";
+}
+
+function digestBuildContent(files) {
+  return createHash("sha256").update(JSON.stringify({
+    manifest: files.manifest,
+    balance: files.balance,
+    worldMap: files.worldMap,
+    maps: files.maps,
+    scripts: files.scripts,
+    mechanics: files.mechanicsAuthored ? files.mechanics : null,
+    visuals: files.visuals,
+    storyComics: files.storyComics,
+    battleBackgrounds: files.battleBackgrounds,
+    distribution: files.distribution
+  })).digest("hex");
 }
 
 function copyDir(src, dest, options = {}, depth = 0) {
@@ -348,15 +399,15 @@ function mimeType(filePath) {
   })[ext] ?? "application/octet-stream";
 }
 
-function singleFileHtml(outDir, manifest, target, renderer, projectData, initialGridKind, includeMacroEconomy = false) {
+function singleFileHtml(outDir, manifest, target, renderer, projectData, initialGridKind, includeMacroEconomy = false, hostMonetization = null, remixEnabled = false) {
   const virtual = new Map([
     [path.resolve(outDir, "project-data.js"), `export default ${JSON.stringify(projectData)};\n`]
   ]);
   const entryPath = path.resolve(outDir, "player.mjs");
   const entry = singleFileModuleBootstrap(entryPath, outDir, virtual);
-  let html = htmlTemplate(manifest, target, renderer, initialGridKind, includeMacroEconomy);
+  let html = htmlTemplate(manifest, target, renderer, initialGridKind, includeMacroEconomy, hostMonetization, remixEnabled);
   html = html.replace(/\s*<link rel="manifest"[^>]*>/, "");
-  html = html.replace('  <link rel="stylesheet" href="./styles.css">', `  <style>${escapeInlineStyle(cssTemplate(target))}</style>`);
+  html = html.replace('  <link rel="stylesheet" href="./styles.css">', `  <style>${escapeInlineStyle(cssTemplate(target, hostMonetization))}</style>`);
   if (renderer === "phaser") {
     const phaser = fs.readFileSync(path.join(outDir, "vendor", "phaser.min.js"), "utf8");
     html = html.replace('  <script src="./vendor/phaser.min.js"></script>', `  <script>${escapeInlineScript(phaser)}</script>`);
@@ -440,13 +491,26 @@ function resolveInitialGridKind(project) {
   return project.maps?.[mapId]?.grid?.kind === "square" ? "square" : "hex";
 }
 
-function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "hex", includeMacroEconomy = false) {
+function hostMonetizationMarkup(hook) {
+  const groups = { top: [], bottom: [], menu: [], between_waves: [] };
+  for (const placement of hook?.placements ?? []) {
+    if (!groups[placement.surface]) continue;
+    groups[placement.surface].push(`<div class="host-monetization-placement" data-towerforge-monetization-placement="${esc(placement.id)}" data-towerforge-monetization="${esc(placement.id)}" data-kind="${esc(placement.kind)}"></div>`);
+  }
+  const section = (surface) => groups[surface].length
+    ? `<section class="host-monetization" data-surface="${surface}" aria-label="Host content">${groups[surface].join("")}</section>`
+    : "";
+  return { top: section("top"), bottom: section("bottom"), menu: section("menu"), betweenWaves: section("between_waves") };
+}
+
+function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "hex", includeMacroEconomy = false, hostMonetization = null, remixEnabled = false) {
   const title = esc(target.appTitle ?? manifest.name ?? "TowerForge TD");
   const battlefieldKind = initialGridKind === "square" ? "Square" : "Hex";
   const playfield = renderer === "phaser"
     ? `<div id="playfield" tabindex="0" role="application" aria-label="${battlefieldKind} battlefield. Use arrow keys to move the tile cursor and Enter to act."></div>`
     : `<canvas id="playfield" tabindex="0" role="application" aria-label="${battlefieldKind} battlefield. Use arrow keys to move the tile cursor and Enter to act."></canvas>`;
   const phaserScript = renderer === "phaser" ? `\n  <script src="./vendor/phaser.min.js"></script>` : "";
+  const monetizationMarkup = hostMonetizationMarkup(hostMonetization);
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -461,6 +525,8 @@ function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
+  ${remixEnabled ? '<a class="towerforge-remix" data-towerforge-remix href="./source.tdpack" download>Remix this project</a>' : ""}
+  ${monetizationMarkup.top}
   <main id="app">
     <header class="hud">
       <div>
@@ -502,6 +568,7 @@ function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "
         <section id="artifact-inventory" class="roguelite-status" aria-label="Artifact inventory" hidden></section>
         <section id="arsenal-status" class="roguelite-status" aria-label="Modular arsenal" hidden></section>
         ${includeMacroEconomy ? '<section id="macro-economy-status" class="roguelite-status" aria-label="Macro economy" hidden></section>' : ""}
+        ${monetizationMarkup.menu}
         <section id="logistics-status" class="roguelite-status" aria-label="Power grid" hidden></section>
         <section id="quest-status" class="roguelite-status" aria-label="Optional challenges" hidden></section>
         <section id="campaign-run-panel" class="campaign-run-panel" aria-label="Campaign run" hidden>
@@ -522,6 +589,8 @@ function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "
       </aside>
     </section>
   </main>
+  ${monetizationMarkup.bottom}
+  ${monetizationMarkup.betweenWaves}
   <section id="boot-error" class="boot-error" role="alertdialog" aria-modal="true" aria-labelledby="boot-error-title" hidden>
     <div class="boot-error-panel">
       <h2 id="boot-error-title">The game could not start</h2>
@@ -582,8 +651,9 @@ function bootRecoveryTemplate(manifest = {}, target = {}, storyComics = {}) {
 })();\n`;
 }
 
-function cssTemplate(target) {
+function cssTemplate(target, hostMonetization = null) {
   const bg = target.backgroundColor ?? "#111111";
+  const monetizationStyles = hostMonetization ? `.host-monetization{position:relative;z-index:5;min-height:0}.host-monetization[data-surface="top"],.host-monetization[data-surface="bottom"]{display:grid;gap:6px;padding:6px 16px;background:var(--surface);border-color:var(--border)}.host-monetization[data-surface="top"]{border-bottom:1px solid var(--border)}.host-monetization[data-surface="bottom"]{border-top:1px solid var(--border)}.host-monetization[data-surface="menu"]{display:grid;gap:6px}.host-monetization[data-surface="between_waves"]{position:fixed;inset:0;z-index:30;pointer-events:none}.host-monetization-placement:empty{display:none}` : "";
   return `:root{--bg:${bg};--surface:#191b19;--panel:#222620;--border:#364036;--text:#eff3ea;--muted:#9ca895;--accent:#8ac783;--path:#6b5540;--danger:#df6a59;--water:#427b88;--font:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
 *{box-sizing:border-box}html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:var(--font)}
 /* Native-app touch hardening (ported from a shipped Capacitor game): no pinch-zoom/pull-to-refresh,
@@ -592,7 +662,7 @@ body{overflow:hidden;overscroll-behavior:none;touch-action:manipulation;-webkit-
 .hud{padding-top:calc(12px + env(safe-area-inset-top))}
 .panel{padding-bottom:calc(14px + env(safe-area-inset-bottom))}
 .campaign-run-node{flex-wrap:wrap}.campaign-run-choices{flex-basis:100%;display:grid;gap:4px}.campaign-run-choice{display:flex;justify-content:space-between;gap:6px;padding:5px 7px;font-size:11px}
-button,select,input{font:inherit}button,select{border:1px solid var(--border);border-radius:6px;background:#111611;color:var(--text);padding:8px 10px}button{cursor:pointer}button:hover{border-color:var(--accent)}button:focus-visible,select:focus-visible,input:focus-visible,#playfield:focus-visible{outline:2px solid var(--accent);outline-offset:2px}button[aria-pressed="true"]{border-color:var(--danger);color:var(--danger)}#app{height:100%;display:flex;flex-direction:column}.hud{display:flex;gap:18px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface)}h1{font-size:18px;line-height:1.1;margin:0;color:var(--accent);letter-spacing:0}p{margin:4px 0 0;color:var(--muted)}.controls{margin-left:auto;display:flex;gap:10px;align-items:end;flex-wrap:wrap}.controls label{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:12px}.play-shell{min-height:0;flex:1;display:grid;grid-template-columns:minmax(0,1fr) 280px}#playfield{width:100%;height:100%;display:block;background:#101410;overflow:hidden;background-position:center;background-size:cover;background-repeat:no-repeat;touch-action:none}#playfield canvas{display:block}.panel{border-left:1px solid var(--border);background:var(--panel);padding:14px;display:flex;flex-direction:column;gap:10px;overflow:auto}.stat{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)}.stat span{color:var(--muted)}.stat strong{font-variant-numeric:tabular-nums}.targeting{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:center;color:var(--muted);font-size:13px}.targeting select{min-width:0}.speed{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;color:var(--muted);margin-top:8px}#message{min-height:42px;padding:10px;border:1px solid var(--border);border-radius:6px;background:#161a16;color:var(--text)}.ability-bar{display:flex;flex-wrap:wrap;gap:6px}.ability-bar:empty{display:none}.ability-bar button{padding:6px 9px;font-size:12px}.ability-bar button.armed{border-color:var(--accent);color:var(--accent)}.ability-bar button:disabled{opacity:.45;cursor:default}.roguelite-status{display:grid;gap:5px;border-top:1px solid var(--border);padding-top:10px}.roguelite-status[hidden]{display:none}.roguelite-status strong{font-size:12px;color:var(--accent)}.roguelite-status span{font-size:12px;color:var(--muted)}.campaign-run-panel{display:grid;gap:7px;border-top:1px solid var(--border);padding-top:10px}.campaign-run-panel[hidden]{display:none}.campaign-run-panel>strong{font-size:12px;color:var(--accent)}.campaign-run-panel>span,.campaign-run-nodes{font-size:12px;color:var(--muted)}.campaign-run-nodes{display:grid;gap:4px}.campaign-run-node{display:flex;justify-content:space-between;gap:8px}.campaign-run-node[data-state="available"]{color:var(--accent)}.campaign-run-node[data-state="current"]{color:var(--text);font-weight:700}.campaign-run-actions{display:flex;gap:6px;flex-wrap:wrap}.campaign-run-actions button{padding:5px 7px;font-size:11px}.meta-panel{border-top:1px solid var(--border);padding-top:10px}.meta-title{display:flex;justify-content:space-between;gap:8px;color:var(--muted);font-size:12px;text-transform:uppercase}.meta-upgrades{display:grid;gap:6px;margin-top:8px}.meta-upgrade{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center;padding:7px;border:1px solid var(--border);border-radius:6px;background:#161a16}.meta-upgrade span{min-width:0;font-size:12px}.meta-upgrade button{padding:5px 7px;font-size:11px}.boot-error,.story-overlay{position:fixed;inset:0;z-index:20;display:grid;place-items:center;padding:24px;background:#0b0e0bdd}.boot-error[hidden],.story-overlay[hidden]{display:none}.boot-error-panel{width:min(460px,100%);padding:22px;border:1px solid var(--danger);border-radius:6px;background:var(--surface);box-shadow:0 20px 60px #0009}.boot-error-panel h2{margin:0 0 8px;font-size:20px}.boot-error-actions,.story-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}.story-panel{width:min(820px,100%);max-height:min(680px,90vh);display:grid;grid-template-columns:minmax(0,1.2fr) minmax(280px,.8fr);overflow:hidden;border:1px solid var(--border);border-radius:6px;background:var(--surface);box-shadow:0 20px 60px #0009}.story-art{min-height:360px;background-position:center;background-size:cover;background-repeat:no-repeat;background-color:#101410}.story-copy{padding:24px;align-self:end}.story-copy h2{margin:0 0 18px;font-size:24px}.story-speaker{min-height:18px;color:var(--accent);font-weight:700}.story-text{color:var(--text);font-size:16px;line-height:1.55;white-space:pre-wrap}@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}}@media(max-width:820px){body{overflow:auto}.hud{align-items:flex-start;flex-direction:column}.controls{margin-left:0}.play-shell{grid-template-columns:1fr;grid-template-rows:65vh auto}.panel{border-left:0;border-top:1px solid var(--border)}.story-panel{grid-template-columns:1fr}.story-art{min-height:220px}.story-copy{padding:18px}}`;
+button,select,input{font:inherit}button,select{border:1px solid var(--border);border-radius:6px;background:#111611;color:var(--text);padding:8px 10px}button{cursor:pointer}button:hover{border-color:var(--accent)}button:focus-visible,select:focus-visible,input:focus-visible,#playfield:focus-visible{outline:2px solid var(--accent);outline-offset:2px}button[aria-pressed="true"]{border-color:var(--danger);color:var(--danger)}#app{height:100%;display:flex;flex-direction:column}.hud{display:flex;gap:18px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface)}h1{font-size:18px;line-height:1.1;margin:0;color:var(--accent);letter-spacing:0}p{margin:4px 0 0;color:var(--muted)}.controls{margin-left:auto;display:flex;gap:10px;align-items:end;flex-wrap:wrap}.controls label{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:12px}.play-shell{min-height:0;flex:1;display:grid;grid-template-columns:minmax(0,1fr) 280px}#playfield{width:100%;height:100%;display:block;background:#101410;overflow:hidden;background-position:center;background-size:cover;background-repeat:no-repeat;touch-action:none}#playfield canvas{display:block}.panel{border-left:1px solid var(--border);background:var(--panel);padding:14px;display:flex;flex-direction:column;gap:10px;overflow:auto}.stat{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)}.stat span{color:var(--muted)}.stat strong{font-variant-numeric:tabular-nums}.targeting{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:center;color:var(--muted);font-size:13px}.targeting select{min-width:0}.speed{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;color:var(--muted);margin-top:8px}#message{min-height:42px;padding:10px;border:1px solid var(--border);border-radius:6px;background:#161a16;color:var(--text)}.ability-bar{display:flex;flex-wrap:wrap;gap:6px}.ability-bar:empty{display:none}.ability-bar button{padding:6px 9px;font-size:12px}.ability-bar button.armed{border-color:var(--accent);color:var(--accent)}.ability-bar button:disabled{opacity:.45;cursor:default}.roguelite-status{display:grid;gap:5px;border-top:1px solid var(--border);padding-top:10px}.roguelite-status[hidden]{display:none}.roguelite-status strong{font-size:12px;color:var(--accent)}.roguelite-status span{font-size:12px;color:var(--muted)}.campaign-run-panel{display:grid;gap:7px;border-top:1px solid var(--border);padding-top:10px}.campaign-run-panel[hidden]{display:none}.campaign-run-panel>strong{font-size:12px;color:var(--accent)}.campaign-run-panel>span,.campaign-run-nodes{font-size:12px;color:var(--muted)}.campaign-run-nodes{display:grid;gap:4px}.campaign-run-node{display:flex;justify-content:space-between;gap:8px}.campaign-run-node[data-state="available"]{color:var(--accent)}.campaign-run-node[data-state="current"]{color:var(--text);font-weight:700}.campaign-run-actions{display:flex;gap:6px;flex-wrap:wrap}.campaign-run-actions button{padding:5px 7px;font-size:11px}.meta-panel{border-top:1px solid var(--border);padding-top:10px}.meta-title{display:flex;justify-content:space-between;gap:8px;color:var(--muted);font-size:12px;text-transform:uppercase}.meta-upgrades{display:grid;gap:6px;margin-top:8px}.meta-upgrade{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center;padding:7px;border:1px solid var(--border);border-radius:6px;background:#161a16}.meta-upgrade span{min-width:0;font-size:12px}.meta-upgrade button{padding:5px 7px;font-size:11px}.boot-error,.story-overlay{position:fixed;inset:0;z-index:20;display:grid;place-items:center;padding:24px;background:#0b0e0bdd}.boot-error[hidden],.story-overlay[hidden]{display:none}.boot-error-panel{width:min(460px,100%);padding:22px;border:1px solid var(--danger);border-radius:6px;background:var(--surface);box-shadow:0 20px 60px #0009}.boot-error-panel h2{margin:0 0 8px;font-size:20px}.boot-error-actions,.story-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}.story-panel{width:min(820px,100%);max-height:min(680px,90vh);display:grid;grid-template-columns:minmax(0,1.2fr) minmax(280px,.8fr);overflow:hidden;border:1px solid var(--border);border-radius:6px;background:var(--surface);box-shadow:0 20px 60px #0009}.story-art{min-height:360px;background-position:center;background-size:cover;background-repeat:no-repeat;background-color:#101410}.story-copy{padding:24px;align-self:end}.story-copy h2{margin:0 0 18px;font-size:24px}.story-speaker{min-height:18px;color:var(--accent);font-weight:700}.story-text{color:var(--text);font-size:16px;line-height:1.55;white-space:pre-wrap}@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}}@media(max-width:820px){body{overflow:auto}.hud{align-items:flex-start;flex-direction:column}.controls{margin-left:0}.play-shell{grid-template-columns:1fr;grid-template-rows:65vh auto}.panel{border-left:0;border-top:1px solid var(--border)}.story-panel{grid-template-columns:1fr}.story-art{min-height:220px}.story-copy{padding:18px}}${monetizationStyles}`;
 }
 
 function playerProfileRuntimeTemplate() {
@@ -889,7 +959,7 @@ function macroEconomyPlayerRuntimeTemplate() {
 }`;
 }
 
-function playerTemplate(includeMultiplayer = false, includeMacroEconomy = false) {
+function playerTemplate(includeMultiplayer = false, includeMacroEconomy = false, includeHostMonetization = false) {
   return `import {
   createCampaignRun,
   createEmptyPlayerProfile,
@@ -915,6 +985,7 @@ function playerTemplate(includeMultiplayer = false, includeMacroEconomy = false)
 } from "./engine/index.js";
 ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multiplayer/index.js";' : ""}
 import { createPlayerProfileStore, derivePlayerProfileStorageKey } from "./player-runtime/index.mjs";
+${includeHostMonetization ? 'import { createHostMonetizationRuntimeV1 } from "./player-runtime/host-monetization.mjs";' : ""}
 import { createCanvasRenderer, hitTestHeroesPresentation, projectArsenalPresentation${includeMacroEconomy ? ", projectMacroEconomyPresentation" : ""}, projectCampaignPresentation, projectDirectorDecisionCues, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectProceduralJuicePresentation, projectQuestPresentation, projectRoguelitePresentation, projectVanguardProtectionPresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
 import { createAudioPlayer } from "./renderer/audio.mjs";
 import project from "./project-data.js";
@@ -930,6 +1001,7 @@ const content = createGameContentRegistry({
   battleBackgrounds: project.battleBackgrounds
 });
 ${includeMultiplayer ? "globalThis.__towerforgeMultiplayer = TowerForgeMultiplayer;" : ""}
+${includeHostMonetization ? "const hostMonetization = createHostMonetizationRuntimeV1({ hook: project.hostMonetization });\nhostMonetization.mount();\nglobalThis.__towerforgeHostMonetization = hostMonetization;" : ""}
 
 ${playerProfileRuntimeTemplate()}
 ${arsenalPlayerRuntimeTemplate()}
@@ -2157,7 +2229,7 @@ function applyProjectTheme() {
 `;
 }
 
-function phaserPlayerTemplate(includeMultiplayer = false, includeMacroEconomy = false) {
+function phaserPlayerTemplate(includeMultiplayer = false, includeMacroEconomy = false, includeHostMonetization = false) {
   return `import {
   createCampaignRun,
   createEmptyPlayerProfile,
@@ -2183,6 +2255,7 @@ function phaserPlayerTemplate(includeMultiplayer = false, includeMacroEconomy = 
 } from "./engine/index.js";
 ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multiplayer/index.js";' : ""}
 import { createPlayerProfileStore, derivePlayerProfileStorageKey } from "./player-runtime/index.mjs";
+${includeHostMonetization ? 'import { createHostMonetizationRuntimeV1 } from "./player-runtime/host-monetization.mjs";' : ""}
 import { createAudioPlayer } from "./renderer/audio.mjs";
 import {
   createProceduralJuicePresentationRuntime,
@@ -2237,6 +2310,7 @@ const content = createGameContentRegistry({
   battleBackgrounds: project.battleBackgrounds
 });
 ${includeMultiplayer ? "globalThis.__towerforgeMultiplayer = TowerForgeMultiplayer;" : ""}
+${includeHostMonetization ? "const hostMonetization = createHostMonetizationRuntimeV1({ hook: project.hostMonetization });\nhostMonetization.mount();\nglobalThis.__towerforgeHostMonetization = hostMonetization;" : ""}
 
 function ownDataValue(record, key) {
   if (record === null || typeof record !== "object") return undefined;

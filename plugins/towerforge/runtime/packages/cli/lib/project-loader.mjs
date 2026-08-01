@@ -58,6 +58,7 @@ export function readRawProjectFiles(projectDir) {
     maps: readJsonOr(path.join(mapsDir, "maps.json"), {}),
     mapSources: readMapSources(projectDir),
     mechanics: readJsonOr(path.join(contentDir, "mechanics.json"), undefined),
+    distribution: readJsonOr(path.join(contentDir, "distribution.json"), undefined),
     visuals: readJsonOr(path.join(contentDir, "visuals.json"), defaultVisuals()),
     storyComics: readJsonOr(path.join(contentDir, "story-comics.json"), { seenStoragePrefix: "story_seen_", comics: {} }),
     battleBackgrounds: readJsonOr(path.join(contentDir, "battle-backgrounds.json"), {
@@ -83,6 +84,7 @@ export function readRawProjectFiles(projectDir) {
 export function normalizeProjectFiles(rawFiles) {
   const migrated = migrateProjectFiles(rawFiles);
   const mechanicsAuthored = migrated.files.mechanics !== undefined;
+  const distributionAuthored = migrated.files.distribution !== undefined;
 
   return {
     projectDir: rawFiles.projectDir,
@@ -93,6 +95,8 @@ export function normalizeProjectFiles(rawFiles) {
     mapSources: migrated.files.mapSources ?? {},
     mechanics: mechanicsAuthored ? migrated.files.mechanics : { schemaVersion: 1, modules: {} },
     mechanicsAuthored,
+    distribution: distributionAuthored ? migrated.files.distribution : undefined,
+    distributionAuthored,
     visuals: normalizeVisuals(migrated.files.visuals),
     storyComics: normalizeStoryComics(migrated.files.storyComics),
     battleBackgrounds: normalizeBattleBackgrounds(migrated.files.battleBackgrounds),
@@ -125,6 +129,8 @@ export function projectSummary(files) {
     missions: files.balance.missions,
     mechanics: files.mechanics,
     mechanicsAuthored: files.mechanicsAuthored ?? false,
+    distribution: files.distribution,
+    distributionAuthored: files.distributionAuthored ?? false,
     maps: Object.fromEntries(Object.entries(files.maps).map(([id, map]) => [id, {
       id,
       grid: map.grid,
@@ -145,7 +151,8 @@ export function projectSummary(files) {
       project: files.manifest.schemaVersion ?? 1,
       buildTargets: files.buildTargets.schemaVersion ?? 1,
       visuals: files.visuals.schemaVersion ?? 1,
-      mechanics: files.mechanics.schemaVersion ?? 1
+      mechanics: files.mechanics.schemaVersion ?? 1,
+      ...(files.distributionAuthored ? { distribution: files.distribution?.schemaVersion } : {})
     },
     appliedMigrations: files.appliedMigrations ?? [],
     mapRoutes: Object.fromEntries(
@@ -160,6 +167,18 @@ export function projectSummary(files) {
 
 export async function loadEngine() {
   const engineIndex = ensureEngineBuilt();
+  return import(pathToFileURL(engineIndex).href);
+}
+
+/** Load the complete already-built engine runtime without invoking TypeScript compilation.
+ * Distribution/source-pack validation uses this path because publishing must validate against the
+ * packaged runtime, while an unrelated stale source timestamp must not turn archive creation into
+ * a hidden build. Normal development commands continue to use loadEngine() and its freshness gate. */
+export async function loadBuiltEngine() {
+  const engineIndex = path.join(repoRoot, "packages", "engine", "dist", "index.js");
+  if (!fs.existsSync(engineIndex)) {
+    throw new Error(`Built @towerforge/engine runtime is missing at ${engineIndex}. Run npm run build:engine before distribution.`);
+  }
   return import(pathToFileURL(engineIndex).href);
 }
 
@@ -202,6 +221,24 @@ export async function loadContentRegistry(projectDir) {
 
 export async function validateProjectDir(projectDir) {
   const { files, engine, content } = await loadContentRegistry(projectDir);
+  const result = mergeValidationResults(validateProjectSchemas(files), engine.validateGameContentRegistry(content));
+  return { files, result };
+}
+
+/** Complete schema + engine content validation using the already-built release runtime. */
+export async function validateProjectDirWithBuiltEngine(projectDir) {
+  const files = loadProjectFiles(projectDir);
+  const engine = await loadBuiltEngine();
+  const content = engine.createGameContentRegistry({
+    balance: files.balance,
+    maps: files.maps,
+    worldMap: files.worldMap,
+    scripts: files.scripts,
+    mechanics: files.mechanics,
+    visuals: files.visuals,
+    storyComics: files.storyComics,
+    battleBackgrounds: files.battleBackgrounds
+  });
   const result = mergeValidationResults(validateProjectSchemas(files), engine.validateGameContentRegistry(content));
   return { files, result };
 }

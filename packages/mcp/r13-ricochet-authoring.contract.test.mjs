@@ -131,7 +131,7 @@ describe("R13.3 MCP/AI ricochet authoring (RED)", () => {
   });
 
   it("publishes the current guide and teaches the existing narrow guarded workflow", () => {
-    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(49);
+    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(50);
     for (const phrase of [
       "R13.3", "basic_projectile_ricochet", "terrainTags", "armorTypes", "maxBounces",
       "rangeCells", "projectileRicocheted", "describe_schema", "get_recipe",

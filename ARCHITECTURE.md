@@ -25,6 +25,7 @@ The engine owns tower-defense rules. The CLI, Studio, and MCP tools own project 
 | `packages/engine/src/multiplayer` | Fixed-tick match sessions, ownership/envelopes, checksums/replay, handshake, reconnect/desync, and transport contracts | engine content/simulation plus injected transport ports | Node, filesystem, hosted identity/lobbies/matchmaking, constructed sockets |
 | `packages/engine/src/replay-lab` | ReplayArchiveV1 binary codec, detached Ghost replay and immutable What-If branch diagnostics | existing content, checkpoint, journal and replay contracts | DOM, Node, filesystem, Studio, renderer, network, project writes |
 | `packages/reference-relay` | Optional self-host invite-code rooms, bounded opaque FIFO forwarding and injected loopback server adapter | separate multiplayer handshake entrypoint and injected server/socket ports | gameplay/simulation rules, accounts, matchmaking, credentials, mandatory player bundling |
+| `packages/distribution` | Closed DistributionConfigV1, PublishManifestV1, RemixProvenanceV1 and host-placement contracts plus canonical candidate digests | data-only validation and digest primitives | gameplay rules, DOM, project filesystem access, provider credentials, upload/network clients |
 | `packages/cli` | `.tdproj` loading, normalization, engine compilation, validate/sim/build/create commands | compiled engine, Node standard library | Browser DOM, Studio UI state |
 | `packages/studio` | Local editor server, browser UI, direct AI adapters, and account-runtime bridge | CLI project loader, shared tool registry, official Codex/Claude runtimes, Node standard library, project files | Direct gameplay rule reimplementation, OAuth credential parsing, arbitrary agent shell/filesystem access |
 | `packages/desktop` | Tauri shell, native menus/window lifecycle, packaged Studio runtime, bundled Node/Codex/Claude runtimes, desktop installers | Studio command bridge, Studio server, CLI/MCP/renderer runtime files, Tauri/Rust shell code | Gameplay rules, project schema forks, renderer-specific gameplay behavior |
@@ -40,6 +41,8 @@ Allowed dependency direction:
 
 `engine types/helpers -> engine content -> engine simulation/generation/multiplayer/replay-lab -> cli/studio/mcp/player adapters`
 
+Distribution is a sibling data-contract boundary: `packages/distribution -> cli distribution orchestration -> Studio/provider adapters`. It MUST NOT enter the gameplay engine. Provider runtimes own credentials and network clients; the project, publish manifest, MCP traces, and generated bundle MUST NOT contain them.
+
 Renderer and player runtime are sibling adapters. The renderer consumes serializable snapshots and project visual data; `packages/player-runtime` consumes the engine-owned profile codec through dependency injection and a caller-supplied Storage-like port. Neither adapter owns gameplay/profile rules or imports Node/filesystem code.
 
 Studio, CLI, and MCP MAY share Node project-loader code. Engine MUST remain importable as compiled browser-safe ES modules.
@@ -50,6 +53,7 @@ Studio, CLI, and MCP MAY share Node project-loader code. Engine MUST remain impo
 flowchart TD
   Project[".tdproj files"] --> Loader["packages/cli/lib/project-loader.mjs"]
   Mechanics["optional content/mechanics.json"] --> Loader
+  Distribution["optional content/distribution.json"] --> Loader
   Visuals["content/visuals.json"] --> Loader
   Scripts["scripts/**/*.tower.json"] --> Loader
   Loader --> Registry["createGameContentRegistry"]
@@ -67,6 +71,12 @@ flowchart TD
   CLI --> Player["Generated static web player"]
   Match --> Player
   CLI --> Package["Capacitor / Tauri scaffolds"]
+  Loader --> DistributionCore["@towerforge/distribution contracts"]
+  DistributionCore --> Publish["CLI publish preview / private staging"]
+  Publish --> Provider["explicit-confirm provider adapter"]
+  DistributionCore --> Remix["deterministic public source .tdpack v2"]
+  DistributionCore --> Studio
+  DistributionCore --> MCP
   MCP --> CLI
   MCP --> Sim
   Player --> Sim
@@ -84,6 +94,7 @@ flowchart TD
 - `project.json`
 - `content/balance.json`
 - `content/mechanics.json` (optional, versioned opt-in mechanics catalog)
+- `content/distribution.json` (optional, versioned publishing/remix/host-placement policy)
 - `content/world-map.json`
 - `content/visuals.json`
 - `content/story-comics.json`
@@ -97,13 +108,14 @@ flowchart TD
 
 `content/mechanics.json` is deliberately absent from legacy projects and ordinary starter templates. When present, it contains independent versioned module profiles; `mission.mechanics.profiles` selects them per mission. The engine resolves that authored selection into a read-only `CapabilitySet` and is the only authority that may report a module as available. A catalog entry, `enabled: true`, and a valid mission selection are all required before a capability may become active.
 
-Project schema v3 is an explicit mechanics-authoring boundary: a project that authors `content/mechanics.json` MUST declare v3, while v0/v1 migrations and unchanged v2 projects remain v2. Loading, saving, building, packaging, or reading capabilities MUST NOT synthesize the optional file or silently upgrade the manifest.
+Project schema v3 remains the explicit mechanics-authoring boundary. R17 adds schema v4 only when `content/distribution.json` is explicitly saved. A v4 project may also author mechanics and elevation, but saving those existing domains alone MUST NOT promote a v2/v3 project to v4. Loading, saving unrelated content, building, packaging, or reading distribution capabilities MUST NOT synthesize the optional file or silently upgrade the manifest. Projects v1-v3 without distribution data retain their exact legacy path.
 
 ### Independent version domains
 
 | Domain | Current/first contract | Compatibility rule |
 | --- | --- | --- |
-| `.tdproj` manifest | v3 when mechanics are authored | Legacy projects without the optional file remain v2 |
+| `.tdproj` manifest | v3 when mechanics are authored; v4 when Distribution v1 is authored | Legacy projects without `content/distribution.json` remain at their existing supported version; only an explicit guarded Distribution save promotes to v4 |
+| Web distribution | `DistributionConfigV1`; `PublishManifestV1`; provider adapter contract v1; public remix source `.tdpack` v2; `RemixProvenanceV1`; `MonetizationHookV1` | This domain is constructor/distribution state, not gameplay. Candidate manifests and source packs are reproducible; upload requires a fresh explicit confirmation bound to candidate, adapter and target. Credentials, provider metadata and user-local paths never enter project content. Ordinary `.tdpack` v1 remains unchanged |
 | Visual catalog and procedural presentation | visuals v2 legacy; visuals v3 with optional `proceduralJuice` v1; `tf-juice-rng-v1` | First R11 authoring explicitly promotes the project manifest and visuals document to v3; missing block keeps legacy renderer/audio behavior and snapshot bytes; future inner versions are lossless/read-only and fail closed; presentation data never enters gameplay digests/checkpoints/replays |
 | Mechanics catalog and modules | catalog v1; `combat` v1/v2/v3; `reactions`, `navigation`, `physics`, `ballistics`, `weather`, `terraforming`, `arsenal`, `macroEconomy`, `director`, `quests`, and `enemyBehaviors` v1; `logistics` v1/v2/v3; `heroes` v1/v2/v3/v4/v5/v6/v7; `elevation` v1/v2/v3; `roguelite` v1/v2/v3/v4; `multiplayer` v1/v2 | Reactions depend on the same mission's active combat v2/v3 profile; elevation v2 adds optional LoS and v3 high-ground rules; ballistics v1 independently adds bound direct/arc projectiles, optional clearance/ricochet, and authored destructible objects while preserving immediate legacy damage elsewhere; weather v1 uses its own seeded RNG domain and never activates Ballistics or Juice; arsenal v1 compiles base/barrel/core loadouts and exact artifact recipes without creating a second item/socket system; macroEconomy v1 owns a separate seeded market, fixed-term deposits and atomic rituals without replacing legacy mission interest; roguelite v2 adds optional artifact loot/socket state, v3 independently permits optional artifacts and deterministic wave draft, and v4 adds an independent optional campaign marker while preserving v3 battle behavior; heroes evolve monotonically from static roster through movement, durability, active ability, nullable battle-local skill tree, independently nullable passive tower-damage aura, and nullable dynamic blocking; only active non-null blocking depends on the same mission's explicitly selected Dynamic Navigation profile; logistics v1 independently adds nullable deterministic power, v2 adds finite local ammunition, and v3 adds independently nullable bounded production/storage/transfer; Director v1 only selects from its authored counter pool; quests v1 selects battle-local secondary objectives only for the mission's active supported profile; enemyBehaviors v1 adds targetable boss components plus optional bounded formations/protection only to the active mission; multiplayer v1 is local co-op and v2 is an explicit asymmetric Send-vs-Build profile; null/legacy paths do not activate adjacent mechanics, component/projectile/weather/arsenal/macro-economy state, quests, or multiplayer packaging; unsupported future versions fail closed and upgrades are explicit |
 | Player profile | engine-owned canonical `PlayerProfileV3` codec with explicit v2 migration | Profile migration never follows project migration implicitly; `CampaignRun` remains a separate version domain and browser persistence delegates to the codec |
@@ -121,6 +133,7 @@ These domains MUST evolve independently. A project schema bump MUST NOT rewrite 
 ## Cross-Cutting Concerns
 
 - Validation: `validateGameContentRegistry` is canonical for cross-reference and numeric guards.
+- Web publish, Remix, and host monetization: R17 is an explicit constructor distribution capability, not a mission mechanic. Optional `content/distribution.json` schema v1 declares a stable project ID, an allowlisted SPDX license, remix policy, optional host placement descriptors, and optional inherited provenance. `PublishManifestV1` canonically binds engine, content, bundle, capability and optional public-source digests without timestamps, provider endpoints, local paths, credentials or deployment state. Node-side provider adapters follow `preview -> reproducible private staging -> exact human confirmation -> upload -> remote digest verification`; the confirmation is short-lived and bound to the candidate, adapter and target. Public remix `.tdpack` v2 is deterministic, excludes private `.towerforge` state and deployment metadata, validates before extraction, creates a new project ID and records parent manifest/source-pack attribution. Monetization descriptors are host-injected `banner | interstitial | purchase_link` placements only and never grant gameplay rewards or enter the engine. MCP may describe/read/preview/apply the local Distribution config, compute a publish preview, and inspect a confined source pack; it cannot mint approval or upload. Absent distribution data adds no Hub state to generated players and no distribution/runtime/provider code to the legacy bundle. See [ADR 0058](docs/adr/0058-r17-web-publish-remix.md).
 - Opt-in mechanics: `packages/engine/src/content/mechanics.ts` owns stable module IDs and capability resolution. The loader may structurally normalize catalogs, but Studio, MCP, renderers, and generated players MUST consume the engine result rather than infer availability or gameplay rules.
 - Advanced enemy behaviors: `enemyBehaviors` v1 is a mission-selected opt-in profile. The engine alone owns component routing, component shield/HP mutation, typed ability suppression, cleanup, and active-only snapshot/checkpoint state. R12.2 exposes post-resolution component damage/destruction only as schema-v7 TowerScript events with an exact event-scoped read-only `component` root; it adds no component action. Graph v2 reuses handler/state/transition nodes, and trace v2 links event-to-transition provenance. R12.3 optionally assigns enemy types to bounded `vanguard | body | support` cohorts and runs only beside a same-mission Navigation v1 `dynamic_flow` selection. Shared flow fields remain authoritative; pure equal-cost steering uses deterministic spatial buckets and at most 16 same-cohort neighbours, never per-enemy A* or full O(n²) scans. R12.4 optionally composes those cohorts with existing root Combat shields: one-hop interception inspects at most 16 stable candidates and permits at most 512 redirects per public tick, then routes the redirected packet through the common resolver. `vanguardDamageIntercepted` is a read-only GameEvent and not a TowerScript event. Studio and MCP author through the existing guarded mechanics/script transactions; Canvas and Phaser consume fail-closed active snapshot projections and never recompute component, formation, or protection rules. No component/formation/protection state or work exists on the absent/disabled/unselected path. See [ADR 0053](docs/adr/0053-r12-advanced-enemy-behaviors.md).
 - Deterministic 2.5D ballistics: `ballistics` v1 is a separate mission-selected opt-in profile, not

@@ -12,6 +12,7 @@
     "allow-desktop-sync-ui-state",
     "allow-desktop-choose-project-parent",
     "allow-desktop-create-project",
+    "allow-desktop-import-remix",
     "allow-desktop-open-project",
     "allow-desktop-open-recent",
     "allow-desktop-open-external",
