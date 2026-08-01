@@ -21,7 +21,7 @@ Desktop builds are published on [GitHub Releases](https://github.com/Lindforge-S
 
 ## Current status
 
-The current public desktop version is [v0.4.0](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.4.0), an unsigned pre-release published on July 28, 2026. `main` already contains R9–R11: Behavior Trees/HFSM, Persona QA with procedural quests, and Procedural Juice. R12 is implemented in open [PR #23](https://github.com/Lindforge-Studios/TowerForge/pull/23) with green CI. Stacked [PR #24](https://github.com/Lindforge-Studios/TowerForge/pull/24) contains R13 and the RED/GREEN repair for its browser-gate race, but still awaits exact-commit CI and renewed sign-off. R14 is the next owner-authorized milestone. The exact delivery status, boundaries, and next milestones live in the [roadmap](docs/ROADMAP.md).
+The current public desktop version is [v0.5.2](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.5.2), an unsigned pre-release containing R0–R14. `main` contains the accepted R15 Macro-Economy, R16 Ghost Replay Lab, and R17 Web Distribution work. The `v0.6.0` tag is retained as immutable evidence of a Windows-only release-pipeline failure and has no public Release; `v0.6.1` is the replacement candidate with cross-platform CRLF-safe packaging. All gameplay extensions remain opt-in. The exact delivery status and boundaries live in the [roadmap](docs/ROADMAP.md).
 
 ## Product surface
 

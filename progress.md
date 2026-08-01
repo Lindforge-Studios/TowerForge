@@ -2241,3 +2241,8 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   build/validate/smoke, mobile and desktop scaffold packaging, and Cargo 9/9. The local Apple
   Silicon DMG `TowerForge_0.6.1_aarch64.dmg` passes complete app signature plus DMG verification;
   its local SHA-256 is `b4da9cd045e04d6e24c29336cdb6d43d0735ee20fc1403eca897322990385a0c`.
+- The first Constructor/Release review found one P2 documentation-parity defect: `README.en.md` and
+  the compact engine review still described open R12/R13 PRs and planned R14–R17. They now identify
+  public v0.5.2 as the R0–R14 baseline, accepted/merged R15–R17, the aborted immutable v0.6.0 tag,
+  and v0.6.1 as the replacement candidate. This docs-only repair invalidates both prior sign-offs;
+  the amended exact commit requires a fresh verification pair and CI before merge.
