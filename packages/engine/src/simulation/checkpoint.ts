@@ -350,6 +350,31 @@ export interface WeatherCheckpointStateV1 {
   readonly periodicOrdinals: Readonly<Record<string, number>>;
 }
 
+export interface MacroEconomyCheckpointStateV1 {
+  readonly schemaVersion: 1;
+  readonly profileId: string;
+  readonly market: import("../content/macro-economy-mechanics.js").MacroEconomyMarketRuntimeV1;
+  readonly deposits: readonly {
+    readonly instanceId: string;
+    readonly depositId: string;
+    readonly currencyId: string;
+    readonly principal: number;
+    readonly openedClearedWave: number;
+    readonly maturityClearedWave: number;
+  }[];
+  readonly nextDepositSequence: number;
+  readonly nextRitualSequence: number;
+  readonly temporaryModifiers: readonly {
+    readonly id: string;
+    readonly ritualSequence: number;
+    readonly altarId: string;
+    readonly effectIndex: number;
+    readonly stat: "damage" | "range" | "fire_rate";
+    readonly multiplier: number;
+    readonly remaining: number;
+  }[];
+}
+
 /** Authoritative mutable simulation state. Map occupancy and water cues are rebuilt derivatives. */
 export interface GameCheckpointStateV1 {
   readonly coreHp: number;
@@ -400,6 +425,7 @@ export interface GameCheckpointStateV1 {
   readonly enemyBehaviors?: EnemyBehaviorsCheckpointStateV1;
   readonly ballistics?: BallisticsCheckpointState;
   readonly weather?: WeatherCheckpointStateV1;
+  readonly macroEconomy?: MacroEconomyCheckpointStateV1;
 }
 
 export interface GameCheckpointV1 {

@@ -8,8 +8,8 @@ import {
   type TowerTargetMode
 } from "./types.js";
 
-export const GAME_COMMAND_SCHEMA_VERSION = 7 as const;
-export const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4, 5, 6, 7] as const);
+export const GAME_COMMAND_SCHEMA_VERSION = 8 as const;
+export const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4, 5, 6, 7, 8] as const);
 
 export type GameCommandV1 =
   | { readonly schemaVersion: 1; readonly type: "tick"; readonly units: number }
@@ -153,6 +153,13 @@ export type GameCommandV7 =
       readonly cells: readonly { readonly x: number; readonly y: number; readonly artifactInstanceId: string }[];
     };
 
+export type GameCommandV8 =
+  | WithCommandSchemaVersion<GameCommandV7, 8>
+  | { readonly schemaVersion: 8; readonly type: "buyCommodity"; readonly commodityId: string; readonly quantity: number }
+  | { readonly schemaVersion: 8; readonly type: "sellCommodity"; readonly commodityId: string; readonly quantity: number }
+  | { readonly schemaVersion: 8; readonly type: "openDeposit"; readonly depositId: string; readonly amount: number }
+  | { readonly schemaVersion: 8; readonly type: "performRitual"; readonly altarId: string; readonly towerIds: readonly string[] };
+
 export type GameCommand =
   | GameCommandV1
   | GameCommandV2
@@ -160,7 +167,8 @@ export type GameCommand =
   | GameCommandV4
   | GameCommandV5
   | GameCommandV6
-  | GameCommandV7;
+  | GameCommandV7
+  | GameCommandV8;
 
 const MAX_PAYLOAD_DEPTH = 32;
 const MAX_PAYLOAD_NODES = 4_096;
@@ -214,7 +222,7 @@ function isBoundedCommandId(value: unknown): value is string {
   return isTrimmedId(value) && utf8ByteLength(value) <= 128;
 }
 
-function isCommandId(schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7, value: unknown): value is string {
+function isCommandId(schemaVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8, value: unknown): value is string {
   return schemaVersion === 1 ? isTrimmedId(value) : isBoundedCommandId(value);
 }
 
@@ -342,7 +350,7 @@ export function parseGameCommand(input: unknown): GameCommand | undefined {
   const schemaVersion = fields.get("schemaVersion");
   const type = fields.get("type");
   if ((schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3 && schemaVersion !== 4
-    && schemaVersion !== 5 && schemaVersion !== 6 && schemaVersion !== 7)
+    && schemaVersion !== 5 && schemaVersion !== 6 && schemaVersion !== 7 && schemaVersion !== 8)
     || typeof type !== "string") return undefined;
 
   if (type === "tick") {
@@ -453,7 +461,7 @@ export function parseGameCommand(input: unknown): GameCommand | undefined {
     if (!isBoundedCommandId(heroId) || !isBoundedCommandId(skillId)) return undefined;
     return { schemaVersion, type, heroId, skillId } as GameCommand;
   }
-  if (schemaVersion === 7 && type === "configureTowerModules") {
+  if (schemaVersion >= 7 && type === "configureTowerModules") {
     if (!hasClosedFields(fields, ["schemaVersion", "type", "towerId", "modules"])) return undefined;
     const towerId = fields.get("towerId");
     const modules = snapshotPlainDataFields(fields.get("modules"));
@@ -462,9 +470,9 @@ export function parseGameCommand(input: unknown): GameCommand | undefined {
     const barrel = modules.get("barrel");
     const core = modules.get("core");
     if (!isBoundedCommandId(base) || !isBoundedCommandId(barrel) || !isBoundedCommandId(core)) return undefined;
-    return { schemaVersion: 7, type, towerId, modules: { base, barrel, core } };
+    return { schemaVersion, type, towerId, modules: { base, barrel, core } } as GameCommand;
   }
-  if (schemaVersion === 7 && type === "craftGem") {
+  if (schemaVersion >= 7 && type === "craftGem") {
     if (!hasClosedFields(fields, ["schemaVersion", "type", "recipeId", "cells"])) return undefined;
     const recipeId = fields.get("recipeId");
     const cells = fields.get("cells");
@@ -485,8 +493,45 @@ export function parseGameCommand(input: unknown): GameCommand | undefined {
         || Number(y) < 0 || Number(y) > 2 || !isBoundedCommandId(artifactInstanceId)) return undefined;
       normalized.push({ x: Number(x), y: Number(y), artifactInstanceId });
     }
-    return { schemaVersion: 7, type, recipeId, cells: normalized };
+    return { schemaVersion, type, recipeId, cells: normalized } as GameCommand;
   }
+  /* towerforge-optional:macroEconomy:start */
+  if (schemaVersion === 8 && (type === "buyCommodity" || type === "sellCommodity")) {
+    if (!hasClosedFields(fields, ["schemaVersion", "type", "commodityId", "quantity"])) return undefined;
+    const commodityId = fields.get("commodityId");
+    const quantity = fields.get("quantity");
+    if (!isBoundedCommandId(commodityId) || typeof quantity !== "number" || !Number.isSafeInteger(quantity)
+      || quantity < 1 || quantity > 1_000_000_000) return undefined;
+    return { schemaVersion: 8, type, commodityId, quantity };
+  }
+  if (schemaVersion === 8 && type === "openDeposit") {
+    if (!hasClosedFields(fields, ["schemaVersion", "type", "depositId", "amount"])) return undefined;
+    const depositId = fields.get("depositId");
+    const amount = fields.get("amount");
+    if (!isBoundedCommandId(depositId) || typeof amount !== "number" || !Number.isFinite(amount)
+      || amount <= 0 || amount > 1_000_000_000_000) return undefined;
+    return { schemaVersion: 8, type, depositId, amount: canonicalNumber(amount) };
+  }
+  if (schemaVersion === 8 && type === "performRitual") {
+    if (!hasClosedFields(fields, ["schemaVersion", "type", "altarId", "towerIds"])) return undefined;
+    const altarId = fields.get("altarId");
+    const towerIds = fields.get("towerIds");
+    if (!isBoundedCommandId(altarId) || !Array.isArray(towerIds) || Object.getPrototypeOf(towerIds) !== Array.prototype
+      || towerIds.length < 1 || towerIds.length > 64) return undefined;
+    const descriptors = Object.getOwnPropertyDescriptors(towerIds);
+    if (Object.getOwnPropertySymbols(descriptors).length > 0
+      || Object.keys(descriptors).length !== towerIds.length + 1) return undefined;
+    const normalized: string[] = [];
+    for (let index = 0; index < towerIds.length; index += 1) {
+      const descriptor = descriptors[String(index)];
+      if (!descriptor?.enumerable || !("value" in descriptor) || !isBoundedCommandId(descriptor.value)) return undefined;
+      normalized.push(descriptor.value);
+    }
+    if (new Set(normalized).size !== normalized.length) return undefined;
+    normalized.sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+    return { schemaVersion: 8, type, altarId, towerIds: normalized };
+  }
+  /* towerforge-optional:macroEconomy:end */
   return undefined;
 }
 
@@ -531,5 +576,15 @@ export function executeParsedGameCommand(
       return game.configureTowerModules(command.towerId, command.modules);
     case "craftGem":
       return game.craftGem(command.recipeId, command.cells);
+    /* towerforge-optional:macroEconomy:start */
+    case "buyCommodity":
+      return game.buyCommodity(command.commodityId, command.quantity);
+    case "sellCommodity":
+      return game.sellCommodity(command.commodityId, command.quantity);
+    case "openDeposit":
+      return game.openDeposit(command.depositId, command.amount);
+    case "performRitual":
+      return game.performRitual(command.altarId, command.towerIds);
+    /* towerforge-optional:macroEconomy:end */
   }
 }

@@ -1,4 +1,7 @@
 import { MULTIPLAYER_LIMITS, resolveActiveMultiplayerMechanics } from "../content/multiplayer-mechanics.js";
+/* towerforge-optional:macroEconomy:start */
+import { resolveActiveMacroEconomyMechanics } from "../content/macro-economy-mechanics.js";
+/* towerforge-optional:macroEconomy:end */
 import { parseGameCommand } from "../simulation/command-internal.js";
 import { cloneCheckpointJson, computeCheckpointStateDigest } from "../simulation/checkpoint.js";
 import { JournaledGameSession } from "../simulation/journal.js";
@@ -247,6 +250,12 @@ export class MatchSession {
         if (options.fixedTickUnits !== profile.fixedTickUnits) {
             throw new Error("Match fixedTickUnits must equal the active authored profile.");
         }
+        /* towerforge-optional:macroEconomy:start */
+        if (profile.ownership.resources === "partitioned"
+            && resolveActiveMacroEconomyMechanics(options.content, options.missionId)) {
+            throw new Error("Macro-economy v1 multiplayer requires shared resources.");
+        }
+        /* towerforge-optional:macroEconomy:end */
         const players = normalizePlayers(options.players, profile.maxPlayers);
         const game = new TowerDefenseGame({
             content: options.content,
@@ -273,6 +282,12 @@ export class MatchSession {
             || canonicalStringify(profile.ownership) !== canonicalStringify(journal.ownership)) {
             throw new Error("Match journal differs from its active authored local co-op profile.");
         }
+        /* towerforge-optional:macroEconomy:start */
+        if (profile.ownership.resources === "partitioned"
+            && resolveActiveMacroEconomyMechanics(options.content, journal.initialCheckpoint.identity.missionId)) {
+            throw new Error("Macro-economy v1 multiplayer requires shared resources.");
+        }
+        /* towerforge-optional:macroEconomy:end */
         const game = TowerDefenseGame.fromCheckpoint({
             content: options.content,
             checkpoint: journal.initialCheckpoint
@@ -392,6 +407,16 @@ export class MatchSession {
                 return protocolRejection("entity_not_owned", { ownerPlayerId });
             }
         }
+        /* towerforge-optional:macroEconomy:start */
+        if (this.ownership.towerControl === "owner_only" && envelope.command.type === "performRitual") {
+            for (const ritualTowerId of envelope.command.towerIds) {
+                const ownerPlayerId = this.towerOwnerById.get(ritualTowerId);
+                if (ownerPlayerId !== undefined && ownerPlayerId !== envelope.playerId) {
+                    return protocolRejection("entity_not_owned", { ownerPlayerId });
+                }
+            }
+        }
+        /* towerforge-optional:macroEconomy:end */
         this.assertJournalCapacity();
         this.activatePlayerResources(envelope.playerId);
         const towerIdsBefore = envelope.command.type === "placeTower"
@@ -407,6 +432,12 @@ export class MatchSession {
         if (result.ok && envelope.command.type === "sellTower") {
             this.towerOwnerById.delete(envelope.command.towerId);
         }
+        /* towerforge-optional:macroEconomy:start */
+        if (result.ok && envelope.command.type === "performRitual") {
+            for (const ritualTowerId of envelope.command.towerIds)
+                this.towerOwnerById.delete(ritualTowerId);
+        }
+        /* towerforge-optional:macroEconomy:end */
         this.captureAndCanonicalizePlayerResources(envelope.playerId);
         this.nextSequenceByPlayer.set(envelope.playerId, expectedSequence + 1);
         this.mutableNextMatchSequence += 1;

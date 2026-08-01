@@ -92,6 +92,7 @@ const MECHANICS_MODULES = [
   { id: "terraforming", title: "Terraforming", description: "Transactional terrain transitions and bounded elevation edits authored as an independent opt-in profile." },
   { id: "roguelite", title: "Rogue-lite", description: "Synergies, artifacts, draft choices, and campaign runs." },
   { id: "arsenal", title: "Modular Arsenal", description: "Opt-in bases, barrels, cores, and 3×3 gem crafting recipes." },
+  { id: "macroEconomy", title: "Macro-Economy", description: "Seeded local markets, fixed-term deposits, and atomic rituals." },
   { id: "heroes", title: "Heroes", description: "Optional opt-in hero roster spawning at the core; later versions add movement, durability, an ability, skill tree, aura, and explicit dynamic-navigation blocking." },
   { id: "logistics", title: "Logistics", description: "Power grids, inventories, ammunition, and production." },
   { id: "director", title: "AI Wave Director", description: "Optional opt-in deterministic adaptation from an authored counter pool with explicit threat budgets and fairness caps." },
@@ -120,6 +121,7 @@ const WEATHER_RECIPE_IDS = new Set([
 const TERRAFORMING_RECIPE_IDS = new Set(["tagged_flood", "tagged_moat", "tagged_destructible_bridge"]);
 const ROGUELITE_RECIPE_IDS = new Set(["basic_elemental_synergy", "basic_boss_artifact_loot"]);
 const ARSENAL_RECIPE_IDS = new Set(["basic_modular_arsenal"]);
+const MACRO_ECONOMY_RECIPE_IDS = new Set(["basic_local_market"]);
 const DIRECTOR_RECIPE_IDS = new Set(["basic_adaptive_wave_director"]);
 const QUEST_RECIPE_IDS = new Set(["basic_procedural_quests"]);
 const ENEMY_BEHAVIORS_RECIPE_IDS = new Set([
@@ -800,6 +802,8 @@ function normalizeMechanicsDraft(profile) {
       : deep(profile ?? {});
   }
   if (MechanicsUI.selectedModuleId === "weather") return normalizeWeatherMechanicsDraft(profile);
+  if (MechanicsUI.selectedModuleId === "arsenal") return deep(profile ?? { modules: {}, blueprints: {}, craftingRecipes: {} });
+  if (MechanicsUI.selectedModuleId === "macroEconomy") return deep(profile ?? { quoteCurrencyId: "coins", commodities: {}, deposits: {}, altars: {} });
   if (MechanicsUI.selectedModuleId === "elevation") return normalizeElevationLineOfSightDraft(profile);
   if (MechanicsUI.selectedModuleId === "navigation") return normalizeNavigationMechanicsDraft(profile);
   if (MechanicsUI.selectedModuleId === "reactions") return normalizeReactionMechanicsDraft(profile);
@@ -1418,6 +1422,13 @@ function mechanicsRecipeModuleId(recipe) {
 }
 
 function initializeMechanicsDraft() {
+  if (mechanicsRecipeModuleId(MechanicsUI.recipe) !== MechanicsUI.selectedModuleId) {
+    const matchingRecipe = MechanicsUI.recipes.find((recipe) => mechanicsRecipeModuleId(recipe) === MechanicsUI.selectedModuleId);
+    if (matchingRecipe) {
+      MechanicsUI.recipe = matchingRecipe;
+      MechanicsUI.recipeId = matchingRecipe.id;
+    }
+  }
   const capability = mechanicsSelectedCapability();
   const moduleView = MechanicsUI.capabilities?.[MechanicsUI.selectedModuleId];
   const missionId = mechanicsMissionId();
@@ -6404,6 +6415,8 @@ function renderMechanicsHub() {
               ? "Author tower tags, global synergies, optional v2 artifact loot, and independent v3 wave draft choices as one opt-in profile transaction."
             : MechanicsUI.selectedModuleId === "arsenal"
               ? "Assemble tower blueprints from compatible base, barrel and core modules, then author exact 3×3 gem recipes."
+            : MechanicsUI.selectedModuleId === "macroEconomy"
+              ? "Author seeded local commodities, fixed-term deposits, and atomic tower-sacrifice rituals."
               : "Author a reusable combat profile, then explicitly select it for this mission.";
   missionSelect.innerHTML = Object.entries(S.project.missions ?? {}).map(([id, mission]) =>
     `<option value="${esc(id)}" ${id === MechanicsUI.missionId ? "selected" : ""}>${esc(mission.label ?? id)}</option>`).join("");
@@ -6456,6 +6469,7 @@ function renderMechanicsHub() {
         && (selectedModuleId !== "terraforming" || TERRAFORMING_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "roguelite" || ROGUELITE_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "arsenal" || ARSENAL_RECIPE_IDS.has(recipe.id))
+        && (selectedModuleId !== "macroEconomy" || MACRO_ECONOMY_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "director" || DIRECTOR_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "quests" || QUEST_RECIPE_IDS.has(recipe.id))
         && (selectedModuleId !== "enemyBehaviors" || ENEMY_BEHAVIORS_RECIPE_IDS.has(recipe.id))
@@ -6498,6 +6512,7 @@ function renderMechanicsHub() {
   $("mechanics-terraforming-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "terraforming");
   $("mechanics-roguelite-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "roguelite");
   $("mechanics-arsenal-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "arsenal");
+  $("mechanics-macro-economy-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "macroEconomy");
   $("mechanics-heroes-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "heroes");
   $("mechanics-logistics-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "logistics");
   $("mechanics-director-editor")?.classList.toggle("hidden", MechanicsUI.selectedModuleId !== "director");
@@ -6577,6 +6592,8 @@ function renderMechanicsHub() {
       if (!CampaignUI.loaded && !CampaignUI.loading) void loadCampaignAuthoring();
     } else if (MechanicsUI.selectedModuleId === "arsenal") {
       renderArsenalMechanicsEditor();
+    } else if (MechanicsUI.selectedModuleId === "macroEconomy") {
+      renderMacroEconomyMechanicsEditor();
     } else if (MechanicsUI.selectedModuleId === "heroes") {
       renderHeroesMechanicsEditor();
     } else if (MechanicsUI.selectedModuleId === "logistics") {
@@ -6598,6 +6615,7 @@ function renderMechanicsHub() {
   const supportedTerraformingVersion = MechanicsUI.selectedModuleId !== "terraforming" || mechanicsProjectModuleVersion() === 1;
   const supportedBallisticsVersion = MechanicsUI.selectedModuleId !== "ballistics" || mechanicsProjectModuleVersion() === 1;
   const supportedWeatherVersion = MechanicsUI.selectedModuleId !== "weather" || mechanicsProjectModuleVersion() === 1;
+  const supportedMacroEconomyVersion = MechanicsUI.selectedModuleId !== "macroEconomy" || mechanicsProjectModuleVersion() === 1;
   const supportedRogueliteVersion = MechanicsUI.selectedModuleId !== "roguelite" || (
     mechanicsProjectModuleVersion() <= 4
     && !hasUnsupportedRogueliteCampaignMarker(MechanicsUI.draft)
@@ -6609,7 +6627,7 @@ function renderMechanicsHub() {
   const supportedEnemyBehaviorsVersion = MechanicsUI.selectedModuleId !== "enemyBehaviors" || mechanicsProjectModuleVersion() === 1;
   const supportedMultiplayerVersion = MechanicsUI.selectedModuleId !== "multiplayer" || mechanicsProjectModuleVersion() <= 2;
   const writable = authoring.writable !== false && capability?.available && supportedTerraformingVersion && supportedBallisticsVersion
-    && supportedWeatherVersion
+    && supportedWeatherVersion && supportedMacroEconomyVersion
     && supportedRogueliteVersion && supportedHeroesVersion && supportedLogisticsVersion
     && supportedDirectorVersion && supportedQuestVersion && supportedEnemyBehaviorsVersion
     && supportedMultiplayerVersion && !busy;
@@ -6626,6 +6644,7 @@ function renderMechanicsHub() {
     || ((MechanicsUI.selectedModuleId === "terraforming" || MechanicsUI.selectedModuleId === "roguelite"
       || MechanicsUI.selectedModuleId === "heroes" || MechanicsUI.selectedModuleId === "logistics"
       || MechanicsUI.selectedModuleId === "arsenal"
+      || MechanicsUI.selectedModuleId === "macroEconomy"
       || MechanicsUI.selectedModuleId === "director" || MechanicsUI.selectedModuleId === "quests"
       || MechanicsUI.selectedModuleId === "enemyBehaviors"
       || MechanicsUI.selectedModuleId === "ballistics"
@@ -6676,6 +6695,28 @@ function renderArsenalMechanicsEditor() {
       MechanicsUI.preview = null;
       MechanicsUI.error = null;
       if (status) status.textContent = "Draft parsed. Preview validates compatibility, references, and budgets.";
+    } catch (error) {
+      MechanicsUI.error = error;
+      MechanicsUI.preview = null;
+      if (status) status.textContent = error.message;
+    }
+    renderMechanicsPreviewResult();
+  };
+}
+
+function renderMacroEconomyMechanicsEditor() {
+  const input = $("mechanics-macro-economy-json");
+  const status = $("mechanics-macro-economy-status");
+  if (!input) return;
+  if (document.activeElement !== input) input.value = JSON.stringify(MechanicsUI.draft ?? { quoteCurrencyId: "coins", commodities: {}, deposits: {}, altars: {} }, null, 2);
+  input.oninput = () => {
+    try {
+      const value = JSON.parse(input.value);
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Profile must be a JSON object.");
+      MechanicsUI.draft = value;
+      MechanicsUI.preview = null;
+      MechanicsUI.error = null;
+      if (status) status.textContent = "Draft parsed. Preview validates currencies, tower references, limits, and closed data.";
     } catch (error) {
       MechanicsUI.error = error;
       MechanicsUI.preview = null;
@@ -13623,6 +13664,71 @@ function renderPlaytestArsenal(snapshot = PT.game?.getSnapshot()) {
   }
 }
 
+function renderPlaytestMacroEconomy(snapshot = PT.game?.getSnapshot()) {
+  const panel = $("pt-macro-economy");
+  if (!panel || !snapshot || !PT.rmod?.projectMacroEconomyPresentation) return;
+  const presentation = PT.rmod.projectMacroEconomyPresentation(snapshot);
+  const selectedTowerId = PT.selectedDebug?.kind === "tower" ? PT.selectedDebug.id : null;
+  const signature = JSON.stringify([presentation, selectedTowerId]);
+  if (panel.dataset.macroEconomySignature === signature) return;
+  panel.dataset.macroEconomySignature = signature;
+  panel.replaceChildren();
+  panel.hidden = !presentation?.active;
+  if (!presentation?.active) return;
+  const title = document.createElement("div");
+  title.className = "form-section-title pt-debug-title";
+  title.textContent = "Macro-Economy";
+  panel.append(title);
+  const dispatch = (command, message) => {
+    const result = PT.debugSession
+      ? dispatchPlaytestCommand(command, () => PT.mod.dispatchGameCommand(PT.game, command))
+      : PT.mod.dispatchGameCommand(PT.game, command);
+    ptMsg(result, message);
+    if (result.ok) renderPlaytestMacroEconomy(PT.game.getSnapshot());
+  };
+  for (const commodity of presentation.commodities) {
+    const row = document.createElement("div");
+    row.className = "pt-arsenal-controls";
+    const label = document.createElement("span");
+    label.textContent = `${commodity.label}: ${commodity.quote} ${presentation.quoteCurrencyId} · held ${commodity.holding}`;
+    row.append(label);
+    for (const side of ["buy", "sell"]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "btn btn-outline";
+      button.textContent = `${side === "buy" ? "Buy" : "Sell"} 1`;
+      button.disabled = !presentation.managementAllowed || (side === "sell" && commodity.holding < 1);
+      button.onclick = () => dispatch({ schemaVersion: 8, type: side === "buy" ? "buyCommodity" : "sellCommodity", commodityId: commodity.id, quantity: 1 }, `${commodity.label} trade completed.`);
+      row.append(button);
+    }
+    panel.append(row);
+  }
+  for (const product of presentation.depositProducts) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn btn-outline";
+    button.textContent = `Deposit ${product.minAmount} ${product.currencyId} · ${product.durationClearedWaves} waves · ${product.interestBasisPoints / 100}%`;
+    button.disabled = !presentation.managementAllowed;
+    button.onclick = () => dispatch({ schemaVersion: 8, type: "openDeposit", depositId: product.id, amount: product.minAmount }, "Deposit opened.");
+    panel.append(button);
+  }
+  for (const altar of presentation.altars) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn btn-danger";
+    button.textContent = selectedTowerId ? `Perform ${altar.label} with selected tower` : `Select a tower for ${altar.label}`;
+    button.disabled = !presentation.ritualAllowed || !selectedTowerId || altar.minTowers !== 1;
+    button.onclick = () => dispatch({ schemaVersion: 8, type: "performRitual", altarId: altar.id, towerIds: [selectedTowerId] }, "Ritual performed.");
+    panel.append(button);
+  }
+  for (const deposit of presentation.deposits) {
+    const note = document.createElement("span");
+    note.className = "text-muted";
+    note.textContent = `${deposit.label}: ${deposit.principal} ${deposit.currencyId}, matures at clear ${deposit.maturityClearedWave}`;
+    panel.append(note);
+  }
+}
+
 function renderPlaytestLogistics(snapshot) {
   const panel = $("pt-logistics-power");
   if (!panel || !PT.rmod?.projectLogisticsPresentation) return;
@@ -13900,6 +14006,7 @@ function updatePlaytestHud(s = PT.game.getSnapshot()) {
   set("pt-objectives", `${objectiveCount}/${objectives.length}${stars.length ? ` | ${starCount}/${stars.length} stars` : ""}`);
   renderPlaytestLogistics(s);
   renderPlaytestArsenal(s);
+  renderPlaytestMacroEconomy(s);
   renderPlaytestQuests(s);
   renderPlaytestBallistics(s);
   if (PT.artifactUiDirty) {

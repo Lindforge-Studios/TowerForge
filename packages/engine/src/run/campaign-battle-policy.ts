@@ -12,6 +12,7 @@ import {
   type HeroesProfileV7
 } from "../content/heroes-mechanics.js";
 import { resolveActiveHighGroundMechanics } from "../content/elevation-mechanics.js";
+import { resolveActiveArsenalMechanics } from "../content/arsenal-mechanics.js";
 import type { SynergyModifierV1 } from "../content/roguelite-mechanics.js";
 
 export interface CampaignBattleDeckEntry {
@@ -76,6 +77,8 @@ export interface HeroAuraDamageFinitePreflightOptions {
   readonly deck?: readonly CampaignBattleDeckEntry[];
   /** Structurally normalized profile used to diagnose inactive/unselected authoring as a warning. */
   readonly heroesProfile?: HeroesProfileV6 | HeroesProfileV7;
+  /** Exact active temporary-stage multipliers, including pending ritual effects. */
+  readonly temporaryDamageMultipliers?: readonly Readonly<{ id: string; multiplier: number }>[];
 }
 
 export type HeroAuraDamageFinitePreflightResult =
@@ -177,6 +180,7 @@ function indexedModifierBounds(
 interface ImmediateTowerDamageCandidate {
   readonly amount: number;
   readonly aoe: boolean;
+  readonly overTime?: boolean;
 }
 
 function towerImmediateDamageAmounts(
@@ -192,7 +196,10 @@ function towerImmediateDamageAmounts(
         ? Math.max(1, Math.pow(Math.abs(attack.chain.damageFalloff), attack.chain.maxJumps))
         : 1), aoe: false }];
     case "pulse":
-      return [{ amount: attack.pulseDamage, aoe: true }];
+      return [
+        { amount: attack.pulseDamage, aoe: true },
+        { amount: attack.dotDamagePerUnit, aoe: true, overTime: true }
+      ];
     case "sniper":
     case "antiair":
       return [{ amount: attack.damage, aoe: false }];
@@ -231,11 +238,27 @@ function maximumMetaTowerDamageMultiplier(content: GameContentRegistry): number 
   return bound;
 }
 
-function rogueliteRunDamageBound(
+function maximumArsenalDamageMultiplier(
   content: GameContentRegistry,
   missionId: string,
-  towerTypeId: string,
-  deck: readonly CampaignBattleDeckEntry[]
+  towerTypeId: string
+): number {
+  const active = resolveActiveArsenalMechanics(content, missionId);
+  const blueprint = active?.blueprints[towerTypeId];
+  if (!active || !blueprint) return 1;
+  return (["base", "barrel", "core"] as const).reduce((product, category) => {
+    const maximum = Object.values(active.modules)
+      .filter((definition) => definition.category === category
+        && (definition.compatibilityTags.length === 0
+          || definition.compatibilityTags.some((tag) => blueprint.compatibilityTags.includes(tag))))
+      .reduce((value, definition) => Math.max(value, definition.modifiers.damageMultiplier), 0);
+    return product * maximum;
+  }, 1);
+}
+
+function rogueliteSynergyDamageBound(
+  content: GameContentRegistry,
+  missionId: string
 ): DamageStageBound {
   const active = resolveActiveRogueliteMechanics(content, missionId);
   if (!active) return emptyStageBound();
@@ -258,6 +281,18 @@ function rogueliteRunDamageBound(
       mergeOptionalChoice(result, tierBounds);
     }
   }
+  return result;
+}
+
+function rogueliteRunDamageBound(
+  content: GameContentRegistry,
+  missionId: string,
+  towerTypeId: string,
+  deck: readonly CampaignBattleDeckEntry[]
+): DamageStageBound {
+  const active = resolveActiveRogueliteMechanics(content, missionId);
+  if (!active) return emptyStageBound();
+  const result = rogueliteSynergyDamageBound(content, missionId);
   for (const [slotIndex, slot] of (active.artifacts?.towerSlots[towerTypeId] ?? []).entries()) {
     mergeOptionalChoice(result, Object.entries(active.artifacts?.definitions ?? {})
       .filter(([, definition]) => definition.slotType === slot.slotType)
@@ -310,10 +345,11 @@ export function preflightHeroAuraDamageFinite(
   const active = resolveActiveHeroesMechanics(content, missionId);
   const profile = options.heroesProfile
     ?? (active?.schemaVersion === 6 || active?.schemaVersion === 7 ? active : undefined);
-  if (!profile) return Object.freeze({ ok: true });
-  const definition = profile.definitions[profile.selectedHeroId];
+  const temporaryDamageMultipliers = options.temporaryDamageMultipliers ?? [];
+  if (!profile && temporaryDamageMultipliers.length === 0) return Object.freeze({ ok: true });
+  const definition = profile?.definitions[profile.selectedHeroId];
   const aura = definition?.passiveAura;
-  if (!aura) return Object.freeze({ ok: true });
+  if (!aura && temporaryDamageMultipliers.length === 0) return Object.freeze({ ok: true });
   const highGround = resolveActiveHighGroundMechanics(content, missionId);
   const metaBound = exactModifierBound([{
     id: "legacy-meta-tower-damage",
@@ -329,15 +365,25 @@ export function preflightHeroAuraDamageFinite(
     fieldPath: `towers.${towerTypeId}.attack.damage`,
     message: `Hero passive aura can overflow finite tower damage for tower "${towerTypeId}".`
   });
-  for (const towerTypeId of content.missions[missionId]?.buildTowerIds ?? []) {
+  // The public headless engine currently accepts every registered tower type, even when Studio's
+  // mission palette omits it, so safety proofs must cover the full engine-placeable registry.
+  for (const towerTypeId of Object.keys(content.towers).sort()) {
     const runBound = rogueliteRunDamageBound(content, missionId, towerTypeId, options.deck ?? []);
+    const overTimeRunBound = rogueliteSynergyDamageBound(content, missionId);
+    const arsenalMultiplier = maximumArsenalDamageMultiplier(content, missionId, towerTypeId);
+    if (arsenalMultiplier !== 1) {
+      addStageBound(runBound, exactModifierBound([{
+        id: "arsenal:maximum-compatible-loadout",
+        modifier: { target: "damage", operation: "multiplier", value: arsenalMultiplier }
+      }]));
+    }
     for (const candidate of towerImmediateDamageAmounts(content, towerTypeId)) {
       let value = applyStageBound(candidate.amount, metaBound);
       if (!Number.isFinite(value)) return failure(towerTypeId);
-      value = applyStageBound(value, runBound);
+      value = applyStageBound(value, candidate.overTime ? overTimeRunBound : runBound);
       if (!Number.isFinite(value)) return failure(towerTypeId);
       const spatialModifiers: OrderedDamageBoundModifier[] = [];
-      if (highGround) {
+      if (highGround && !candidate.overTime) {
         spatialModifiers.push({
           id: "elevation:high-ground:damage",
           modifier: {
@@ -350,10 +396,12 @@ export function preflightHeroAuraDamageFinite(
           }
         });
       }
-      aura.effects.forEach((effect, effectIndex) => spatialModifiers.push({
-        id: heroPassiveAuraModifierIdV6(profile.selectedHeroId, aura.id, effectIndex),
-        modifier: effect.modifier
-      }));
+      if (!candidate.overTime) {
+        aura?.effects.forEach((effect, effectIndex) => spatialModifiers.push({
+          id: heroPassiveAuraModifierIdV6(profile!.selectedHeroId, aura.id, effectIndex),
+          modifier: effect.modifier
+        }));
+      }
       if (candidate.aoe) {
         spatialModifiers.push({
           id: "legacy-spatial-sunlight-aoe",
@@ -368,6 +416,11 @@ export function preflightHeroAuraDamageFinite(
         });
       }
       value = applyStageBound(value, exactModifierBound(spatialModifiers));
+      if (!Number.isFinite(value)) return failure(towerTypeId);
+      value = applyStageBound(value, exactModifierBound(temporaryDamageMultipliers.map((modifier) => ({
+        id: modifier.id,
+        modifier: { target: "damage", operation: "multiplier", value: modifier.multiplier }
+      }))));
       if (!Number.isFinite(value)) return failure(towerTypeId);
     }
   }

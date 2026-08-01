@@ -24,6 +24,7 @@ const TAGGED_DESTRUCTIBLE_BRIDGE_ID = "tagged_destructible_bridge";
 const BASIC_ELEMENTAL_SYNERGY_ID = "basic_elemental_synergy";
 const BASIC_BOSS_ARTIFACT_LOOT_ID = "basic_boss_artifact_loot";
 const BASIC_MODULAR_ARSENAL_ID = "basic_modular_arsenal";
+const BASIC_LOCAL_MARKET_ID = "basic_local_market";
 const BASIC_COMMANDER_HERO_ID = "basic_commander_hero";
 const BASIC_MOBILE_COMMANDER_HERO_ID = "basic_mobile_commander_hero";
 const BASIC_DURABLE_COMMANDER_HERO_ID = "basic_durable_commander_hero";
@@ -346,6 +347,14 @@ const RECIPES = Object.freeze([
     moduleSchemaVersion: 1
   }),
   Object.freeze({
+    id: BASIC_LOCAL_MARKET_ID,
+    moduleId: "macroEconomy",
+    label: "Basic Local Market",
+    description: "Inert macro-economy v1 profile with a seeded ore market, one fixed-term deposit, and one resource ritual.",
+    suggestedId: BASIC_LOCAL_MARKET_ID,
+    moduleSchemaVersion: 1
+  }),
+  Object.freeze({
     id: BASIC_COMMANDER_HERO_ID,
     moduleId: "heroes",
     label: "Basic Commander Hero",
@@ -641,6 +650,32 @@ export function materializeMechanicsRecipe(recipeId, context = {}) {
             gem_t2: {
               outputArtifactId: "gem_t2", allowRotations: true,
               pattern: [{ x: 0, y: 0, artifactId: "gem_t1" }, { x: 1, y: 0, artifactId: "gem_t1" }]
+            }
+          }
+        }
+      }
+    };
+  }
+  if (recipeId === BASIC_LOCAL_MARKET_ID) {
+    const towerTypeId = firstSafeId(towerIds);
+    return {
+      ...recipe,
+      entity: {
+        moduleId: "macroEconomy", moduleSchemaVersion: 1, missionId: missionId ?? "",
+        profileId: recipe.suggestedId,
+        profile: {
+          quoteCurrencyId: "coins",
+          commodities: {
+            ore: { label: "Ore", basePrice: 10, minPrice: 5, maxPrice: 25, trendPerWave: 0.1, volatility: 0.08, demandElasticity: 0.05 }
+          },
+          deposits: {
+            short_term: { label: "Short-term deposit", currencyId: "coins", durationClearedWaves: 2, interestBasisPoints: 500, minAmount: 10, maxAmount: 1000 }
+          },
+          altars: {
+            exchange_altar: {
+              label: "Exchange altar", coord: { q: 0, r: 0 }, radius: 2, minTowers: 1, maxTowers: 1,
+              towerTypeIds: towerTypeId === undefined ? [] : [towerTypeId],
+              effects: [{ kind: "grant_resource", resourceId: "coins", amount: 25 }]
             }
           }
         }

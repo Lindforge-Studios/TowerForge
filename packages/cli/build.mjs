@@ -87,6 +87,7 @@ try {
 
   const renderer = target.renderer === "phaser" ? "phaser" : "canvas";
   const multiplayerActive = hasActiveMultiplayer(files);
+  const macroEconomyActive = hasActiveMacroEconomy(files);
   copyDir(path.join(repoRoot, "packages", "engine", "dist"), path.join(outDir, "engine"), {
     excludeRootEntries: multiplayerActive ? undefined : new Set(["multiplayer"])
   });
@@ -98,6 +99,7 @@ try {
   }
   // Renderer dir ships for both players — the canvas player needs index.mjs, both need audio.mjs.
   copyDir(path.join(repoRoot, "packages", "renderer", "src"), path.join(outDir, "renderer"));
+  if (!macroEconomyActive) pruneInactiveMacroEconomyRuntime(outDir);
   if (renderer === "phaser") {
     // Vendor Phaser locally so the offline PWA still works (no CDN dependency).
     const phaserSrc = path.join(repoRoot, "packages", "renderer", "vendor", "phaser.min.js");
@@ -120,12 +122,12 @@ try {
     battleBackgrounds: files.battleBackgrounds,
     buildTarget: target
   });
-  fs.writeFileSync(path.join(outDir, "index.html"), htmlTemplate(files.manifest, target, renderer, initialGridKind), "utf8");
+  fs.writeFileSync(path.join(outDir, "index.html"), htmlTemplate(files.manifest, target, renderer, initialGridKind, macroEconomyActive), "utf8");
   fs.writeFileSync(path.join(outDir, "styles.css"), cssTemplate(target), "utf8");
   fs.writeFileSync(path.join(outDir, "boot.js"), bootRecoveryTemplate(files.manifest, target, files.storyComics), "utf8");
   fs.writeFileSync(
     path.join(outDir, "player.mjs"),
-    renderer === "phaser" ? phaserPlayerTemplate(multiplayerActive) : playerTemplate(multiplayerActive),
+    renderer === "phaser" ? phaserPlayerTemplate(multiplayerActive, macroEconomyActive) : playerTemplate(multiplayerActive, macroEconomyActive),
     "utf8"
   );
   fs.writeFileSync(path.join(outDir, "manifest.webmanifest"), JSON.stringify(webManifest(files.manifest, target), null, 2) + "\n", "utf8");
@@ -160,7 +162,7 @@ try {
       battleBackgrounds: files.battleBackgrounds,
       buildTarget: target
     };
-    fs.writeFileSync(singleFilePath, singleFileHtml(outDir, files.manifest, target, renderer, embeddedProject, initialGridKind), "utf8");
+    fs.writeFileSync(singleFilePath, singleFileHtml(outDir, files.manifest, target, renderer, embeddedProject, initialGridKind, macroEconomyActive), "utf8");
   }
 
   // Phaser now shares topology and terrain tileset resolution with Canvas. Entity sprites still use
@@ -229,6 +231,44 @@ function copyDir(src, dest, options = {}, depth = 0) {
   }
 }
 
+function pruneInactiveMacroEconomyRuntime(outDir) {
+  const engineIndex = path.join(outDir, "engine", "index.js");
+  const rendererIndex = path.join(outDir, "renderer", "index.mjs");
+  const stripExport = (filePath, specifier) => {
+    const source = fs.readFileSync(filePath, "utf8");
+    const next = source.replace(`export * from "${specifier}";\n`, "");
+    if (next === source) throw new Error(`Could not prune inactive Macro-Economy export from ${filePath}.`);
+    fs.writeFileSync(filePath, next, "utf8");
+  };
+  stripExport(engineIndex, "./content/macro-economy-mechanics.js");
+  stripExport(rendererIndex, "./macro-economy-presentation.mjs");
+  const stripOptionalSections = (relativePath) => {
+    const filePath = path.join(outDir, "engine", relativePath);
+    let source = fs.readFileSync(filePath, "utf8");
+    if (relativePath === path.join("content", "validate.js")) {
+      source = source.replace(/^import .* from "\.\/macro-economy-mechanics\.js";\n/m, "");
+    }
+    const pattern = /\/\* towerforge-optional:macroEconomy:start \*\/[\s\S]*?\/\* towerforge-optional:macroEconomy:end \*\//g;
+    const matches = source.match(pattern);
+    if (!matches?.length) throw new Error(`Could not find optional Macro-Economy sections in ${filePath}.`);
+    const next = source.replace(pattern, "")
+      .replaceAll("/* towerforge-optional:macroEconomy:start */", "")
+      .replaceAll("/* towerforge-optional:macroEconomy:end */", "");
+    fs.writeFileSync(filePath, next, "utf8");
+  };
+  stripOptionalSections(path.join("content", "schema-descriptor.js"));
+  stripOptionalSections(path.join("content", "mechanics.js"));
+  stripOptionalSections(path.join("content", "validate.js"));
+  stripOptionalSections(path.join("simulation", "TowerDefenseGame.js"));
+  stripOptionalSections(path.join("simulation", "command-internal.js"));
+  const multiplayerSession = path.join(outDir, "engine", "multiplayer", "match-session.js");
+  if (fs.existsSync(multiplayerSession)) {
+    stripOptionalSections(path.join("multiplayer", "match-session.js"));
+  }
+  fs.rmSync(path.join(outDir, "engine", "content", "macro-economy-mechanics.js"), { force: true });
+  fs.rmSync(path.join(outDir, "renderer", "macro-economy-presentation.mjs"), { force: true });
+}
+
 function hasActiveMultiplayer(files) {
   const module = files.mechanics?.modules?.multiplayer;
   if (module?.enabled !== true || (module.schemaVersion !== 1 && module.schemaVersion !== 2)) return false;
@@ -236,6 +276,17 @@ function hasActiveMultiplayer(files) {
   if (!profiles || typeof profiles !== "object" || Array.isArray(profiles)) return false;
   return Object.values(files.balance?.missions ?? {}).some((mission) => {
     const profileId = mission?.mechanics?.profiles?.multiplayer;
+    return typeof profileId === "string" && Object.prototype.hasOwnProperty.call(profiles, profileId);
+  });
+}
+
+function hasActiveMacroEconomy(files) {
+  const module = files.mechanics?.modules?.macroEconomy;
+  if (module?.enabled !== true || module.schemaVersion !== 1) return false;
+  const profiles = module.profiles;
+  if (!profiles || typeof profiles !== "object" || Array.isArray(profiles)) return false;
+  return Object.values(files.balance?.missions ?? {}).some((mission) => {
+    const profileId = mission?.mechanics?.profiles?.macroEconomy;
     return typeof profileId === "string" && Object.prototype.hasOwnProperty.call(profiles, profileId);
   });
 }
@@ -286,13 +337,13 @@ function mimeType(filePath) {
   })[ext] ?? "application/octet-stream";
 }
 
-function singleFileHtml(outDir, manifest, target, renderer, projectData, initialGridKind) {
+function singleFileHtml(outDir, manifest, target, renderer, projectData, initialGridKind, includeMacroEconomy = false) {
   const virtual = new Map([
     [path.resolve(outDir, "project-data.js"), `export default ${JSON.stringify(projectData)};\n`]
   ]);
   const entryPath = path.resolve(outDir, "player.mjs");
   const entry = singleFileModuleBootstrap(entryPath, outDir, virtual);
-  let html = htmlTemplate(manifest, target, renderer, initialGridKind);
+  let html = htmlTemplate(manifest, target, renderer, initialGridKind, includeMacroEconomy);
   html = html.replace(/\s*<link rel="manifest"[^>]*>/, "");
   html = html.replace('  <link rel="stylesheet" href="./styles.css">', `  <style>${escapeInlineStyle(cssTemplate(target))}</style>`);
   if (renderer === "phaser") {
@@ -378,7 +429,7 @@ function resolveInitialGridKind(project) {
   return project.maps?.[mapId]?.grid?.kind === "square" ? "square" : "hex";
 }
 
-function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "hex") {
+function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "hex", includeMacroEconomy = false) {
   const title = esc(target.appTitle ?? manifest.name ?? "TowerForge TD");
   const battlefieldKind = initialGridKind === "square" ? "Square" : "Hex";
   const playfield = renderer === "phaser"
@@ -439,6 +490,7 @@ function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "
         <section id="wave-draft" class="roguelite-status" aria-label="Wave draft" hidden></section>
         <section id="artifact-inventory" class="roguelite-status" aria-label="Artifact inventory" hidden></section>
         <section id="arsenal-status" class="roguelite-status" aria-label="Modular arsenal" hidden></section>
+        ${includeMacroEconomy ? '<section id="macro-economy-status" class="roguelite-status" aria-label="Macro economy" hidden></section>' : ""}
         <section id="logistics-status" class="roguelite-status" aria-label="Power grid" hidden></section>
         <section id="quest-status" class="roguelite-status" aria-label="Optional challenges" hidden></section>
         <section id="campaign-run-panel" class="campaign-run-panel" aria-label="Campaign run" hidden>
@@ -779,7 +831,54 @@ function arsenalPlayerRuntimeTemplate() {
 }`;
 }
 
-function playerTemplate(includeMultiplayer = false) {
+function macroEconomyPlayerRuntimeTemplate() {
+  return `function updateMacroEconomyStatus(snap) {
+  const panel = $("macro-economy-status");
+  if (!panel) return;
+  const presentation = projectMacroEconomyPresentation(snap);
+  const signature = JSON.stringify([presentation, selectedTowerId]);
+  if (panel.dataset.macroEconomySignature === signature) return;
+  panel.dataset.macroEconomySignature = signature;
+  panel.replaceChildren();
+  panel.hidden = !presentation?.active;
+  if (!presentation?.active) return;
+  const heading = document.createElement("strong");
+  heading.textContent = "Macro-Economy";
+  panel.append(heading);
+  const act = (command) => { const result = dispatchGameCommand(game, command); report(result); if (result.ok) updateMacroEconomyStatus(game.getSnapshot()); };
+  for (const commodity of presentation.commodities) {
+    const label = document.createElement("span");
+    label.textContent = commodity.label + ": " + commodity.quote + " " + presentation.quoteCurrencyId + " · held " + commodity.holding;
+    panel.append(label);
+    for (const side of ["buy", "sell"]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = (side === "buy" ? "Buy " : "Sell ") + commodity.label;
+      button.disabled = !presentation.managementAllowed || (side === "sell" && commodity.holding < 1);
+      button.addEventListener("click", () => act({ schemaVersion: 8, type: side + "Commodity", commodityId: commodity.id, quantity: 1 }));
+      panel.append(button);
+    }
+  }
+  for (const product of presentation.depositProducts) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "Deposit " + product.minAmount + " " + product.currencyId + " for " + product.durationClearedWaves + " waves";
+    button.disabled = !presentation.managementAllowed;
+    button.addEventListener("click", () => act({ schemaVersion: 8, type: "openDeposit", depositId: product.id, amount: product.minAmount }));
+    panel.append(button);
+  }
+  for (const altar of presentation.altars) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = selectedTowerId ? "Perform " + altar.label : "Select a tower for " + altar.label;
+    button.disabled = !presentation.ritualAllowed || !selectedTowerId || altar.minTowers !== 1;
+    button.addEventListener("click", () => act({ schemaVersion: 8, type: "performRitual", altarId: altar.id, towerIds: [selectedTowerId] }));
+    panel.append(button);
+  }
+}`;
+}
+
+function playerTemplate(includeMultiplayer = false, includeMacroEconomy = false) {
   return `import {
   createCampaignRun,
   createEmptyPlayerProfile,
@@ -805,7 +904,7 @@ function playerTemplate(includeMultiplayer = false) {
 } from "./engine/index.js";
 ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multiplayer/index.js";' : ""}
 import { createPlayerProfileStore, derivePlayerProfileStorageKey } from "./player-runtime/index.mjs";
-import { createCanvasRenderer, hitTestHeroesPresentation, projectArsenalPresentation, projectCampaignPresentation, projectDirectorDecisionCues, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectProceduralJuicePresentation, projectQuestPresentation, projectRoguelitePresentation, projectVanguardProtectionPresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
+import { createCanvasRenderer, hitTestHeroesPresentation, projectArsenalPresentation${includeMacroEconomy ? ", projectMacroEconomyPresentation" : ""}, projectCampaignPresentation, projectDirectorDecisionCues, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectProceduralJuicePresentation, projectQuestPresentation, projectRoguelitePresentation, projectVanguardProtectionPresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
 import { createAudioPlayer } from "./renderer/audio.mjs";
 import project from "./project-data.js";
 
@@ -823,6 +922,7 @@ ${includeMultiplayer ? "globalThis.__towerforgeMultiplayer = TowerForgeMultiplay
 
 ${playerProfileRuntimeTemplate()}
 ${arsenalPlayerRuntimeTemplate()}
+${includeMacroEconomy ? macroEconomyPlayerRuntimeTemplate() : ""}
 
 const $ = (id) => document.getElementById(id);
 applyProjectTheme();
@@ -1741,6 +1841,7 @@ function updateHud(snap) {
   updateTargetMode(snap);
   updateRogueliteStatus(snap);
   updateArsenalStatus(snap);
+  ${includeMacroEconomy ? "updateMacroEconomyStatus(snap);" : ""}
   updateLogisticsStatus(snap);
   updateQuestStatus(snap);
   if (snap.outcome === "victory" && !victoryRewarded) {
@@ -2045,7 +2146,7 @@ function applyProjectTheme() {
 `;
 }
 
-function phaserPlayerTemplate(includeMultiplayer = false) {
+function phaserPlayerTemplate(includeMultiplayer = false, includeMacroEconomy = false) {
   return `import {
   createCampaignRun,
   createEmptyPlayerProfile,
@@ -2077,6 +2178,7 @@ import {
   createProceduralJuiceWorldSnapshotBuffer,
   projectCampaignPresentation,
   projectArsenalPresentation,
+${includeMacroEconomy ? "  projectMacroEconomyPresentation," : ""}
   projectBallisticsEventPresentation,
   projectBallisticsPresentation,
   projectBallisticsPresentationPoint,
@@ -2137,6 +2239,7 @@ function ownDataValue(record, key) {
 
 ${playerProfileRuntimeTemplate()}
 ${arsenalPlayerRuntimeTemplate()}
+${includeMacroEconomy ? macroEconomyPlayerRuntimeTemplate() : ""}
 
 const $ = (id) => document.getElementById(id);
 applyProjectTheme();
@@ -3821,6 +3924,7 @@ function updateHud(snap) {
   updateTargetMode(snap);
   updateRogueliteStatus(snap);
   updateArsenalStatus(snap);
+  ${includeMacroEconomy ? "updateMacroEconomyStatus(snap);" : ""}
   updateLogisticsStatus(snap);
   updateQuestStatus(snap);
   if (snap.outcome === "victory" && !victoryRewarded) {

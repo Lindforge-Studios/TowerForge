@@ -854,6 +854,11 @@ export type GameEvent =
       addedGroups: readonly WaveGroup[];
     }
   | { type: "waveCleared"; waveIndex: number; income: ResourceBag; interest: ResourceBag }
+  | { type: "commodityTraded"; side: "buy" | "sell"; commodityId: string; quantity: number; unitPrice: number; quoteAmount: number }
+  | { type: "marketPricesAdvanced"; waveIndex: number }
+  | { type: "depositOpened"; instanceId: string; depositId: string; currencyId: string; principal: number; maturityClearedWave: number }
+  | { type: "depositMatured"; instanceId: string; depositId: string; currencyId: string; principal: number; interestAmount: number }
+  | { type: "ritualPerformed"; altarId: string; towerIds: readonly string[] }
   | { type: "resourcesGranted"; source: "waveStart" | "earlyStart"; waveIndex: number; resources: ResourceBag }
   | { type: "objectiveCompleted"; objectiveId: string; kind: MissionVictoryObjective["kind"] }
   | { type: "objectiveFailed"; objectiveId: string; kind: MissionFailureObjective["kind"] }
@@ -1449,6 +1454,34 @@ export interface GameSnapshot {
     readonly craftingRecipes: readonly (import("../content/arsenal-mechanics.js").ArsenalCraftingRecipeV1 & {
       readonly id: string;
     })[];
+  };
+  macroEconomy?: {
+    readonly schemaVersion: 1;
+    readonly profileId: string;
+    readonly managementAllowed: boolean;
+    readonly ritualAllowed: boolean;
+    readonly quoteCurrencyId: string;
+    readonly market: {
+      readonly lastPriceWaveIndex: number;
+      readonly commodities: readonly {
+        readonly id: string;
+        readonly label: string;
+        readonly quote: number;
+        readonly holding: number;
+        readonly pendingNetDemand: number;
+      }[];
+    };
+    readonly deposits: readonly {
+      readonly instanceId: string;
+      readonly depositId: string;
+      readonly label: string;
+      readonly currencyId: string;
+      readonly principal: number;
+      readonly openedClearedWave: number;
+      readonly maturityClearedWave: number;
+    }[];
+    readonly depositProducts: readonly (import("../content/macro-economy-mechanics.js").MacroEconomyDepositDefinitionV1 & { readonly id: string })[];
+    readonly altars: readonly (import("../content/macro-economy-mechanics.js").MacroEconomyAltarDefinitionV1 & { readonly id: string })[];
   };
   heroes?: HeroesSnapshot;
   logistics?: LogisticsSnapshot;

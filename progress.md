@@ -1654,3 +1654,104 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   preserving every manifest, hash, subprocess verification and tamper-detection assertion.
 - Failed tags remain immutable. The next release attempt advances all public version domains
   together to v0.5.2.
+
+## 2026-08-01 — R15 deterministic Macro-Economy
+
+- R15.1 RED command:
+  `npm run test -- --run packages/engine/src/content/r15-macro-economy-market.contract.test.ts`.
+  All three contracts failed for the expected reason: the closed profile normalizer, market runtime
+  and deterministic next-wave price step did not exist. GREEN adds `macroEconomy` v1, bounded
+  commodity/deposit/altar schemas, a domain-separated seeded market and input-order invariance.
+- R15.2/R15.3 runtime contracts were authored before their production paths. The missing v8
+  command/journal union, active snapshot/checkpoint state, deposit maturity and atomic ritual
+  actions were RED, then implemented through the canonical dispatcher and shared
+  DamageResolver/status paths. Trades and deposits remain management-only; rituals are allowed
+  while the outcome is `playing`, so their combat effects have authoritative targets.
+- The first active checkpoint run exposed a RED event-codec regression: `commodityTraded` was not
+  accepted by the closed checkpoint event schema. A later verifier regression proved that a
+  post-wave checkpoint used non-canonical null-prototype price records and rejected a valid negative
+  `pendingNetDemand`. Both now have focused GREEN coverage, together with complete commodity record,
+  quote-bound and seed-provenance rejection.
+- Focused engine, renderer, Studio, MCP/AI and generated-player/package contracts are GREEN at
+  18/18 across six files. The first real browser acceptance run then recorded two additional RED
+  integration defects: the Studio draft normalizer appended combat-only fields to Macro-Economy,
+  and generated players replaced command buttons every animation frame so pointer activation could
+  never stabilize. The fixes keep closed module drafts raw and memoize engine-owned presentation;
+  the complete Studio lifecycle plus Canvas/Phaser × hex/square command matrix is GREEN at 3/3,
+  including keyboard and touch activation and absent/disabled legacy bundles.
+- The pre-freeze repository pass reached 3,734/3,734 unit/contract tests and the pre-R15 browser
+  baseline reached 141/141. Exact final gates and two independent sign-offs remain required before
+  ADR 0056 can move from Proposed to Accepted.
+- The first independent freeze was rejected. Fresh RED regressions reproduced seven findings:
+  another co-op player could sacrifice an owned tower, partitioned wallets shared market state,
+  hostile direct ritual arrays could throw, selection order changed snapshots, recomputed forged
+  checkpoint provenance passed the inner codec, temporary damage modifiers could exceed the shared
+  64-entry resolver budget, and inactive runtime files remained in a legacy bundle. The focused
+  command completed with 7 failed / 17 control tests passed.
+- GREEN canonicalizes descriptor-safe ritual selections and affected enemies, enforces every
+  `owner_only` ritual target, removes sacrificed ownership, and rejects Macro-Economy v1 with
+  partitioned multiplayer resources in both content validation and `MatchSession` create/restore.
+  Deposits now record their opened-wave proof; ritual modifiers carry exact altar/effect/sequence
+  provenance, positive finite multipliers and duration bounds; shared modifier capacity and numeric
+  products are preflighted before tower destruction. Legacy builds prune full Macro-Economy engine
+  and renderer modules and bind common engine imports to an inert optional-mechanics adapter.
+  The repaired focused set is GREEN at 27/27 across four files.
+- The first complete rerun then exposed one existing R8 packaging interaction: an active
+  multiplayer-only build retained `match-session`'s static Macro-Economy import after the R15 file
+  was pruned. The existing conditional multiplayer package contract supplied the RED; the inactive
+  adapter rewrite now covers that optional entrypoint too, and the combined R8/R15 packaging set is
+  GREEN at 3/3.
+- The second independent freeze was also rejected. Code verification supplied RED reproductions
+  for reset leakage, finite modifier products that overflowed derived range/fire-rate, and sequence
+  values without safe increment headroom. Integration verification proved the stronger opt-in
+  invariant was still false: copied `TowerDefenseGame.js` and `command-internal.js` retained full
+  R15 runtime/parser bytes and per-instance empty state even though catalog files were pruned.
+- GREEN now resets market/deposits/modifiers/sequences from the original deterministic seed, caps
+  aggregate temporary multiplier products at a conservative `1e100`, and bounds both sequences at
+  one billion with atomic command rejection before increment. Inactive engine instances no longer
+  allocate any R15 own fields. The engine build emits explicit optional-section markers; the
+  generated-player packager strips those engine, validator, command and multiplayer sections plus
+  the catalog/presentation modules before single-file graph and service-worker collection. Active
+  builds retain the complete implementation. The second repaired focused matrix is GREEN at 17/17.
+- The third freeze produced two final RED regressions. Code verification showed that restoring an
+  inactive legacy checkpoint created four empty R15 own-properties even though a fresh legacy game
+  did not. Constructor integration verification showed that the pruned legacy bundle still exposed
+  `macroEconomy` in the mechanics catalog and five R15 checkpoint event-schema names. The combined
+  focused run failed exactly those two tests with 14 controls passing.
+- GREEN removes inactive restore assignments and places the module IDs plus event descriptors under
+  the same compiled optional-section boundary as the runtime. Legacy package construction now strips
+  `content/mechanics.js` as well. The repaired engine and R12/R15 packaging matrix passes 17/17, while
+  active builds retain the complete catalog and event codec.
+- The fourth Code Verifier rejected the freeze with two additional hostile/numeric cases. RED added
+  a validator-approved `1e308` tower plus a finite ritual multiplier that previously failed later in
+  `DamageResolver`, and symbol-keyed authored/command arrays that the string-key descriptor count
+  silently accepted. The focused run failed exactly all three new assertions with 15 controls green.
+- GREEN rejects own symbols in every R15 dense-array and ritual command boundary. Ritual preflight
+  now evaluates pending temporary damage after authored base, meta, rogue, Arsenal, elevation and
+  hero stages, validates checkpoint-restored temporary damage the same way, and conservatively
+  proves range/fire-rate products across compatible Arsenal modules and authored Weather before any
+  tower is sacrificed. The repaired focused matrix passes 95/95 across five files.
+- The fifth Code Verifier found that the proof's tower domain still followed the Studio palette even
+  though the public headless placement API accepts every registered tower, and that checkpoint
+  restore did not reuse the non-damage proof. RED reproduced an unlisted `1e308` damage tower plus
+  authored range/fire-rate restore overflow; all three new assertions failed with 15 controls green.
+- GREEN extends damage proof to the full engine-placeable tower registry and moves range/fire-rate
+  composition into a pure Macro-Economy helper shared by live ritual preflight and checkpoint
+  validation. It includes exact meta levels and conservative Arsenal, support and Weather bounds.
+  The repaired focused matrix passes 98/98 across five files.
+- The sixth Code Verifier isolated the remaining pulse DoT path: `dotDamagePerUnit` re-enters the
+  common tower DamageResolver after its source tower may be sacrificed, but the finite proof covered
+  only `pulseDamage`. Live and forged-checkpoint RED tests both reproduced acceptance of a `1e308`
+  DoT followed by failure on a finite temporary multiplier.
+- GREEN treats pulse DoT as an explicit over-time damage candidate. Its proof mirrors runtime stages:
+  meta, global synergy, optional sunlight and temporary modifiers, while excluding source-tower
+  Arsenal/artifact/draft/high-ground/hero modifiers. Live and checkpoint paths share the corrected
+  proof; the repaired focused set passes 97/97 across four files.
+- Final frozen-tree gates passed: typecheck, engine build, 3,748/3,748 tests in 363 files, content
+  validation, the 60-unit starter simulation, balance, map compilation, web build, 144/144 browser
+  E2E, plugin build/validate/smoke, mobile scaffold and desktop scaffold packaging. The starter
+  simulation remained `playing` with core 10, two of three waves, two towers, one enemy and 45 coins.
+- Independent Code Verifier sign-off: PASS, with 101/101 focused tests and no P0–P2 findings.
+  Independent Constructor Integration Verifier sign-off: PASS, with 76/76 focused tests, 3/3 R15
+  browser acceptance, strict legacy carrier pruning, active carrier presence and exact plugin parity.
+  ADR 0056 is Accepted; R15 is complete pending its separate PR merge/release workflow.

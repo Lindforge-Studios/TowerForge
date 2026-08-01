@@ -57,13 +57,13 @@ gh pr checks <number>
 ```
 
 As of 2026-08-01, R12 and R13 are merged and the repaired R13 exact commit passed remote CI. The
-`v0.5.2` release line adds R9–R14 to the previous R0–R8 public baseline. R14 remains fully opt-in:
-CampaignRunV2, Arsenal v1 and GameCommand/Journal v7 do not change legacy projects. R15–R17 remain
-out of scope for this release.
+`v0.5.2` release line adds R9–R14 to the previous R0–R8 public baseline. Current mainline also has
+the release-candidate R15 implementation: fully opt-in Macro-Economy v1 and GameCommand/Journal v8.
+It does not change legacy projects. R16–R17 remain planned.
 
 ## Opt-In Mechanics
 
-Open **Mechanics** in Studio to use the isolated Mechanics Hub. Pick a mission and switch between the implemented combat, reactions, navigation, elevation, physics, terraforming, rogue-lite, Arsenal, heroes, logistics, Director, quests, multiplayer, enemy-behavior, Ballistics, and Weather capabilities. Preview before apply. The ordinary mechanics transaction updates `project.json`, `content/mechanics.json`, and mission selections with validation, backup, and rollback; domain-specific multi-file editors such as campaign graphs, tower tags, or destructibles use their narrower documented transaction. Recipes return inert candidates and never enable dependencies or select a mission automatically. Disable preserves authored data and restores the lower-capability runtime path. Ordinary tower, enemy, map, mission, and TowerScript forms remain unchanged.
+Open **Mechanics** in Studio to use the isolated Mechanics Hub. Pick a mission and switch between the implemented combat, reactions, navigation, elevation, physics, terraforming, rogue-lite, Arsenal, Macro-Economy, heroes, logistics, Director, quests, multiplayer, enemy-behavior, Ballistics, and Weather capabilities. Preview before apply. The ordinary mechanics transaction updates `project.json`, `content/mechanics.json`, and mission selections with validation, backup, and rollback; domain-specific multi-file editors such as campaign graphs, tower tags, or destructibles use their narrower documented transaction. Recipes return inert candidates and never enable dependencies or select a mission automatically. Disable preserves authored data and restores the lower-capability runtime path. Ordinary tower, enemy, map, mission, and TowerScript forms remain unchanged.
 
 In Playtest, the dynamic-navigation overlay analyzes all cells when the viewport contains at most 4,096 tiles. On a larger viewport it shows a deterministic focus window around the most recent pointer or keyboard interaction coordinate and reports `analyzed/total` partial coverage; move focus near the area you want to inspect. The overlay is advisory: every click still runs authoritative `canPlaceTower` preflight and `placeTower`, so a cell outside the current window cannot bypass last-path validation.
 
@@ -780,6 +780,38 @@ state into `PlayerProfileV3` or browser-local profile storage. Disable/unselect 
 confirm that `snapshot.arsenal`, its checkpoint tower loadouts and all Arsenal controls disappear.
 Verify both Canvas and Phaser on hex/square plus PWA, single-file, web package and `.tdpack`. The
 copyable reference is `docs/examples/opt-in-modular-arsenal/`.
+
+### R15 deterministic Macro-Economy
+
+Macro-Economy is a separate mission-selected `macroEconomy` v1 module. In **Mechanics Hub**, start
+from the inert `basic_local_market` recipe and explicitly preview before enable/apply. The equivalent
+AI flow is:
+
+`describe_schema({domain:"macroEconomy"}) -> get_capabilities -> get_recipe({collection:"mechanics",recipeId:"basic_local_market"}) -> preview_mechanics_module -> apply_mechanics_module(ifRevision=preview.revision) -> validate_project`.
+
+Trade only during setup or between waves with exact `GameCommandV8 buyCommodity` or
+`sellCommodity`. The price shown in `snapshot.macroEconomy` is authoritative; current-wave net
+demand is applied only at the next cleared-wave boundary. Use `openDeposit` with an authored product
+and explicit amount. There is no early withdrawal: principal plus basis-point interest settles
+automatically after the configured number of cleared waves.
+
+`performRitual` takes an altar ID and exact live tower instance IDs while the game outcome is still
+`playing`; unlike trades and deposits, combat-time rituals are allowed so damage and status effects
+have an authoritative target. Do not pre-destroy towers or apply effects in UI code: the engine
+atomically validates count, type, radius, live state and bounded effect capacity before destroying
+the full selection and applying allowlisted resource, damage, status or temporary tower modifier
+effects. Studio and players must dispatch commands and read `ritualAllowed` plus resulting events.
+
+For local co-op, select Macro-Economy v1 only with `ownership.resources: shared`; validation and
+match construction reject partitioned wallets. With `owner_only`, every selected ritual tower must
+belong to the issuing player. Modifier capacity and finite products are checked before sacrifice.
+
+Disable or unselect Macro-Economy and reload to confirm that the optional snapshot/checkpoint state
+and management controls disappear while the legacy `mission.economy.interestRate` behavior remains
+unchanged. Verify Canvas and Phaser on hex/square plus PWA, single-file, web package and `.tdpack`.
+The inactive generated player must not contain or precache the Macro-Economy engine/renderer
+implementation modules.
+The copyable reference is `docs/examples/opt-in-macro-economy/`.
 
 ## Desktop Studio Navigation
 

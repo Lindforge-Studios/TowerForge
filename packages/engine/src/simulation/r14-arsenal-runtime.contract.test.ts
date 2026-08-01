@@ -125,8 +125,8 @@ describe("R14.2 modular arsenal runtime contract (RED)", () => {
   });
 
   it("publishes GameCommandV7 and configures an active tower only in management phases", () => {
-    expect(GAME_COMMAND_SCHEMA_VERSION).toBe(7);
-    expect(GAME_COMMAND_JOURNAL_SCHEMA_VERSION).toBe(7);
+    expect(GAME_COMMAND_SCHEMA_VERSION).toBe(8);
+    expect(GAME_COMMAND_JOURNAL_SCHEMA_VERSION).toBe(8);
     const game = new TowerDefenseGame({ content, missionId: "arsenal", seed: "arsenal" });
     expect(game.placeTower("cannon", { q: 1, r: 0 })).toEqual({ ok: true });
     expect(game.getSnapshot().arsenal?.towers[0]).toMatchObject({

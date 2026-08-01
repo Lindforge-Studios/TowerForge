@@ -101,7 +101,8 @@ import { resolveActiveReactionsMechanics } from "./reaction-mechanics.js";
 import {
   MultiplayerProfileValidationError,
   normalizeMultiplayerProfileV1,
-  normalizeMultiplayerProfileV2
+  normalizeMultiplayerProfileV2,
+  resolveActiveMultiplayerMechanics
 } from "./multiplayer-mechanics.js";
 import {
   normalizeAuthoredWorldCampaign,
@@ -118,6 +119,10 @@ import {
   normalizeArsenalProfileV1
 } from "./arsenal-mechanics.js";
 import { resolveActiveRogueliteMechanics } from "./roguelite-mechanics.js";
+import {
+  MacroEconomyProfileValidationError,
+  normalizeMacroEconomyProfileV1
+} from "./macro-economy-mechanics.js";
 
 /**
  * `code` is a STABLE, machine-branchable identifier — derived automatically from
@@ -6764,6 +6769,90 @@ export function validateGameContentRegistry(content: GameContentRegistry): Valid
   } catch {
     err("mechanics", "arsenal", "modules.arsenal", "Arsenal module could not be inspected safely.");
   }
+
+  /* towerforge-optional:macroEconomy:start */
+  // R15 macro-economy profiles are always structurally checked. References remain warnings
+  // until an enabled profile is mission-selected, matching every other opt-in module.
+  try {
+    const modulesDescriptor = Object.getOwnPropertyDescriptor(content.mechanics, "modules");
+    const modulesValue = modulesDescriptor?.enumerable && "value" in modulesDescriptor ? modulesDescriptor.value : undefined;
+    const moduleDescriptor = modulesValue && typeof modulesValue === "object"
+      ? Object.getOwnPropertyDescriptor(modulesValue, "macroEconomy")
+      : undefined;
+    const moduleValue = moduleDescriptor?.enumerable && "value" in moduleDescriptor ? moduleDescriptor.value : undefined;
+    if (moduleValue !== undefined) {
+      const root = Object.getOwnPropertyDescriptors(moduleValue as object);
+      const version = root.schemaVersion?.enumerable && "value" in root.schemaVersion ? root.schemaVersion.value : undefined;
+      const enabled = root.enabled?.enumerable && "value" in root.enabled ? root.enabled.value : undefined;
+      const profilesValue = root.profiles?.enumerable && "value" in root.profiles ? root.profiles.value : undefined;
+      if (version === 1 && profilesValue && typeof profilesValue === "object" && !Array.isArray(profilesValue)) {
+        const profiles = Object.getOwnPropertyDescriptors(profilesValue);
+        for (const profileId of Object.keys(profiles).sort()) {
+          const descriptor = profiles[profileId];
+          if (!descriptor?.enumerable || !("value" in descriptor)) {
+            err("mechanics", "macroEconomy", `modules.macroEconomy.profiles.${profileId}`, "Macro-economy profiles must be enumerable own data.");
+            continue;
+          }
+          try {
+            const profile = normalizeMacroEconomyProfileV1(descriptor.value);
+            const activeMissionIds = enabled === true
+              ? Object.values(content.missions)
+                  .filter((mission) => mission.mechanics?.profiles?.macroEconomy === profileId)
+                  .map((mission) => mission.id)
+                  .sort()
+              : [];
+            const active = activeMissionIds.length > 0;
+            const semantic = active ? err : warn;
+            for (const missionId of activeMissionIds) {
+              const multiplayer = resolveActiveMultiplayerMechanics(content, missionId);
+              if (multiplayer?.mode === "local_coop" && multiplayer.ownership.resources === "partitioned") {
+                err(
+                  "mission",
+                  missionId,
+                  "mechanics.profiles.macroEconomy",
+                  "Macro-economy v1 multiplayer requires shared resources."
+                );
+              }
+            }
+            if (!currencyIds.has(profile.quoteCurrencyId)) {
+              semantic("mechanics", "macroEconomy", `modules.macroEconomy.profiles.${profileId}.quoteCurrencyId`, `Macro-economy quote currency "${profile.quoteCurrencyId}" is not declared.`);
+            }
+            for (const [depositId, deposit] of Object.entries(profile.deposits)) {
+              if (!currencyIds.has(deposit.currencyId)) {
+                semantic("mechanics", "macroEconomy", `modules.macroEconomy.profiles.${profileId}.deposits.${depositId}.currencyId`, `Deposit "${depositId}" references undeclared currency "${deposit.currencyId}".`);
+              }
+            }
+            for (const [altarId, altar] of Object.entries(profile.altars)) {
+              for (const towerTypeId of altar.towerTypeIds) {
+                if (!towerIds.has(towerTypeId)) semantic("mechanics", "macroEconomy", `modules.macroEconomy.profiles.${profileId}.altars.${altarId}.towerTypeIds`, `Ritual altar "${altarId}" references unknown tower "${towerTypeId}".`);
+              }
+              for (const [effectIndex, effect] of altar.effects.entries()) {
+                if (effect.kind === "grant_resource" && !currencyIds.has(effect.resourceId)) {
+                  semantic("mechanics", "macroEconomy", `modules.macroEconomy.profiles.${profileId}.altars.${altarId}.effects.${effectIndex}.resourceId`, `Ritual altar "${altarId}" references undeclared currency "${effect.resourceId}".`);
+                }
+                if (effect.kind === "damage_enemies") {
+                  for (const missionId of activeMissionIds) {
+                    const combat = resolveActiveCombatMechanics(content, missionId);
+                    const known = combat
+                      ? Object.prototype.hasOwnProperty.call(combat.damageTypes, effect.damageTypeId)
+                      : effect.damageTypeId === "physical";
+                    if (!known) {
+                      err("mechanics", "macroEconomy", `modules.macroEconomy.profiles.${profileId}.altars.${altarId}.effects.${effectIndex}.damageTypeId`, `Ritual altar "${altarId}" references damage type "${effect.damageTypeId}" unavailable in mission "${missionId}".`);
+                    }
+                  }
+                }
+              }
+            }
+          } catch (error) {
+            err("mechanics", "macroEconomy", `modules.macroEconomy.profiles.${profileId}`, error instanceof MacroEconomyProfileValidationError ? error.message : "Macro-economy profile is invalid.");
+          }
+        }
+      }
+    }
+  } catch {
+    err("mechanics", "macroEconomy", "modules.macroEconomy", "Macro-economy module could not be inspected safely.");
+  }
+  /* towerforge-optional:macroEconomy:end */
 
   return {
     ok: issues.filter((i) => i.severity === "error").length === 0,
