@@ -1,6 +1,7 @@
 import { ROGUELITE_DAMAGE_MODIFIER_RESERVE, resolveActiveRogueliteMechanics, rogueliteSynergyWorstCaseModifierCount } from "../content/roguelite-mechanics.js";
 import { activeHeroAuraModifierReserve, heroPassiveAuraModifierIdV6, resolveActiveHeroesMechanics } from "../content/heroes-mechanics.js";
 import { resolveActiveHighGroundMechanics } from "../content/elevation-mechanics.js";
+import { resolveActiveArsenalMechanics } from "../content/arsenal-mechanics.js";
 /**
  * Upper bound for one tower's run-stage modifier fan-in during a campaign battle.
  * The same policy guards preparation, direct construction, and checkpoint restore.
@@ -119,7 +120,10 @@ function towerImmediateDamageAmounts(content, towerTypeId) {
                         ? Math.max(1, Math.pow(Math.abs(attack.chain.damageFalloff), attack.chain.maxJumps))
                         : 1), aoe: false }];
         case "pulse":
-            return [{ amount: attack.pulseDamage, aoe: true }];
+            return [
+                { amount: attack.pulseDamage, aoe: true },
+                { amount: attack.dotDamagePerUnit, aoe: true, overTime: true }
+            ];
         case "sniper":
         case "antiair":
             return [{ amount: attack.damage, aoe: false }];
@@ -156,7 +160,21 @@ function maximumMetaTowerDamageMultiplier(content) {
     }
     return bound;
 }
-function rogueliteRunDamageBound(content, missionId, towerTypeId, deck) {
+function maximumArsenalDamageMultiplier(content, missionId, towerTypeId) {
+    const active = resolveActiveArsenalMechanics(content, missionId);
+    const blueprint = active?.blueprints[towerTypeId];
+    if (!active || !blueprint)
+        return 1;
+    return ["base", "barrel", "core"].reduce((product, category) => {
+        const maximum = Object.values(active.modules)
+            .filter((definition) => definition.category === category
+            && (definition.compatibilityTags.length === 0
+                || definition.compatibilityTags.some((tag) => blueprint.compatibilityTags.includes(tag))))
+            .reduce((value, definition) => Math.max(value, definition.modifiers.damageMultiplier), 0);
+        return product * maximum;
+    }, 1);
+}
+function rogueliteSynergyDamageBound(content, missionId) {
     const active = resolveActiveRogueliteMechanics(content, missionId);
     if (!active)
         return emptyStageBound();
@@ -172,6 +190,13 @@ function rogueliteRunDamageBound(content, missionId, towerTypeId, deck) {
             mergeOptionalChoice(result, tierBounds);
         }
     }
+    return result;
+}
+function rogueliteRunDamageBound(content, missionId, towerTypeId, deck) {
+    const active = resolveActiveRogueliteMechanics(content, missionId);
+    if (!active)
+        return emptyStageBound();
+    const result = rogueliteSynergyDamageBound(content, missionId);
     for (const [slotIndex, slot] of (active.artifacts?.towerSlots[towerTypeId] ?? []).entries()) {
         mergeOptionalChoice(result, Object.entries(active.artifacts?.definitions ?? {})
             .filter(([, definition]) => definition.slotType === slot.slotType)
@@ -206,11 +231,12 @@ export function preflightHeroAuraDamageFinite(content, missionId, options = {}) 
     const active = resolveActiveHeroesMechanics(content, missionId);
     const profile = options.heroesProfile
         ?? (active?.schemaVersion === 6 || active?.schemaVersion === 7 ? active : undefined);
-    if (!profile)
+    const temporaryDamageMultipliers = options.temporaryDamageMultipliers ?? [];
+    if (!profile && temporaryDamageMultipliers.length === 0)
         return Object.freeze({ ok: true });
-    const definition = profile.definitions[profile.selectedHeroId];
+    const definition = profile?.definitions[profile.selectedHeroId];
     const aura = definition?.passiveAura;
-    if (!aura)
+    if (!aura && temporaryDamageMultipliers.length === 0)
         return Object.freeze({ ok: true });
     const highGround = resolveActiveHighGroundMechanics(content, missionId);
     const metaBound = exactModifierBound([{
@@ -227,17 +253,27 @@ export function preflightHeroAuraDamageFinite(content, missionId, options = {}) 
         fieldPath: `towers.${towerTypeId}.attack.damage`,
         message: `Hero passive aura can overflow finite tower damage for tower "${towerTypeId}".`
     });
-    for (const towerTypeId of content.missions[missionId]?.buildTowerIds ?? []) {
+    // The public headless engine currently accepts every registered tower type, even when Studio's
+    // mission palette omits it, so safety proofs must cover the full engine-placeable registry.
+    for (const towerTypeId of Object.keys(content.towers).sort()) {
         const runBound = rogueliteRunDamageBound(content, missionId, towerTypeId, options.deck ?? []);
+        const overTimeRunBound = rogueliteSynergyDamageBound(content, missionId);
+        const arsenalMultiplier = maximumArsenalDamageMultiplier(content, missionId, towerTypeId);
+        if (arsenalMultiplier !== 1) {
+            addStageBound(runBound, exactModifierBound([{
+                    id: "arsenal:maximum-compatible-loadout",
+                    modifier: { target: "damage", operation: "multiplier", value: arsenalMultiplier }
+                }]));
+        }
         for (const candidate of towerImmediateDamageAmounts(content, towerTypeId)) {
             let value = applyStageBound(candidate.amount, metaBound);
             if (!Number.isFinite(value))
                 return failure(towerTypeId);
-            value = applyStageBound(value, runBound);
+            value = applyStageBound(value, candidate.overTime ? overTimeRunBound : runBound);
             if (!Number.isFinite(value))
                 return failure(towerTypeId);
             const spatialModifiers = [];
-            if (highGround) {
+            if (highGround && !candidate.overTime) {
                 spatialModifiers.push({
                     id: "elevation:high-ground:damage",
                     modifier: {
@@ -248,10 +284,12 @@ export function preflightHeroAuraDamageFinite(content, missionId, options = {}) 
                     }
                 });
             }
-            aura.effects.forEach((effect, effectIndex) => spatialModifiers.push({
-                id: heroPassiveAuraModifierIdV6(profile.selectedHeroId, aura.id, effectIndex),
-                modifier: effect.modifier
-            }));
+            if (!candidate.overTime) {
+                aura?.effects.forEach((effect, effectIndex) => spatialModifiers.push({
+                    id: heroPassiveAuraModifierIdV6(profile.selectedHeroId, aura.id, effectIndex),
+                    modifier: effect.modifier
+                }));
+            }
             if (candidate.aoe) {
                 spatialModifiers.push({
                     id: "legacy-spatial-sunlight-aoe",
@@ -263,6 +301,12 @@ export function preflightHeroAuraDamageFinite(content, missionId, options = {}) 
                 });
             }
             value = applyStageBound(value, exactModifierBound(spatialModifiers));
+            if (!Number.isFinite(value))
+                return failure(towerTypeId);
+            value = applyStageBound(value, exactModifierBound(temporaryDamageMultipliers.map((modifier) => ({
+                id: modifier.id,
+                modifier: { target: "damage", operation: "multiplier", value: modifier.multiplier }
+            }))));
             if (!Number.isFinite(value))
                 return failure(towerTypeId);
         }

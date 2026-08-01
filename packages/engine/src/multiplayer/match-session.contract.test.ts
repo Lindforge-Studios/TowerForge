@@ -4,6 +4,7 @@ import {
   type GameContentInput,
   type GameContentRegistry
 } from "../content/registry.js";
+import { validateGameContentRegistry } from "../content/validate.js";
 
 const MATCH_INPUT: GameContentInput = {
   balance: {
@@ -162,6 +163,34 @@ function content(): GameContentRegistry {
   return createGameContentRegistry(MATCH_INPUT);
 }
 
+function macroEconomyContent(resources: "shared" | "partitioned" = "shared"): GameContentRegistry {
+  const input = structuredClone(MATCH_INPUT) as any;
+  input.balance.missions.coop.mechanics.profiles.macroEconomy = "shared_market";
+  input.mechanics.modules.multiplayer.profiles.local_coop.ownership.resources = resources;
+  input.mechanics.modules.macroEconomy = {
+    schemaVersion: 1,
+    enabled: true,
+    profiles: {
+      shared_market: {
+        quoteCurrencyId: "coins",
+        commodities: {
+          ore: { label: "Ore", basePrice: 5, minPrice: 1, maxPrice: 20, trendPerWave: 0, volatility: 0, demandElasticity: 0 }
+        },
+        deposits: {
+          short: { label: "Short", currencyId: "coins", durationClearedWaves: 1, interestBasisPoints: 100, minAmount: 1, maxAmount: 20 }
+        },
+        altars: {
+          forge: {
+            label: "Forge", coord: { q: 1, r: 0 }, radius: 8, minTowers: 1, maxTowers: 1,
+            towerTypeIds: ["pelter"], effects: [{ kind: "grant_resource", resourceId: "coins", amount: 1 }]
+          }
+        }
+      }
+    }
+  };
+  return createGameContentRegistry(input);
+}
+
 function createSession(api: MultiplayerApi, matchContent = content()): MatchSessionFixture {
   return api.MatchSession.create({
     schemaVersion: 1,
@@ -195,6 +224,31 @@ function envelope(
 }
 
 describe("R8.1 MatchSession local_coop contract (RED)", () => {
+  it("enforces owner_only across every ritual tower and removes sacrificed ownership", async () => {
+    const api = await loadMultiplayer();
+    const session = createSession(api, macroEconomyContent());
+    expect(session.dispatch(envelope("alice", 0, {
+      schemaVersion: 6, type: "placeTower", towerTypeId: "pelter", coord: { q: 1, r: 0 }
+    }))).toMatchObject({ ok: true });
+    expect(session.dispatch(envelope("bob", 0, {
+      schemaVersion: 8, type: "performRitual", altarId: "forge", towerIds: ["tower_1"]
+    }, 0, 1))).toMatchObject({ ok: false, code: "entity_not_owned" });
+    expect(session.getSnapshot().towerOwnership).toEqual([{ towerId: "tower_1", playerId: "alice" }]);
+    expect(session.dispatch(envelope("alice", 1, {
+      schemaVersion: 8, type: "performRitual", altarId: "forge", towerIds: ["tower_1"]
+    }, 0, 1))).toMatchObject({ ok: true });
+    expect(session.getSnapshot().towerOwnership).toEqual([]);
+  });
+
+  it("rejects partitioned resources with active Macro-Economy v1", async () => {
+    const api = await loadMultiplayer();
+    const invalid = macroEconomyContent("partitioned");
+    expect(validateGameContentRegistry(invalid).issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ severity: "error", message: expect.stringMatching(/macro-economy.*shared resources/i) })
+    ]));
+    expect(() => createSession(api, invalid)).toThrow(/macro-economy.*shared resources/i);
+  });
+
   it("keeps partitioned co-op resource wallets independent inside one simulation", async () => {
     const api = await loadMultiplayer();
     const input = structuredClone(MATCH_INPUT) as any;

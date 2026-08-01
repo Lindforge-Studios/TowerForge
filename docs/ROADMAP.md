@@ -61,21 +61,21 @@ service. Нет соответствующего выбора или локал�
 | R13.5 — deterministic Weather | Реализация завершена; ADR Accepted | Independent opt-in `weather` v1, seeded schedule, bounded effects, active-only state and shared Canvas/Phaser projection |
 | R13 | Завершён и слит; exact-commit CI green; code + constructor sign-off; ADR Accepted | PR #24 merged as `318671c`; browser-race regression прошёл 20/20 и remote CI завершился SUCCESS |
 | R14 — Gem Crafting & Modular Arsenal | Реализован; release-candidate v0.5.2 | CampaignRunV2, opt-in Arsenal v1, GameCommand/Journal v7, runtime assembly, atomic gem crafting и Studio/MCP/Canvas/Phaser surfaces |
-| R15 — Deterministic Macro-Economy | Запланирован; пауза, работа не начата | Independent `macroEconomy` v1 slices: seeded local market, explicit deposits, atomic rituals |
+| R15 — Deterministic Macro-Economy | Завершён; code + constructor sign-off; ADR Accepted | Independent `macroEconomy` v1, seeded local market, explicit deposits, atomic rituals, GameCommand/Journal v8 и constructor surfaces |
 | R16 — Ghost Replay Lab | Запланирован; пауза, работа не начата | Binary replay archive, detached ghost, immutable What-If branches и отдельный reference relay |
 | R17 — Web Publish, Remix & Monetization | Запланирован; пауза, работа не начата | Reproducible publish manifest, provider adapters, licensed remix provenance и host-only monetization hooks |
 
-### Delivery snapshot на 2026-07-31
+### Delivery snapshot на 2026-08-01
 
 - Последний прежний desktop pre-release — [`v0.4.0`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.4.0) на source commit `f07a403`; он включает R0–R8.
 - R12 PR #23 и R13 PR #24 слиты в `main`; R13 exact-commit CI run `30655702863` завершился SUCCESS.
 - Ветка R14 готовит `v0.5.2`: CampaignRunV2, `arsenal` v1, GameCommand/Journal v7, engine-owned compiler, runtime module management, exact gem crafting и все constructor surfaces.
-- R15–R17 остаются вне `v0.5.2` и не реализуются в этой поставке.
+- R15 реализован после `v0.5.2`; R16–R17 остаются запланированными и не входят в текущий release baseline.
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Сейчас исполнимыми являются только
 версии, перечисленные в [ARCHITECTURE.md](../ARCHITECTURE.md): наличие planned descriptor или
-roadmap-строки не считается capability. R14 `arsenal` теперь является реализованным opt-in
-capability; R15 `macroEconomy` и любые R16/R17 contracts ещё не существуют и не должны появляться
+roadmap-строки не считается capability. R14 `arsenal` и R15 `macroEconomy` являются
+реализованными opt-in capabilities; R16/R17 contracts ещё не существуют и не должны появляться
 в Studio/MCP/player как доступные.
 
 ## Порядок поставки
@@ -888,6 +888,15 @@ run; `PlayerProfileV3` не меняется.
 Первый macro-economy command повышает GameCommand/Journal до v8; replay продолжает принимать
 v1–v8. Market, deposits и rituals нельзя объединять в один RED/GREEN slice.
 
+R15 реализован по этому контракту. Active-only snapshot/checkpoint хранят котировки,
+остатки, net demand, депозиты и временные ritual modifiers; restore проверяет profile/seed
+provenance, opened/maturity boundaries, exact ritual effect origin, полноту commodity records и
+authored bounds. Co-op v1 допускает только shared resources и проверяет `owner_only` для каждой
+жертвуемой башни; inactive player bundle не содержит полной реализации R15. Studio Mechanics Hub, MCP/AI,
+Studio Playtest и generated Canvas/Phaser players используют один engine-owned contract. Копируемый
+fixture находится в `docs/examples/opt-in-macro-economy/`; решение зафиксировано в
+[ADR 0056](adr/0056-r15-deterministic-macro-economy.md).
+
 ### R16 — Ghost Replay Lab
 
 R16 расширяет существующие R0/R8 checkpoint, journal и transport contracts, не создавая второго
@@ -925,7 +934,7 @@ R17 является distribution-track после gameplay и replay milestones
    placements вне engine. Rewarded gameplay rewards, payment keys, hidden telemetry и real-money
    balance исключены из v1.
 
-R14 реализован. R15–R17 остаются запланированными и остановлены до отдельной команды владельца;
+R14–R15 реализованы. R16–R17 остаются запланированными и остановлены до отдельной команды владельца;
 их public contracts ещё не считаются реализованными или доступными агентам.
 
 ## TDD и роли

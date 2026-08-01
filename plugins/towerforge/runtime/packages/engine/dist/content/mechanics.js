@@ -10,6 +10,9 @@ export const MECHANICS_MODULE_IDS = [
     "terraforming",
     "roguelite",
     "arsenal",
+    /* towerforge-optional:macroEconomy:start */
+    "macroEconomy",
+    /* towerforge-optional:macroEconomy:end */
     "heroes",
     "logistics",
     "director",
@@ -30,6 +33,9 @@ export const IMPLEMENTED_MECHANICS_MODULE_IDS = [
     "terraforming",
     "roguelite",
     "arsenal",
+    /* towerforge-optional:macroEconomy:start */
+    "macroEconomy",
+    /* towerforge-optional:macroEconomy:end */
     "heroes",
     "logistics",
     "director",

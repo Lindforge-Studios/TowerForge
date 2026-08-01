@@ -47,6 +47,7 @@ export * from "./content/logistics-mechanics.js";
 export * from "./content/director-mechanics.js";
 export * from "./content/quest-mechanics.js";
 export * from "./content/arsenal-mechanics.js";
+export * from "./content/macro-economy-mechanics.js";
 export * from "./content/enemy-behaviors-mechanics.js";
 export * from "./content/multiplayer-mechanics.js";
 export * from "./content/reaction-mechanics.js";

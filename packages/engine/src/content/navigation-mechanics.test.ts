@@ -213,7 +213,7 @@ function hasIssue(
 describe("R2.1 navigation module v1 capability contract", () => {
   it("publishes navigation as implemented with one closed bounded v1 descriptor", () => {
     expect(Engine.IMPLEMENTED_MECHANICS_MODULE_IDS).toEqual([
-      "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "arsenal", "heroes",
+      "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "arsenal", "macroEconomy", "heroes",
       "logistics", "director", "quests", "enemyBehaviors", "multiplayer"
     ]);
 

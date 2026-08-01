@@ -384,7 +384,7 @@ describe("R4.4C campaign-to-battle handoff contract", () => {
 
     expect(CAMPAIGN_RUN_SCHEMA_VERSION).toBe(2);
     expect(GAME_CHECKPOINT_SCHEMA_VERSION).toBe(1);
-    expect(GAME_COMMAND_SCHEMA_VERSION).toBe(7);
+    expect(GAME_COMMAND_SCHEMA_VERSION).toBe(8);
     expect(PLAYER_PROFILE_SCHEMA_VERSION).toBe(3);
     expect(checkpoint.schemaVersion).toBe(1);
     expect(Object.prototype.hasOwnProperty.call(checkpoint.state, "campaignBattle")).toBe(false);

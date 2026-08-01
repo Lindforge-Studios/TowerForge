@@ -14,6 +14,11 @@ export interface HeroAuraDamageFinitePreflightOptions {
     readonly deck?: readonly CampaignBattleDeckEntry[];
     /** Structurally normalized profile used to diagnose inactive/unselected authoring as a warning. */
     readonly heroesProfile?: HeroesProfileV6 | HeroesProfileV7;
+    /** Exact active temporary-stage multipliers, including pending ritual effects. */
+    readonly temporaryDamageMultipliers?: readonly Readonly<{
+        id: string;
+        multiplier: number;
+    }>[];
 }
 export type HeroAuraDamageFinitePreflightResult = {
     readonly ok: true;

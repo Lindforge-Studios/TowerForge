@@ -37,6 +37,7 @@ const MECHANICS_MODULE_SCHEMA_VERSIONS = Object.freeze({
   terraforming: Object.freeze([1]),
   roguelite: Object.freeze([1, 2, 3, 4]),
   arsenal: Object.freeze([1]),
+  macroEconomy: Object.freeze([1]),
   heroes: Object.freeze([1, 2, 3, 4, 5, 6, 7]),
   logistics: Object.freeze([1, 2, 3]),
   director: Object.freeze([1]),
@@ -108,6 +109,7 @@ export async function inspectMechanicsAuthoring(projectDir, options = {}) {
     towerTagsByTowerId: authoredTowerTags(files.balance?.towers)
   };
   const arsenal = moduleAuthoringView(files, mission, "arsenal", engine.ARSENAL_MECHANICS_SCHEMA);
+  const macroEconomy = moduleAuthoringView(files, mission, "macroEconomy", engine.MACRO_ECONOMY_MECHANICS_SCHEMA);
   const heroes = moduleAuthoringView(files, mission, "heroes", engine.HEROES_MECHANICS_SCHEMA);
   const logistics = moduleAuthoringView(files, mission, "logistics", engine.LOGISTICS_MECHANICS_SCHEMA);
   const director = moduleAuthoringView(files, mission, "director", engine.DIRECTOR_MECHANICS_SCHEMA);
@@ -144,6 +146,7 @@ export async function inspectMechanicsAuthoring(projectDir, options = {}) {
     terraforming,
     roguelite,
     arsenal,
+    macroEconomy,
     heroes,
     logistics,
     director,

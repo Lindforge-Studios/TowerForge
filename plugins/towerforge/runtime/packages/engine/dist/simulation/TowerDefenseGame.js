@@ -14,6 +14,9 @@ import { DIRECTOR_LIMITS, resolveActiveDirectorMechanics } from "../content/dire
 import { resolveActiveQuestMechanics, selectProceduralQuestsV1 } from "../content/quest-mechanics.js";
 import { ENEMY_BEHAVIORS_LIMITS, resolveActiveEnemyBehaviorsV1 } from "../content/enemy-behaviors-mechanics.js";
 import { compileArsenalBlueprintV1, craftCampaignGemV1, resolveActiveArsenalMechanics } from "../content/arsenal-mechanics.js";
+/* towerforge-optional:macroEconomy:start */
+import { MACRO_ECONOMY_LIMITS, advanceMarketWaveV1, createMarketRuntimeV1, preflightMacroEconomyDerivedStatsV1, resolveActiveMacroEconomyMechanics } from "../content/macro-economy-mechanics.js";
+/* towerforge-optional:macroEconomy:end */
 import { CAMPAIGN_RUN_LIMITS } from "../run/campaign-run.js";
 import { campaignBattleWorstCaseModifierCount, preflightHeroAuraDamageFinite } from "../run/campaign-battle-policy.js";
 import { evaluateTowerScriptExpression } from "../scripting/expression.js";
@@ -60,6 +63,33 @@ function emptyDataRecord() {
 function compareBinary(left, right) {
     return left < right ? -1 : left > right ? 1 : 0;
 }
+/* towerforge-optional:macroEconomy:start */
+function normalizeRitualTowerIds(value) {
+    try {
+        if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype || value.length > 64)
+            return undefined;
+        const descriptors = Object.getOwnPropertyDescriptors(value);
+        if (Object.getOwnPropertySymbols(descriptors).length > 0
+            || Object.keys(descriptors).length !== value.length + 1)
+            return undefined;
+        const result = [];
+        for (let index = 0; index < value.length; index += 1) {
+            const descriptor = descriptors[String(index)];
+            if (!descriptor?.enumerable || !("value" in descriptor)
+                || typeof descriptor.value !== "string" || descriptor.value.length === 0
+                || descriptor.value.length > 256)
+                return undefined;
+            result.push(descriptor.value);
+        }
+        if (new Set(result).size !== result.length)
+            return undefined;
+        return Object.freeze(result.sort(compareBinary));
+    }
+    catch {
+        return undefined;
+    }
+}
+/* towerforge-optional:macroEconomy:end */
 function sameGridCoord(left, right) {
     return left.q === right.q && left.r === right.r;
 }
@@ -355,6 +385,7 @@ export class TowerDefenseGame {
     activeTerraformingMechanics;
     activeRogueliteMechanics;
     activeArsenalMechanics;
+    /* towerforge-optional:macroEconomy:end */
     activeHeroesMechanics;
     activeLogisticsPower;
     activeLogisticsAmmunition;
@@ -535,6 +566,17 @@ export class TowerDefenseGame {
         this.initializeDestructibleObjects();
         this.activeRogueliteMechanics = resolveActiveRogueliteMechanics(this.content, missionId);
         this.activeArsenalMechanics = resolveActiveArsenalMechanics(this.content, missionId);
+        /* towerforge-optional:macroEconomy:start */
+        const activeMacroEconomy = resolveActiveMacroEconomyMechanics(this.content, missionId);
+        if (activeMacroEconomy) {
+            this.activeMacroEconomy = activeMacroEconomy;
+            this.macroEconomyMarket = createMarketRuntimeV1(activeMacroEconomy, `${canonicalStringify(this.initialRngState)}|${missionId}`);
+            this.macroEconomyDeposits = [];
+            this.nextMacroEconomyDepositSequence = 1;
+            this.nextMacroEconomyRitualSequence = 1;
+            this.ritualTemporaryModifiers = [];
+        }
+        /* towerforge-optional:macroEconomy:end */
         this.activeHeroesMechanics = resolveActiveHeroesMechanics(this.content, missionId);
         this.activeDirectorMechanics = resolveActiveDirectorMechanics(this.content, missionId);
         this.activeQuestMechanics = resolveActiveQuestMechanics(this.content, missionId);
@@ -845,6 +887,15 @@ export class TowerDefenseGame {
         this.vanguardProtectionMaximumCandidateCount = 0;
         this.directorDecisions = Object.freeze([]);
         this.initializeQuestEntries();
+        /* towerforge-optional:macroEconomy:start */
+        if (this.activeMacroEconomy) {
+            this.macroEconomyMarket = createMarketRuntimeV1(this.activeMacroEconomy, `${canonicalStringify(this.initialRngState)}|${this.mission.id}`);
+            this.macroEconomyDeposits = [];
+            this.nextMacroEconomyDepositSequence = 1;
+            this.nextMacroEconomyRitualSequence = 1;
+            this.ritualTemporaryModifiers = [];
+        }
+        /* towerforge-optional:macroEconomy:end */
         this.lastEvents = [];
         if (this.activePhysicsMechanics)
             this.displacementStepAttemptsThisTick = 0;
@@ -1524,6 +1575,239 @@ export class TowerDefenseGame {
         return this.outcome === "playing" && this.enemies.length === 0
             && (this.waveState === "ready" || this.waveState === "between");
     }
+    /* towerforge-optional:macroEconomy:start */
+    macroEconomyManagementAllowed() {
+        return this.outcome === "playing" && this.enemies.length === 0
+            && (this.waveState === "ready" || this.waveState === "between");
+    }
+    macroEconomyRitualAllowed() {
+        return this.outcome === "playing";
+    }
+    buyCommodity(commodityId, quantity) {
+        if (typeof commodityId !== "string" || commodityId.length === 0 || commodityId !== commodityId.trim()
+            || commodityId.length > MACRO_ECONOMY_LIMITS.idCodeUnits || !Number.isSafeInteger(quantity)
+            || quantity < 1 || quantity > 1_000_000_000) {
+            return this.fail("Invalid macro-economy command.", "reason.invalidGameCommand");
+        }
+        const active = this.activeMacroEconomy;
+        const market = this.macroEconomyMarket;
+        if (!active || !market)
+            return this.fail("Macro-economy is not available.", "reason.macroEconomyUnavailable");
+        if (!this.macroEconomyManagementAllowed())
+            return this.fail("Market trades are available only during management phases.", "reason.macroEconomyManagementUnavailable");
+        const definition = active.commodities[commodityId];
+        const unitPrice = market.quotes[commodityId];
+        if (!definition || unitPrice === undefined)
+            return this.fail("Commodity was not found.", "reason.commodityNotFound");
+        const quoteAmount = Math.round(unitPrice * quantity * 1_000_000) / 1_000_000;
+        const nextHolding = (market.holdings[commodityId] ?? 0) + quantity;
+        const nextDemand = (market.pendingNetDemand[commodityId] ?? 0) + quantity;
+        if (!Number.isFinite(quoteAmount) || quoteAmount > MACRO_ECONOMY_LIMITS.amount
+            || nextHolding > MACRO_ECONOMY_LIMITS.amount || nextDemand > MACRO_ECONOMY_LIMITS.amount) {
+            return this.fail("Market trade exceeds the bounded runtime state.", "reason.marketTradeLimitExceeded");
+        }
+        if ((this.resources[active.quoteCurrencyId] ?? 0) + 1e-9 < quoteAmount)
+            return this.fail("Insufficient quote currency.", "reason.insufficientResources");
+        this.resources[active.quoteCurrencyId] = (this.resources[active.quoteCurrencyId] ?? 0) - quoteAmount;
+        this.macroEconomyMarket = Object.freeze({
+            ...market,
+            holdings: Object.freeze({ ...market.holdings, [commodityId]: nextHolding }),
+            pendingNetDemand: Object.freeze({ ...market.pendingNetDemand, [commodityId]: nextDemand })
+        });
+        this.lastEvents.push({ type: "commodityTraded", side: "buy", commodityId, quantity, unitPrice, quoteAmount });
+        this.finishScriptedAction();
+        return { ok: true };
+    }
+    sellCommodity(commodityId, quantity) {
+        if (typeof commodityId !== "string" || commodityId.length === 0 || commodityId !== commodityId.trim()
+            || commodityId.length > MACRO_ECONOMY_LIMITS.idCodeUnits || !Number.isSafeInteger(quantity)
+            || quantity < 1 || quantity > 1_000_000_000) {
+            return this.fail("Invalid macro-economy command.", "reason.invalidGameCommand");
+        }
+        const active = this.activeMacroEconomy;
+        const market = this.macroEconomyMarket;
+        if (!active || !market)
+            return this.fail("Macro-economy is not available.", "reason.macroEconomyUnavailable");
+        if (!this.macroEconomyManagementAllowed())
+            return this.fail("Market trades are available only during management phases.", "reason.macroEconomyManagementUnavailable");
+        const definition = active.commodities[commodityId];
+        const unitPrice = market.quotes[commodityId];
+        if (!definition || unitPrice === undefined)
+            return this.fail("Commodity was not found.", "reason.commodityNotFound");
+        if ((market.holdings[commodityId] ?? 0) < quantity)
+            return this.fail("Commodity inventory is insufficient.", "reason.commodityInventoryInsufficient");
+        const quoteAmount = Math.round(unitPrice * quantity * 1_000_000) / 1_000_000;
+        const nextDemand = (market.pendingNetDemand[commodityId] ?? 0) - quantity;
+        const nextCurrency = (this.resources[active.quoteCurrencyId] ?? 0) + quoteAmount;
+        if (!Number.isFinite(quoteAmount) || quoteAmount > MACRO_ECONOMY_LIMITS.amount
+            || nextDemand < -MACRO_ECONOMY_LIMITS.amount || !Number.isFinite(nextCurrency)) {
+            return this.fail("Market trade exceeds the bounded runtime state.", "reason.marketTradeLimitExceeded");
+        }
+        this.resources[active.quoteCurrencyId] = nextCurrency;
+        this.macroEconomyMarket = Object.freeze({
+            ...market,
+            holdings: Object.freeze({ ...market.holdings, [commodityId]: (market.holdings[commodityId] ?? 0) - quantity }),
+            pendingNetDemand: Object.freeze({ ...market.pendingNetDemand, [commodityId]: nextDemand })
+        });
+        this.lastEvents.push({ type: "commodityTraded", side: "sell", commodityId, quantity, unitPrice, quoteAmount });
+        this.finishScriptedAction();
+        return { ok: true };
+    }
+    openDeposit(depositId, amount) {
+        if (typeof depositId !== "string" || depositId.length === 0 || depositId !== depositId.trim()
+            || depositId.length > MACRO_ECONOMY_LIMITS.idCodeUnits || !Number.isFinite(amount)
+            || amount <= 0 || amount > MACRO_ECONOMY_LIMITS.amount) {
+            return this.fail("Invalid macro-economy command.", "reason.invalidGameCommand");
+        }
+        const active = this.activeMacroEconomy;
+        if (!active)
+            return this.fail("Macro-economy is not available.", "reason.macroEconomyUnavailable");
+        const deposits = this.macroEconomyDeposits;
+        const nextDepositSequence = this.nextMacroEconomyDepositSequence;
+        if (!this.macroEconomyManagementAllowed())
+            return this.fail("Deposits are available only during management phases.", "reason.macroEconomyManagementUnavailable");
+        const definition = active.deposits[depositId];
+        if (!definition)
+            return this.fail("Deposit product was not found.", "reason.depositNotFound");
+        if (deposits.length >= MACRO_ECONOMY_LIMITS.activeDeposits) {
+            return this.fail("The active deposit limit was reached.", "reason.depositLimitReached");
+        }
+        if (amount < definition.minAmount || amount > definition.maxAmount)
+            return this.fail("Deposit amount is outside the authored limits.", "reason.depositAmountInvalid");
+        if ((this.resources[definition.currencyId] ?? 0) + 1e-9 < amount)
+            return this.fail("Insufficient deposit currency.", "reason.insufficientResources");
+        if (nextDepositSequence >= MACRO_ECONOMY_LIMITS.sequence) {
+            return this.fail("The deposit sequence limit was reached.", "reason.depositLimitReached");
+        }
+        const instanceId = `deposit_${nextDepositSequence}`;
+        this.nextMacroEconomyDepositSequence = nextDepositSequence + 1;
+        const maturityClearedWave = this.clearedWaveCount + definition.durationClearedWaves;
+        this.resources[definition.currencyId] = (this.resources[definition.currencyId] ?? 0) - amount;
+        deposits.push({
+            instanceId, depositId, currencyId: definition.currencyId, principal: amount,
+            openedClearedWave: this.clearedWaveCount, maturityClearedWave
+        });
+        this.lastEvents.push({ type: "depositOpened", instanceId, depositId, currencyId: definition.currencyId, principal: amount, maturityClearedWave });
+        this.finishScriptedAction();
+        return { ok: true };
+    }
+    performRitual(altarId, towerIds) {
+        const active = this.activeMacroEconomy;
+        if (!active)
+            return this.fail("Macro-economy is not available.", "reason.macroEconomyUnavailable");
+        const temporaryModifiers = this.ritualTemporaryModifiers;
+        const nextRitualSequence = this.nextMacroEconomyRitualSequence;
+        if (!this.macroEconomyRitualAllowed())
+            return this.fail("Rituals are unavailable after the battle ends.", "reason.macroEconomyManagementUnavailable");
+        if (typeof altarId !== "string" || altarId.length === 0 || altarId.length > 256) {
+            return this.fail("Ritual command is malformed.", "reason.invalidGameCommand");
+        }
+        const canonicalTowerIds = normalizeRitualTowerIds(towerIds);
+        if (!canonicalTowerIds)
+            return this.fail("Ritual command is malformed.", "reason.invalidGameCommand");
+        const altar = active.altars[altarId];
+        if (!altar)
+            return this.fail("Ritual altar was not found.", "reason.ritualAltarNotFound");
+        if (canonicalTowerIds.length < altar.minTowers || canonicalTowerIds.length > altar.maxTowers) {
+            return this.fail("Ritual tower selection does not meet the authored count.", "reason.ritualRequirementsNotMet");
+        }
+        const towers = canonicalTowerIds.map((towerId) => this.towers.find((tower) => tower.id === towerId && (tower.hp === undefined || tower.hp > 0)));
+        if (towers.some((tower) => tower === undefined))
+            return this.fail("Ritual tower selection changed.", "reason.ritualTowerInvalid");
+        const selected = towers;
+        if (selected.some((tower) => this.map.distance(tower.coord, altar.coord) > altar.radius
+            || (altar.towerTypeIds.length > 0 && !altar.towerTypeIds.includes(tower.typeId)))) {
+            return this.fail("Ritual tower selection does not meet altar requirements.", "reason.ritualRequirementsNotMet");
+        }
+        const addedEffects = altar.effects.filter((effect) => effect.kind === "temporary_tower_modifier");
+        const addedModifiers = addedEffects.length;
+        if (temporaryModifiers.length + addedModifiers > MACRO_ECONOMY_LIMITS.temporaryModifiers) {
+            return this.fail("The temporary ritual modifier limit was reached.", "reason.ritualModifierLimitReached");
+        }
+        if (nextRitualSequence >= MACRO_ECONOMY_LIMITS.sequence) {
+            return this.fail("The ritual sequence limit was reached.", "reason.ritualModifierLimitReached");
+        }
+        const damageModifierCount = temporaryModifiers.filter((modifier) => modifier.stat === "damage").length
+            + addedEffects.filter((effect) => effect.stat === "damage").length;
+        if (campaignBattleWorstCaseModifierCount(this.campaignDeck, this.content, this.mission.id) + damageModifierCount > MAX_MODIFIERS_PER_RESOLUTION) {
+            return this.fail("The shared damage modifier budget would be exceeded.", "reason.ritualModifierLimitReached");
+        }
+        const projectedTemporaryModifiers = [
+            ...temporaryModifiers,
+            ...altar.effects.flatMap((effect, effectIndex) => effect.kind === "temporary_tower_modifier" ? [{
+                    id: `ritual_modifier_${nextRitualSequence}_${effectIndex}`,
+                    ritualSequence: nextRitualSequence,
+                    altarId, effectIndex, stat: effect.stat, multiplier: effect.multiplier, remaining: effect.duration
+                }] : [])
+        ];
+        const damagePreflight = preflightHeroAuraDamageFinite(this.content, this.mission.id, {
+            deck: this.campaignDeck,
+            temporaryDamageMultipliers: projectedTemporaryModifiers
+                .filter((modifier) => modifier.stat === "damage")
+                .map((modifier) => ({ id: modifier.id, multiplier: modifier.multiplier }))
+        });
+        const derivedStatsPreflight = preflightMacroEconomyDerivedStatsV1(this.content, this.mission.id, this.metaUpgradeLevels, projectedTemporaryModifiers);
+        if (!damagePreflight.ok || !derivedStatsPreflight.ok) {
+            return this.fail("Ritual modifiers would create unsafe derived tower stats.", "reason.ritualModifierLimitReached");
+        }
+        for (const stat of ["damage", "range", "fire_rate"]) {
+            const product = [
+                ...temporaryModifiers.filter((modifier) => modifier.stat === stat).map((modifier) => modifier.multiplier),
+                ...addedEffects.filter((effect) => effect.stat === stat).map((effect) => effect.multiplier)
+            ].reduce((value, multiplier) => value * multiplier, 1);
+            if (!Number.isFinite(product) || product <= 0 || product > MACRO_ECONOMY_LIMITS.temporaryMultiplierProduct) {
+                return this.fail("Ritual modifiers would create unsafe numeric state.", "reason.ritualModifierLimitReached");
+            }
+        }
+        const projectedResources = { ...this.resources };
+        for (const effect of altar.effects) {
+            if (effect.kind !== "grant_resource")
+                continue;
+            projectedResources[effect.resourceId] = (projectedResources[effect.resourceId] ?? 0) + effect.amount;
+            if (!Number.isFinite(projectedResources[effect.resourceId])) {
+                return this.fail("Ritual resources exceed the bounded runtime state.", "reason.ritualResourceLimitReached");
+            }
+        }
+        // Mutation begins only after every tower and every effect has passed preflight.
+        const ritualSequence = nextRitualSequence;
+        this.nextMacroEconomyRitualSequence = nextRitualSequence + 1;
+        for (const tower of selected)
+            this.autoUnsocketTowerArtifacts(tower, "tower_destroyed");
+        for (const towerId of canonicalTowerIds)
+            this.destroyTower(towerId);
+        for (const [effectIndex, effect] of altar.effects.entries()) {
+            if (effect.kind === "grant_resource") {
+                this.resources[effect.resourceId] = (this.resources[effect.resourceId] ?? 0) + effect.amount;
+            }
+            else if (effect.kind === "damage_enemies") {
+                for (const enemy of this.enemies.filter((candidate) => candidate.hp > 0 && this.map.distance(this.enemyCoord(candidate), altar.coord) <= effect.radius).sort((left, right) => compareBinary(left.id, right.id))) {
+                    this.applyResolvedEnemyDamage(enemy, effect.amount, { kind: "ability", abilityId: `ritual:${altarId}` }, { damageType: effect.damageTypeId, tags: ["area"] });
+                }
+            }
+            else if (effect.kind === "apply_status") {
+                for (const enemy of this.enemies.filter((candidate) => candidate.hp > 0 && this.map.distance(this.enemyCoord(candidate), altar.coord) <= effect.radius).sort((left, right) => compareBinary(left.id, right.id))) {
+                    if (effect.status === "slow")
+                        this.applyStatusEffect(enemy, { slow: { factor: Math.max(0.01, Math.min(0.99, effect.magnitude)), duration: effect.duration } });
+                    else if (effect.status === "stun")
+                        this.applyStatusEffect(enemy, { stun: effect.duration });
+                    else
+                        this.applyStatusEffect(enemy, { poison: { dps: effect.magnitude, duration: effect.duration } });
+                }
+            }
+            else {
+                temporaryModifiers.push({
+                    id: `ritual_modifier_${ritualSequence}_${effectIndex}`,
+                    ritualSequence, altarId, effectIndex,
+                    stat: effect.stat, multiplier: effect.multiplier, remaining: effect.duration
+                });
+            }
+        }
+        this.removeDeadEnemies();
+        this.lastEvents.push({ type: "ritualPerformed", altarId, towerIds: [...canonicalTowerIds] });
+        this.finishScriptedAction();
+        return { ok: true };
+    }
+    /* towerforge-optional:macroEconomy:end */
     compiledArsenalTower(tower) {
         if (!this.activeArsenalMechanics || !tower.arsenalModules)
             return undefined;
@@ -2230,6 +2514,13 @@ export class TowerDefenseGame {
             return;
         }
         const delta = Math.max(0, Math.min(deltaUnits, 0.2));
+        /* towerforge-optional:macroEconomy:start */
+        if (this.ritualTemporaryModifiers) {
+            this.ritualTemporaryModifiers = this.ritualTemporaryModifiers
+                .map((modifier) => ({ ...modifier, remaining: Math.max(0, modifier.remaining - delta) }))
+                .filter((modifier) => modifier.remaining > 0);
+        }
+        /* towerforge-optional:macroEconomy:end */
         this.updateAbilities(delta);
         this.advanceNativeTerraformingExpiry(delta);
         this.updateHeroAbility(delta);
@@ -3796,6 +4087,19 @@ export class TowerDefenseGame {
             }
             : undefined;
         const quests = this.buildQuestSnapshot();
+        /* towerforge-optional:macroEconomy:start */
+        const macroEconomy = this.activeMacroEconomy && this.macroEconomyMarket
+            ? {
+                schemaVersion: 1,
+                profileId: this.activeMacroEconomy.profileId,
+                market: this.macroEconomyMarket,
+                deposits: this.macroEconomyDeposits.map((deposit) => ({ ...deposit })),
+                nextDepositSequence: this.nextMacroEconomyDepositSequence,
+                nextRitualSequence: this.nextMacroEconomyRitualSequence,
+                temporaryModifiers: this.ritualTemporaryModifiers.map((modifier) => ({ ...modifier }))
+            }
+            : undefined;
+        /* towerforge-optional:macroEconomy:end */
         const state = {
             coreHp: this.coreHp,
             resources: { ...this.resources },
@@ -3862,6 +4166,9 @@ export class TowerDefenseGame {
             ...(enemyBehaviors === undefined ? {} : { enemyBehaviors }),
             ...(ballistics === undefined ? {} : { ballistics }),
             ...(weather === undefined ? {} : { weather }),
+            /* towerforge-optional:macroEconomy:start */
+            ...(macroEconomy === undefined ? {} : { macroEconomy }),
+            /* towerforge-optional:macroEconomy:end */
             ...(this.campaignBattle === undefined ? {} : {
                 campaignBattle: {
                     schemaVersion: 1,
@@ -3923,6 +4230,9 @@ export class TowerDefenseGame {
         const checkpointEnemyBehaviors = resolveActiveEnemyBehaviorsV1(content, identity.missionId);
         const checkpointBallistics = resolveActiveBallisticsMechanics(content, identity.missionId);
         const checkpointWeather = resolveActiveWeatherMechanics(content, identity.missionId);
+        /* towerforge-optional:macroEconomy:start */
+        const checkpointMacroEconomy = resolveActiveMacroEconomyMechanics(content, identity.missionId);
+        /* towerforge-optional:macroEconomy:end */
         const checkpointStateMachines = Object.values(content.scripts ?? {})
             .filter((script) => Boolean(script && script.enabled !== false && script.schemaVersion === 7 && script.stateMachines?.length))
             .sort((left, right) => compareBinary(left.id, right.id));
@@ -4040,6 +4350,17 @@ export class TowerDefenseGame {
         }
         if (hasWeatherCheckpoint)
             checkpointDataField(descriptors, "weather", "Game checkpoint state");
+        /* towerforge-optional:macroEconomy:start */
+        const hasMacroEconomyCheckpoint = Object.prototype.hasOwnProperty.call(descriptors, "macroEconomy");
+        if (checkpointMacroEconomy && !hasMacroEconomyCheckpoint) {
+            throw new Error("Game checkpoint macroEconomy state is required for an active capability.");
+        }
+        if (!checkpointMacroEconomy && hasMacroEconomyCheckpoint) {
+            throw new Error("Game checkpoint macroEconomy state is unsupported for an inactive capability.");
+        }
+        if (hasMacroEconomyCheckpoint)
+            checkpointDataField(descriptors, "macroEconomy", "Game checkpoint state");
+        /* towerforge-optional:macroEconomy:end */
         const hasScriptMachinesCheckpoint = Object.prototype.hasOwnProperty.call(descriptors, "scriptMachines");
         if (requiresScriptMachinesCheckpoint && !hasScriptMachinesCheckpoint) {
             throw new Error("Game checkpoint TowerScript machine state is required for active schema v7 machines.");
@@ -4064,6 +4385,9 @@ export class TowerDefenseGame {
             ...(hasEnemyBehaviorsCheckpoint ? ["enemyBehaviors"] : []),
             ...(hasBallisticsCheckpoint ? ["ballistics"] : []),
             ...(hasWeatherCheckpoint ? ["weather"] : []),
+            /* towerforge-optional:macroEconomy:start */
+            ...(hasMacroEconomyCheckpoint ? ["macroEconomy"] : []),
+            /* towerforge-optional:macroEconomy:end */
             ...(hasScriptMachinesCheckpoint ? ["scriptMachines"] : [])
         ], "Game checkpoint state");
         const finite = (value, label, minimum = 0, maximum = Infinity) => {
@@ -4072,8 +4396,8 @@ export class TowerDefenseGame {
             }
             return value;
         };
-        const integer = (value, label, minimum = 0) => {
-            const result = finite(value, label, minimum);
+        const integer = (value, label, minimum = 0, maximum = Infinity) => {
+            const result = finite(value, label, minimum, maximum);
             if (!Number.isSafeInteger(result))
                 throw new Error(`Game checkpoint state ${label} must be a safe integer.`);
             return result;
@@ -4100,12 +4424,17 @@ export class TowerDefenseGame {
             return value;
         };
         const own = (record, key) => Object.prototype.hasOwnProperty.call(record, key);
-        const recordNumbers = (value, label, allowedKeys, integersOnly = false) => {
+        const recordNumbers = (value, label, allowedKeys, integersOnly = false, minimum = 0, requireAllAllowedKeys = false, maximum = Infinity) => {
             const entries = checkpointObjectDescriptors(value, `Game checkpoint state ${label}`);
+            if (requireAllAllowedKeys && allowedKeys
+                && (Object.keys(entries).length !== allowedKeys.size
+                    || [...allowedKeys].some((key) => !Object.prototype.hasOwnProperty.call(entries, key)))) {
+                throw new Error(`Game checkpoint state ${label} must contain every authored id exactly once.`);
+            }
             for (const key of Object.keys(entries)) {
                 if (allowedKeys && !allowedKeys.has(key))
                     throw new Error(`Game checkpoint state ${label} references unknown id "${key}".`);
-                const number = finite(checkpointDataField(entries, key, label), `${label}.${key}`);
+                const number = finite(checkpointDataField(entries, key, label), `${label}.${key}`, minimum, maximum);
                 if (integersOnly && !Number.isInteger(number))
                     throw new Error(`Game checkpoint state ${label}.${key} must be an integer.`);
             }
@@ -4195,6 +4524,110 @@ export class TowerDefenseGame {
                 throw new Error("Game checkpoint weather inactive periodic ordinal provenance is invalid.");
             }
         }
+        /* towerforge-optional:macroEconomy:start */
+        if (checkpointMacroEconomy && state.macroEconomy) {
+            const economy = closed(state.macroEconomy, "macroEconomy state", ["schemaVersion", "profileId", "market", "deposits", "nextDepositSequence", "nextRitualSequence", "temporaryModifiers"]);
+            if (integer(checkpointDataField(economy, "schemaVersion", "macroEconomy state"), "macroEconomy schemaVersion", 1) !== 1
+                || stringValue(checkpointDataField(economy, "profileId", "macroEconomy state"), "macroEconomy profileId") !== checkpointMacroEconomy.profileId) {
+                throw new Error("Game checkpoint macroEconomy provenance is invalid.");
+            }
+            const market = closed(checkpointDataField(economy, "market", "macroEconomy state"), "macroEconomy market", ["schemaVersion", "seedDomain", "lastPriceWaveIndex", "quotes", "holdings", "pendingNetDemand"]);
+            if (integer(checkpointDataField(market, "schemaVersion", "macroEconomy market"), "macroEconomy market schemaVersion", 1) !== 1)
+                throw new Error("Game checkpoint macroEconomy market version is unsupported.");
+            const expectedMarketSeedDomain = `${canonicalStringify(rootInitialRng)}|${identity.missionId}`;
+            if (stringValue(checkpointDataField(market, "seedDomain", "macroEconomy market"), "macroEconomy seedDomain") !== expectedMarketSeedDomain) {
+                throw new Error("Game checkpoint macroEconomy market provenance is invalid.");
+            }
+            const lastPriceWaveIndex = integer(checkpointDataField(market, "lastPriceWaveIndex", "macroEconomy market"), "macroEconomy lastPriceWaveIndex", -1);
+            if (lastPriceWaveIndex !== state.clearedWaveCount - 1)
+                throw new Error("Game checkpoint macroEconomy market wave provenance is invalid.");
+            const commodityIds = new Set(Object.keys(checkpointMacroEconomy.commodities));
+            recordNumbers(checkpointDataField(market, "quotes", "macroEconomy market"), "macroEconomy quotes", commodityIds, false, 0, true);
+            const quoteDescriptors = checkpointObjectDescriptors(checkpointDataField(market, "quotes", "macroEconomy market"), "Game checkpoint state macroEconomy quotes");
+            for (const commodityId of commodityIds) {
+                const definition = checkpointMacroEconomy.commodities[commodityId];
+                finite(checkpointDataField(quoteDescriptors, commodityId, "macroEconomy quotes"), `macroEconomy quotes.${commodityId}`, definition.minPrice, definition.maxPrice);
+            }
+            recordNumbers(checkpointDataField(market, "holdings", "macroEconomy market"), "macroEconomy holdings", commodityIds, true, 0, true, MACRO_ECONOMY_LIMITS.amount);
+            recordNumbers(checkpointDataField(market, "pendingNetDemand", "macroEconomy market"), "macroEconomy pendingNetDemand", commodityIds, true, -MACRO_ECONOMY_LIMITS.amount, true, MACRO_ECONOMY_LIMITS.amount);
+            const nextDepositSequence = integer(checkpointDataField(economy, "nextDepositSequence", "macroEconomy state"), "macroEconomy nextDepositSequence", 1, MACRO_ECONOMY_LIMITS.sequence);
+            const nextRitualSequence = integer(checkpointDataField(economy, "nextRitualSequence", "macroEconomy state"), "macroEconomy nextRitualSequence", 1, MACRO_ECONOMY_LIMITS.sequence);
+            const depositInstanceIds = new Set();
+            const deposits = array(checkpointDataField(economy, "deposits", "macroEconomy state"), "macroEconomy deposits");
+            if (deposits.length > MACRO_ECONOMY_LIMITS.activeDeposits)
+                throw new Error("Game checkpoint macroEconomy deposit limit is invalid.");
+            for (const [index, value] of deposits.entries()) {
+                const deposit = closed(value, `macroEconomy deposit ${index}`, ["instanceId", "depositId", "currencyId", "principal", "openedClearedWave", "maturityClearedWave"]);
+                const instanceId = stringValue(checkpointDataField(deposit, "instanceId", "macroEconomy deposit"), "macroEconomy deposit instanceId");
+                const sequenceMatch = /^deposit_([1-9][0-9]*)$/.exec(instanceId);
+                const instanceSequence = sequenceMatch ? Number(sequenceMatch[1]) : Number.NaN;
+                const depositId = stringValue(checkpointDataField(deposit, "depositId", "macroEconomy deposit"), "macroEconomy depositId");
+                const definition = checkpointMacroEconomy.deposits[depositId];
+                if (depositInstanceIds.has(instanceId) || !definition || !Number.isSafeInteger(instanceSequence)
+                    || instanceSequence < 1 || instanceSequence >= nextDepositSequence)
+                    throw new Error("Game checkpoint macroEconomy deposit sequence provenance is invalid.");
+                depositInstanceIds.add(instanceId);
+                if (stringValue(checkpointDataField(deposit, "currencyId", "macroEconomy deposit"), "macroEconomy deposit currencyId") !== definition.currencyId)
+                    throw new Error("Game checkpoint macroEconomy deposit currency is invalid.");
+                finite(checkpointDataField(deposit, "principal", "macroEconomy deposit"), "macroEconomy deposit principal", definition.minAmount, definition.maxAmount);
+                const openedClearedWave = integer(checkpointDataField(deposit, "openedClearedWave", "macroEconomy deposit"), "macroEconomy openedClearedWave", 0);
+                const maturityClearedWave = integer(checkpointDataField(deposit, "maturityClearedWave", "macroEconomy deposit"), "macroEconomy maturityClearedWave", 1);
+                if (openedClearedWave > state.clearedWaveCount || maturityClearedWave <= state.clearedWaveCount
+                    || maturityClearedWave !== openedClearedWave + definition.durationClearedWaves) {
+                    throw new Error("Game checkpoint macroEconomy deposit maturity provenance is invalid.");
+                }
+            }
+            const temporaryModifiers = array(checkpointDataField(economy, "temporaryModifiers", "macroEconomy state"), "macroEconomy temporaryModifiers");
+            if (temporaryModifiers.length > MACRO_ECONOMY_LIMITS.temporaryModifiers)
+                throw new Error("Game checkpoint macroEconomy modifier limit is invalid.");
+            const modifierIds = new Set();
+            const modifierProducts = { damage: 1, range: 1, fire_rate: 1 };
+            const checkpointTemporaryDamageMultipliers = [];
+            const checkpointTemporaryModifiers = [];
+            for (const [index, value] of temporaryModifiers.entries()) {
+                const modifier = closed(value, `macroEconomy modifier ${index}`, ["id", "ritualSequence", "altarId", "effectIndex", "stat", "multiplier", "remaining"]);
+                const modifierId = stringValue(checkpointDataField(modifier, "id", "macroEconomy modifier"), "macroEconomy modifier id");
+                const ritualSequence = integer(checkpointDataField(modifier, "ritualSequence", "macroEconomy modifier"), "macroEconomy ritualSequence", 1);
+                const altarId = stringValue(checkpointDataField(modifier, "altarId", "macroEconomy modifier"), "macroEconomy modifier altarId");
+                const effectIndex = integer(checkpointDataField(modifier, "effectIndex", "macroEconomy modifier"), "macroEconomy modifier effectIndex", 0);
+                const effect = checkpointMacroEconomy.altars[altarId]?.effects[effectIndex];
+                if (modifierIds.has(modifierId) || modifierId !== `ritual_modifier_${ritualSequence}_${effectIndex}` || ritualSequence >= nextRitualSequence
+                    || effect?.kind !== "temporary_tower_modifier")
+                    throw new Error("Game checkpoint macroEconomy modifier provenance is invalid.");
+                modifierIds.add(modifierId);
+                const stat = stringValue(checkpointDataField(modifier, "stat", "macroEconomy modifier"), "macroEconomy modifier stat");
+                const multiplier = finite(checkpointDataField(modifier, "multiplier", "macroEconomy modifier"), "macroEconomy modifier multiplier", 0.000001, 100);
+                const remaining = finite(checkpointDataField(modifier, "remaining", "macroEconomy modifier"), "macroEconomy modifier remaining", 0.000001, MACRO_ECONOMY_LIMITS.amount);
+                if (stat !== effect.stat || multiplier !== effect.multiplier || remaining > effect.duration) {
+                    throw new Error("Game checkpoint macroEconomy modifier provenance is invalid.");
+                }
+                modifierProducts[effect.stat] *= multiplier;
+                checkpointTemporaryModifiers.push({ stat: effect.stat, multiplier });
+                if (effect.stat === "damage")
+                    checkpointTemporaryDamageMultipliers.push({ id: modifierId, multiplier });
+                if (!Number.isFinite(modifierProducts[effect.stat]) || modifierProducts[effect.stat] <= 0
+                    || modifierProducts[effect.stat] > MACRO_ECONOMY_LIMITS.temporaryMultiplierProduct) {
+                    throw new Error("Game checkpoint macroEconomy modifier numeric state is invalid.");
+                }
+            }
+            const ritualDamageCount = temporaryModifiers.filter((value) => {
+                const descriptors = checkpointObjectDescriptors(value, "macroEconomy modifier");
+                return checkpointDataField(descriptors, "stat", "macroEconomy modifier") === "damage";
+            }).length;
+            if (campaignBattleWorstCaseModifierCount(state.campaignBattle?.deck ?? [], content, identity.missionId) + ritualDamageCount > MAX_MODIFIERS_PER_RESOLUTION) {
+                throw new Error("Game checkpoint macroEconomy modifier budget is invalid.");
+            }
+            if (!preflightHeroAuraDamageFinite(content, identity.missionId, {
+                deck: state.campaignBattle?.deck ?? [],
+                temporaryDamageMultipliers: checkpointTemporaryDamageMultipliers
+            }).ok) {
+                throw new Error("Game checkpoint macroEconomy modifier derived damage is invalid.");
+            }
+            if (!preflightMacroEconomyDerivedStatsV1(content, identity.missionId, identity.metaUpgradeLevels, checkpointTemporaryModifiers).ok) {
+                throw new Error("Game checkpoint macroEconomy derived stat is invalid.");
+            }
+        }
+        /* towerforge-optional:macroEconomy:end */
         if (checkpointBallistics && state.ballistics) {
             const ballistics = closed(state.ballistics, "ballistics state", ["schemaVersion", "nextProjectileSequence", "projectiles"], checkpointBallistics.projectiles.destructibles === undefined ? [] : ["destructibles"]);
             const checkpointBallisticsSchemaVersion = integer(checkpointDataField(ballistics, "schemaVersion", "ballistics state"), "ballistics schemaVersion", 1);
@@ -5888,6 +6321,13 @@ export class TowerDefenseGame {
             weatherBudgetExceeded: { required: ["type", "profileId", "waveIndex", "limit"] },
             directorDecision: { required: ["type", "waveIndex", "counterId", "threatCost", "reason", "addedGroups"] },
             waveCleared: { required: ["type", "waveIndex", "income", "interest"] },
+            /* towerforge-optional:macroEconomy:start */
+            commodityTraded: { required: ["type", "side", "commodityId", "quantity", "unitPrice", "quoteAmount"] },
+            marketPricesAdvanced: { required: ["type", "waveIndex"] },
+            depositOpened: { required: ["type", "instanceId", "depositId", "currencyId", "principal", "maturityClearedWave"] },
+            depositMatured: { required: ["type", "instanceId", "depositId", "currencyId", "principal", "interestAmount"] },
+            ritualPerformed: { required: ["type", "altarId", "towerIds"] },
+            /* towerforge-optional:macroEconomy:end */
             questCompleted: { required: ["type", "questId", "kind"] },
             questFailed: { required: ["type", "questId", "kind"] },
             resourcesGranted: { required: ["type", "source", "waveIndex", "resources"] },
@@ -5975,7 +6415,8 @@ export class TowerDefenseGame {
             "rollIndex", "shieldAbsorbed", "hpDamage", "previousMana", "currentMana", "manaSpent",
             "cooldownApplied", "requestedDamage", "resolvedDamage", "cost", "previousPoints", "currentPoints",
             "threatCost", "previousHp", "currentHp", "maxHp", "previousShield", "currentShield", "shieldCapacity",
-            "requestedAmount", "fromHp", "toHp", "applicationOrdinal", "affectedCount"
+            "requestedAmount", "fromHp", "toHp", "applicationOrdinal", "affectedCount", "quantity", "unitPrice",
+            "quoteAmount", "principal", "maturityClearedWave", "interestAmount"
         ]);
         const stringEventFields = new Set([
             "towerId", "towerTypeId", "enemyId", "enemyTypeId", "parentEnemyId", "parentEnemyTypeId", "healerEnemyId",
@@ -5987,7 +6428,8 @@ export class TowerDefenseGame {
             "counterId", "questId", "machineId", "contextId", "transitionId", "fromStatePath", "toStatePath",
             "componentId", "cohortId", "protectedEnemyId", "protectedEnemyTypeId", "vanguardEnemyId",
             "vanguardEnemyTypeId", "projectileId", "objectId", "definitionId", "profileId", "choiceId",
-            "weatherId", "zoneId", "effectId", "reason"
+            "weatherId", "zoneId", "effectId", "reason", "side", "commodityId", "instanceId", "depositId",
+            "currencyId", "altarId"
         ]);
         const coordEventFields = new Set(["coord", "from", "to", "center", "originCoord", "sourceCoord"]);
         const bagEventFields = new Set(["refund", "cost", "resources", "income", "interest"]);
@@ -7233,6 +7675,20 @@ export class TowerDefenseGame {
         this.enemyCounter = state.enemyCounter;
         this.towerCounter = state.towerCounter;
         this.clearedWaveCount = state.clearedWaveCount;
+        /* towerforge-optional:macroEconomy:start */
+        if (this.activeMacroEconomy && state.macroEconomy) {
+            this.macroEconomyMarket = Object.freeze({
+                ...state.macroEconomy.market,
+                quotes: Object.freeze({ ...state.macroEconomy.market.quotes }),
+                holdings: Object.freeze({ ...state.macroEconomy.market.holdings }),
+                pendingNetDemand: Object.freeze({ ...state.macroEconomy.market.pendingNetDemand })
+            });
+            this.macroEconomyDeposits = state.macroEconomy.deposits.map((deposit) => ({ ...deposit }));
+            this.nextMacroEconomyDepositSequence = state.macroEconomy.nextDepositSequence;
+            this.nextMacroEconomyRitualSequence = state.macroEconomy.nextRitualSequence;
+            this.ritualTemporaryModifiers = state.macroEconomy.temporaryModifiers.map((modifier) => ({ ...modifier }));
+        }
+        /* towerforge-optional:macroEconomy:end */
         this.killCount = state.killCount;
         this.leakCount = state.leakCount;
         this.killCountByEnemyType = { ...state.killCountByEnemyType };
@@ -7845,6 +8301,30 @@ export class TowerDefenseGame {
             })
             : undefined;
         const quests = this.buildQuestSnapshot();
+        /* towerforge-optional:macroEconomy:start */
+        const macroEconomy = this.activeMacroEconomy && this.macroEconomyMarket
+            ? Object.freeze({
+                schemaVersion: 1,
+                profileId: this.activeMacroEconomy.profileId,
+                managementAllowed: this.macroEconomyManagementAllowed(),
+                ritualAllowed: this.macroEconomyRitualAllowed(),
+                quoteCurrencyId: this.activeMacroEconomy.quoteCurrencyId,
+                market: Object.freeze({
+                    lastPriceWaveIndex: this.macroEconomyMarket.lastPriceWaveIndex,
+                    commodities: Object.freeze(Object.keys(this.activeMacroEconomy.commodities).sort(compareBinary).map((id) => Object.freeze({
+                        id,
+                        label: this.activeMacroEconomy.commodities[id].label,
+                        quote: this.macroEconomyMarket.quotes[id],
+                        holding: this.macroEconomyMarket.holdings[id] ?? 0,
+                        pendingNetDemand: this.macroEconomyMarket.pendingNetDemand[id] ?? 0
+                    })))
+                }),
+                deposits: Object.freeze(this.macroEconomyDeposits.map((deposit) => Object.freeze({ ...deposit, label: this.activeMacroEconomy.deposits[deposit.depositId].label }))),
+                depositProducts: Object.freeze(Object.entries(this.activeMacroEconomy.deposits).sort(([left], [right]) => compareBinary(left, right)).map(([id, definition]) => Object.freeze({ id, ...definition }))),
+                altars: Object.freeze(Object.entries(this.activeMacroEconomy.altars).sort(([left], [right]) => compareBinary(left, right)).map(([id, definition]) => Object.freeze({ id, ...definition, coord: Object.freeze({ ...definition.coord }), towerTypeIds: Object.freeze([...definition.towerTypeIds]), effects: Object.freeze(definition.effects.map((effect) => Object.freeze({ ...effect }))) })))
+            })
+            : undefined;
+        /* towerforge-optional:macroEconomy:end */
         return {
             mapId: this.map.id,
             grid: { ...this.map.grid },
@@ -7943,6 +8423,9 @@ export class TowerDefenseGame {
             ...(enemyBehaviors === undefined ? {} : { enemyBehaviors }),
             ...(ballistics === undefined ? {} : { ballistics }),
             ...(weather === undefined ? {} : { weather }),
+            /* towerforge-optional:macroEconomy:start */
+            ...(macroEconomy === undefined ? {} : { macroEconomy }),
+            /* towerforge-optional:macroEconomy:end */
             scriptState: {
                 values: this.cloneScriptValues(),
                 diagnostics: this.scriptDiagnostics.map((diagnostic) => ({ ...diagnostic })),
@@ -13146,7 +13629,14 @@ export class TowerDefenseGame {
                     : attack.kind === "pipeline"
                         ? attack.rangeByLevel?.[Math.min(levelIndex, attack.rangeByLevel.length - 1)] ?? type.range
                         : type.range;
-        return baseRange * (this.compiledArsenalTower(tower)?.rangeMultiplier ?? 1);
+        let effectiveRange = baseRange * (this.compiledArsenalTower(tower)?.rangeMultiplier ?? 1);
+        /* towerforge-optional:macroEconomy:start */
+        const ritualMultiplier = (this.ritualTemporaryModifiers ?? EMPTY_FROZEN_ARRAY)
+            .filter((modifier) => modifier.stat === "range")
+            .reduce((value, modifier) => value * modifier.multiplier, 1);
+        effectiveRange *= ritualMultiplier;
+        /* towerforge-optional:macroEconomy:end */
+        return effectiveRange;
     }
     slipperyJackInterval(tower) {
         const type = this.towerTypes[tower.typeId];
@@ -13830,6 +14320,11 @@ export class TowerDefenseGame {
             });
         }
         modifiers.push(...this.rogueliteDamageModifiers);
+        /* towerforge-optional:macroEconomy:start */
+        for (const modifier of (this.ritualTemporaryModifiers ?? EMPTY_FROZEN_ARRAY).filter((candidate) => candidate.stat === "damage")) {
+            modifiers.push({ id: modifier.id, target: "damage", stage: "temporary", operation: "multiplier", value: modifier.multiplier });
+        }
+        /* towerforge-optional:macroEconomy:end */
         const sourceTower = towerId === undefined || options.overTime === true
             ? undefined
             : this.towers.find((tower) => tower.id === towerId
@@ -14088,7 +14583,14 @@ export class TowerDefenseGame {
             const multiplier = attack.fireRateMultiplierByLevel[Math.min(levelIndex, attack.fireRateMultiplierByLevel.length - 1)] ?? 1;
             best = Math.max(best, multiplier * this.towerFireRateMetaMultiplier);
         }
-        return best * this.weatherMultiplierAt("tower_fire_rate", tower.coord);
+        let effectiveFireRate = best * this.weatherMultiplierAt("tower_fire_rate", tower.coord);
+        /* towerforge-optional:macroEconomy:start */
+        const ritualMultiplier = (this.ritualTemporaryModifiers ?? EMPTY_FROZEN_ARRAY)
+            .filter((modifier) => modifier.stat === "fire_rate")
+            .reduce((value, modifier) => value * modifier.multiplier, 1);
+        effectiveFireRate *= ritualMultiplier;
+        /* towerforge-optional:macroEconomy:end */
+        return effectiveFireRate;
     }
     supportBuffTouchesTower(support, target) {
         const supportType = this.towerTypes[support.typeId];
@@ -14562,6 +15064,26 @@ export class TowerDefenseGame {
             this.addResources(interest);
             this.clearedWaveCount += 1;
             this.lastEvents.push({ type: "waveCleared", waveIndex, income, interest });
+            /* towerforge-optional:macroEconomy:start */
+            if (this.activeMacroEconomy && this.macroEconomyMarket) {
+                this.macroEconomyMarket = advanceMarketWaveV1(this.activeMacroEconomy, this.macroEconomyMarket, waveIndex);
+                this.lastEvents.push({ type: "marketPricesAdvanced", waveIndex });
+                const retained = [];
+                for (const deposit of this.macroEconomyDeposits) {
+                    if (deposit.maturityClearedWave > this.clearedWaveCount) {
+                        retained.push(deposit);
+                        continue;
+                    }
+                    const product = this.activeMacroEconomy.deposits[deposit.depositId];
+                    if (!product)
+                        throw new Error(`Active deposit product "${deposit.depositId}" disappeared.`);
+                    const interestAmount = Math.round(deposit.principal * product.interestBasisPoints / 10_000 * 1_000_000) / 1_000_000;
+                    this.resources[deposit.currencyId] = (this.resources[deposit.currencyId] ?? 0) + deposit.principal + interestAmount;
+                    this.lastEvents.push({ type: "depositMatured", instanceId: deposit.instanceId, depositId: deposit.depositId, currencyId: deposit.currencyId, principal: deposit.principal, interestAmount });
+                }
+                this.macroEconomyDeposits = retained;
+            }
+            /* towerforge-optional:macroEconomy:end */
             this.advancePreserveShieldQuests();
             const heroDefinition = (this.activeHeroesMechanics?.schemaVersion === 5
                 || this.activeHeroesMechanics?.schemaVersion === 6

@@ -92,6 +92,12 @@ export declare class TowerDefenseGame {
     private readonly activeTerraformingMechanics;
     private readonly activeRogueliteMechanics;
     private readonly activeArsenalMechanics;
+    private readonly activeMacroEconomy;
+    private macroEconomyMarket;
+    private macroEconomyDeposits;
+    private nextMacroEconomyDepositSequence;
+    private nextMacroEconomyRitualSequence;
+    private ritualTemporaryModifiers;
     private readonly activeHeroesMechanics;
     private readonly activeLogisticsPower;
     private readonly activeLogisticsAmmunition;
@@ -239,6 +245,12 @@ export declare class TowerDefenseGame {
     getTowerUpgradeCost(towerOrId: TowerState | string, branchId?: string): ResourceCost | null;
     upgradeTower(towerId: string, branchId?: string): ActionResult;
     private arsenalManagementAllowed;
+    private macroEconomyManagementAllowed;
+    private macroEconomyRitualAllowed;
+    buyCommodity(commodityId: string, quantity: number): ActionResult;
+    sellCommodity(commodityId: string, quantity: number): ActionResult;
+    openDeposit(depositId: string, amount: number): ActionResult;
+    performRitual(altarId: string, towerIds: readonly string[]): ActionResult;
     private compiledArsenalTower;
     configureTowerModules(towerId: string, modules: ArsenalModuleLoadoutV1): ActionResult;
     craftGem(recipeId: string, cells: readonly {

@@ -71,7 +71,7 @@ describe("R1.5 reactions MCP/AI surface", () => {
     const mechanics = await callTool("describe_schema", { domain: "mechanics" }, {});
     const reactions = await callTool("describe_schema", { domain: "reactions" }, {});
 
-    expect(engine.IMPLEMENTED_MECHANICS_MODULE_IDS).toEqual(["combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "arsenal", "heroes", "logistics", "director", "quests", "enemyBehaviors", "multiplayer"]);
+    expect(engine.IMPLEMENTED_MECHANICS_MODULE_IDS).toEqual(["combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "arsenal", "macroEconomy", "heroes", "logistics", "director", "quests", "enemyBehaviors", "multiplayer"]);
     expect(engine.REACTION_LIMITS).toEqual({
       exposureDefinitions: 256,
       damageTypeApplicationBindings: 256,
@@ -100,7 +100,7 @@ describe("R1.5 reactions MCP/AI surface", () => {
       dependency: { moduleId: "combat", supportedModuleSchemaVersions: [2, 3] },
       limits: engine.REACTION_LIMITS
     });
-    expect(mechanics.mechanics.implementedModuleIds).toEqual(["combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "arsenal", "heroes", "logistics", "director", "quests", "enemyBehaviors", "multiplayer"]);
+    expect(mechanics.mechanics.implementedModuleIds).toEqual(["combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "arsenal", "macroEconomy", "heroes", "logistics", "director", "quests", "enemyBehaviors", "multiplayer"]);
     expect(mechanics.mechanics.modules.reactions).toMatchObject({
       authoring: engine.REACTIONS_MECHANICS_SCHEMA,
       snapshot: { field: "reactions", optional: true, supportedSchemaVersions: [1] },

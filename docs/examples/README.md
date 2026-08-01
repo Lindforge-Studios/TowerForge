@@ -73,4 +73,5 @@ Reference examples show expected project and code patterns.
 - Renderer fixtures that prove sprite/atlas parity and enforce swarm-scale performance budgets.
 - A focused R13/R4.4B browser regression fixture proving expected guarded 400/409 responses do not become uncaught application errors.
 - `opt-in-modular-arsenal/` — R14 Arsenal v1 plus the minimal Roguelite gem catalog needed by its exact crafting recipe.
-- R15–R17 reference fixtures only when their contracts enter RED/GREEN implementation; planned schemas must not be presented as available authoring examples.
+- `opt-in-macro-economy/` — R15 local seeded market, fixed-term deposit and atomic ritual authoring.
+- R16–R17 reference fixtures only when their contracts enter RED/GREEN implementation; planned schemas must not be presented as available authoring examples.

@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "macroEconomy": {
+      "schemaVersion": 1,
+      "enabled": true,
+      "profiles": {
+        "basic_local_market": {
+          "quoteCurrencyId": "coins",
+          "commodities": {
+            "ore": {
+              "label": "Ore",
+              "basePrice": 10,
+              "minPrice": 5,
+              "maxPrice": 25,
+              "trendPerWave": 0.1,
+              "volatility": 0.08,
+              "demandElasticity": 0.05
+            }
+          },
+          "deposits": {
+            "short_term": {
+              "label": "Short-term deposit",
+              "currencyId": "coins",
+              "durationClearedWaves": 2,
+              "interestBasisPoints": 500,
+              "minAmount": 10,
+              "maxAmount": 1000
+            }
+          },
+          "altars": {
+            "exchange_altar": {
+              "label": "Exchange altar",
+              "coord": { "q": 0, "r": 0 },
+              "radius": 2,
+              "minTowers": 1,
+              "maxTowers": 1,
+              "towerTypeIds": ["cannon_tower"],
+              "effects": [
+                { "kind": "grant_resource", "resourceId": "coins", "amount": 25 }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

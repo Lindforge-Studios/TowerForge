@@ -6,6 +6,7 @@ export { ELEVATION_MECHANICS_SCHEMA } from "./elevation-mechanics.js";
 export { TERRAFORMING_MECHANICS_SCHEMA } from "./terraforming-mechanics.js";
 export { ROGUELITE_MECHANICS_SCHEMA } from "./roguelite-mechanics.js";
 export { ARSENAL_MECHANICS_SCHEMA } from "./arsenal-mechanics.js";
+export { MACRO_ECONOMY_MECHANICS_SCHEMA } from "./macro-economy-mechanics.js";
 export { HEROES_MECHANICS_SCHEMA } from "./heroes-mechanics.js";
 export { LOGISTICS_MECHANICS_SCHEMA } from "./logistics-mechanics.js";
 export declare const DIRECTOR_MECHANICS_SCHEMA: Readonly<{

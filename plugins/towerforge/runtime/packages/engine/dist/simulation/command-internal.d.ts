@@ -1,8 +1,8 @@
 import type { TowerScriptJson } from "../scripting/types.js";
 import type { TowerDefenseGame } from "./TowerDefenseGame.js";
 import { type ActionResult, type GridCoord, type MissionAbilityId, type TowerTargetMode } from "./types.js";
-export declare const GAME_COMMAND_SCHEMA_VERSION: 7;
-export declare const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS: readonly [1, 2, 3, 4, 5, 6, 7];
+export declare const GAME_COMMAND_SCHEMA_VERSION: 8;
+export declare const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS: readonly [1, 2, 3, 4, 5, 6, 7, 8];
 export type GameCommandV1 = {
     readonly schemaVersion: 1;
     readonly type: "tick";
@@ -148,7 +148,28 @@ export type GameCommandV7 = WithCommandSchemaVersion<GameCommandV6, 7> | {
         readonly artifactInstanceId: string;
     }[];
 };
-export type GameCommand = GameCommandV1 | GameCommandV2 | GameCommandV3 | GameCommandV4 | GameCommandV5 | GameCommandV6 | GameCommandV7;
+export type GameCommandV8 = WithCommandSchemaVersion<GameCommandV7, 8> | {
+    readonly schemaVersion: 8;
+    readonly type: "buyCommodity";
+    readonly commodityId: string;
+    readonly quantity: number;
+} | {
+    readonly schemaVersion: 8;
+    readonly type: "sellCommodity";
+    readonly commodityId: string;
+    readonly quantity: number;
+} | {
+    readonly schemaVersion: 8;
+    readonly type: "openDeposit";
+    readonly depositId: string;
+    readonly amount: number;
+} | {
+    readonly schemaVersion: 8;
+    readonly type: "performRitual";
+    readonly altarId: string;
+    readonly towerIds: readonly string[];
+};
+export type GameCommand = GameCommandV1 | GameCommandV2 | GameCommandV3 | GameCommandV4 | GameCommandV5 | GameCommandV6 | GameCommandV7 | GameCommandV8;
 export declare function invalidGameCommandResult(): ActionResult;
 /**
  * Strict descriptor-safe parser shared by direct dispatch and command journals.

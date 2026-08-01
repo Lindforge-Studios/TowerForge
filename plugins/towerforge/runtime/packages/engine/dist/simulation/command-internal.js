@@ -1,6 +1,6 @@
 import { TOWER_TARGET_MODES } from "./types.js";
-export const GAME_COMMAND_SCHEMA_VERSION = 7;
-export const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4, 5, 6, 7]);
+export const GAME_COMMAND_SCHEMA_VERSION = 8;
+export const GAME_COMMAND_SUPPORTED_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4, 5, 6, 7, 8]);
 const MAX_PAYLOAD_DEPTH = 32;
 const MAX_PAYLOAD_NODES = 4_096;
 const MAX_PAYLOAD_BYTES = 64 * 1_024;
@@ -175,7 +175,7 @@ export function parseGameCommand(input) {
     const schemaVersion = fields.get("schemaVersion");
     const type = fields.get("type");
     if ((schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3 && schemaVersion !== 4
-        && schemaVersion !== 5 && schemaVersion !== 6 && schemaVersion !== 7)
+        && schemaVersion !== 5 && schemaVersion !== 6 && schemaVersion !== 7 && schemaVersion !== 8)
         || typeof type !== "string")
         return undefined;
     if (type === "tick") {
@@ -314,7 +314,7 @@ export function parseGameCommand(input) {
             return undefined;
         return { schemaVersion, type, heroId, skillId };
     }
-    if (schemaVersion === 7 && type === "configureTowerModules") {
+    if (schemaVersion >= 7 && type === "configureTowerModules") {
         if (!hasClosedFields(fields, ["schemaVersion", "type", "towerId", "modules"]))
             return undefined;
         const towerId = fields.get("towerId");
@@ -326,9 +326,9 @@ export function parseGameCommand(input) {
         const core = modules.get("core");
         if (!isBoundedCommandId(base) || !isBoundedCommandId(barrel) || !isBoundedCommandId(core))
             return undefined;
-        return { schemaVersion: 7, type, towerId, modules: { base, barrel, core } };
+        return { schemaVersion, type, towerId, modules: { base, barrel, core } };
     }
-    if (schemaVersion === 7 && type === "craftGem") {
+    if (schemaVersion >= 7 && type === "craftGem") {
         if (!hasClosedFields(fields, ["schemaVersion", "type", "recipeId", "cells"]))
             return undefined;
         const recipeId = fields.get("recipeId");
@@ -355,8 +355,54 @@ export function parseGameCommand(input) {
                 return undefined;
             normalized.push({ x: Number(x), y: Number(y), artifactInstanceId });
         }
-        return { schemaVersion: 7, type, recipeId, cells: normalized };
+        return { schemaVersion, type, recipeId, cells: normalized };
     }
+    /* towerforge-optional:macroEconomy:start */
+    if (schemaVersion === 8 && (type === "buyCommodity" || type === "sellCommodity")) {
+        if (!hasClosedFields(fields, ["schemaVersion", "type", "commodityId", "quantity"]))
+            return undefined;
+        const commodityId = fields.get("commodityId");
+        const quantity = fields.get("quantity");
+        if (!isBoundedCommandId(commodityId) || typeof quantity !== "number" || !Number.isSafeInteger(quantity)
+            || quantity < 1 || quantity > 1_000_000_000)
+            return undefined;
+        return { schemaVersion: 8, type, commodityId, quantity };
+    }
+    if (schemaVersion === 8 && type === "openDeposit") {
+        if (!hasClosedFields(fields, ["schemaVersion", "type", "depositId", "amount"]))
+            return undefined;
+        const depositId = fields.get("depositId");
+        const amount = fields.get("amount");
+        if (!isBoundedCommandId(depositId) || typeof amount !== "number" || !Number.isFinite(amount)
+            || amount <= 0 || amount > 1_000_000_000_000)
+            return undefined;
+        return { schemaVersion: 8, type, depositId, amount: canonicalNumber(amount) };
+    }
+    if (schemaVersion === 8 && type === "performRitual") {
+        if (!hasClosedFields(fields, ["schemaVersion", "type", "altarId", "towerIds"]))
+            return undefined;
+        const altarId = fields.get("altarId");
+        const towerIds = fields.get("towerIds");
+        if (!isBoundedCommandId(altarId) || !Array.isArray(towerIds) || Object.getPrototypeOf(towerIds) !== Array.prototype
+            || towerIds.length < 1 || towerIds.length > 64)
+            return undefined;
+        const descriptors = Object.getOwnPropertyDescriptors(towerIds);
+        if (Object.getOwnPropertySymbols(descriptors).length > 0
+            || Object.keys(descriptors).length !== towerIds.length + 1)
+            return undefined;
+        const normalized = [];
+        for (let index = 0; index < towerIds.length; index += 1) {
+            const descriptor = descriptors[String(index)];
+            if (!descriptor?.enumerable || !("value" in descriptor) || !isBoundedCommandId(descriptor.value))
+                return undefined;
+            normalized.push(descriptor.value);
+        }
+        if (new Set(normalized).size !== normalized.length)
+            return undefined;
+        normalized.sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+        return { schemaVersion: 8, type, altarId, towerIds: normalized };
+    }
+    /* towerforge-optional:macroEconomy:end */
     return undefined;
 }
 /** Execute a command that has already passed the strict parser exactly once. */
@@ -397,5 +443,15 @@ export function executeParsedGameCommand(game, command) {
             return game.configureTowerModules(command.towerId, command.modules);
         case "craftGem":
             return game.craftGem(command.recipeId, command.cells);
+        /* towerforge-optional:macroEconomy:start */
+        case "buyCommodity":
+            return game.buyCommodity(command.commodityId, command.quantity);
+        case "sellCommodity":
+            return game.sellCommodity(command.commodityId, command.quantity);
+        case "openDeposit":
+            return game.openDeposit(command.depositId, command.amount);
+        case "performRitual":
+            return game.performRitual(command.altarId, command.towerIds);
+        /* towerforge-optional:macroEconomy:end */
     }
 }

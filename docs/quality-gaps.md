@@ -22,14 +22,14 @@ Last reviewed: 2026-08-01
 
 - R12 and R13 are merged. The repaired R13 exact commit passed remote CI after its browser race was
   reproduced and fixed without weakening revision or future-version handling.
-- R14 is the v0.5.2 release candidate. It must pass the exact-commit repository, browser, plugin,
-  native scaffold, Tauri and macOS bundle gates before the tag is published.
+- R15 is complete on its opt-in development branch. Its frozen tree passed repository, browser,
+  plugin and package gates plus independent Code Verifier and Constructor Integration Verifier
+  sign-offs; merge and release remain separate delivery actions.
 
 ## Known Product Gaps
 
 | Priority | Area | Current gap | Planned milestone |
 | --- | --- | --- | --- |
-| P1 | Macro-economy | Existing mission interest is static; there is no seeded local commodity market, explicit deposit contract, or atomic ritual system. | R15 |
 | P2 | Replay UX | Checkpoint/journal replay and multiplayer reconnect exist, but there is no binary archive, detached ghost, immutable What-If branch, or Replay Lab. | R16 |
 | P2 | Distribution | Static/PWA/package output exists, but provider-neutral one-click publish, licensed remix provenance, and host-only monetization placements do not. | R17 |
 | P2 | Renderer scale | Canvas and Phaser share gameplay projections, but repeatable 500–1000-enemy frame budgets, geometry/index profiling, and bounded presentation pools are not CI-enforced. | Separate production hardening |
@@ -38,5 +38,6 @@ Last reviewed: 2026-08-01
 | P2 | Tiled coverage | Core terrain/path/object contracts are supported, but full arbitrary Tiled multi-layer/object-layer round-trip is intentionally absent. | Unscheduled |
 | P3 | Signed distribution | v0.5.2 remains an unsigned pre-release. Developer ID notarization, Windows signing, store submission, hosted auth/matchmaking, and TowerForge Cloud need external deployment decisions and credentials. | Deployment milestone |
 
-R14 is implemented as an opt-in capability. R15–R17 remain paused; their planned contracts MUST NOT
-appear in schema descriptors, recipes, Studio controls, player bundles, or agent claims.
+R14 and R15 are implemented as independent opt-in capabilities. R16–R17 remain paused; their
+planned contracts MUST NOT appear in schema descriptors, recipes, Studio controls, player bundles,
+or agent claims.
