@@ -5,6 +5,15 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { assertReleaseVersions, prepareDesktopRelease } from "./prepare-release.mjs";
 
+const REQUIRED_INSTALLERS = Object.freeze({
+  ".dmg": ["mac/TowerForge_0.2.0_aarch64.dmg", "dmg"],
+  ".exe": ["windows/TowerForge_0.2.0_x64-setup.exe", "exe"],
+  ".msi": ["windows/TowerForge_0.2.0_x64_en-US.msi", "msi"],
+  ".AppImage": ["linux/TowerForge_0.2.0_amd64.AppImage", "appimage"],
+  ".deb": ["linux/TowerForge_0.2.0_amd64.deb", "deb"],
+  ".rpm": ["linux/TowerForge-0.2.0-1.x86_64.rpm", "rpm"]
+});
+
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "towerforge-release-"));
   const repoRoot = path.join(root, "repo");
@@ -21,17 +30,17 @@ function fixture() {
   return { root, repoRoot, inputDir, outputDir };
 }
 
+function writeInstallers(dirs, { omit = null } = {}) {
+  for (const [extension, [relativePath, contents]] of Object.entries(REQUIRED_INSTALLERS)) {
+    if (extension === omit) continue;
+    fs.writeFileSync(path.join(dirs.inputDir, relativePath), contents);
+  }
+}
+
 describe("desktop release preparation", () => {
   it("assembles installers, checksums, and source-linked unsigned notes", () => {
     const dirs = fixture();
-    const files = {
-      "mac/TowerForge_0.2.0_aarch64.dmg": "mac",
-      "windows/TowerForge_0.2.0_x64-setup.exe": "windows",
-      "linux/TowerForge_0.2.0_amd64.AppImage": "linux"
-    };
-    for (const [relativePath, contents] of Object.entries(files)) {
-      fs.writeFileSync(path.join(dirs.inputDir, relativePath), contents);
-    }
+    writeInstallers(dirs);
     fs.writeFileSync(path.join(dirs.inputDir, "linux/debug.log"), "ignored");
 
     const result = prepareDesktopRelease({
@@ -41,9 +50,14 @@ describe("desktop release preparation", () => {
       commitSha: "a".repeat(40)
     });
 
-    expect(result.installers.map((item) => item.fileName)).toEqual(Object.keys(files).map((filePath) => path.basename(filePath)).sort());
+    const files = Object.values(REQUIRED_INSTALLERS);
+    expect(result.installers.map((item) => item.fileName)).toEqual(
+      files.map(([filePath]) => path.basename(filePath)).sort((left, right) => left.localeCompare(right))
+    );
+    expect(result.installers.map((item) => path.extname(item.fileName)).sort()).toEqual(Object.keys(REQUIRED_INSTALLERS).sort());
     const checksums = fs.readFileSync(path.join(dirs.outputDir, "SHA256SUMS"), "utf8");
-    for (const [relativePath, contents] of Object.entries(files)) {
+    expect(checksums.trim().split("\n")).toHaveLength(6);
+    for (const [relativePath, contents] of files) {
       const expected = createHash("sha256").update(contents).digest("hex");
       expect(checksums).toContain(`${expected}  ${path.basename(relativePath)}`);
     }
@@ -53,6 +67,47 @@ describe("desktop release preparation", () => {
     expect(notes).toContain("https://github.com/Lindforge-Studios/TowerForge/tree/v0.2.0");
     expect(notes).toContain("System Settings > Privacy & Security > Open Anyway");
     expect(notes).not.toContain("xattr");
+    expect(notes).toContain(`\`\`\`text\n${checksums.trim()}\n\`\`\``);
+  });
+
+  it.each(Object.keys(REQUIRED_INSTALLERS))("rejects a candidate missing %s before writing output", (extension) => {
+    const dirs = fixture();
+    writeInstallers(dirs, { omit: extension });
+    expect(() => prepareDesktopRelease({
+      ...dirs,
+      tag: "v0.2.0",
+      repository: "Lindforge-Studios/TowerForge",
+      commitSha: "c".repeat(40)
+    })).toThrow(new RegExp(`Missing required desktop installer format: ${extension.replace(".", "\\.")}`));
+    expect(fs.existsSync(dirs.outputDir)).toBe(false);
+  });
+
+  it.each(Object.keys(REQUIRED_INSTALLERS))("rejects duplicate %s installers with distinct basenames", (extension) => {
+    const dirs = fixture();
+    writeInstallers(dirs);
+    const duplicateDir = path.join(dirs.inputDir, "duplicates");
+    fs.mkdirSync(duplicateDir);
+    fs.writeFileSync(path.join(duplicateDir, `TowerForge-alternate${extension}`), "duplicate");
+    expect(() => prepareDesktopRelease({
+      ...dirs,
+      tag: "v0.2.0",
+      repository: "Lindforge-Studios/TowerForge",
+      commitSha: "d".repeat(40)
+    })).toThrow(new RegExp(`Duplicate desktop installer format: ${extension.replace(".", "\\.")}`));
+    expect(fs.existsSync(dirs.outputDir)).toBe(false);
+  });
+
+  it("does not accept an unsupported package as a required installer replacement", () => {
+    const dirs = fixture();
+    writeInstallers(dirs, { omit: ".rpm" });
+    fs.writeFileSync(path.join(dirs.inputDir, "linux/TowerForge.pkg"), "unsupported");
+    expect(() => prepareDesktopRelease({
+      ...dirs,
+      tag: "v0.2.0",
+      repository: "Lindforge-Studios/TowerForge",
+      commitSha: "e".repeat(40)
+    })).toThrow(/Missing required desktop installer format: \.rpm/);
+    expect(fs.existsSync(dirs.outputDir)).toBe(false);
   });
 
   it("rejects duplicate installer basenames", () => {

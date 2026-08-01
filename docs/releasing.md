@@ -4,7 +4,7 @@ TowerForge desktop artifacts are built and published through GitHub Actions. Unt
 
 ## Published Baseline
 
-The current release line is `v0.5.2`, an unsigned pre-release containing accepted R0–R14. A local build or GitHub Actions artifact MUST NOT be described as a release until the matching tag, public release page, installers, notes, and `SHA256SUMS` exist and have been verified.
+The current release line is `v0.6.0`, an unsigned pre-release containing accepted R0–R17. A local build or GitHub Actions artifact MUST NOT be described as a release until the matching tag, public release page, installers, notes, and `SHA256SUMS` exist and have been verified.
 
 ## Release Invariants
 
@@ -28,7 +28,7 @@ The current release line is `v0.5.2`, an unsigned pre-release containing accepte
 
 Every run creates the `towerforge-release-candidate` Actions artifact. It contains the installers, `SHA256SUMS`, and generated release notes. A manual run stops there. A tag run additionally creates a GitHub pre-release titled `TowerForge vX.Y.Z - Unsigned build` using the repository-scoped `GITHUB_TOKEN`; no provider, signing, or user API keys are exposed to the workflow.
 
-The release assembler rejects mismatched versions across root npm, desktop npm, Tauri, and Cargo manifests, duplicate installer names, unsupported tag syntax, missing installers, and attempts to reuse an existing release tag. It never silently replaces published assets.
+The release assembler rejects mismatched versions across root npm, desktop npm, Tauri, and Cargo manifests, duplicate installer names, unsupported tag syntax, any candidate that does not contain exactly one `.dmg`, `.exe`, `.msi`, `.AppImage`, `.deb`, and `.rpm`, and attempts to reuse an existing release tag. It never silently replaces published assets.
 
 ## Codex Plugin Mirror
 
