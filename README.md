@@ -21,7 +21,7 @@ Desktop-сборки публикуются в [GitHub Releases](https://github.
 
 ## Текущий статус
 
-Актуальная desktop-линия — `v0.6.0` (неподписанный pre-release): она объединяет всю принятую дорожную карту R0–R17. Помимо gameplay-механик R9–R14 в неё входят opt-in Macro-Economy, Ghost Replay Lab с What-If-ветками и provider-neutral Web Distribution Hub с лицензированным Remix. Gameplay-расширения остаются выключенными по умолчанию. Точный статус и границы ведутся в [ROADMAP](docs/ROADMAP.md).
+Актуальная desktop-линия — `v0.6.1` (неподписанный pre-release): она объединяет всю принятую дорожную карту R0–R17 и кросс-платформенное исправление сборки Windows. Помимо gameplay-механик R9–R14 в неё входят opt-in Macro-Economy, Ghost Replay Lab с What-If-ветками и provider-neutral Web Distribution Hub с лицензированным Remix. Gameplay-расширения остаются выключенными по умолчанию. Точный статус и границы ведутся в [ROADMAP](docs/ROADMAP.md).
 
 ## Состав продукта
 

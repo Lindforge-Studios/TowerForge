@@ -57,12 +57,14 @@ gh pr checks <number>
 ```
 
 As of 2026-08-01, R12 and R13 are merged and the repaired R13 exact commit passed remote CI. The
-`v0.6.0` release line unifies accepted R0–R17: fully opt-in Macro-Economy v1 and
+`v0.6.1` release candidate unifies accepted R0–R17: fully opt-in Macro-Economy v1 and
 GameCommand/Journal v8, checksummed Ghost Replay Lab/What-If/reference relay, and the constructor-only
 Distribution Hub with reproducible publish, provider adapters, licensed Remix provenance and
 host-only monetization hooks. Legacy projects remain unchanged. R17 passed full exact-tree gates,
 remote CI and independent Code Verifier plus Constructor Integration Verifier review before merge.
-The line is public only after the matching tag and six installers plus `SHA256SUMS` are verified.
+It also makes optional renderer-export pruning invariant across LF and CRLF checkouts. The immutable
+`v0.6.0` tag failed its Windows build and has no public release. The v0.6.1 line is public only after
+the matching tag and six installers plus `SHA256SUMS` are verified.
 
 ## Opt-In Mechanics
 
@@ -1000,7 +1002,7 @@ CI is configured in `.github/workflows/ci.yml` for local-alpha quality gates. `.
 
 Public desktop releases follow [the desktop release policy](releasing.md). Until signing is configured, they remain GitHub pre-releases with `Unsigned build` in the title. To inspect a cross-platform candidate without publishing, run **Actions > Unsigned Desktop Builds > Run workflow** against the intended commit. To publish, merge the release commit, then create and push an annotated tag whose version matches all desktop manifests:
 
-The v0.6.0 release line includes accepted R0–R17. Never describe `main` or an open PR as released merely because local installers or Actions artifacts exist; the GitHub tag and published installer assets remain authoritative.
+The v0.6.1 release line includes accepted R0–R17 and the Windows CRLF packaging repair. Never describe `main` or an open PR as released merely because local installers or Actions artifacts exist; the GitHub tag and published installer assets remain authoritative.
 
 ```bash
 git tag -a vX.Y.Z -m "TowerForge vX.Y.Z"

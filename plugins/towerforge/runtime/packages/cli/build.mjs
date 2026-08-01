@@ -15,6 +15,7 @@ import {
 import { copyVisualAssets } from "./lib/assets.mjs";
 import { parseJsonFlag, printJson } from "./lib/trace.mjs";
 import { projectTileCoverage } from "./lib/tile-coverage.mjs";
+import { pruneSingleModuleExport, pruneSingleModuleImport } from "./lib/optional-export-pruning.mjs";
 import { buildPublishManifestV1 } from "../distribution/src/index.mjs";
 import {
   computePublishTreeDigestV1,
@@ -288,8 +289,7 @@ function pruneInactiveMacroEconomyRuntime(outDir) {
   const rendererIndex = path.join(outDir, "renderer", "index.mjs");
   const stripExport = (filePath, specifier) => {
     const source = fs.readFileSync(filePath, "utf8");
-    const next = source.replace(`export * from "${specifier}";\n`, "");
-    if (next === source) throw new Error(`Could not prune inactive Macro-Economy export from ${filePath}.`);
+    const next = pruneSingleModuleExport(source, specifier);
     fs.writeFileSync(filePath, next, "utf8");
   };
   stripExport(engineIndex, "./content/macro-economy-mechanics.js");
@@ -298,7 +298,7 @@ function pruneInactiveMacroEconomyRuntime(outDir) {
     const filePath = path.join(outDir, "engine", relativePath);
     let source = fs.readFileSync(filePath, "utf8");
     if (relativePath === path.join("content", "validate.js")) {
-      source = source.replace(/^import .* from "\.\/macro-economy-mechanics\.js";\n/m, "");
+      source = pruneSingleModuleImport(source, "./macro-economy-mechanics.js");
     }
     const pattern = /\/\* towerforge-optional:macroEconomy:start \*\/[\s\S]*?\/\* towerforge-optional:macroEconomy:end \*\//g;
     const matches = source.match(pattern);
@@ -326,8 +326,7 @@ function pruneReplayLabTooling(outDir) {
   fs.rmSync(path.join(outDir, "renderer", "ghost-replay-presentation.mjs"), { force: true });
   const rendererIndex = path.join(outDir, "renderer", "index.mjs");
   const source = fs.readFileSync(rendererIndex, "utf8");
-  const next = source.replace('export * from "./ghost-replay-presentation.mjs";\n', "");
-  if (next === source) throw new Error(`Could not prune Replay Lab presentation export from ${rendererIndex}.`);
+  const next = pruneSingleModuleExport(source, "./ghost-replay-presentation.mjs");
   fs.writeFileSync(rendererIndex, next, "utf8");
 }
 

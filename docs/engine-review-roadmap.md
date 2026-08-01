@@ -1,6 +1,6 @@
 # TowerForge Engine Review And Production Roadmap
 
-Last reviewed: 2026-07-31
+Last reviewed: 2026-08-01
 
 This document is the compact engineering review. Product sequencing and live PR state are canonical
 in [ROADMAP.md](ROADMAP.md); release and production gaps are canonical in
@@ -17,10 +17,15 @@ TowerForge now has:
 - TowerScript v7 Behavior Trees/HFSM plus lossless Graph, structured Trace, and checkpoint-backed
   Debugger v2 without arbitrary project code execution;
 - compute-only Persona QA, deterministic procedural quests, and visuals-v3 Procedural Juice;
-- implemented R12 targetable boss components, component-driven phases, bounded formation steering,
-  and vanguard protection in open PR #23;
-- implemented R13 direct/arc projectiles, clearance, ricochet, transactional destructibles, and
-  independent seeded Weather in stacked PR #24;
+- accepted R12 targetable boss components, component-driven phases, bounded formation steering,
+  and vanguard protection;
+- accepted R13 direct/arc projectiles, clearance, ricochet, transactional destructibles, and
+  independent seeded Weather;
+- accepted R14 CampaignRunV2, opt-in modular Arsenal and deterministic gem crafting;
+- accepted R15 seeded local market, explicit deposits and atomic rituals;
+- accepted R16 checksummed Replay Archive, detached Ghost/What-If Lab and isolated reference relay;
+- accepted R17 reproducible publish manifests, explicit-confirm provider adapters, licensed Remix
+  provenance and host-only monetization placements;
 - local-first Studio, guarded MCP/AI authoring, Tauri desktop, PWA/single-file builds, `.tdpack`,
   Codex plugin packaging, and mobile/desktop game scaffolds.
 
@@ -30,21 +35,21 @@ tools remain out of scope.
 
 ## Immediate Gate
 
-R13 is not accepted yet. GitHub CI on prior head `b3069a4` passed 3,693 unit tests and every
-pre-browser step, then failed one of 141 Playwright tests. Trace evidence proved a fixture race
-between the completed file write and the pending guarded apply response; RED reproduced 1/12 and
-the repaired contract passed 20/20. The new exact commit still requires full gates and two fresh
-sign-offs. R12/R13 are merged and R14 is the current implemented release candidate; later planned items are not implemented APIs.
+R0–R17 are accepted and merged. The current public desktop baseline is unsigned pre-release
+`v0.5.2` with R0–R14. The immutable `v0.6.0` tag exposed a Windows CRLF package-pruning defect before
+publication, so it has no public Release. Replacement candidate `v0.6.1` must pass exact-commit PR
+CI, two fresh independent sign-offs, and a manual native cross-platform candidate with all six
+installer formats before tagging and public verification.
 
-## Next Planned Increments
+## Post-Roadmap Hardening
 
-| Order | Area | Contract boundary |
+| Priority | Area | Remaining boundary |
 | --- | --- | --- |
-| R14.0 | Campaign run migration | `CampaignRunV2` codec and V1 migration, with no arsenal content in the same RED/GREEN slice |
-| R14.1–R14.4 | Modular arsenal and gem crafting | Opt-in `arsenal` v1, engine-owned blueprint compiler, between-wave module commands, existing artifact instances on a bounded 3×3 board, shared Studio/MCP/player surfaces |
-| R15.1–R15.3 | Macro-economy | Opt-in `macroEconomy` v1; separate seeded market, explicit deposits, and atomic rituals; command/journal v8 only when commands arrive |
-| R16.1–R16.4 | Ghost Replay Lab | Checksummed binary archive over canonical JSON, detached ghost, immutable branch suffix, and a separate gameplay-free self-host relay |
-| R17.1–R17.4 | Distribution | Reproducible publish manifest, explicit-confirmation provider adapters, licensed `.tdpack` remix provenance, and host-only monetization placements |
+| P2 | Renderer scale | Enforce repeatable 500–1000-enemy frame budgets and bounded presentation pools in CI |
+| P2 | Asset breadth | Expand bundled tower/enemy sprite families and guarded batch binding |
+| P2 | Profiles | Add named save slots/loadouts and user-facing export/import controls without changing `PlayerProfileV3` implicitly |
+| P2 | Tiled coverage | Extend intentional map import coverage without weakening topology or path validation |
+| P3 | Signed distribution | Add Developer ID notarization and Windows signing only when deployment credentials and policy are available |
 
 ## Engineering Invariants
 

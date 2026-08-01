@@ -2215,3 +2215,34 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   Current documentation describes the accepted R0–R17 baseline while preserving historical v0.5.2
   evidence. Full repository, browser, native, plugin and macOS bundle gates are required on this
   exact tree before the release PR can merge or the annotated tag can be created.
+
+## 2026-08-01 — v0.6.1 Windows release recovery RED/GREEN
+
+- The immutable annotated `v0.6.0` tag points to merge commit `217f96b`, but tag workflow
+  `30699653133` stopped before publication. Windows job `91368289343` failed during generated-player
+  package tests because a renderer export was pruned with an LF-only literal after Windows checkout
+  converted the source to CRLF. No public v0.6.0 Release or partial installer set was created; the
+  tag remains incident evidence and is not moved or reused.
+- Focused RED command `npm run test -- --run packages/cli/lib/optional-export-pruning.test.mjs`
+  failed before collection because the strict cross-platform pruning contract did not exist. An
+  independent review then found the same latent LF-only defect in both inactive Macro-Economy
+  exports and its validation import.
+- The shared pure helper now accepts exactly one anchored LF, CRLF, or EOF module statement,
+  preserves every unrelated byte, validates the relative specifier, and rejects missing or
+  duplicate statements. Replay Lab and all Macro-Economy pruning sites use the same helper. Focused
+  GREEN covers LF/CRLF/EOF, mixed endings, malformed inputs, false positives, both opt-in domains,
+  and the original package paths: 25/25 tests passed.
+- Release domains are synchronized to v0.6.1. Before this patch is tagged, the exact merged commit
+  must pass full local gates, two fresh independent reviews, ordinary PR CI, and a manual
+  cross-platform `Unsigned Desktop Builds` candidate. Only then may a new annotated `v0.6.1` tag
+  trigger public unsigned pre-release assembly and post-download verification.
+- The frozen local candidate passes typecheck, engine build, Vitest 3,905/3,905, Playwright
+  147/147, project validation, tutorial simulation, balance, map compilation, web build, plugin
+  build/validate/smoke, mobile and desktop scaffold packaging, and Cargo 9/9. The local Apple
+  Silicon DMG `TowerForge_0.6.1_aarch64.dmg` passes complete app signature plus DMG verification;
+  its local SHA-256 is `b4da9cd045e04d6e24c29336cdb6d43d0735ee20fc1403eca897322990385a0c`.
+- The first Constructor/Release review found one P2 documentation-parity defect: `README.en.md` and
+  the compact engine review still described open R12/R13 PRs and planned R14–R17. They now identify
+  public v0.5.2 as the R0–R14 baseline, accepted/merged R15–R17, the aborted immutable v0.6.0 tag,
+  and v0.6.1 as the replacement candidate. This docs-only repair invalidates both prior sign-offs;
+  the amended exact commit requires a fresh verification pair and CI before merge.
