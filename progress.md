@@ -2183,3 +2183,19 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   Integration Verifier PASS, with no P0–P3 findings. ADR 0058 is Accepted and R17 is complete;
   subsequent changes in this branch are documentation-only acceptance status and the isolated
   opt-in reference snippets under `docs/examples/opt-in-web-distribution/`.
+
+## 2026-08-01 — R17 CI passive-balance race RED/GREEN
+
+- The first PR CI run exposed an old Studio race after 146/147 browser scenarios passed: a passive
+  balance request retained the pre-edit content revision while an external editor replaced project
+  bytes, and the delayed endpoint surfaced the stale sweep as HTTP 500. The focused RED proved that
+  `/api/balance` ignored an explicit stale `ifRevision` and ran a complete report.
+- Passive balance requests now carry the exact project content hash. The server rejects malformed
+  revisions, returns an inert HTTP 200 `stale` response before or after a concurrent edit, and keeps
+  HTTP 500 for genuine failures on an unchanged revision. Studio discards the inert response rather
+  than committing a stale report.
+- The focused API regression and the original campaign lifecycle are GREEN. Fresh exact-tree gates
+  passed: typecheck, engine build, Vitest 3,873/3,873, Playwright 147/147, validation, starter
+  simulation, balance, map compilation, web build, plugin build/validate/smoke, mobile and desktop
+  scaffold packaging, and Cargo 9/9. This source change invalidates the previous sign-offs and is
+  frozen for two independent repeat reviews before merge.

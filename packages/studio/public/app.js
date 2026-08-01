@@ -519,7 +519,8 @@ function schedulePassiveBalance(delay = 1200) {
   passiveBalanceTimer = setTimeout(async () => {
     passiveBalanceTimer = null;
     try {
-      const report = await apiGet("/api/balance");
+      const report = await apiGet(`/api/balance?ifRevision=${encodeURIComponent(revision)}`);
+      if (report?.stale === true) return;
       if (requestSerial !== balanceRequestSerial || S.dirty || S.contentHash !== revision) return;
       S.balanceReport = report;
       S.balanceReportRevision = revision;

@@ -99,6 +99,21 @@ describe("studio server origin/host guard", () => {
     expect(await stale.json()).toMatchObject({ code: "revision_conflict" });
   }, 30_000);
 
+  it("turns a stale passive balance request into an inert success instead of a browser-visible 500", async () => {
+    const project = await (await fetch(`${BASE}/api/project`)).json();
+    const manifestPath = path.join(projectDir, "project.json");
+    const original = fs.readFileSync(manifestPath);
+    const manifest = JSON.parse(original.toString("utf8"));
+    try {
+      fs.writeFileSync(manifestPath, `${JSON.stringify({ ...manifest, name: `${manifest.name} external edit` }, null, 2)}\n`);
+      const response = await fetch(`${BASE}/api/balance?ifRevision=${project.contentHash}`);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ stale: true });
+    } finally {
+      fs.writeFileSync(manifestPath, original);
+    }
+  });
+
   it("keeps quest generation preview inactive until the mission explicitly selects quests", async () => {
     const project = await (await fetch(`${BASE}/api/project`)).json();
     const response = await fetch(`${BASE}/api/quests/preview-generation`, {

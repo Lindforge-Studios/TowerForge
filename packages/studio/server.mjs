@@ -2236,6 +2236,14 @@ const server = http.createServer(async (req, res) => {
 
   // ── GET /api/balance ───────────────────────────────────────────────────────
   if (req.method === "GET" && pathname === "/api/balance") {
+    const ifRevision = url.searchParams.get("ifRevision");
+    if (ifRevision !== null && !/^[0-9a-f]{20}$/.test(ifRevision)) {
+      return jsonResp(res, 400, { code: "invalid_revision", error: "ifRevision must be a project content hash." });
+    }
+    const currentRevision = projectHash();
+    if (ifRevision && currentRevision !== ifRevision) {
+      return jsonResp(res, 200, { stale: true, contentHash: currentRevision });
+    }
     try {
       const missionId = url.searchParams.get("mission");
       const seconds = Number(url.searchParams.get("seconds"));
@@ -2243,9 +2251,17 @@ const server = http.createServer(async (req, res) => {
         missionIds: missionId ? [missionId] : [],
         simSeconds: Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 1800) : undefined
       });
+      const completedRevision = projectHash();
+      if (ifRevision && completedRevision !== ifRevision) {
+        return jsonResp(res, 200, { stale: true, contentHash: completedRevision });
+      }
       writeRunTrace(PROJECT_DIR, { source: "studio", action: "balance", status: "ok", missions: report.summary.missions, flagged: report.summary.flagged });
       return jsonResp(res, 200, report);
     } catch (e) {
+      const failedRevision = projectHash();
+      if (ifRevision && failedRevision !== ifRevision) {
+        return jsonResp(res, 200, { stale: true, contentHash: failedRevision });
+      }
       writeRunTrace(PROJECT_DIR, { source: "studio", action: "balance", status: "error", error: e.message });
       return jsonResp(res, 500, { error: e.message });
     }
