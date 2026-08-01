@@ -1,0 +1,16 @@
+{
+  "name": "@towerforge/reference-relay",
+  "version": "0.1.0",
+  "description": "Optional gameplay-free self-host relay adapter for TowerForge R8 match transports.",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "dependencies": {
+    "@towerforge/engine": "0.1.0"
+  },
+  "scripts": {
+    "test": "cd ../.. && vitest run packages/reference-relay/src/relay.contract.test.mjs"
+  }
+}

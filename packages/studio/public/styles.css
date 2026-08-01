@@ -1476,3 +1476,31 @@ html[data-ai-dock="closed"] .ai-dock { display: none; }
   .script-graph-pane { grid-template-columns: 160px minmax(0, 1fr); }
   .script-panel-header .btn { padding-inline: 7px; }
 }
+.replay-lab-preview {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--border, #34363a);
+  border-radius: 8px;
+  background: var(--surface-2, #191a1c);
+}
+
+.replay-lab-ghost-overlay {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+  min-height: 42px;
+}
+
+.replay-ghost-marker {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px dashed currentColor;
+  border-radius: 6px;
+  color: var(--text-muted, #a8abb2);
+  font-size: 12px;
+}
+
+.replay-ghost-tower { color: var(--accent, #75b47a); }
+.replay-ghost-enemy { color: var(--danger, #d66b6b); }

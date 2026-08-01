@@ -174,6 +174,16 @@ export async function loadMultiplayerEngine() {
   return import(pathToFileURL(multiplayerIndex).href);
 }
 
+/** Load the isolated Replay Lab runtime without pulling it into ordinary player builds. */
+export async function loadReplayLabEngine() {
+  const engineIndex = ensureEngineBuilt();
+  const replayLabIndex = path.join(path.dirname(engineIndex), "replay-lab", "index.js");
+  if (!fs.existsSync(replayLabIndex)) {
+    throw new Error(`Bundled @towerforge/engine/replay-lab runtime is missing at ${replayLabIndex}. Rebuild the engine runtime.`);
+  }
+  return import(pathToFileURL(replayLabIndex).href);
+}
+
 export async function loadContentRegistry(projectDir) {
   const files = loadProjectFiles(projectDir);
   const engine = await loadEngine();

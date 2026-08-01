@@ -12,6 +12,7 @@ import { PNG } from "pngjs";
 import {
   loadEngine,
   loadMultiplayerEngine,
+  loadReplayLabEngine,
   loadContentRegistry,
   loadProjectFiles,
   normalizeProjectFiles,
@@ -93,7 +94,7 @@ const BALANCE_PATCH_KEYS = [
   "enemies", "towers", "waveSets", "missions", "abilities", "constants", "currencies", "defaultMissionId",
   "defaultDifficultyId", "difficulties", "metaProgression", "terrainTypes"
 ];
-const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "arsenal", "macroEconomy", "heroes", "logistics", "director", "quests", "enemyBehaviors", "personaQa", "multiplayer", "proceduralJuice", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
+const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "arsenal", "macroEconomy", "heroes", "logistics", "director", "quests", "enemyBehaviors", "personaQa", "multiplayer", "replayLab", "proceduralJuice", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
 
 // Maps an upsert_entity/delete_entity `collection` to (a) the balance.json key, (b) the shape
 // (a map keyed by id, or an array of {id,...} items — currencies only), and (c) the
@@ -852,6 +853,48 @@ export const TOOLS = [
         remote: { type: "object", description: "MatchChecksumTimelineV1." }
       },
       required: ["local", "remote"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "inspect_replay_archive",
+    description: "Inspect one checksummed ReplayArchiveV1 through the isolated Replay Lab runtime. Compute-only; writes no project files and never opens a socket.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Project whose content digest must match the archive." },
+        archiveBase64: { type: "string", minLength: 1, maxLength: 100_663_296 }
+      },
+      required: ["archiveBase64"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "verify_replay_archive",
+    description: "Decode and deterministically replay one ReplayArchiveV1, returning digest evidence only. Compute-only; writes no project files and never opens a socket.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Project whose content registry validates the archive." },
+        archiveBase64: { type: "string", minLength: 1, maxLength: 100_663_296 },
+        expectedStateDigest: { type: "string", pattern: "^tf-state-v1:[0-9a-f]{16}$" }
+      },
+      required: ["archiveBase64"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "analyze_replay_branch",
+    description: "Create and analyze an immutable What-If branch at one replay sequence. Compute-only; writes no project files and never opens a socket.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Project whose content registry validates the archive." },
+        archiveBase64: { type: "string", minLength: 1, maxLength: 100_663_296 },
+        forkSequence: { type: "integer", minimum: 0, maximum: 100000 },
+        commands: { type: "array", maxItems: 100000, items: { type: "object" } }
+      },
+      required: ["archiveBase64", "forkSequence", "commands"],
       additionalProperties: false
     }
   },
@@ -1953,6 +1996,9 @@ const TOOL_RISK = {
   analyze_multiplayer_handshake: { riskClass: "compute_only", sideEffect: "loads @towerforge/engine/multiplayer; performs no network access and writes no project files" },
   verify_multiplayer_replay: { riskClass: "compute_only", sideEffect: "loads @towerforge/engine/multiplayer and builds engine dist if stale; writes no project files" },
   diagnose_multiplayer_desync: { riskClass: "compute_only", sideEffect: "loads @towerforge/engine/multiplayer; writes no project files" },
+  inspect_replay_archive: { riskClass: "compute_only", sideEffect: "loads @towerforge/engine/replay-lab; writes no project files and performs no network access" },
+  verify_replay_archive: { riskClass: "compute_only", sideEffect: "loads @towerforge/engine/replay-lab and builds engine dist if stale; writes no project files and performs no network access" },
+  analyze_replay_branch: { riskClass: "compute_only", sideEffect: "loads @towerforge/engine/replay-lab; writes no project files and performs no network access" },
   preview_map_elevations: { riskClass: "read_only", sideEffect: "none" },
   apply_map_elevations: { riskClass: "write_local", sideEffect: "may upgrade project.json to schema v3; writes the target map source and compiled maps with revision guard, validation, backup, and rollback" },
   preview_destructible_environment: { riskClass: "compute_only", sideEffect: "none" },
@@ -2501,6 +2547,27 @@ export async function callTool(name, args = {}, ctx = {}) {
         note: "Match metadata wraps ordinary game snapshots; it never adds a multiplayer field to GameSnapshot."
       }
     };
+    const replayLab = {
+      entrypoint: "@towerforge/engine/replay-lab",
+      versions: { archive: 1, ghost: 1, branch: 1 },
+      limits: { archiveBytes: 72 * 1_024 * 1_024, ghostCachedFrames: 256 },
+      analysis: {
+        inspect: "inspect_replay_archive",
+        verify: "verify_replay_archive",
+        branch: "analyze_replay_branch"
+      },
+      referenceRelay: {
+        schemaVersion: 1,
+        package: "@towerforge/reference-relay",
+        defaultHost: "127.0.0.1",
+        limits: { inviteCodeUtf8Bytes: 128, peerIdUtf8Bytes: 128, peersPerRoom: 4, frameBytes: 1_048_576, queuedFramesPerPeer: 256 },
+        accounts: false,
+        matchmaking: false,
+        gameplayLogic: false
+      },
+      writesProjectFiles: false,
+      opensNetworkSocket: false
+    };
     return {
       schemaVersion: 4,
       agentGuideVersion: TOWERFORGE_AGENT_GUIDE_VERSION,
@@ -2555,6 +2622,7 @@ export async function callTool(name, args = {}, ctx = {}) {
       ...(includes("enemyBehaviors") ? { enemyBehaviors } : {}),
       ...(includes("personaQa") ? { personaQa } : {}),
       ...(includes("multiplayer") ? { multiplayer } : {}),
+      ...(includes("replayLab") ? { replayLab } : {}),
       ...(includes("proceduralJuice") ? { proceduralJuice } : {}),
       ...(includes("assets") ? {
         assetAuthoring: {
@@ -2836,6 +2904,15 @@ export async function callTool(name, args = {}, ctx = {}) {
 
     case "diagnose_multiplayer_desync":
       return diagnoseMultiplayerDesync(args);
+
+    case "inspect_replay_archive":
+      return inspectReplayArchive(projectDir, args);
+
+    case "verify_replay_archive":
+      return verifyReplayArchive(projectDir, args);
+
+    case "analyze_replay_branch":
+      return analyzeReplayBranch(projectDir, args);
 
     case "preview_map_elevations":
       return previewMapElevations(projectDir, {
@@ -5277,6 +5354,81 @@ async function verifyMultiplayerReplay(projectDir, args) {
 async function diagnoseMultiplayerDesync(args) {
   const multiplayer = await loadMultiplayerEngine();
   return multiplayer.diagnoseMatchDesyncV1(args.local, args.remote);
+}
+
+function replayArchiveBytesFromBase64(value) {
+  if (typeof value !== "string" || value.length === 0 || value.length > 100_663_296
+    || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) {
+    throw new Error("Replay archive must be strict bounded base64.");
+  }
+  const bytes = Buffer.from(value, "base64");
+  if (bytes.toString("base64") !== value) throw new Error("Replay archive base64 is non-canonical.");
+  return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+}
+
+async function decodedReplayArchive(projectDir, args) {
+  const { content } = await loadContentRegistry(projectDir);
+  const replayLab = await loadReplayLabEngine();
+  const archive = replayLab.decodeReplayArchiveV1({
+    content,
+    bytes: replayArchiveBytesFromBase64(args.archiveBase64)
+  });
+  return { content, replayLab, archive };
+}
+
+async function inspectReplayArchive(projectDir, args) {
+  const { archive } = await decodedReplayArchive(projectDir, args);
+  return {
+    schemaVersion: 1,
+    verifiedContainer: true,
+    entrypoint: "@towerforge/engine/replay-lab",
+    archiveDigest: archive.archiveDigest,
+    contentDigest: archive.contentDigest,
+    capabilityDigest: archive.capabilityDigest,
+    missionId: archive.missionId,
+    journalSchemaVersion: archive.journal.schemaVersion,
+    entryCount: archive.journal.entries.length,
+    initialStateDigest: archive.journal.initialCheckpoint.stateDigest
+  };
+}
+
+async function verifyReplayArchive(projectDir, args) {
+  const { content, archive } = await decodedReplayArchive(projectDir, args);
+  const engine = await loadEngine();
+  const replay = engine.replayGameCommandJournal({ content, journal: archive.journal });
+  if (args.expectedStateDigest !== undefined && args.expectedStateDigest !== replay.stateDigest) {
+    throw new Error("Replay archive final state digest does not match expectedStateDigest.");
+  }
+  return {
+    schemaVersion: 1,
+    verified: true,
+    entrypoint: "@towerforge/engine/replay-lab",
+    archiveDigest: archive.archiveDigest,
+    entriesReplayed: replay.entriesReplayed,
+    stateDigest: replay.stateDigest
+  };
+}
+
+async function analyzeReplayBranch(projectDir, args) {
+  const { content, replayLab, archive } = await decodedReplayArchive(projectDir, args);
+  const branch = replayLab.createReplayBranchV1({
+    content,
+    archive,
+    forkSequence: args.forkSequence,
+    commands: args.commands
+  });
+  const replay = replayLab.replayReplayBranchV1({ content, archive, branch });
+  return {
+    schemaVersion: 1,
+    entrypoint: "@towerforge/engine/replay-lab",
+    branch,
+    replay: {
+      branchDigest: replay.branchDigest,
+      entriesReplayed: replay.entriesReplayed,
+      stateDigest: replay.stateDigest
+    },
+    divergence: replayLab.diagnoseReplayBranchDivergenceV1({ content, archive, branch })
+  };
 }
 
 const NAVIGATION_ANALYSIS_ARGUMENTS = new Set([

@@ -1,5 +1,69 @@
 Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R8 roadmap with subagents and independent verification.
 
+## 2026-08-01 — R16.1 ReplayArchiveV1 RED
+
+- Contract freeze: the browser-safe Replay Lab is a dedicated `@towerforge/engine/replay-lab`
+  entrypoint and is not exported by the root engine. `ReplayArchiveV1` carries only the existing
+  `GameCommandJournal` v1–v8, uses an engine-owned mission capability digest, fixes the `TFRP`
+  magic/schema/header/declared-length/checksum behavior, and rejects archives above 72 MiB.
+- Added RED contracts in `packages/engine/src/replay-lab/replay-archive.contract.test.ts`,
+  `replay-archive-security.contract.test.ts`, and `replay-lab-entrypoint.contract.test.ts`. They
+  cover deterministic v1–v8 round-trip, detached identity, header/checksum/length corruption,
+  pre-construction rejection, hostile binary/journal input, the exact size ceiling, and root export
+  isolation.
+- RED command:
+  `npx vitest run packages/engine/src/replay-lab/replay-archive.contract.test.ts packages/engine/src/replay-lab/replay-archive-security.contract.test.ts packages/engine/src/replay-lab/replay-lab-entrypoint.contract.test.ts --maxWorkers=1`.
+- Expected RED result: 3/3 files failed. Both archive suites failed collection because
+  `packages/engine/src/replay-lab/index.js` does not exist; the entrypoint suite independently
+  failed because `packages/engine/package.json` has no `./replay-lab` export. The root-export
+  absence assertion already passes. No production code was changed in this slice.
+
+## 2026-08-01 — R16.1–R16.4 implementation GREEN pending sign-off
+
+- The isolated Replay Lab now supplies ReplayArchiveV1, detached Ghost frames, immutable What-If
+  branches, read-only Studio/MCP surfaces and a separate gameplay-free reference relay package.
+- A Studio acceptance regression exposed explicit optional `undefined` fields in trusted engine
+  snapshots: canonical checkpoint cloning correctly rejected them even though they are valid
+  presentation fields. Ghost snapshot detachment now uses `structuredClone` on the engine-owned
+  snapshot and recursively freezes the result; it does not weaken archive/journal validation.
+- Focused engine/renderer result after the fix: 6 files, 34 tests passed. Focused Studio acceptance
+  `npx playwright test tests/e2e/r16-replay-lab.spec.mjs`: 1 passed. The first sandboxed attempt
+  could not bind `127.0.0.1` (`EPERM`); the identical approved loopback run passed.
+- This is implementation evidence only. ADR 0057 remains Proposed and R16 remains pending full
+  exact-commit gates plus independent Code Verifier and Constructor Integration Verifier sign-off.
+
+## 2026-08-01 — R16.2 Ghost Session RED
+
+- Added `packages/engine/src/replay-lab/ghost-session.contract.test.ts` for construction from a
+  branded decoded archive only, a command-free public surface, deterministic seek/advance/final,
+  exact deeply immutable ghost envelopes, active/source isolation, bounds and 256-frame cache
+  eviction with deterministic re-seek.
+- Added `packages/renderer/src/ghost-replay-presentation.contract.test.mjs` for the pure shared
+  binary-stable overlay projection, detached rows, fail-closed hostile input and bounded
+  4,096-tower/4,096-enemy output with explicit overflow counts.
+- RED command:
+  `npx vitest run packages/engine/src/replay-lab/ghost-session.contract.test.ts packages/renderer/src/ghost-replay-presentation.contract.test.mjs --maxWorkers=1`.
+- Expected RED result: 2/2 files failed. The engine suite failed collection because the isolated
+  Replay Lab entrypoint does not exist; both renderer tests failed because the shared limits and
+  `projectGhostReplayPresentation` export do not exist. No production code was changed.
+
+## 2026-08-01 — R16.3 What-If Branches RED
+
+- Added compact engine contracts in `packages/engine/src/replay-lab/replay-branch.contract.test.ts`
+  for fork-at-zero/middle/end, exact immutable parent provenance, deterministic branch/final
+  digests, invalid fork/parent/version/suffix rejection, and first-divergence reporting.
+- Added declarative-only Studio and MCP contracts in
+  `packages/studio/public/r16-replay-lab-surface.contract.test.mjs` and
+  `packages/mcp/r16-replay-lab.contract.test.mjs`. Replay Lab must be an isolated read-only tab;
+  archive verification and branch analysis are narrow compute-only tools with no project writer or
+  network side effect.
+- RED command:
+  `npx vitest run packages/engine/src/replay-lab/replay-branch.contract.test.ts packages/studio/public/r16-replay-lab-surface.contract.test.mjs packages/mcp/r16-replay-lab.contract.test.mjs --maxWorkers=1`.
+- Expected RED result: 3/3 files and 10/10 tests failed. Engine lacks the branch create/replay/
+  divergence exports; Studio lacks the Replay Lab tab/runtime delegation; MCP rejects the unknown
+  `replayLab` schema domain and exposes none of the three compute-only tools or agent guidance. No
+  production code was changed.
+
 ## R11 architecture handoff (2026-07-29)
 
 - R11 is an independent opt-in presentation milestone semantically built on the accepted R8 surface;
@@ -1755,3 +1819,155 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   Independent Constructor Integration Verifier sign-off: PASS, with 76/76 focused tests, 3/3 R15
   browser acceptance, strict legacy carrier pruning, active carrier presence and exact plugin parity.
   ADR 0056 is Accepted; R15 is complete pending its separate PR merge/release workflow.
+
+## 2026-08-01 — R16.4 Reference Relay RED
+
+- Contract freeze adds a separate `@towerforge/reference-relay` workspace with an injected
+  loopback-server adapter and no simulation dependency. The relay contract requires the existing
+  R8 capability-handshake negotiation before any frame forwarding, opaque detached FIFO frames,
+  cross-room isolation, deterministic cleanup and idempotent close.
+- Closed limits are fixed at 128 UTF-8 bytes for invite codes and peer IDs, four peers per room,
+  1 MiB per frame and 256 queued frames per peer. The public server descriptor explicitly promises
+  loopback by default and no accounts, matchmaking or gameplay logic.
+- Additional compatibility contracts keep Replay Lab, ghost presentation and the reference relay
+  out of untouched starter single-file, mobile and desktop carriers. MCP discovery publishes only
+  static deployment metadata and agent guidance; it exposes no socket-opening or relay write tool.
+- RED command:
+  `npx vitest run packages/reference-relay/src/relay.contract.test.mjs packages/cli/build.r16-replay-lab-package.contract.test.mjs packages/mcp/r16-reference-relay.contract.test.mjs --maxWorkers=1`.
+  The expected RED was observed: the relay entrypoint does not exist, the legacy carrier still
+  includes `engine/replay-lab`, and MCP has neither the `replayLab` descriptor nor reference-relay
+  guidance. Result: three failed files and three failed executable tests; the relay suite failed at
+  collection before production exists. No R16.4 production code was added in this slice.
+
+## 2026-08-01 — R16 Replay Lab browser acceptance RED
+
+- Added one focused Playwright acceptance over a disposable starter project and loopback Studio.
+  It opens the isolated Replay Lab tab, verifies its `data-project-write="none"` boundary, imports a
+  truncated three-byte archive, and proves the rejection leaves the timeline empty, every replay
+  control disabled, ordinary Save disabled, the dirty badge clear, project bytes unchanged and the
+  request log free of writes.
+- The same test creates a valid checksummed archive through the built engine, imports it in Studio,
+  and uses the native range control to seek from journal sequence 0 to 2 while preserving the same
+  read-only guarantees.
+- RED command: `npm run test:e2e -- tests/e2e/r16-replay-lab.spec.mjs`.
+  The malformed-input/read-only path and valid import reached GREEN, then the expected integration
+  RED reproduced on native seek: the engine reported `Canonical serialization rejects unsupported
+  undefined values`, so the timeline remained at `Sequence 0 / 2` instead of `Sequence 2 / 2`.
+  Result: one failed test. No production code was changed in this acceptance slice.
+
+## 2026-08-01 — R16 independent verifier repair RED
+
+- Renderer hardening now covers nested hostile row proxies, a proxied array whose `length` access
+  throws, and an oversized proxied array that throws if the adapter inspects any row beyond the
+  public 4,096-row budget. The contract requires fail-closed `undefined` without an exception and
+  applies the bound before traversal and sorting while retaining the authoritative overflow count.
+- Focused renderer/Studio command:
+  `npx vitest run packages/renderer/src/ghost-replay-presentation.contract.test.mjs packages/studio/public/r16-replay-lab-surface.contract.test.mjs --maxWorkers=1`.
+  The expected three RED failures were observed: a hostile `length` trap escaped the shared adapter;
+  Studio had no replay preview/overlay and never called `projectGhostReplayPresentation`; archive
+  import reused a cached `ReplayLabUI.content` instead of explicitly rebuilding the registry before
+  decode. The two pre-existing tests in each file remained GREEN.
+- The browser acceptance now starts from an initial checkpoint containing a real tower and requires
+  a visible `replay-lab-preview`, one projected ghost tower, removal when the checkbox is cleared and
+  restoration when it is checked. A second browser scenario edits authoritative tower range without
+  saving and reimports the old archive, proving the current content digest rejects it.
+- Browser RED command: `npm run test:e2e -- tests/e2e/r16-replay-lab.spec.mjs`.
+  Result: one failed / one passed. The overlay scenario failed because `replay-lab-preview` does not
+  exist; the unsaved-edit scenario did reject the stale archive, but the static contract remains RED
+  until every import explicitly constructs a fresh engine registry rather than relying on aliased or
+  cached state. No production code was changed in this repair wave.
+
+## 2026-08-01 — R16 transactional Replay Lab import RED
+
+- The import contract now treats content, decoded archive, ghost session and initial frame as one
+  atomic tuple. `loadReplayLabArchive` must build a local `candidateContent`, decode against it,
+  construct `candidateGhost` and successfully seek `candidateFrame` before assigning any member of
+  the live `ReplayLabUI` tuple. A failed candidate preserves the previous valid session rather than
+  pairing a fresh content registry with an old branded archive.
+- Static RED command:
+  `npx vitest run packages/studio/public/r16-replay-lab-surface.contract.test.mjs --maxWorkers=1`.
+  Result: two expected failures / three controls passed. Current import assigns
+  `ReplayLabUI.content` before decode and has no local candidate tuple or post-validation commit.
+- The Playwright regression imports valid archive A, makes an unsaved gameplay-range edit, rejects
+  A against the new current content, then verifies the old timeline and ghost overlay remain usable
+  and attempts a What-If fork. It also specifies the same preservation behavior after a malformed
+  follow-up candidate.
+- Browser RED command: `npm run test:e2e -- tests/e2e/r16-replay-lab.spec.mjs`.
+  Result: one failed / one passed. The earlier malformed/read-only, overlay toggle and seek path is
+  GREEN. The transactional regression failed exactly at the fork: the live UI retained archive A
+  but had already replaced its content, producing `Replay branch parent content digest provenance
+  mismatch.` No production code was changed in this repair slice.
+
+## 2026-08-01 — R16 verifier repair GREEN and final freeze
+
+- The shared ghost projector now contains nested proxies/accessors/symbols/sparse arrays, reads no
+  more than 4,096 tower or enemy rows before sorting, and preserves exact overflow counts. Studio
+  rebuilds the current content registry before every archive decode and renders a detached shared-
+  renderer ghost overlay whose toggle removes and restores projected markers without project writes.
+- Repair-focused evidence: 39/39 Vitest contracts and 2/2 Replay Lab Playwright scenarios passed.
+  The complete frozen-tree Vitest run passed 3,797/3,797 tests in 374 files. The complete browser
+  run passed 146/146 after an isolated 3/3 R15 rerun confirmed the first parallel failure was a
+  transient test race rather than a product regression.
+- Final gates passed on the frozen implementation: typecheck, engine build, content validation,
+  60-unit starter simulation, balance, map compilation, web build, plugin build/validate/smoke,
+  mobile scaffold and desktop scaffold packaging. The starter simulation remained `playing` with
+  core 10, two of three waves, two towers, one enemy and 45 coins.
+- ADR 0057 is Accepted. R16 now awaits repeat independent Code Verifier and Constructor Integration
+  Verifier sign-off on this exact tree before PR publication.
+
+## 2026-08-01 — R16 independent verifier repair GREEN
+
+- The shared renderer projector now treats every presented row and coordinate as closed own data,
+  contains nested proxy/accessor traps, rejects symbol-bearing or sparse visible input, and reads at
+  most the public 4,096-row window before sorting. It retains the authoritative source length only
+  for the overflow diagnostic, so oversized frames are bounded without probing row 4,097.
+- Replay Lab imports now rebuild the engine content registry from the current Studio draft before
+  every decode. An archive created before an unsaved gameplay edit is rejected by the content digest
+  instead of being admitted through a stale cached registry.
+- The Studio preview calls the shared renderer `projectGhostReplayPresentation` adapter and renders
+  only its detached tower/enemy rows. The Ghost overlay checkbox now removes and restores the actual
+  preview; no targeting, coordinates, replay progression or other gameplay rule is duplicated in
+  Studio.
+- Focused contract command:
+  `npx vitest run packages/renderer/src/ghost-replay-presentation.contract.test.mjs packages/studio/public/r16-replay-lab-surface.contract.test.mjs`.
+  Result: 7/7 passed across two files.
+- Browser acceptance command:
+  `npx playwright test tests/e2e/r16-replay-lab.spec.mjs`.
+  Result: 2/2 passed, covering malformed rejection/read-only isolation, valid import and seek, real
+  overlay toggle, and rejection after an unsaved content change. These repairs invalidate the prior
+  verifier sign-offs; a new exact-commit freeze and both independent sign-offs remain required.
+
+## 2026-08-01 — R16 transactional Replay Lab import GREEN
+
+- `loadReplayLabArchive` now reads the candidate bytes, constructs a detached current-project
+  registry, decodes the archive, creates the ghost and completes `seek(0)` entirely in local
+  variables. Only then does one synchronous block replace the live content/archive/ghost/frame
+  tuple and clear branch/error state. Any exception therefore preserves the prior valid session.
+- The first browser rerun exposed a second alias boundary: the accepted registry still shared
+  authored records with the mutable Studio draft, so an unsaved edit also changed the old session's
+  effective content digest. `createReplayLabContent` now passes a structured clone into the engine
+  registry, preserving the accepted tuple as detached immutable replay provenance. Successful seek
+  and branch actions clear a prior import diagnostic without weakening failed-import visibility.
+- Focused static/renderer command:
+  `npx vitest run packages/studio/public/r16-replay-lab-surface.contract.test.mjs packages/renderer/src/ghost-replay-presentation.contract.test.mjs --maxWorkers=1`.
+  Result: 8/8 passed across two files.
+- Browser acceptance command:
+  `npx playwright test tests/e2e/r16-replay-lab.spec.mjs`.
+  Result: 2/2 passed. After both a current-content mismatch and malformed follow-up archive, the
+  previous timeline, ghost overlay and What-If fork remain operational. This source repair again
+  invalidates the earlier freeze/sign-offs; exact-commit gates and both independent verifiers must
+  be repeated before R16 acceptance.
+
+## 2026-08-01 — R16 final exact-tree freeze after transactional repair
+
+- Full Vitest passed 3,798/3,798 tests in 374 files; full Playwright passed 146/146. Typecheck,
+  engine build, content validation, the 60-unit starter simulation, balance, map compilation and web
+  build passed on the same working tree.
+- Codex plugin build/validate/smoke, mobile scaffold packaging and desktop scaffold packaging also
+  passed. The starter remained on its legacy Replay-Lab-free player path.
+- The frozen tree is now handed to both independent verifiers again. Any further source or contract
+  change invalidates these results and requires another freeze.
+- Independent Code Verifier sign-off: PASS, with 50/50 focused contracts, 2/2 hostile-input
+  regressions and no P0–P2 findings. Independent Constructor Integration Verifier sign-off: PASS,
+  with 18/18 focused contracts, 2/2 browser scenarios, 30/30 package compatibility checks and no
+  P0–P3 findings. R16 is complete pending its separate PR merge.

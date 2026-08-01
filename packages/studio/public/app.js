@@ -54,7 +54,7 @@ const STUDIO_TABS = [
   ["home", "Home"], ["waves", "Waves"], ["enemies", "Enemies"], ["towers", "Towers"],
   ["missions", "Missions"], ["worldmap", "World Map"], ["maps", "Maps"],
   ["playtest", "Playtest"], ["balance", "Balance"],
-  ["mechanics", "Mechanics"], ["scripts", "Scripts"], ["assets", "Assets"], ["settings", "Settings"], ["buildtargets", "Build Targets"]
+  ["mechanics", "Mechanics"], ["replaylab", "Replay Lab"], ["scripts", "Scripts"], ["assets", "Assets"], ["settings", "Settings"], ["buildtargets", "Build Targets"]
 ];
 
 const APP_INFO = {
@@ -79,6 +79,18 @@ const TowerScriptGraphUI = {
   loading: false,
   drag: null,
   engineModule: null
+};
+
+const ReplayLabUI = {
+  runtime: null,
+  engine: null,
+  renderer: null,
+  content: null,
+  archive: null,
+  ghost: null,
+  frame: null,
+  branch: null,
+  error: null
 };
 
 const MECHANICS_MODULES = [
@@ -580,6 +592,12 @@ async function load() {
     ProceduralJuiceUI.loaded = false;
     ProceduralJuiceUI.preview = null;
     ProceduralJuiceUI.error = null;
+    ReplayLabUI.content = null;
+    ReplayLabUI.archive = null;
+    ReplayLabUI.ghost = null;
+    ReplayLabUI.frame = null;
+    ReplayLabUI.branch = null;
+    ReplayLabUI.error = null;
     markDirty(false);
     historyInit();
     PT.dirty = true; // force playtest to rebuild from the freshly loaded project
@@ -697,6 +715,7 @@ function renderActiveTab() {
   else if (t === "playtest") renderPlaytestTab();
   else if (t === "balance") renderBalanceTab();
   else if (t === "mechanics") renderMechanicsHub();
+  else if (t === "replaylab") renderReplayLab();
   else if (t === "scripts") renderScriptsTab();
   else if (t === "assets") renderAssetsTab();
   else if (t === "settings") renderSettingsTab();
@@ -6377,6 +6396,133 @@ async function applyMechanics(enabled) {
     if (S.activeTab === "mechanics") renderMechanicsHub();
   }
 }
+
+async function ensureReplayLabRuntime() {
+  if (!ReplayLabUI.runtime) ReplayLabUI.runtime = await import("/engine/replay-lab/index.js");
+  if (!ReplayLabUI.engine) ReplayLabUI.engine = await import("/engine/index.js");
+  if (!ReplayLabUI.renderer) ReplayLabUI.renderer = await import("/renderer/index.mjs");
+  return ReplayLabUI.runtime;
+}
+
+function createReplayLabContent() {
+  const detachedProjectContent = structuredClone({
+    balance: assembleBalance(),
+    maps: S.project?.maps ?? {},
+    worldMap: S.project?.worldMap ?? { width: 800, height: 600, regions: [], missionNodes: [] },
+    scripts: S.project?.scripts ?? {},
+    mechanics: S.project?.mechanics,
+    visuals: S.project?.visuals ?? {}
+  });
+  return ReplayLabUI.engine.createGameContentRegistry(detachedProjectContent);
+}
+
+async function loadReplayLabArchive(file = $("replay-lab-file")?.files?.[0]) {
+  if (!file) throw new Error("Choose a .tfreplay archive first.");
+  const runtime = await ensureReplayLabRuntime();
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const candidateContent = createReplayLabContent();
+  const candidate = runtime.decodeReplayArchiveV1({
+    content: candidateContent,
+    bytes
+  });
+  const candidateGhost = runtime.createGhostReplaySessionV1({ archive: candidate });
+  const candidateFrame = candidateGhost.seek(0);
+  ReplayLabUI.content = candidateContent;
+  ReplayLabUI.archive = candidate;
+  ReplayLabUI.ghost = candidateGhost;
+  ReplayLabUI.frame = candidateFrame;
+  ReplayLabUI.branch = null;
+  ReplayLabUI.error = null;
+  renderReplayLab();
+}
+
+function renderReplayLab() {
+  const archive = ReplayLabUI.archive;
+  const frame = ReplayLabUI.frame;
+  const seek = $("replay-lab-seek");
+  const timeline = $("replay-lab-timeline");
+  const ghostToggle = $("replay-lab-ghost-toggle");
+  const fork = $("btn-replay-lab-fork");
+  const preview = $("replay-lab-preview");
+  const overlay = $("replay-lab-ghost-overlay");
+  const presentation = archive
+    ? ReplayLabUI.renderer?.projectGhostReplayPresentation(ReplayLabUI.frame)
+    : undefined;
+  if (seek) {
+    seek.disabled = !archive;
+    seek.max = String(archive?.journal?.entries?.length ?? 0);
+    seek.value = String(frame?.sequence ?? 0);
+  }
+  if (ghostToggle) ghostToggle.disabled = !archive;
+  if (fork) fork.disabled = !archive;
+  if (preview) preview.hidden = !archive;
+  if (overlay) {
+    const visible = ghostToggle?.checked !== false && presentation?.active === true;
+    overlay.innerHTML = visible
+      ? [
+          ...presentation.towers.map(tower => `<div class="replay-ghost-marker replay-ghost-tower" data-replay-ghost-tower-id="${esc(tower.id)}"><strong>${esc(tower.typeId)}</strong><span>${tower.coord.q}, ${tower.coord.r}</span></div>`),
+          ...presentation.enemies.map(enemy => `<div class="replay-ghost-marker replay-ghost-enemy" data-replay-ghost-enemy-id="${esc(enemy.id)}"><strong>${esc(enemy.typeId)}</strong><span>${Math.max(0, enemy.hp)} / ${Math.max(0, enemy.maxHp)} HP</span></div>`)
+        ].join("")
+      : "";
+  }
+  if (timeline) timeline.textContent = archive
+    ? `Sequence ${frame?.sequence ?? 0} / ${archive.journal.entries.length} · ${frame?.stateDigest ?? archive.journal.initialCheckpoint.stateDigest}`
+    : "No archive loaded.";
+  const diagnostic = $("replay-lab-divergence");
+  if (diagnostic) diagnostic.textContent = ReplayLabUI.error
+    ? ReplayLabUI.error
+    : ReplayLabUI.branch
+      ? JSON.stringify(ReplayLabUI.branch, null, 2)
+      : archive
+        ? JSON.stringify({ archiveDigest: archive.archiveDigest, contentDigest: archive.contentDigest, missionId: archive.missionId }, null, 2)
+        : "Import a checksummed archive to inspect its timeline.";
+}
+
+async function createReplayLabBranch() {
+  if (!ReplayLabUI.archive || !ReplayLabUI.frame) throw new Error("Import an archive first.");
+  const runtime = await ensureReplayLabRuntime();
+  const branch = runtime.createReplayBranchV1({
+    content: ReplayLabUI.content,
+    archive: ReplayLabUI.archive,
+    forkSequence: ReplayLabUI.frame.sequence,
+    commands: []
+  });
+  ReplayLabUI.branch = {
+    branch,
+    divergence: runtime.diagnoseReplayBranchDivergenceV1({
+      content: ReplayLabUI.content,
+      archive: ReplayLabUI.archive,
+      branch
+    })
+  };
+  ReplayLabUI.error = null;
+  renderReplayLab();
+}
+
+$("btn-replay-lab-import")?.addEventListener("click", () => {
+  loadReplayLabArchive().catch(error => {
+    ReplayLabUI.error = String(error?.message ?? error);
+    renderReplayLab();
+    toast("Replay import failed: " + ReplayLabUI.error, "err");
+  });
+});
+$("replay-lab-seek")?.addEventListener("input", event => {
+  if (!ReplayLabUI.ghost) return;
+  try {
+    ReplayLabUI.frame = ReplayLabUI.ghost.seek(Number(event.target.value));
+    ReplayLabUI.error = null;
+  } catch (error) {
+    ReplayLabUI.error = String(error?.message ?? error);
+  }
+  renderReplayLab();
+});
+$("replay-lab-ghost-toggle")?.addEventListener("change", () => renderReplayLab());
+$("btn-replay-lab-fork")?.addEventListener("click", () => {
+  createReplayLabBranch().catch(error => {
+    ReplayLabUI.error = String(error?.message ?? error);
+    renderReplayLab();
+  });
+});
 
 function renderMechanicsHub() {
   const missionSelect = $("mechanics-mission-select");
