@@ -57,12 +57,12 @@ gh pr checks <number>
 ```
 
 As of 2026-08-01, R12 and R13 are merged and the repaired R13 exact commit passed remote CI. The
-`v0.5.2` release line adds R9–R14 to the previous R0–R8 public baseline. Current mainline also has
-the release-candidate R15 implementation: fully opt-in Macro-Economy v1 and GameCommand/Journal v8.
-It does not change legacy projects. R16.1–R16.4 are accepted after full gates and both independent
-sign-offs. R17 is accepted after verifier-led RED/GREEN repair, full exact-tree gates and
-independent Code Verifier plus Constructor Integration Verifier PASS results. It is not released
-until the matching tag and public release assets are verified.
+`v0.6.0` release line unifies accepted R0–R17: fully opt-in Macro-Economy v1 and
+GameCommand/Journal v8, checksummed Ghost Replay Lab/What-If/reference relay, and the constructor-only
+Distribution Hub with reproducible publish, provider adapters, licensed Remix provenance and
+host-only monetization hooks. Legacy projects remain unchanged. R17 passed full exact-tree gates,
+remote CI and independent Code Verifier plus Constructor Integration Verifier review before merge.
+The line is public only after the matching tag and six installers plus `SHA256SUMS` are verified.
 
 ## Opt-In Mechanics
 
@@ -1000,7 +1000,7 @@ CI is configured in `.github/workflows/ci.yml` for local-alpha quality gates. `.
 
 Public desktop releases follow [the desktop release policy](releasing.md). Until signing is configured, they remain GitHub pre-releases with `Unsigned build` in the title. To inspect a cross-platform candidate without publishing, run **Actions > Unsigned Desktop Builds > Run workflow** against the intended commit. To publish, merge the release commit, then create and push an annotated tag whose version matches all desktop manifests:
 
-The v0.5.2 release line includes R0–R14. Never describe `main` or an open PR as released merely because local installers or Actions artifacts exist; the GitHub tag and published installer assets remain authoritative.
+The v0.6.0 release line includes accepted R0–R17. Never describe `main` or an open PR as released merely because local installers or Actions artifacts exist; the GitHub tag and published installer assets remain authoritative.
 
 ```bash
 git tag -a vX.Y.Z -m "TowerForge vX.Y.Z"

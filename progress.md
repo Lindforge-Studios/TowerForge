@@ -2199,3 +2199,19 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   simulation, balance, map compilation, web build, plugin build/validate/smoke, mobile and desktop
   scaffold packaging, and Cargo 9/9. This source change invalidates the previous sign-offs and is
   frozen for two independent repeat reviews before merge.
+
+## 2026-08-01 — v0.6.0 release assembly RED/GREEN
+
+- The release audit found that the cross-platform assembler accepted any non-empty subset of its
+  installer allowlist even though the publication policy promises all six formats. The RED suite
+  supplied the complete candidate plus six missing-format cases, six duplicate-format cases and an
+  unsupported replacement. Before production repair, 14/16 focused tests failed and incomplete
+  candidates were copied into release output.
+- The assembler now requires exactly one `.dmg`, `.exe`, `.msi`, `.AppImage`, `.deb` and `.rpm`
+  before creating output. Duplicate basenames remain a separate early rejection; unrelated
+  diagnostic files remain ignored. The focused release suite is GREEN at 16/16 and proves that
+  `SHA256SUMS` and the release-note checksum block contain the same six installer hashes.
+- Root, desktop npm, Tauri, Cargo, Codex plugin and MCP server versions are synchronized to v0.6.0.
+  Current documentation describes the accepted R0–R17 baseline while preserving historical v0.5.2
+  evidence. Full repository, browser, native, plugin and macOS bundle gates are required on this
+  exact tree before the release PR can merge or the annotated tag can be created.

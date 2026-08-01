@@ -60,17 +60,17 @@ service. Нет соответствующего выбора или локал�
 | R13.4 — destructible environment | Реализация завершена; ADR Accepted | Targetable map-object HP/armor, atomic persistent terrain mutation, Ballistics snapshot v2/checkpoint inner v4, guarded five-file authoring and shared Canvas/Phaser projection |
 | R13.5 — deterministic Weather | Реализация завершена; ADR Accepted | Independent opt-in `weather` v1, seeded schedule, bounded effects, active-only state and shared Canvas/Phaser projection |
 | R13 | Завершён и слит; exact-commit CI green; code + constructor sign-off; ADR Accepted | PR #24 merged as `318671c`; browser-race regression прошёл 20/20 и remote CI завершился SUCCESS |
-| R14 — Gem Crafting & Modular Arsenal | Реализован; release-candidate v0.5.2 | CampaignRunV2, opt-in Arsenal v1, GameCommand/Journal v7, runtime assembly, atomic gem crafting и Studio/MCP/Canvas/Phaser surfaces |
+| R14 — Gem Crafting & Modular Arsenal | Реализован; опубликован в v0.5.2 | CampaignRunV2, opt-in Arsenal v1, GameCommand/Journal v7, runtime assembly, atomic gem crafting и Studio/MCP/Canvas/Phaser surfaces |
 | R15 — Deterministic Macro-Economy | Завершён; code + constructor sign-off; ADR Accepted | Independent `macroEconomy` v1, seeded local market, explicit deposits, atomic rituals, GameCommand/Journal v8 и constructor surfaces |
 | R16 — Ghost Replay Lab | Завершён; full gates green; code + constructor sign-off; ADR Accepted | Checksummed ReplayArchiveV1, detached bounded ghost с реальным Studio overlay, immutable What-If branches, read-only Studio/MCP surfaces и отдельный gameplay-free reference relay |
 | R17 — Web Publish, Remix & Monetization | Завершён; full gates; code + constructor sign-off; ADR Accepted | Opt-in Distribution v1/project v4, reproducible publish manifest, explicit-confirm provider adapters, licensed Remix provenance и host-only monetization hooks |
 
 ### Delivery snapshot на 2026-08-01
 
-- Последний прежний desktop pre-release — [`v0.4.0`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.4.0) на source commit `f07a403`; он включает R0–R8.
-- R12 PR #23 и R13 PR #24 слиты в `main`; R13 exact-commit CI run `30655702863` завершился SUCCESS.
-- Ветка R14 готовит `v0.5.2`: CampaignRunV2, `arsenal` v1, GameCommand/Journal v7, engine-owned compiler, runtime module management, exact gem crafting и все constructor surfaces.
-- R15 реализован после `v0.5.2`; R16.1–R16.4 прошли полные gates и два независимых sign-off после verifier-led repair. R17 также завершён: после RED/GREEN и verifier-led волн exact tree повторно прошёл full local gates и получил Code Verifier и Constructor Integration Verifier PASS без P0–P3 findings.
+- Предыдущий desktop pre-release — [`v0.5.2`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.5.2); он включает R0–R14.
+- R15 PR #28, R16 PR #29 и R17 PR #30 слиты в `main`; R17 exact-commit CI run `30698019009` завершился SUCCESS.
+- R15–R17 прошли раздельные RED/GREEN-циклы, полные gates и по два независимых sign-off; после финального CI repair в R17 P0–P3 findings отсутствуют.
+- Релизная линия `v0.6.0` объединяет принятые R0–R17; публикация считается завершённой только после проверки тега, шести installers и `SHA256SUMS`.
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Сейчас исполнимыми являются только
 версии, перечисленные в [ARCHITECTURE.md](../ARCHITECTURE.md): наличие planned descriptor или

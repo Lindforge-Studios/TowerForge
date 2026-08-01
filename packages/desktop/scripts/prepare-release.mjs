@@ -47,6 +47,18 @@ function collectInstallers(root) {
   return installers.sort((left, right) => path.basename(left).localeCompare(path.basename(right)));
 }
 
+function assertInstallerFormats(installers) {
+  const counts = new Map([...INSTALLER_EXTENSIONS].map((extension) => [extension, 0]));
+  for (const installer of installers) {
+    const extension = path.extname(installer);
+    counts.set(extension, (counts.get(extension) ?? 0) + 1);
+  }
+  const missing = [...counts].find(([, count]) => count === 0)?.[0];
+  if (missing) throw new Error(`Missing required desktop installer format: ${missing}`);
+  const duplicate = [...counts].find(([, count]) => count > 1)?.[0];
+  if (duplicate) throw new Error(`Duplicate desktop installer format: ${duplicate}`);
+}
+
 function sha256(filePath) {
   return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
@@ -119,6 +131,7 @@ export function prepareDesktopRelease({ inputDir, outputDir, repoRoot, tag, repo
     .map((installer) => path.basename(installer))
     .filter((fileName, index, names) => names.indexOf(fileName) !== index);
   if (duplicateNames.length) throw new Error(`Duplicate release installer basename: ${duplicateNames[0]}`);
+  assertInstallerFormats(installers);
   fs.mkdirSync(resolvedOutput, { recursive: true });
 
   const checksums = installers.map((sourcePath) => {
