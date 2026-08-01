@@ -62,7 +62,7 @@ service. Нет соответствующего выбора или локал�
 | R13 | Завершён и слит; exact-commit CI green; code + constructor sign-off; ADR Accepted | PR #24 merged as `318671c`; browser-race regression прошёл 20/20 и remote CI завершился SUCCESS |
 | R14 — Gem Crafting & Modular Arsenal | Реализован; release-candidate v0.5.2 | CampaignRunV2, opt-in Arsenal v1, GameCommand/Journal v7, runtime assembly, atomic gem crafting и Studio/MCP/Canvas/Phaser surfaces |
 | R15 — Deterministic Macro-Economy | Завершён; code + constructor sign-off; ADR Accepted | Independent `macroEconomy` v1, seeded local market, explicit deposits, atomic rituals, GameCommand/Journal v8 и constructor surfaces |
-| R16 — Ghost Replay Lab | Запланирован; пауза, работа не начата | Binary replay archive, detached ghost, immutable What-If branches и отдельный reference relay |
+| R16 — Ghost Replay Lab | Завершён; full gates green; code + constructor sign-off; ADR Accepted | Checksummed ReplayArchiveV1, detached bounded ghost с реальным Studio overlay, immutable What-If branches, read-only Studio/MCP surfaces и отдельный gameplay-free reference relay |
 | R17 — Web Publish, Remix & Monetization | Запланирован; пауза, работа не начата | Reproducible publish manifest, provider adapters, licensed remix provenance и host-only monetization hooks |
 
 ### Delivery snapshot на 2026-08-01
@@ -70,13 +70,14 @@ service. Нет соответствующего выбора или локал�
 - Последний прежний desktop pre-release — [`v0.4.0`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.4.0) на source commit `f07a403`; он включает R0–R8.
 - R12 PR #23 и R13 PR #24 слиты в `main`; R13 exact-commit CI run `30655702863` завершился SUCCESS.
 - Ветка R14 готовит `v0.5.2`: CampaignRunV2, `arsenal` v1, GameCommand/Journal v7, engine-owned compiler, runtime module management, exact gem crafting и все constructor surfaces.
-- R15 реализован после `v0.5.2`; R16–R17 остаются запланированными и не входят в текущий release baseline.
+- R15 реализован после `v0.5.2`; R16.1–R16.4 прошли полные gates и два независимых sign-off после verifier-led repair; R17 остаётся запланированным.
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Сейчас исполнимыми являются только
 версии, перечисленные в [ARCHITECTURE.md](../ARCHITECTURE.md): наличие planned descriptor или
 roadmap-строки не считается capability. R14 `arsenal` и R15 `macroEconomy` являются
-реализованными opt-in capabilities; R16/R17 contracts ещё не существуют и не должны появляться
-в Studio/MCP/player как доступные.
+реализованными opt-in capabilities. R16 не mechanics capability: это явно открываемый
+только для чтения Replay Lab с отдельным engine entrypoint; обычный player/build его
+не включает. R17 contracts ещё не существуют и не должны появляться в Studio/MCP/player.
 
 ## Порядок поставки
 
@@ -902,16 +903,16 @@ fixture находится в `docs/examples/opt-in-macro-economy/`; решен�
 R16 расширяет существующие R0/R8 checkpoint, journal и transport contracts, не создавая второго
 симулятора и не включая multiplayer runtime в single-player bundle.
 
-1. **R16.1 — ReplayArchiveV1.** Checksummed binary container оборачивает канонические JSON
+1. **R16.1 — ReplayArchiveV1 (complete).** Checksummed binary container оборачивает канонические JSON
    checkpoint/journal contracts. Truncated, malformed, oversized и incompatible bytes отклоняются
    до создания simulation.
-2. **R16.2 — ghost session.** Detached read-only replay публикует ghost snapshots, не занимает
+2. **R16.2 — ghost session (complete).** Detached read-only replay публикует ghost snapshots, не занимает
    клетки, не участвует в targeting и не выдаёт commands. Engine/content/capability digest mismatch
    блокирует запуск.
-3. **R16.3 — What-If.** `ReplayBranchV1` хранит parent digest, fork sequence и новый journal suffix;
+3. **R16.3 — What-If (complete).** `ReplayBranchV1` хранит parent digest, fork sequence и новый journal suffix;
    исходный archive immutable. Replay Lab показывает timeline, overlay и first-divergence
    diagnostics.
-4. **R16.4 — reference relay.** Отдельный self-host package поверх R8 WebSocket adapter: invite-code
+4. **R16.4 — reference relay (complete).** Отдельный self-host package поверх R8 WebSocket adapter: invite-code
    rooms, обязательный capability handshake, без аккаунтов и gameplay logic. Hosted auth,
    matchmaking и TowerForge Cloud остаются вне R16.
 
@@ -934,8 +935,9 @@ R17 является distribution-track после gameplay и replay milestones
    placements вне engine. Rewarded gameplay rewards, payment keys, hidden telemetry и real-money
    balance исключены из v1.
 
-R14–R15 реализованы. R16–R17 остаются запланированными и остановлены до отдельной команды владельца;
-их public contracts ещё не считаются реализованными или доступными агентам.
+R14–R15 реализованы. R16.1–R16.4 прошли полный gate-набор и два независимых sign-off после
+отдельных verifier-led RED/GREEN repair-волн. R17 остаётся запланированным и не считается
+доступным агентам до отдельной ветки.
 
 ## TDD и роли
 

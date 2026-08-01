@@ -48,6 +48,8 @@ Reference examples show expected project and code patterns.
 | Projectile ricochet | `docs/examples/opt-in-projectile-ricochet/` | R13.3 bounded terrain/armor-surface recipe using topology-owned reflection and common damage resolution. |
 | Destructible environment | `docs/examples/opt-in-destructible-environment/` | R13.4 five-file reference for object durability plus route-safe atomic terrain/elevation mutation. |
 | Deterministic Weather | `docs/examples/opt-in-weather/` | R13.5 independent seeded Weather profile and mission selection; Blizzard, Acid Rain, and Sandstorm remain inert recipes until explicitly applied. |
+| Replay Lab contracts | `packages/engine/src/replay-lab/`, `tests/e2e/r16-replay-lab.spec.mjs` | R16 checksummed archive, detached Ghost, immutable What-If branch and read-only Studio acceptance. This is an explicit inspection workflow, not project content or a mechanics fixture. |
+| Self-host reference relay | `packages/reference-relay/` | R16.4 gameplay-free invite-code relay over the existing R8 capability handshake; network server/socket ports are injected by the deployer and the package is excluded from players. |
 | Headless smoke sim | `packages/cli/sim.mjs` | CLI wrapper for engine-backed mission smoke runs. |
 | Static web build | `packages/cli/build.mjs` | Generates the playable web bundle from project data, compiled engine modules, renderer, and safe assets. |
 | Native packaging | `packages/cli/lib/packaging.mjs` | Canonical Capacitor/Tauri scaffold generation around a built web bundle. |
@@ -74,4 +76,4 @@ Reference examples show expected project and code patterns.
 - A focused R13/R4.4B browser regression fixture proving expected guarded 400/409 responses do not become uncaught application errors.
 - `opt-in-modular-arsenal/` — R14 Arsenal v1 plus the minimal Roguelite gem catalog needed by its exact crafting recipe.
 - `opt-in-macro-economy/` — R15 local seeded market, fixed-term deposit and atomic ritual authoring.
-- R16–R17 reference fixtures only when their contracts enter RED/GREEN implementation; planned schemas must not be presented as available authoring examples.
+- R17 reference fixtures only when its contracts enter RED/GREEN implementation; planned schemas must not be presented as available authoring examples.

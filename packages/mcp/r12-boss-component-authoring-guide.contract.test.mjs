@@ -40,7 +40,7 @@ describe("R12.2 component-driven boss phase authoring guide (RED)", () => {
   });
 
   it("documents the exact descriptor/read/preview/guarded-apply/validate/trace workflow", () => {
-    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(48);
+    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(49);
     for (const phrase of [
       "component_driven_boss_phase",
       "bossComponentDamaged",

@@ -89,7 +89,7 @@ try {
   const multiplayerActive = hasActiveMultiplayer(files);
   const macroEconomyActive = hasActiveMacroEconomy(files);
   copyDir(path.join(repoRoot, "packages", "engine", "dist"), path.join(outDir, "engine"), {
-    excludeRootEntries: multiplayerActive ? undefined : new Set(["multiplayer"])
+    excludeRootEntries: new Set(multiplayerActive ? ["replay-lab"] : ["multiplayer", "replay-lab"])
   });
   const playerRuntimeSource = path.join(repoRoot, "packages", "player-runtime", "src");
   const playerRuntimeOutput = path.join(outDir, "player-runtime");
@@ -99,6 +99,7 @@ try {
   }
   // Renderer dir ships for both players — the canvas player needs index.mjs, both need audio.mjs.
   copyDir(path.join(repoRoot, "packages", "renderer", "src"), path.join(outDir, "renderer"));
+  pruneReplayLabTooling(outDir);
   if (!macroEconomyActive) pruneInactiveMacroEconomyRuntime(outDir);
   if (renderer === "phaser") {
     // Vendor Phaser locally so the offline PWA still works (no CDN dependency).
@@ -267,6 +268,16 @@ function pruneInactiveMacroEconomyRuntime(outDir) {
   }
   fs.rmSync(path.join(outDir, "engine", "content", "macro-economy-mechanics.js"), { force: true });
   fs.rmSync(path.join(outDir, "renderer", "macro-economy-presentation.mjs"), { force: true });
+}
+
+function pruneReplayLabTooling(outDir) {
+  fs.rmSync(path.join(outDir, "engine", "replay-lab"), { recursive: true, force: true });
+  fs.rmSync(path.join(outDir, "renderer", "ghost-replay-presentation.mjs"), { force: true });
+  const rendererIndex = path.join(outDir, "renderer", "index.mjs");
+  const source = fs.readFileSync(rendererIndex, "utf8");
+  const next = source.replace('export * from "./ghost-replay-presentation.mjs";\n', "");
+  if (next === source) throw new Error(`Could not prune Replay Lab presentation export from ${rendererIndex}.`);
+  fs.writeFileSync(rendererIndex, next, "utf8");
 }
 
 function hasActiveMultiplayer(files) {

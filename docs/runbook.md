@@ -59,7 +59,8 @@ gh pr checks <number>
 As of 2026-08-01, R12 and R13 are merged and the repaired R13 exact commit passed remote CI. The
 `v0.5.2` release line adds R9–R14 to the previous R0–R8 public baseline. Current mainline also has
 the release-candidate R15 implementation: fully opt-in Macro-Economy v1 and GameCommand/Journal v8.
-It does not change legacy projects. R16–R17 remain planned.
+It does not change legacy projects. R16.1–R16.4 are implementation-complete and pending full gates
+plus independent sign-offs; R17 remains planned.
 
 ## Opt-In Mechanics
 
@@ -812,6 +813,45 @@ unchanged. Verify Canvas and Phaser on hex/square plus PWA, single-file, web pac
 The inactive generated player must not contain or precache the Macro-Economy engine/renderer
 implementation modules.
 The copyable reference is `docs/examples/opt-in-macro-economy/`.
+
+### R16 Ghost Replay Lab
+
+Replay Lab is not a mission mechanic and does not modify `.tdproj` content. Open **Replay Lab** in
+Studio, choose a `.tfreplay` archive and import it explicitly. The archive is validated against the
+currently open project's engine, content, mission and capability identity before its journal can be
+used. The tab is read-only (`data-project-write="none"`): timeline seek, Ghost overlay, What-If fork
+and first-divergence diagnostics never call project save/apply APIs and never mutate the source
+archive or the active playtest.
+
+`ReplayArchiveV1` accepts at most 72 MiB and uses a fixed `TFRP` v1 header of 20 bytes. Malformed,
+truncated, trailing, bad-checksum, non-canonical or incompatible payloads fail before replay. Ghost
+frames are detached and immutable; the engine retains at most 256 cached frames and deterministically
+reconstructs an evicted frame. A branch records its exact parent archive digest and fork sequence,
+then journals only new commands from the fork checkpoint.
+
+For an agent, follow the compute-only sequence:
+
+`describe_schema({domain:"replayLab"}) -> inspect_replay_archive -> verify_replay_archive -> analyze_replay_branch`.
+
+The tools accept bounded base64 archive data, write no project files and never open sockets. They do
+not provide an archive writer, project writer or relay launcher. Ordinary starter builds, generated
+web players, single-file output, PWA caches and mobile/desktop carriers must not contain
+`engine/replay-lab`, Ghost presentation code or `@towerforge/reference-relay`.
+
+The reference relay is an optional administrator-owned library at
+`packages/reference-relay`. It requires the existing R8 capability handshake before any opaque
+frame, supports at most four peers per invite-code room, caps frames at 1 MiB and each peer queue at
+256 frames, and defaults its injected server adapter to `127.0.0.1`. It contains no gameplay,
+accounts, auth or matchmaking and is never started by Studio/MCP. Integrators must supply and own
+the actual server/socket port; do not expose it beyond loopback without a separate deployment and
+security decision. Run its focused contract with:
+
+```bash
+npm --workspace @towerforge/reference-relay test
+```
+
+See proposed [ADR 0057](adr/0057-r16-ghost-replay-lab.md) and
+[`packages/reference-relay/README.md`](../packages/reference-relay/README.md).
 
 ## Desktop Studio Navigation
 
