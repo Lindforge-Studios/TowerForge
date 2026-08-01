@@ -2246,3 +2246,20 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   public v0.5.2 as the R0–R14 baseline, accepted/merged R15–R17, the aborted immutable v0.6.0 tag,
   and v0.6.1 as the replacement candidate. This docs-only repair invalidates both prior sign-offs;
   the amended exact commit requires a fresh verification pair and CI before merge.
+
+## 2026-08-02 — v0.6.1 published and independently verified
+
+- PR #32 merged as `db1dd07`; its tree is byte-identical to twice-reviewed exact head `6b65c21`.
+  PR CI `30701086156`, main CI `30701673183`, Code Verifier and Constructor/Release Integration
+  Verifier all passed with no P0–P3 findings.
+- Required pre-tag workflow `30701697798` ran on exact merge SHA and completed macOS, Windows,
+  Linux and strict six-installer assembly successfully. The annotated `v0.6.1` tag dereferences to
+  `db1dd07`; tagged desktop workflow `30703649784` and plugin export `30703649782` completed SUCCESS.
+- GitHub published unsigned pre-release
+  `https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.6.1` with exactly six installers
+  and `SHA256SUMS`. All downloaded installers passed the published checksum file; the downloaded
+  Apple Silicon DMG passed strict bundle signature, architecture, embedded Node startup and
+  container verification.
+- Public Codex plugin mirror sync `30705822141` completed SUCCESS. Its v0.6.1 manifest reports
+  TowerForge/plugin/MCP `0.6.1` and exact source commit `db1dd07`, and the mirror annotated tag was
+  created without moving an existing tag.

@@ -35,11 +35,12 @@ tools remain out of scope.
 
 ## Immediate Gate
 
-R0–R17 are accepted and merged. The current public desktop baseline is unsigned pre-release
-`v0.5.2` with R0–R14. The immutable `v0.6.0` tag exposed a Windows CRLF package-pruning defect before
-publication, so it has no public Release. Replacement candidate `v0.6.1` must pass exact-commit PR
-CI, two fresh independent sign-offs, and a manual native cross-platform candidate with all six
-installer formats before tagging and public verification.
+R0–R17 are accepted, merged and published in unsigned pre-release
+[`v0.6.1`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.6.1) from exact commit
+`db1dd07`. The immutable `v0.6.0` tag exposed a Windows CRLF package-pruning defect before
+publication and has no public Release. The replacement passed exact-commit CI, two fresh independent
+sign-offs, a manual native cross-platform candidate, tagged native rebuilds, six-installer assembly,
+published checksum verification and downloaded DMG verification.
 
 ## Post-Roadmap Hardening
 

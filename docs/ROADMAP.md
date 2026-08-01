@@ -1,6 +1,6 @@
 # TowerForge — Roadmap расширяемых механик
 
-Последняя проверка: 2026-08-01
+Последняя проверка: 2026-08-02
 
 Цель программы — расширить TowerForge от классического TD до набора совместимых жанровых механик,
 не меняя поведение существующих проектов. Gameplay-модули являются opt-in: разработчик добавляет
@@ -70,7 +70,7 @@ service. Нет соответствующего выбора или локал�
 - Предыдущий desktop pre-release — [`v0.5.2`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.5.2); он включает R0–R14.
 - R15 PR #28, R16 PR #29 и R17 PR #30 слиты в `main`; R17 exact-commit CI run `30698019009` завершился SUCCESS.
 - R15–R17 прошли раздельные RED/GREEN-циклы, полные gates и по два независимых sign-off; после финального CI repair в R17 P0–P3 findings отсутствуют.
-- Тег `v0.6.0` сохранён как неизменяемое свидетельство падения Windows release job и не имеет публичного GitHub Release. Кандидат `v0.6.1` объединяет R0–R17 и CRLF-safe package pruning; публикация считается завершённой только после проверки тега, шести installers и `SHA256SUMS`.
+- Тег `v0.6.0` сохранён как неизменяемое свидетельство падения Windows release job и не имеет публичного GitHub Release. [`v0.6.1`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.6.1) опубликован как неподписанный pre-release с R0–R17 и CRLF-safe package pruning; exact tag, шесть installers, `SHA256SUMS` и скачанный DMG проверены.
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Сейчас исполнимыми являются только
 версии, перечисленные в [ARCHITECTURE.md](../ARCHITECTURE.md): наличие planned descriptor или
