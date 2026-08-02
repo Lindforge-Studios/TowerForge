@@ -4,7 +4,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium, expect, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { createProject } from "../../packages/cli/lib/create-project.mjs";
 
 // Retained Playwright traces serialize every large GPU-backed surface in this six-viewport matrix.
@@ -78,24 +78,19 @@ test.afterAll(async () => {
 
 for (const entry of cases) {
   test.describe(entry.id, () => {
-    test(`@r18-large-screen ${entry.renderer}/${entry.grid} desktop target works at ${entry.width}x${entry.height}`, async () => {
+    test.use({
+      viewport: { width: entry.width, height: entry.height },
+      deviceScaleFactor: entry.dpr,
+      hasTouch: entry.touch === true,
+      serviceWorkers: "block",
+      reducedMotion: "reduce"
+    });
+
+    test(`@r18-large-screen ${entry.renderer}/${entry.grid} desktop target works at ${entry.width}x${entry.height}`, async ({ page }) => {
       // Linux/SwiftShader needs more than the ordinary case budget to render and dispose the
       // generated ultrawide surface after the preceding full-suite GPU matrix. The exception stays
       // bounded and applies only to this explicit 3440px Phaser acceptance case.
       test.setTimeout(entry.renderer === "phaser" && entry.width >= 3440 ? 180_000 : 120_000);
-      // The default Playwright `page` fixture reuses one worker-scoped Chromium process. Repeated
-      // large SwiftShader surfaces can exhaust that process even after every WebGL context has
-      // been explicitly lost. Launching one browser per acceptance case makes the resource
-      // boundary match the generated-player lifecycle that this matrix is verifying.
-      const browser = await chromium.launch();
-      const context = await browser.newContext({
-        viewport: { width: entry.width, height: entry.height },
-        deviceScaleFactor: entry.dpr,
-        hasTouch: entry.touch === true,
-        serviceWorkers: "block",
-        reducedMotion: "reduce"
-      });
-      const page = await context.newPage();
       const browserErrors = [];
       let graphicsTeardown = null;
       page.on("pageerror", (error) => browserErrors.push(error.message));
@@ -193,8 +188,6 @@ for (const entry of cases) {
           await page.goto("about:blank", { waitUntil: "commit" });
           await page.close({ runBeforeUnload: false });
         }
-        await context.close();
-        await browser.close();
       }
     });
   });

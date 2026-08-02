@@ -2737,3 +2737,27 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - Candidate `b8ca204` and its incomplete verifier cycle are superseded. The next exact candidate
   requires all three GitHub jobs, local focused evidence and both independent sign-offs before
   merge.
+
+## 2026-08-02 — R18 fixture-teardown budget RED
+
+- Exact run `30744037033` proved the fresh-runner split itself: the five-case job passed 5/5, but
+  the single ultrawide job timed out after all product work while the acceptance test awaited its
+  manually owned browser cleanup. Code verification found that `context.close()` and
+  `browser.close()` were inside the same 180-second product-test budget and the first could prevent
+  the second from running.
+- Browser/context ownership returns to Playwright's test fixture, whose teardown has a separate
+  bounded lifecycle after the product test. The test still explicitly requires the generated
+  Phaser disposer, detached canvas and lost WebGL context, then detaches and closes the disposed
+  page. Fresh runner isolation remains 150 + 5 + 1; assertions, retries, global timeouts and
+  production source are unchanged.
+- Candidate `e16738b` is rejected with independent P1/P2 findings. The repair must pass the focused
+  ultrawide command, all three exact CI jobs and renewed independent verification before merge.
+
+## 2026-08-02 — R18 fixture-teardown focused GREEN
+
+- With fixture-owned browser/context teardown, the exact ultrawide command
+  `npx playwright test tests/e2e/r18-large-screen-player.spec.mjs --grep "3440x1440" --workers=1`
+  passed 1/1 in 11.2 seconds; the product case itself completed in 5.4 seconds.
+- The complementary command using `--grep-invert "3440x1440"` passed the other 5/5 in 11.7
+  seconds. Together with exact discovery, the fresh-runner split remains 150 + 5 + 1 = 156 without
+  overlap. A new exact commit, GitHub run and both independent sign-offs remain mandatory.
