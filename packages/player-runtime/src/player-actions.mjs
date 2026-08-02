@@ -38,27 +38,83 @@ export function createDefaultPlayerActionDescriptors() {
   return REGISTRY;
 }
 
+const DESCRIPTOR_KEYS = Object.freeze(["schemaVersion", "id", "labelKey", "kind"]);
+const DESCRIPTOR_KINDS = new Set(["ui", "command", "signal"]);
+const MAX_ACTION_DESCRIPTORS = 256;
+
+function ownDataRecord(value, field, expectedKeys) {
+  if (value === null || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) {
+    throw new TypeError(`${field} must be a plain object.`);
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (Object.getOwnPropertySymbols(descriptors).length > 0) throw new TypeError(`${field} cannot contain symbol keys.`);
+  const keys = Object.keys(descriptors).sort();
+  const expected = [...expectedKeys].sort();
+  if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) {
+    throw new TypeError(`${field} contains missing or unsupported fields.`);
+  }
+  const result = Object.create(null);
+  for (const key of expectedKeys) {
+    const descriptor = descriptors[key];
+    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+      throw new TypeError(`${field}.${key} must be an enumerable own data property.`);
+    }
+    result[key] = descriptor.value;
+  }
+  return result;
+}
+
+function ownDataArray(value, field) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+    throw new TypeError(`${field} must be a plain array.`);
+  }
+  if (value.length > MAX_ACTION_DESCRIPTORS) throw new RangeError(`${field} exceeds the descriptor limit.`);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (Object.getOwnPropertySymbols(descriptors).length > 0) throw new TypeError(`${field} cannot contain symbol keys.`);
+  const elementKeys = Object.keys(descriptors).filter((key) => key !== "length");
+  if (elementKeys.length !== value.length) throw new TypeError(`${field} must be dense and cannot contain extra fields.`);
+  const result = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = descriptors[String(index)];
+    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+      throw new TypeError(`${field}[${index}] must be an enumerable own data property.`);
+    }
+    result.push(descriptor.value);
+  }
+  return result;
+}
+
 export function createPlayerActionRegistry(options) {
-  if (!options || typeof options !== "object" || Array.isArray(options)) throw new TypeError("Player action registry options must be an object.");
-  const descriptors = options.descriptors;
-  const handlers = options.handlers;
-  if (!Array.isArray(descriptors)) throw new TypeError("Player action descriptors must be an array.");
-  if (!handlers || typeof handlers !== "object" || Array.isArray(handlers)) throw new TypeError("Player action handlers must be an object.");
+  const optionRecord = ownDataRecord(options, "Player action registry options", ["descriptors", "handlers"]);
+  const descriptors = ownDataArray(optionRecord.descriptors, "Player action descriptors");
   const ids = new Set();
   const detachedDescriptors = descriptors.map((descriptor) => {
-    if (!descriptor || typeof descriptor !== "object" || Array.isArray(descriptor)
-      || typeof descriptor.id !== "string" || !descriptor.id || ids.has(descriptor.id)) {
+    const record = ownDataRecord(descriptor, "Player action descriptor", DESCRIPTOR_KEYS);
+    if (record.schemaVersion !== PLAYER_ACTION_DESCRIPTOR_SCHEMA_VERSION
+      || typeof record.id !== "string" || !/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(record.id)
+      || typeof record.labelKey !== "string" || !record.labelKey || record.labelKey.length > 256
+      || !DESCRIPTOR_KINDS.has(record.kind) || ids.has(record.id)) {
       throw new TypeError("Player action descriptors must have unique string ids.");
     }
-    if (typeof handlers[descriptor.id] !== "function") throw new TypeError(`Missing player action handler "${descriptor.id}".`);
-    ids.add(descriptor.id);
-    return Object.freeze({ ...descriptor });
+    ids.add(record.id);
+    return Object.freeze({
+      schemaVersion: PLAYER_ACTION_DESCRIPTOR_SCHEMA_VERSION,
+      id: record.id,
+      labelKey: record.labelKey,
+      kind: record.kind
+    });
   });
+  const handlerRecord = ownDataRecord(optionRecord.handlers, "Player action handlers", ids);
+  const detachedHandlers = new Map();
+  for (const id of ids) {
+    if (typeof handlerRecord[id] !== "function") throw new TypeError(`Missing player action handler "${id}".`);
+    detachedHandlers.set(id, handlerRecord[id]);
+  }
   return Object.freeze({
     descriptors: Object.freeze(detachedDescriptors),
     invoke(id, payload = {}) {
       if (!ids.has(id)) return Object.freeze({ ok: false, code: "unsupported_player_action" });
-      return handlers[id](payload);
+      return detachedHandlers.get(id)(payload);
     }
   });
 }

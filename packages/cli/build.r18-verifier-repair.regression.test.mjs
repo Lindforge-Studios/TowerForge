@@ -61,6 +61,19 @@ describe("R18 rejected-candidate repair contracts (RED)", () => {
       expect(generated.player).toMatch(/KeyQ[\s\S]{0,500}(?:ability|useAbility)/i);
     }
   });
+
+  it("binds desktop session saves to the canonical mission capability digest", () => {
+    for (const generated of [canvas, phaser]) {
+      expect(generated.player).toMatch(/computeMissionCapabilityDigestV1/);
+      expect(generated.player).toMatch(
+        /expectedCapabilityDigest[\s\S]{0,420}computeMissionCapabilityDigestV1[\s\S]{0,260}activeMissionId/
+      );
+      expect(generated.player).toMatch(
+        /capabilityDigest\s*:\s*computeMissionCapabilityDigestV1\(\{[\s\S]{0,180}missionId/
+      );
+    }
+    expect(legacy.player).not.toMatch(/computeMissionCapabilityDigestV1|capabilityDigest|expectedCapabilityDigest/);
+  });
 });
 
 function build(projectDir, renderer, desktop) {

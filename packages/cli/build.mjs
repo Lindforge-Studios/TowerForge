@@ -1317,6 +1317,7 @@ try {
     storage: createIndexedDbSessionStorage({ dbName: "towerforge-player-" + playerProfileScope, storeName: "player-data" }),
     baseKey: "towerforge:session:" + playerProfileScope,
     expectedContentDigest: currentContentDigest,
+    expectedCapabilityDigest: (save) => computeMissionCapabilityDigestV1({ content, missionId: save.activeMissionId }),
     codec: { parse: parsePlayerSessionSaveV1, serialize: serializePlayerSessionSaveV1 },
     restore(save) {
       const restoredGame = TowerDefenseGame.fromCheckpoint({ content, checkpoint: save.checkpoint });
@@ -1342,6 +1343,7 @@ async function saveDesktopSession() {
     checkpoint,
     journalSuffix: [],
     contentDigest: checkpoint.contentDigest,
+    capabilityDigest: computeMissionCapabilityDigestV1({ content, missionId }),
     savedAt: new Date().toISOString()
   });
 }
@@ -1564,7 +1566,7 @@ globalThis.__towerforgePlayerActions = playerActionRegistry;
 function playerTemplate(includeMultiplayer = false, includeMacroEconomy = false, includeHostMonetization = false, largeScreenPlayer = false) {
   return `import {
   createCampaignRun,
-  createEmptyPlayerProfile,
+  ${largeScreenPlayer ? "computeMissionCapabilityDigestV1,\n  " : ""}createEmptyPlayerProfile,
   createGameContentRegistry,
   dispatchGameCommand,
   exportCampaignRun,
@@ -2852,7 +2854,7 @@ function applyProjectTheme() {
 function phaserPlayerTemplate(includeMultiplayer = false, includeMacroEconomy = false, includeHostMonetization = false, largeScreenPlayer = false) {
   return `import {
   createCampaignRun,
-  createEmptyPlayerProfile,
+  ${largeScreenPlayer ? "computeMissionCapabilityDigestV1,\n  " : ""}createEmptyPlayerProfile,
   createGameContentRegistry,
   dispatchGameCommand,
   exportCampaignRun,

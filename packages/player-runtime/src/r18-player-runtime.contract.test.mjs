@@ -19,6 +19,7 @@ function sessionSave(activeMissionId, savedAt) {
     checkpoint: { schemaVersion: 1, engineVersion: "towerforge-sim-v2", opaque: "checkpoint" },
     journalSuffix: [{ sequence: 0, command: { schemaVersion: 8, type: "startWave" } }],
     contentDigest: "a".repeat(64),
+    capabilityDigest: "tf-capabilities-v1:0123456789abcdef",
     savedAt
   };
 }

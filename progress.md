@@ -2959,6 +2959,84 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   rendered `Start wave`, proving the generated live shell was not localized. All failures were
   observed against unchanged production at `70823d2`.
 
+## 2026-08-03 — R18 verifier repair RED: capability-bound saves and closed action registry
+
+- Exact candidate `c63dea4` still allowed a `PlayerSessionSaveV1` without a capability digest.
+  `createRotatingPlayerSessionStore` checked only the project content digest, so a save authored for
+  a different mission capability selection could reach the restore callback. The v1 envelope is now
+  contractually required to carry canonical `tf-capabilities-v1:<16 hex>`. The store accepts either
+  a fixed expected digest or a mission-aware `expectedCapabilityDigest(save)` resolver and must
+  return stable `session_capability_missing` / `session_capability_mismatch` before restore. Generated
+  Canvas and Phaser desktop players must use engine-owned `computeReplayCapabilityDigestV1`, compute
+  saves from current `missionId`, and resolve loads from `save.activeMissionId`; legacy players remain
+  free of the digest function and session fields.
+- The same candidate read descriptors and handlers through ordinary property lookup. An inherited
+  `id: "constructor"` could resolve `Object.prototype.constructor`; accessor getters were invoked,
+  and the registry retained the caller-owned handler map after validation. New contracts require a
+  closed schema-v1 descriptor (`schemaVersion`, `id`, `labelKey`, `kind`), exact own data handlers,
+  rejection of revoked proxies/accessors/unknown fields/duplicates/future schemas/invalid kinds,
+  and invocation through a detached handler map only.
+- Expected focused RED command against unchanged production:
+  `npx vitest run packages/player-runtime/src/player-session-store.contract.test.mjs packages/player-runtime/src/player-actions.contract.test.mjs packages/cli/build.r18-verifier-repair.regression.test.mjs --reporter=verbose`.
+  No production code was changed for this slice.
+- Focused RED result on exact `c63dea4`: exit `1`, 13 failed assertions. Session failures were
+  missing/loosely formatted capability digests being accepted, both missing and mismatching saves
+  reaching `restore`, the mission-aware resolver never being called, and generated Canvas/Phaser
+  omitting `computeReplayCapabilityDigestV1`. Registry failures were inherited `constructor`,
+  descriptor/handler accessors, unknown fields/handlers, future schema, invalid kind and post-create
+  handler mutation all being accepted. Duplicate IDs and revoked-proxy fail-closed behavior already
+  passed and remain compatibility guards inside the same RED slice.
+
+## 2026-08-03 — R18 capability/action verifier repair focused GREEN
+
+- The existing R16 capability digest primitive now lives in the ordinary engine stable-digest
+  entrypoint while Replay Lab re-exports the exact same function. Its domain, canonical payload and
+  output remain `tf-capabilities-v1:<16 hex>`; large-screen single-player builds therefore verify
+  capabilities without shipping Replay Lab.
+- `PlayerSessionSaveV1` now requires the canonical capability digest. Generated Canvas and Phaser
+  players save it for the current mission and resolve the expected value from the saved mission
+  before `TowerDefenseGame.fromCheckpoint`. Missing and mismatching selections fail closed and do
+  not invoke restore. Content, capability, checkpoint and GameCommand version domains remain
+  independent and unchanged.
+- `createPlayerActionRegistry` validates exact own-data options, dense bounded descriptor arrays,
+  closed schema-v1 descriptors and an exact own-data handler set. It retains a private detached
+  `Map`, so prototype inheritance, accessors, unknown handlers and mutation after construction do
+  not affect invocation.
+- Exact RED command now passes `28/28`. Expanded player-runtime, Replay Archive, generated-player
+  and action-registry compatibility run passes `110/110`; `typecheck` and `build:engine` are GREEN.
+  This is focused GREEN only. The next exact candidate still requires plugin regeneration, full
+  gates and two fresh independent sign-offs.
+
+## 2026-08-03 — R18 full-suite boundary RED: Replay Lab root isolation
+
+- The first full `npm run test` after focused GREEN completed `4022/4023` and failed only
+  `replay-lab-entrypoint.contract.test.ts`. Moving the shared hash under the historic
+  `computeReplayCapabilityDigestV1` name caused that Replay Lab API name to leak from the ordinary
+  root engine entrypoint, violating R16 single-player isolation even though no Replay Lab files were
+  bundled.
+- The repair keeps the digest algorithm/domain byte-identical but exposes the shared root primitive
+  as `computeMissionCapabilityDigestV1`; Replay Lab retains its existing
+  `computeReplayCapabilityDigestV1` wrapper only from the isolated entrypoint. Generated R18 players
+  use the generic mission API. This existing full-suite failure is the RED regression for the
+  boundary fix; production was not further changed before recording it.
+
+## 2026-08-03 — R18 verifier repair pre-freeze GREEN
+
+- The isolated Replay Lab boundary repair passes its focused stack `46/46`; root engine exposes
+  only `computeMissionCapabilityDigestV1`, while Replay Lab preserves its existing replay-named
+  wrapper and byte-identical digest behavior.
+- Full Vitest passes `4023/4023` in 414 files. An immediately preceding full run reached
+  `4021/4023` only because two pre-existing MCP tests exceeded their 5-second timeout under local
+  load; their isolated repeat passed `28/28`, and the clean full repeat then passed without source
+  changes.
+- Full Playwright passes `157/157` in 3.6 minutes. The focused R18 browser matrix passes `10/10`
+  across Canvas/Phaser, hex/square, 1024–3440 px, Continue, autosave, Studio target allocation,
+  persistent hit targets and Phaser lifecycle.
+- `typecheck`, `build:engine`, `validate`, `sim tutorial_01 60`, starter balance, maps compile, web
+  build, plugin build/validate/smoke, mobile/desktop package scaffolds and Cargo `9/9` are GREEN.
+  The tracked plugin runtime was regenerated from source. The next commit is the exact freeze
+  candidate; both previous sign-offs are invalid and two new independent sign-offs are required.
+
 ## 2026-08-02 — R18 preference edge-case RED
 
 - Read-only follow-up review found that repeated camera zoom stores the requested multiplicative

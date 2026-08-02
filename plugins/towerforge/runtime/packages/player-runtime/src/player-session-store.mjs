@@ -1,6 +1,13 @@
 export const PLAYER_SESSION_SAVE_SCHEMA_VERSION = 1;
 
 const SAVE_KEYS = Object.freeze(["schemaVersion", "activeMissionId", "checkpoint", "journalSuffix", "contentDigest", "capabilityDigest", "savedAt"]);
+const CAPABILITY_DIGEST_PATTERN = /^tf-capabilities-v1:[a-f0-9]{16}$/i;
+
+function capabilityMissingError() {
+  const error = new TypeError("capabilityDigest is required.");
+  Object.defineProperty(error, "code", { value: "session_capability_missing", enumerable: false });
+  return error;
+}
 
 function ownData(value, field) {
   if (value === null || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) {
@@ -53,7 +60,8 @@ function normalize(value) {
   if (typeof record.contentDigest !== "string" || !(/^[a-f0-9]{64}$/i.test(record.contentDigest) || /^tf-content-v1:[a-f0-9]{16}$/i.test(record.contentDigest))) {
     throw new TypeError("contentDigest is invalid.");
   }
-  if (record.capabilityDigest !== undefined && (typeof record.capabilityDigest !== "string" || record.capabilityDigest.length < 8 || record.capabilityDigest.length > 256)) {
+  if (record.capabilityDigest === undefined) throw capabilityMissingError();
+  if (typeof record.capabilityDigest !== "string" || !CAPABILITY_DIGEST_PATTERN.test(record.capabilityDigest)) {
     throw new TypeError("capabilityDigest is invalid.");
   }
   if (typeof record.savedAt !== "string" || !Number.isFinite(Date.parse(record.savedAt))) throw new TypeError("savedAt must be an ISO timestamp.");
@@ -63,7 +71,7 @@ function normalize(value) {
     checkpoint: cloneOwnData(record.checkpoint, "checkpoint"),
     journalSuffix: cloneOwnData(record.journalSuffix, "journalSuffix"),
     contentDigest: record.contentDigest,
-    ...(record.capabilityDigest === undefined ? {} : { capabilityDigest: record.capabilityDigest }),
+    capabilityDigest: record.capabilityDigest,
     savedAt: record.savedAt
   };
   return Object.freeze(result);
@@ -85,10 +93,16 @@ export function createRotatingPlayerSessionStore(options) {
   const codec = record.codec;
   const restore = record.restore;
   const expectedContentDigest = record.expectedContentDigest;
+  const expectedCapabilityDigest = record.expectedCapabilityDigest;
   if (!storage || typeof storage.getItem !== "function" || typeof storage.setItem !== "function") throw new TypeError("storage port is invalid.");
   if (typeof baseKey !== "string" || !baseKey) throw new TypeError("baseKey is required.");
   if (!codec || typeof codec.parse !== "function" || typeof codec.serialize !== "function") throw new TypeError("codec is invalid.");
   if (typeof restore !== "function") throw new TypeError("restore callback is required.");
+  if (expectedCapabilityDigest !== undefined
+    && typeof expectedCapabilityDigest !== "function"
+    && (typeof expectedCapabilityDigest !== "string" || !CAPABILITY_DIGEST_PATTERN.test(expectedCapabilityDigest))) {
+    throw new TypeError("expectedCapabilityDigest must be a canonical digest or resolver.");
+  }
   const headKey = `${baseKey}:head`;
   const slotKeys = Object.freeze([`${baseKey}:slot-0`, `${baseKey}:slot-1`]);
   const slotKey = (slot) => slotKeys[slot];
@@ -118,6 +132,8 @@ export function createRotatingPlayerSessionStore(options) {
     const primary = head === "1" ? 1 : 0;
     let found = false;
     let contentMismatch = false;
+    let capabilityMissing = false;
+    let capabilityMismatch = false;
     for (const slot of [primary, 1 - primary]) {
       try {
         const raw = await storage.getItem(slotKey(slot));
@@ -129,13 +145,40 @@ export function createRotatingPlayerSessionStore(options) {
           contentMismatch = true;
           continue;
         }
+        if (typeof value.capabilityDigest !== "string") {
+          capabilityMissing = true;
+          continue;
+        }
+        if (expectedCapabilityDigest !== undefined) {
+          let expected;
+          try {
+            expected = typeof expectedCapabilityDigest === "function"
+              ? expectedCapabilityDigest(value)
+              : expectedCapabilityDigest;
+          } catch {
+            capabilityMismatch = true;
+            continue;
+          }
+          if (typeof expected !== "string" || !CAPABILITY_DIGEST_PATTERN.test(expected)
+            || value.capabilityDigest !== expected) {
+            capabilityMismatch = true;
+            continue;
+          }
+        }
         const restored = await restore(value);
         return Object.freeze({ code: "session_loaded", slot, restored });
-      } catch {
+      } catch (error) {
+        if (error?.code === "session_capability_missing") capabilityMissing = true;
         // A complete previous slot is the recovery boundary.
       }
     }
-    return Object.freeze({ code: contentMismatch ? "session_content_mismatch" : found ? "session_corrupt" : "session_missing" });
+    return Object.freeze({ code: capabilityMissing
+      ? "session_capability_missing"
+      : capabilityMismatch
+        ? "session_capability_mismatch"
+        : contentMismatch
+          ? "session_content_mismatch"
+          : found ? "session_corrupt" : "session_missing" });
   };
 
   const reset = () => enqueueMutation(async () => {

@@ -134,6 +134,7 @@ function sessionSave(contentDigest) {
     checkpoint: { schemaVersion: 1, engineVersion: "towerforge-sim-v2", opaque: "checkpoint" },
     journalSuffix: [{ sequence: 0, command: { schemaVersion: 8, type: "startWave" } }],
     contentDigest,
+    capabilityDigest: "tf-capabilities-v1:0123456789abcdef",
     savedAt: "2026-08-02T00:00:00.000Z"
   };
 }

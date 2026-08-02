@@ -79,6 +79,7 @@ function save(activeMissionId, savedAt) {
     checkpoint: { schemaVersion: 1, engineVersion: "towerforge-sim-v2", opaque: activeMissionId },
     journalSuffix: [],
     contentDigest: "a".repeat(64),
+    capabilityDigest: "tf-capabilities-v1:0123456789abcdef",
     savedAt
   };
 }

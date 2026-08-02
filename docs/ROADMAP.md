@@ -983,6 +983,16 @@ verifier-led RED/GREEN repair-волн и независимых Code Verifier �
 
 Автор реализации не выполняет ни один из двух sign-off. Фаза считается завершённой только вместе с opt-in reference fixture, disabled-capability regression и затронутыми release gates из `AGENTS.md`.
 
+Тесты запускаются слоями, а не полным repository sweep после каждого изменения:
+
+1. каждый RED/GREEN micro-slice гоняет только новый contract и непосредственно связанные regressions;
+2. после engine/surface GREEN запускаются тесты всех затронутых пакетов и compatibility fixtures;
+3. перед exact-commit freeze выполняются полный Vitest, полный Playwright и все gates затронутых слоёв;
+4. любое source-изменение после freeze аннулирует полный evidence и оба sign-off, поэтому полный набор
+   повторяется на новом точном кандидате.
+
+Такой cadence сохраняет быстрый TDD feedback, но не позволяет принять R только по focused-тестам.
+
 ## Запрещённые объединения
 
 - Damage resolver и reactions.

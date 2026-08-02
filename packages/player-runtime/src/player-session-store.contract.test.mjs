@@ -13,6 +13,7 @@ function save(id = "tutorial_01", savedAt = "2026-08-02T00:00:00.000Z") {
     checkpoint: { schemaVersion: 1, engineVersion: "towerforge-sim-v2", opaque: "checkpoint" },
     journalSuffix: [{ sequence: 0, command: { schemaVersion: 8, type: "startWave" } }],
     contentDigest: "a".repeat(64),
+    capabilityDigest: "tf-capabilities-v1:0123456789abcdef",
     savedAt
   };
 }
@@ -38,7 +39,9 @@ describe("PlayerSessionSaveV1 and two-slot store (RED)", () => {
     ["unknown field", JSON.stringify({ ...save(), token: "secret" })],
     ["corrupt", '{"schemaVersion":1'],
     ["missing checkpoint", JSON.stringify({ ...save(), checkpoint: undefined })],
-    ["invalid digest", JSON.stringify({ ...save(), contentDigest: "short" })]
+    ["invalid digest", JSON.stringify({ ...save(), contentDigest: "short" })],
+    ["missing capability digest", JSON.stringify({ ...save(), capabilityDigest: undefined })],
+    ["invalid capability digest", JSON.stringify({ ...save(), capabilityDigest: "capabilities-ish" })]
   ])("rejects %s save data", (_label, raw) => {
     expect(() => parsePlayerSessionSaveV1(raw)).toThrow();
   });
@@ -77,5 +80,62 @@ describe("PlayerSessionSaveV1 and two-slot store (RED)", () => {
     expect(result.code).toBe("session_corrupt");
     expect(result).not.toHaveProperty("save");
     expect(result).not.toHaveProperty("restored");
+  });
+
+  it.each([
+    [
+      "missing",
+      { ...save(), capabilityDigest: undefined },
+      "session_capability_missing"
+    ],
+    [
+      "mismatching",
+      { ...save(), capabilityDigest: "tf-capabilities-v1:fedcba9876543210" },
+      "session_capability_mismatch"
+    ]
+  ])("rejects a %s capability digest before restore with a stable code", async (_label, candidate, code) => {
+    const storage = new AsyncStorage();
+    storage.values.set("towerforge:session:test:head", "0");
+    storage.values.set("towerforge:session:test:slot-0", JSON.stringify(candidate));
+    const restored = [];
+    const store = createRotatingPlayerSessionStore({
+      storage,
+      baseKey: "towerforge:session:test",
+      expectedCapabilityDigest: "tf-capabilities-v1:0123456789abcdef",
+      codec: { parse: parsePlayerSessionSaveV1, serialize: serializePlayerSessionSaveV1 },
+      restore(value) { restored.push(value); return value.activeMissionId; }
+    });
+
+    expect(await store.loadLatest()).toEqual({ code });
+    expect(restored).toEqual([]);
+  });
+
+  it("resolves the expected capability digest from the detached save before restore", async () => {
+    const storage = new AsyncStorage();
+    const expectedCalls = [];
+    const restored = [];
+    const store = createRotatingPlayerSessionStore({
+      storage,
+      baseKey: "towerforge:session:test",
+      expectedCapabilityDigest(value) {
+        expectedCalls.push(value.activeMissionId);
+        return value.activeMissionId === "mission_2"
+          ? "tf-capabilities-v1:2222222222222222"
+          : "tf-capabilities-v1:1111111111111111";
+      },
+      codec: { parse: parsePlayerSessionSaveV1, serialize: serializePlayerSessionSaveV1 },
+      restore(value) { restored.push(value.activeMissionId); return value.activeMissionId; }
+    });
+    await store.save({
+      ...save("mission_2"),
+      capabilityDigest: "tf-capabilities-v1:2222222222222222"
+    });
+
+    expect(await store.loadLatest()).toMatchObject({
+      code: "session_loaded",
+      restored: "mission_2"
+    });
+    expect(expectedCalls).toEqual(["mission_2"]);
+    expect(restored).toEqual(["mission_2"]);
   });
 });

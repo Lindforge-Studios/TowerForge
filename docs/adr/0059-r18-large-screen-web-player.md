@@ -30,12 +30,18 @@ coordinates, topology, range, line of sight or targeting. Camera input is ignore
 menu or editable control owns interaction.
 
 `packages/player-runtime` owns renderer-neutral descriptors and codecs for `PlayerActionDescriptorV1`,
-`PlayerPreferencesV1` and `PlayerSessionSaveV1`. Gameplay sessions use an injected asynchronous
-storage port and a rotating two-slot commit. Browser builds provide IndexedDB; localStorage is used
-only for preferences. Restore validates the content digest before constructing a simulation and the
-engine validates checkpoint identity and state. Corrupt, future and incompatible records fail
-closed. A successful restore also rebuilds mission-dependent selectors, abilities, background,
-music and overlays from the restored mission so the DOM shell cannot describe a different session.
+`PlayerPreferencesV1` and `PlayerSessionSaveV1`. Action descriptors and handlers are exact own-data
+records; the registry detaches both and invokes handlers from a private map, so inherited names,
+accessors, unknown fields and later caller mutation cannot cross the UI-command allowlist. Gameplay
+sessions use an injected asynchronous storage port and a rotating two-slot commit. Browser builds
+provide IndexedDB; localStorage is used only for preferences. Restore validates the content digest
+and the engine-owned, mission-specific capability digest before constructing a simulation; the
+engine then validates checkpoint version, identity and state. Replay archives and session saves use
+the same `tf-capabilities-v1` hash primitive through the root `computeMissionCapabilityDigestV1`
+contract without exposing or bundling Replay Lab in ordinary desktop players. Corrupt, future and
+incompatible records fail closed. A successful restore also rebuilds
+mission-dependent selectors, abilities, background, music and overlays from the restored mission so
+the DOM shell cannot describe a different session.
 
 Preferences are applied behavior rather than codec-only data. Camera zoom stores the bounded ratio
 actually returned by the viewport and replays it at boot; reset writes the neutral ratio. Key

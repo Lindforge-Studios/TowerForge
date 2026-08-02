@@ -16,6 +16,17 @@ export declare function canonicalStringify(value: unknown, options?: CanonicalSt
 export declare function canonicalJsonMetrics(value: unknown, options?: CanonicalStringifyOptions): CanonicalJsonMetrics;
 export declare function stableDigest(value: unknown, options?: CanonicalStringifyOptions): string;
 /**
+ * Digest the engine-owned capability selection for one mission.
+ *
+ * Replay archives and resumable player sessions intentionally share this
+ * version domain. Keeping the primitive in the ordinary engine entrypoint
+ * avoids pulling the opt-in Replay Lab runtime into a single-player bundle.
+ */
+export declare function computeMissionCapabilityDigestV1(options: {
+    readonly content: GameContentRegistry;
+    readonly missionId: string;
+}): string;
+/**
  * Digest every registry domain that can affect deterministic simulation.
  * Presentation-only data and the derived map factory closure are intentionally
  * excluded. The projection is rebuilt on every call because registries are mutable.
