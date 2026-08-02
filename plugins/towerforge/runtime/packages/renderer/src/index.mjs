@@ -83,10 +83,17 @@ export class TowerForgeCanvasRenderer {
     this.canvas = options.canvas;
     this.ctx = options.canvas.getContext("2d");
     this.content = options.content ?? {};
+    this.viewportFactory = typeof options.createViewportTransform === "function" ? options.createViewportTransform : null;
+    this.viewportProfile = this.viewportFactory && options.viewportProfile ? Object.freeze({ ...options.viewportProfile }) : null;
+    this.viewportController = null;
+    this.viewportSignature = "";
     const authoredVisuals = ownDataValue(this.content, "visuals");
     this.proceduralJuiceConfigured = ownDataValue(authoredVisuals, "schemaVersion") === 3
       && ownDataValue(authoredVisuals, "proceduralJuice") !== undefined;
     this.assetBase = options.assetBase ?? "";
+    this.maxDevicePixelRatio = Number.isFinite(options.maxDevicePixelRatio) && options.maxDevicePixelRatio > 0
+      ? options.maxDevicePixelRatio
+      : Infinity;
     this.effects = [];
     this.shake = 0;
     this.images = new Map();
@@ -134,13 +141,52 @@ export class TowerForgeCanvasRenderer {
     // Android. Scale the device-pixel-ratio down so the backbuffer never exceeds MAX_BACKBUFFER_PX,
     // but never below the CSS resolution (scale >= 1), so desktop stays crisp. (Practice ported
     // from a shipped Capacitor game where an uncapped backbuffer was the #1 low-end-device crash.)
-    const dpr = globalThis.devicePixelRatio || 1;
+    const dpr = Math.min(globalThis.devicePixelRatio || 1, this.maxDevicePixelRatio);
     const cap = Math.max(MAX_BACKBUFFER_PX, cssW * cssH); // never blurrier than 1 device pixel per CSS pixel
     let scale = dpr;
     if (cssW * cssH * scale * scale > cap) scale = Math.sqrt(cap / (cssW * cssH));
     scale = Math.max(1, scale);
     this.canvas.width = Math.floor(cssW * scale);
     this.canvas.height = Math.floor(cssH * scale);
+    this.viewportController = null;
+    this.viewportSignature = "";
+    this.tileLayerDirtyAll = true;
+  }
+
+  panViewportBy(delta) {
+    if (!this.viewportController || !delta || !Number.isFinite(delta.x) || !Number.isFinite(delta.y)) return null;
+    const rect = this.canvas.getBoundingClientRect();
+    const scaleX = rect.width > 0 ? this.canvas.width / rect.width : 1;
+    const scaleY = rect.height > 0 ? this.canvas.height / rect.height : 1;
+    const snapshot = this.viewportController.panBy({ x: delta.x * scaleX, y: delta.y * scaleY });
+    this.tileLayerDirtyAll = true;
+    return snapshot;
+  }
+
+  zoomViewportAt(event, factor) {
+    if (!this.viewportController || !event || !Number.isFinite(factor) || factor <= 0) return null;
+    const rect = this.canvas.getBoundingClientRect();
+    const scaleX = rect.width > 0 ? this.canvas.width / rect.width : 1;
+    const scaleY = rect.height > 0 ? this.canvas.height / rect.height : 1;
+    const anchor = {
+      x: (event.clientX - rect.left) * scaleX,
+      y: (event.clientY - rect.top) * scaleY
+    };
+    const current = this.viewportController.getSnapshot();
+    const snapshot = this.viewportController.zoomAt(anchor, current.zoom * factor);
+    this.tileLayerDirtyAll = true;
+    return snapshot;
+  }
+
+  resetViewport() {
+    if (!this.viewportController) return null;
+    const snapshot = this.viewportController.reset();
+    this.tileLayerDirtyAll = true;
+    return snapshot;
+  }
+
+  getViewportSnapshot() {
+    return this.viewportController?.getSnapshot() ?? null;
   }
 
   drawSnapshot(authoritativeSnapshot, proceduralProjection = undefined) {
@@ -841,19 +887,23 @@ export class TowerForgeCanvasRenderer {
     // reliable conversion factor here. Read the canvas's actual CSS-to-backbuffer scale instead.
     const scaleX = rect.width > 0 ? this.canvas.width / rect.width : 1;
     const scaleY = rect.height > 0 ? this.canvas.height / rect.height : 1;
-    const x = (event.clientX - rect.left) * scaleX;
-    const y = (event.clientY - rect.top) * scaleY;
+    const screenPoint = { x: (event.clientX - rect.left) * scaleX, y: (event.clientY - rect.top) * scaleY };
+    const hitPoint = geom.viewportTransform ? geom.viewportTransform.screenToWorld(screenPoint) : screenPoint;
     let best = null;
     let bestDist = Infinity;
     for (const tile of tiles ?? []) {
-      const p = this.center(tile, geom);
-      const d = Math.hypot(p.x - x, p.y - y);
+      const radius = geom.worldR ?? geom.r;
+      const p = geom.grid.kind === "square"
+        ? { x: geom.ox + tile.q * radius * 2, y: geom.oy + tile.r * radius * 2 }
+        : { x: geom.ox + tile.q * radius * 1.48 + (tile.r % 2) * radius * 0.74, y: geom.oy + tile.r * radius * 1.28 };
+      const d = Math.hypot(p.x - hitPoint.x, p.y - hitPoint.y);
       if (d < bestDist) {
         bestDist = d;
         best = tile;
       }
     }
-    const hitRadius = geom.grid.kind === "square" ? geom.r * Math.SQRT2 : geom.r * 0.95;
+    const hitRadiusBase = geom.worldR ?? geom.r;
+    const hitRadius = geom.grid.kind === "square" ? hitRadiusBase * Math.SQRT2 : hitRadiusBase * 0.95;
     return best && bestDist <= hitRadius ? { q: best.q, r: best.r } : null;
   }
 
@@ -874,22 +924,66 @@ export class TowerForgeCanvasRenderer {
       if (tile.q > maxQ) maxQ = tile.q;
       if (tile.r > maxR) maxR = tile.r;
     }
+    let base;
     if (grid?.kind === "square") {
       const cell = Math.min(this.canvas.width / (maxQ + 2), this.canvas.height / (maxR + 2));
-      return { r: cell / 2, ox: cell, oy: cell, grid };
+      base = { r: cell / 2, ox: cell, oy: cell, grid };
+    } else {
+      const r = Math.min(this.canvas.width / ((maxQ + 2) * 1.65), this.canvas.height / ((maxR + 2) * 1.45));
+      base = { r, ox: r * 1.5, oy: r * 1.5, grid: grid ?? { kind: "hex", layout: "odd-r" } };
     }
-    const r = Math.min(this.canvas.width / ((maxQ + 2) * 1.65), this.canvas.height / ((maxR + 2) * 1.45));
-    return { r, ox: r * 1.5, oy: r * 1.5, grid: grid ?? { kind: "hex", layout: "odd-r" } };
+    if (!this.viewportFactory || !this.viewportProfile || tiles.length === 0) return base;
+    const signature = `${this.canvas.width}x${this.canvas.height}|${base.grid.kind}|${maxQ},${maxR}`;
+    if (!this.viewportController || this.viewportSignature !== signature) {
+      const baseCenter = (coord) => base.grid.kind === "square"
+        ? { x: base.ox + coord.q * base.r * 2, y: base.oy + coord.r * base.r * 2 }
+        : { x: base.ox + coord.q * base.r * 1.48 + (coord.r % 2) * base.r * 0.74, y: base.oy + coord.r * base.r * 1.28 };
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const tile of tiles) {
+        const point = baseCenter(tile);
+        minX = Math.min(minX, point.x - base.r);
+        minY = Math.min(minY, point.y - base.r);
+        maxX = Math.max(maxX, point.x + base.r);
+        maxY = Math.max(maxY, point.y + base.r);
+      }
+      const rect = this.canvas.getBoundingClientRect();
+      const scale = rect.width > 0 ? this.canvas.width / rect.width : 1;
+      const padding = Math.max(0, Number(this.viewportProfile.padding) || 0) * scale;
+      const probe = this.viewportFactory({
+        viewport: { width: this.canvas.width, height: this.canvas.height },
+        worldBounds: { minX, minY, maxX, maxY },
+        padding,
+        minZoom: 0.0001,
+        maxZoom: 10_000
+      });
+      const fitZoom = probe.getSnapshot().zoom;
+      this.viewportController = this.viewportFactory({
+        viewport: { width: this.canvas.width, height: this.canvas.height },
+        worldBounds: { minX, minY, maxX, maxY },
+        padding,
+        minZoom: fitZoom * (Number(this.viewportProfile.minZoom) || 0.5),
+        maxZoom: fitZoom * (Number(this.viewportProfile.maxZoom) || 4),
+        initialZoom: fitZoom * (Number(this.viewportProfile.initialZoom) || 1)
+      });
+      this.viewportSignature = signature;
+      this.tileLayerDirtyAll = true;
+    }
+    const view = this.viewportController.getSnapshot();
+    return { ...base, worldR: base.r, r: base.r * view.zoom, viewportTransform: this.viewportController };
   }
 
   center(coord, geom) {
+    const radius = geom.worldR ?? geom.r;
+    let point;
     if (geom.grid.kind === "square") {
-      return { x: geom.ox + coord.q * geom.r * 2, y: geom.oy + coord.r * geom.r * 2 };
+      point = { x: geom.ox + coord.q * radius * 2, y: geom.oy + coord.r * radius * 2 };
+    } else {
+      point = {
+        x: geom.ox + coord.q * radius * 1.48 + (coord.r % 2) * radius * 0.74,
+        y: geom.oy + coord.r * radius * 1.28
+      };
     }
-    return {
-      x: geom.ox + coord.q * geom.r * 1.48 + (coord.r % 2) * geom.r * 0.74,
-      y: geom.oy + coord.r * geom.r * 1.28
-    };
+    return geom.viewportTransform ? geom.viewportTransform.worldToScreen(point) : point;
   }
 
   drawTower(tower, snapshot, geom) {
@@ -1235,7 +1329,8 @@ export class TowerForgeCanvasRenderer {
     const binding = this.content.visuals?.bindings?.tileSets?.maps?.[map.id]
       ?? this.content.visuals?.bindings?.tileSets?.grids?.[geom.grid.kind]
       ?? "fallback";
-    const cacheKey = `${map.id}|${geom.grid.kind}|${tiles.length}|${this.canvas.width}x${this.canvas.height}|${binding}|${this.content.visuals?.tileSeed ?? 0}`;
+    const viewKey = geom.viewportTransform ? JSON.stringify(geom.viewportTransform.getSnapshot()) : "legacy";
+    const cacheKey = `${map.id}|${geom.grid.kind}|${tiles.length}|${this.canvas.width}x${this.canvas.height}|${viewKey}|${binding}|${this.content.visuals?.tileSeed ?? 0}`;
     let fullRedraw = this.tileLayerDirtyAll || this.tileLayerKey !== cacheKey || this.tileLayer.width !== this.canvas.width || this.tileLayer.height !== this.canvas.height;
     if (this.tileLayer.width !== this.canvas.width) this.tileLayer.width = this.canvas.width;
     if (this.tileLayer.height !== this.canvas.height) this.tileLayer.height = this.canvas.height;

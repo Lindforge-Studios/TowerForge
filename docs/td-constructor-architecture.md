@@ -35,6 +35,8 @@ The current "full constructor" means:
 - Build deterministic local/self-hosted co-op or asymmetric protocol clients when a mission opts in.
 - Use AI Chat or external MCP agents to inspect, simulate, validate, patch, build, and package local projects through validation-gated tools.
 - Build a playable static web bundle.
+- Build an explicit large-screen desktop web target with shared pan/zoom, compact player controls,
+  IndexedDB session recovery, localized PWA metadata and accessible keyboard/pointer/touch input.
 - Prepare a deterministic publish candidate, choose a remix/license policy, and explicitly publish
   through an injected provider adapter without storing provider credentials in the project.
 - Export or import a permitted deterministic public remix source pack with preserved provenance.
@@ -80,7 +82,8 @@ packages/renderer
   map definitions, and optional visuals-v3 Procedural Juice data
 
 packages/player-runtime
-  renderer-neutral browser profile persistence through injected storage and engine codec
+  renderer-neutral profile/session persistence, player actions, preferences and localization
+  through injected storage and engine codecs
 
 examples/starter.tdproj
   reference project data

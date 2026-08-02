@@ -38,6 +38,11 @@ import {
 import { compileMapSources, writeCompiledMaps, writeMapSource } from "../cli/lib/map-compiler.mjs";
 import { normalizeVisuals } from "../cli/lib/project-schema.mjs";
 import { previewTiledTilesetImport } from "../cli/lib/tileset-importer.mjs";
+import {
+  applyPlayerTarget,
+  previewPlayerTarget,
+  readPlayerTargets
+} from "../cli/lib/player-target-authoring.mjs";
 import { agentClientConfigs, writeProjectClientConfig } from "../cli/lib/agent-connect.mjs";
 import { writeRunTrace } from "../cli/lib/trace.mjs";
 import { contentRecipeContext, listContentRecipes, materializeContentRecipe } from "../cli/lib/content-recipes.mjs";
@@ -1217,6 +1222,46 @@ const server = http.createServer(async (req, res) => {
       return jsonResp(res, 200, loadProject());
     } catch (e) {
       return jsonResp(res, 500, { error: e.message });
+    }
+  }
+
+  // Large-screen player target authoring is intentionally target-local. Preview is inert;
+  // apply owns the project-v5/build-targets-v2 promotion and its backup/rollback transaction.
+  if (req.method === "GET" && pathname === "/api/player-targets") {
+    try {
+      return jsonResp(res, 200, readPlayerTargets(PROJECT_DIR));
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status, failure.response);
+    }
+  }
+
+  if (req.method === "POST" && ["/api/player-targets/preview", "/api/player-targets/apply"].includes(pathname)) {
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { code: "malformed_request", error: "Invalid JSON body" }); }
+    const applying = pathname.endsWith("/apply");
+    const allowed = applying ? new Set(["targetId", "target", "ifRevision"]) : new Set(["targetId", "target"]);
+    if (!body || typeof body !== "object" || Array.isArray(body)
+      || Object.keys(body).some(key => !allowed.has(key))
+      || typeof body.targetId !== "string"
+      || !body.target || typeof body.target !== "object" || Array.isArray(body.target)) {
+      return jsonResp(res, 400, { code: "invalid_request", error: "Player target request is malformed or contains unsupported fields." });
+    }
+    if (applying && (typeof body.ifRevision !== "string" || !body.ifRevision)) {
+      return jsonResp(res, 428, { code: "revision_required", error: "Player target apply requires ifRevision returned by preview." });
+    }
+    try {
+      const result = applying
+        ? applyPlayerTarget(PROJECT_DIR, body.targetId, body.target, { ifRevision: body.ifRevision })
+        : previewPlayerTarget(PROJECT_DIR, body.targetId, body.target);
+      const status = result.conflict ? 409 : result.ok ? 200 : 422;
+      if (applying && result.ok) writeRunTrace(PROJECT_DIR, { source: "studio", action: "player-target:apply", status: "ok", targetId: body.targetId });
+      return jsonResp(res, status, { ...result, ...(applying && result.ok ? { newHash: projectHash() } : {}) });
+    } catch (error) {
+      if (applying) writeRunTrace(PROJECT_DIR, { source: "studio", action: "player-target:apply", status: "error", targetId: body.targetId, error: String(error?.code ?? "apply_failed").slice(0, 128) });
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
     }
   }
 

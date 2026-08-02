@@ -5,7 +5,7 @@ import {
 } from "./map-compiler.mjs";
 import { validateDistributionConfigV1 } from "../../distribution/src/index.mjs";
 
-export const PROJECT_SCHEMA_VERSION = 4;
+export const PROJECT_SCHEMA_VERSION = 5;
 export const MECHANICS_PROJECT_SCHEMA_VERSION = 3;
 export const ELEVATION_PROJECT_SCHEMA_VERSION = 3;
 export const DISTRIBUTION_PROJECT_SCHEMA_VERSION = 4;
@@ -150,7 +150,7 @@ export function validateProjectSchemas(files) {
   validateMechanics(files, err, warn);
   validateDistribution(files, err);
 
-  if (![ELEVATION_PROJECT_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION].includes(files.manifest?.schemaVersion) && hasAuthoredElevation(files)) {
+  if (![ELEVATION_PROJECT_SCHEMA_VERSION, 4, PROJECT_SCHEMA_VERSION].includes(files.manifest?.schemaVersion) && hasAuthoredElevation(files)) {
     err(
       "project",
       "project.json",
@@ -168,6 +168,14 @@ export function validateProjectSchemas(files) {
   validateVisuals(files.visuals, err, warn, files.balance, files.maps, files.mechanics);
   validateNarrative(files, err, warn);
   validateBuildTargets(files.buildTargets, err);
+  if ((files.buildTargets?.schemaVersion ?? 1) === 2 && files.manifest?.schemaVersion !== PROJECT_SCHEMA_VERSION) {
+    err(
+      "project",
+      "project.json",
+      "schemaVersion",
+      `Projects that author build-targets.json v2 must use project schema v${PROJECT_SCHEMA_VERSION}.`
+    );
+  }
 
   return {
     ok: issues.filter((i) => i.severity === "error").length === 0,
@@ -181,7 +189,7 @@ function validateMechanics(files, err, warn) {
 
   if (authored) {
     const manifestVersion = files.manifest?.schemaVersion;
-    if (![MECHANICS_PROJECT_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION].includes(manifestVersion)) {
+    if (![MECHANICS_PROJECT_SCHEMA_VERSION, 4, PROJECT_SCHEMA_VERSION].includes(manifestVersion)) {
       err(
         "project",
         "project.json",
@@ -266,12 +274,12 @@ function validateMechanics(files, err, warn) {
 function validateDistribution(files, err) {
   const authored = files.distributionAuthored ?? files.distribution !== undefined;
   if (!authored) return;
-  if (files.manifest?.schemaVersion !== DISTRIBUTION_PROJECT_SCHEMA_VERSION) {
+  if (![DISTRIBUTION_PROJECT_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION].includes(files.manifest?.schemaVersion)) {
     err(
       "project",
       "project.json",
       "schemaVersion",
-      `Projects that author content/distribution.json must use project schema v${DISTRIBUTION_PROJECT_SCHEMA_VERSION}.`
+      `Projects that author content/distribution.json must use project schema v${DISTRIBUTION_PROJECT_SCHEMA_VERSION} or v${PROJECT_SCHEMA_VERSION}.`
     );
   }
   try {
@@ -1074,6 +1082,66 @@ function validateBuildTargets(buildTargets, err) {
   if (!buildTargets || typeof buildTargets !== "object") {
     err("buildTargets", "build-targets.json", "root", "build-targets.json must be an object.");
     return;
+  }
+  const schemaVersion = buildTargets.schemaVersion ?? 1;
+  if (!Number.isSafeInteger(schemaVersion) || schemaVersion < 1 || schemaVersion > 2) {
+    err("buildTargets", "build-targets.json", "schemaVersion", schemaVersion > 2
+      ? `Build targets schemaVersion ${schemaVersion} is newer than this runtime supports (2).`
+      : "build-targets.json schemaVersion must be 1 or 2.");
+    return;
+  }
+  if (schemaVersion === 2) {
+    const rootKeys = new Set(["schemaVersion", "defaults", "targets"]);
+    for (const key of Object.keys(buildTargets)) if (!rootKeys.has(key)) {
+      err("buildTargets", "build-targets.json", key, `Unknown build-targets.json field "${key}".`);
+    }
+    const targetKeys = new Set([
+      "id", "type", "platform", "renderer", "webDir", "outputDir", "market", "storeChannel",
+      "appId", "appName", "label", "title", "appTitle", "backgroundColor", "appVersion", "manifest",
+      "formFactor", "viewport", "quality", "locale", "inputProfile"
+    ]);
+    for (const [targetId, target] of Object.entries(buildTargets.targets ?? {})) {
+      if (!isRecord(target)) {
+        err("buildTargets", targetId, `targets.${targetId}`, "Build target must be an object.");
+        continue;
+      }
+      for (const key of Object.keys(target)) if (!targetKeys.has(key)) {
+        err("buildTargets", targetId, `targets.${targetId}.${key}`, `Unknown build target field "${key}".`);
+      }
+      if (!["legacy", "desktop", "responsive"].includes(target.formFactor)) {
+        err("buildTargets", targetId, `targets.${targetId}.formFactor`, "formFactor must be legacy, desktop, or responsive.");
+      }
+      if (!["auto", "low", "balanced", "high"].includes(target.quality)) {
+        err("buildTargets", targetId, `targets.${targetId}.quality`, "quality must be auto, low, balanced, or high.");
+      }
+      if (typeof target.locale !== "string" || !target.locale.trim() || target.locale.length > 64) {
+        err("buildTargets", targetId, `targets.${targetId}.locale`, "locale must be a non-empty string.");
+      }
+      if (!["keyboard_mouse", "touch", "hybrid"].includes(target.inputProfile)) {
+        err("buildTargets", targetId, `targets.${targetId}.inputProfile`, "inputProfile must be keyboard_mouse, touch, or hybrid.");
+      }
+      const viewportPath = `targets.${targetId}.viewport`;
+      if (!isRecord(target.viewport)) {
+        err("buildTargets", targetId, viewportPath, "viewport must be an object.");
+      } else {
+        const viewportKeys = new Set(["fit", "padding", "minZoom", "maxZoom", "initialZoom"]);
+        for (const key of Object.keys(target.viewport)) if (!viewportKeys.has(key)) {
+          err("buildTargets", targetId, `${viewportPath}.${key}`, `Unknown viewport field "${key}".`);
+        }
+        if (target.viewport.fit !== "contain") err("buildTargets", targetId, `${viewportPath}.fit`, "viewport.fit must be contain.");
+        if (!Number.isFinite(target.viewport.padding) || target.viewport.padding < 0 || target.viewport.padding > 512) {
+          err("buildTargets", targetId, `${viewportPath}.padding`, "viewport.padding must be a finite number between 0 and 512.");
+        }
+        const minZoom = target.viewport.minZoom;
+        const maxZoom = target.viewport.maxZoom;
+        if (!Number.isFinite(minZoom) || minZoom <= 0 || !Number.isFinite(maxZoom) || maxZoom <= 0 || minZoom > maxZoom) {
+          err("buildTargets", targetId, viewportPath, "viewport minZoom/maxZoom must form a positive ordered range.");
+        }
+        if (!Number.isFinite(target.viewport.initialZoom) || target.viewport.initialZoom < minZoom || target.viewport.initialZoom > maxZoom) {
+          err("buildTargets", targetId, `${viewportPath}.initialZoom`, "viewport.initialZoom must be inside minZoom/maxZoom.");
+        }
+      }
+    }
   }
   for (const [targetId, target] of Object.entries(buildTargets.targets ?? {})) {
     if (target.platform !== "web") continue;

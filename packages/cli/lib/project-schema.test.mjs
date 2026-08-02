@@ -22,8 +22,8 @@ function mechanicsSchemaFiles(schemaVersion, mechanics) {
 }
 
 describe("project schema", () => {
-  it("supports project schema v4 while keeping v1/v2 projects without mechanics valid", () => {
-    expect(PROJECT_SCHEMA_VERSION).toBe(4);
+  it("supports project schema v5 while keeping v1/v2 projects without mechanics valid", () => {
+    expect(PROJECT_SCHEMA_VERSION).toBe(5);
 
     for (const schemaVersion of [1, 2]) {
       const result = validateProjectSchemas(mechanicsSchemaFiles(schemaVersion, undefined));

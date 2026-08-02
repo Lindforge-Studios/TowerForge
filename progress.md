@@ -2247,6 +2247,21 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   and v0.6.1 as the replacement candidate. This docs-only repair invalidates both prior sign-offs;
   the amended exact commit requires a fresh verification pair and CI before merge.
 
+## 2026-08-02 — R18 large-screen player foundation RED
+
+- Contract freeze adds tests only for four public boundaries: shared `ViewportTransformV1`, the
+  generated-player action/preferences/session runtime, project v5 plus BuildTargets v2 desktop
+  form-factor validation, and opt-in desktop player packaging. No production implementation is
+  included in this RED slice; the schema-v1 starter remains the required compatibility path.
+- RED command:
+  `npx vitest run packages/renderer/src/viewport-transform.contract.test.mjs packages/player-runtime/src/r18-player-runtime.contract.test.mjs packages/cli/lib/r18-build-targets.contract.test.mjs packages/cli/build.r18-large-screen-package.contract.test.mjs`.
+- Expected result: 4/4 files failed, with 16 failed and 3 passing assertions. The renderer import
+  reports missing `viewport-transform.mjs`; the public player-runtime exports are absent; the CLI
+  still reports project schema v5 as newer than supported v4 and does not validate closed
+  BuildTargets v2 fields; the opt-in desktop build therefore stops before emitting its desktop
+  shell/PWA/runtime markers. The untouched legacy build assertion remains green and ships none of
+  the R18-only marker/modules.
+
 ## 2026-08-02 — v0.6.1 published and independently verified
 
 - PR #32 merged as `db1dd07`; its tree is byte-identical to twice-reviewed exact head `6b65c21`.
@@ -2263,3 +2278,108 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - Public Codex plugin mirror sync `30705822141` completed SUCCESS. Its v0.6.1 manifest reports
   TowerForge/plugin/MCP `0.6.1` and exact source commit `db1dd07`, and the mirror annotated tag was
   created without moving an existing tag.
+
+## 2026-08-02 — R18.3–R18.4 generated desktop carrier RED
+
+- Contract/Test Designer added only `packages/cli/build.r18-session-pwa.contract.test.mjs`; no
+  production source was changed by this slice. The bounded contract covers the opt-in desktop
+  carrier's IndexedDB-backed two-slot session storage, Continue and autosave wiring, localStorage-
+  only preferences, digest-before-restore behavior, corrupt/future fail-closed results, localized
+  PWA metadata, favicon/localized strings, accessible 44 px actions, reduced motion, quality
+  settings, and the untouched schema-v1 legacy output path.
+- Exact RED command:
+  `npm run test -- --run packages/cli/build.r18-session-pwa.contract.test.mjs`.
+  Result: expected failure, 1 file; 3 failed and 1 passed of 4 tests. The desktop build does not yet
+  emit `player-runtime/indexeddb-session-storage.mjs`; the rotating store restores a mismatched
+  `contentDigest` instead of returning `session_content_mismatch`; and the desktop web manifest
+  lacks the authored `lang` plus the remaining extended PWA/accessibility metadata. The legacy
+  target assertion is already green and proves it imports/emits none of these R18-only surfaces.
+
+## 2026-08-02 — R18 generated desktop player acceptance RED
+
+- Contract/Test Designer added only `tests/e2e/r18-large-screen-player.spec.mjs`; no production
+  source was changed by this slice. The bounded Playwright matrix covers Canvas/Phaser and
+  hex/square at 1024×720, 1920×1080, and 3440×1440, including wheel zoom, reset, middle-button
+  pan, input gating, pointer hit/placement after camera transforms, tower upgrade, rotating
+  Continue save/restore with checkpoint/content digests, 44 px actions, localized settings,
+  ARIA dialog semantics, preference persistence, and focus return.
+- Exact RED command:
+  `npx playwright test tests/e2e/r18-large-screen-player.spec.mjs --workers=1`.
+  Result: expected failure, 4/4 tests failed. In every Canvas/Phaser × hex/square case, pressing
+  Escape while the desktop quality `select` owns focus leaves `#desktop-settings-dialog` visible
+  instead of closing the modal and returning focus to `#desktop-settings`. The remaining tested
+  viewport, camera, pointer, placement, action, and shell prerequisites reached this shared
+  accessibility boundary without browser errors.
+
+## 2026-08-02 — R18.1 shared viewport integration RED
+
+- Contract/Test Designer added only
+  `packages/renderer/src/r18-canvas-viewport-integration.contract.test.mjs` and
+  `packages/cli/build.r18-viewport-integration.contract.test.mjs`; no production source was changed
+  by this slice. The focused contract requires one injected shared transform for Canvas draw and
+  inverse pointer hit-testing, delegates pan/zoom/reset to that transform, and requires an opt-in
+  generated Phaser desktop player to import the same viewport runtime while gating camera gestures
+  away from gameplay actions and editable controls. The schema-v1 legacy player remains the
+  compatibility control and must contain none of the R18-only runtime or controls.
+- Exact RED command:
+  `npx vitest run packages/renderer/src/r18-canvas-viewport-integration.contract.test.mjs packages/cli/build.r18-viewport-integration.contract.test.mjs --reporter=dot`.
+  Result: expected failure, 2 files; 2 failed and 3 passed of 5 tests. Canvas already projects draw
+  coordinates through the injected transform and exposes its camera delegates, but `pickTile` does
+  not call `screenToWorld`, so transformed pointer coordinates cannot be resolved consistently.
+  The generated desktop Phaser player does not yet import `createViewportTransformV1` or expose the
+  gated pan/zoom/reset integration. Both legacy assertions are green: Canvas without the option
+  preserves exact legacy coordinates and the schema-v1 player emits no viewport-only module or
+  camera-control symbols.
+
+## 2026-08-02 — R18 authoring surfaces RED
+
+- The independent Contract/Test Designer added only
+  `packages/mcp/r18-player-targets-authoring.contract.test.mjs` and
+  `packages/studio/r18-player-targets-surface.contract.test.mjs`; no production source was changed
+  by this slice. The MCP contract freezes the exact target-local workflow
+  `describe_schema(playerTargets) -> read_player_targets ->
+  get_player_target_recipe(desktop_large_screen) -> preview_player_target ->
+  apply_player_target(ifRevision) -> validate_project`. Read, recipe and preview are inert; apply
+  owns the atomic project-v5/BuildTargets-v2 promotion, validation, backup and rollback while
+  preserving every existing legacy target byte-for-byte.
+- The Studio source/API contract retains ordinary `Add target` as the schema-v1 legacy action and
+  requires a separate explicit Large-screen desktop preset, all closed v2 target fields, and a
+  narrow preview/apply route using the same guarded transaction. Agent instructions must teach the
+  exact workflow and explain that a desktop target never changes another target's template path.
+- Exact RED command:
+  `npx vitest run packages/mcp/r18-player-targets-authoring.contract.test.mjs packages/studio/r18-player-targets-surface.contract.test.mjs --reporter=dot`.
+  Result: expected failure, 2 files and 7/7 tests failed. `playerTargets` is not a recognized schema
+  domain; all four narrow tools and the `desktop_large_screen` recipe are absent; agent guide v50
+  has no R18 workflow; and Studio has neither the explicit desktop preset nor its narrow API or v2
+  editors. These failures occurred after the legacy Add-target control was confirmed present.
+
+## 2026-08-02 — R18 focused GREEN before freeze
+
+- Implemented the explicit project-v5/BuildTargets-v2 desktop carrier without changing schema-v1
+  targets: one pure shared viewport transform now owns contain/center, bounded pan/zoom and inverse
+  hit testing for Canvas and Phaser; the DOM shell owns player actions, keyboard/pointer controls,
+  preferences, localized settings/results and accessibility.
+- Added renderer-neutral `PlayerActionDescriptorV1`, `PlayerPreferencesV1` and
+  `PlayerSessionSaveV1`, plus an injected IndexedDB adapter and rotating two-slot store. Restore
+  rejects content mismatch before simulation construction; generated desktop players autosave at
+  command/wave/lifecycle boundaries while localStorage remains preferences-only.
+- Added the exact guarded authoring flow
+  `describe_schema(playerTargets) -> read_player_targets ->
+  get_player_target_recipe(desktop_large_screen) -> preview_player_target ->
+  apply_player_target(ifRevision) -> validate_project`, shared by MCP and Studio. Apply preserves
+  legacy targets, promotes both schemas atomically, validates, backs up and rolls back.
+- Focused GREEN command:
+  `npx vitest run packages/renderer/src/viewport-transform.contract.test.mjs packages/renderer/src/r18-canvas-viewport-integration.contract.test.mjs packages/player-runtime/src/player-actions.contract.test.mjs packages/player-runtime/src/player-preferences.contract.test.mjs packages/player-runtime/src/player-session-store.contract.test.mjs packages/player-runtime/src/r18-player-runtime.contract.test.mjs packages/cli/lib/r18-build-targets.contract.test.mjs packages/cli/build.r18-large-screen-package.contract.test.mjs packages/cli/build.r18-viewport-integration.contract.test.mjs packages/cli/build.r18-session-pwa.contract.test.mjs packages/mcp/r18-player-targets-authoring.contract.test.mjs packages/studio/r18-player-targets-surface.contract.test.mjs --reporter=dot`.
+  Result: 12 files, 59/59 tests passed.
+- The acceptance RED localized Escape handling inside the settings form. After moving the modal
+  close guard ahead of the editable-control camera guard, exact Playwright command
+  `npx playwright test tests/e2e/r18-large-screen-player.spec.mjs --workers=1` passed 6/6 for
+  Canvas/Phaser × hex/square at 1024×720, 1280×720, 1440×900, 1920×1080, 2560×1440 and
+  3440×1440 with DPR 1/2, including transformed pointer/touch
+  placement, pan/zoom/reset, input gating, upgrade, IndexedDB Continue digest restore, preferences,
+  ARIA, focus return and reduced motion.
+- Pre-freeze gates are GREEN: `npm run typecheck`, `npm run build:engine`, `npm run test`,
+  `npm run validate`, `npm run sim tutorial_01 60`, `npm run build`, full Playwright 151/151 before
+  the test-only viewport expansion, plugin build/validate/smoke, mobile and desktop package
+  generation, and Tauri `cargo test` 9/9. The exact candidate still requires the final full E2E
+  rerun and both independent sign-offs after commit freeze.
