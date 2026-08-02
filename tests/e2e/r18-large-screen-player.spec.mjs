@@ -87,7 +87,10 @@ for (const entry of cases) {
     });
 
     test(`${entry.renderer}/${entry.grid} desktop target works at ${entry.width}x${entry.height}`, async ({ page }) => {
-      test.setTimeout(120_000);
+      // Linux/SwiftShader needs more than the ordinary case budget to render and dispose the
+      // generated ultrawide surface after the preceding full-suite GPU matrix. The exception stays
+      // bounded and applies only to this explicit 3440px Phaser acceptance case.
+      test.setTimeout(entry.renderer === "phaser" && entry.width >= 3440 ? 180_000 : 120_000);
       const browserErrors = [];
       let graphicsTeardown = null;
       page.on("pageerror", (error) => browserErrors.push(error.message));
@@ -162,19 +165,21 @@ for (const entry of cases) {
       if (entry.session) await verifyContinueRestore(page, entry);
         expect(browserErrors).toEqual([]);
       } finally {
+        const pageWasOpen = !page.isClosed();
         graphicsTeardown = await releaseGeneratedGraphics(page, entry.renderer);
-        if (entry.renderer === "phaser" && !page.isClosed()) {
-          // Detach the already-disposed WebGL document before asking Playwright to close the
-          // context. Linux/SwiftShader can otherwise leave trace finalization waiting on a stale
-          // SharedImage mailbox even though Phaser and the WebGL context are already gone.
-          await page.goto("about:blank", { waitUntil: "commit" });
-        }
-        if (entry.renderer === "phaser") {
+        if (entry.renderer === "phaser" && pageWasOpen) {
           expect(graphicsTeardown).toMatchObject({
             disposeHookAvailable: true,
             canvasConnected: false,
             contextLost: true
           });
+        }
+        if (entry.renderer === "phaser" && !page.isClosed()) {
+          // Detach the already-disposed WebGL document before asking Playwright to close the
+          // context. Linux/SwiftShader can otherwise leave trace finalization waiting on a stale
+          // SharedImage mailbox even though Phaser and the WebGL context are already gone.
+          await page.goto("about:blank", { waitUntil: "commit" });
+          await page.close({ runBeforeUnload: false });
         }
       }
     });

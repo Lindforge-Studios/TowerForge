@@ -2658,3 +2658,16 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   checks remain active; no close is swallowed or raced and production code is unchanged. Expected
   GREEN is the exact focused browser command followed by a fresh GitHub full gate on the new frozen
   commit.
+
+## 2026-08-02 — R18 ultrawide full-suite budget RED
+
+- GitHub CI run `30740569700` proved that fixture-owned context teardown alone was insufficient:
+  155/156 scenarios passed, but the last 3440×1440 Phaser case exhausted its strict 120-second
+  test budget before `releaseGeneratedGraphics` could return on the already-loaded shared Linux
+  worker. The resulting null teardown matcher was a secondary timeout symptom; no product
+  assertion failed.
+- The bounded harness contract now gives only that named ultrawide Phaser case 180 seconds. It
+  still requires the generated disposer to return, the canvas to detach and the WebGL context to
+  report lost, then explicitly closes the already-blank page before fixture teardown. The other
+  five cases remain at 120 seconds, and neither production code nor global Playwright limits are
+  changed.
