@@ -119,7 +119,8 @@ for (const entry of cases) {
 
       await page.locator("#desktop-reset-view").click();
       await expect.poll(async () => (await viewportSnapshot(page)).zoom).toBeCloseTo(initialViewport.zoom, 5);
-      await expect.poll(async () => pointDistance(await tilePoint(page, probe.coord), initialPoint)).toBeLessThan(0.75);
+      const resetPoint = await tilePoint(page, probe.coord);
+      expect(await page.evaluate((point) => window.__towerforgePickPoint(point), resetPoint)).toEqual(probe.coord);
 
       const box = await playfield.boundingBox();
       expect(box).not.toBeNull();

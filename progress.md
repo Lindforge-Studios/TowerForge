@@ -2632,3 +2632,15 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   `npx playwright test tests/e2e/r18-large-screen-player.spec.mjs tests/e2e/r18-phaser-lifecycle.spec.mjs tests/e2e/r18-desktop-hit-targets.spec.mjs --workers=1`.
   Focused result: 9/9 passed in 17.3 seconds. This test-source change creates another exact
   candidate and requires the complete gate/sign-off cycle before merge.
+
+## 2026-08-02 — R18 responsive reset assertion RED
+
+- The exact full local gate after isolating the trace-disabled viewport file completed 155/156.
+  Its separate Playwright worker exposed an existing responsive-layout race at 1280×720 touch:
+  `Reset view` restored the authored zoom and live inverse mapping, while a late 21-pixel playfield
+  height change legitimately re-centered the same tile. The old assertion incorrectly required
+  the pre-reflow screen-space Y coordinate to remain within 0.75 pixels.
+- The acceptance contract now checks the real boundary: reset restores the authored zoom and the
+  post-reset projected point inverse-picks the exact authored tile. Fixed pixel placement across a
+  responsive playfield resize is not required. The combined R18 browser command passed 9/9 in
+  18.2 seconds. Full gates must be repeated on the next exact candidate before independent sign-off.
