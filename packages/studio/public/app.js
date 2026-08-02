@@ -1,6 +1,7 @@
 import { createCanvasRenderer, projectElevationCues } from "/renderer/index.mjs";
 import { AUDIO_EVENTS } from "/renderer/audio.mjs";
 import { LANGUAGES, getLanguage, initI18n, setLanguage } from "/i18n.js";
+import { allocatePlayerTargetId } from "/player-target-id.mjs";
 import { layoutTowerScriptGraph } from "/towerscript-layout.mjs";
 
 initI18n();
@@ -13082,16 +13083,17 @@ function renderBuildTargetsTab() {
   const addDesktopBtn = $("btn-add-desktop-target");
   if (addDesktopBtn) {
     addDesktopBtn.onclick = async () => {
-      const targetId = "desktop-large";
-      const target = {
-        id: targetId, platform: "web", renderer: "canvas", webDir: "dist-desktop",
-        market: "pwa", storeChannel: "pwa", appId: "com.example.game", appName: "My Game",
-        appTitle: "My Game", backgroundColor: "#111111", appVersion: "0.1.0",
-        formFactor: "desktop", viewport: { fit: "contain", padding: 32, minZoom: 0.5, maxZoom: 3, initialZoom: 1 },
-        quality: "balanced", locale: "auto", inputProfile: "keyboard_mouse"
-      };
       try {
         const read = await apiGet("/api/player-targets");
+        const targetId = allocatePlayerTargetId(read.targets);
+        const targetSuffix = targetId.slice("desktop-large".length);
+        const target = {
+          id: targetId, platform: "web", renderer: "canvas", webDir: `dist-desktop${targetSuffix}`,
+          market: "pwa", storeChannel: "pwa", appId: "com.example.game", appName: "My Game",
+          appTitle: "My Game", backgroundColor: "#111111", appVersion: "0.1.0",
+          formFactor: "desktop", viewport: { fit: "contain", padding: 32, minZoom: 0.5, maxZoom: 3, initialZoom: 1 },
+          quality: "balanced", locale: "auto", inputProfile: "keyboard_mouse"
+        };
         const preview = await apiPost("/api/player-targets/preview", { targetId, target });
         if (!preview.ok) throw new Error("Desktop target does not pass validation.");
         const applied = await apiPost("/api/player-targets/apply", { targetId, target, ifRevision: read.revision });

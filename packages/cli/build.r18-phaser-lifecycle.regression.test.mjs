@@ -41,7 +41,11 @@ describe("R18 generated Phaser lifecycle contract (RED)", () => {
 
   it("bounds desktop Phaser backbuffer and frame scheduling through the selected quality preset", () => {
     expect(desktopPlayer).toMatch(/let\s+phaserPresentationQuality\s*=/);
-    expect(desktopPlayer).toMatch(/resolution\s*:\s*phaserPresentationQuality\.resolution/);
+    expect(desktopPlayer).toMatch(/mode\s*:\s*Phaser\.Scale\.NONE/);
+    expect(desktopPlayer).toMatch(/scale\.resize\(surface\.backingWidth,\s*surface\.backingHeight\)/);
+    expect(desktopPlayer).toMatch(/ResizeObserver/);
+    expect(desktopPlayer).toMatch(/phaserPresentationResizeObserver\?\.disconnect\(\)/);
+    expect(desktopPlayer).not.toMatch(/resolution\s*:\s*phaserPresentationQuality\.resolution/);
     expect(desktopPlayer).toMatch(/target\s*:\s*phaserPresentationQuality\.targetFps/);
     expect(desktopPlayer).toMatch(/limit\s*:\s*phaserPresentationQuality\.targetFps/);
     expect(desktopPlayer).toMatch(/forceSetTimeOut\s*:\s*true/);

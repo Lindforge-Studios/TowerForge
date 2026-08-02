@@ -17,6 +17,8 @@ whose `formFactor` is `desktop` or `responsive`. Schema-v1 targets retain their 
 bundle path. The guarded authoring transaction is target-local and uses
 `read -> recipe -> preview -> apply(ifRevision)`; apply alone promotes both schemas, preserves other
 targets, validates the complete project, writes backups and rolls back both files together.
+Studio allocates the first free bounded `desktop-large[-N]` identity and a matching output directory;
+the desktop recipe never silently upserts or shares generated output with an existing target.
 
 `packages/renderer/src/viewport-transform.mjs` owns pure contain/center, bounded pan/zoom and inverse
 hit-test mathematics. Canvas and Phaser consume the same transform; neither changes engine
@@ -36,7 +38,13 @@ renderers, consumes bounded render deltas through fixed 60 Hz wall-clock steps a
 step to respect the engine's `0.2` tick-unit limit. All engine events from those substeps are
 retained until the rendered frame. Replacing, restoring or explicitly resetting a game resets the
 clock. A saved `PlayerPreferencesV1.quality` is applied at boot and through a live renderer adapter;
-legacy targets neither import nor package the clock or quality-profile modules.
+the Phaser adapter updates both the TimeStep limits and the already-running timeout driver's delay.
+Because Phaser 3.80 does not consume a top-level `resolution` setting and `Scale.RESIZE` always
+restores the full parent-sized drawing buffer, the large-screen Phaser carrier uses its supported
+`Scale.NONE` resize path: the logical backbuffer is bounded by the quality pixel budget while CSS
+keeps the full playfield size. ScaleManager, cameras and input share the same logical dimensions,
+and a scoped ResizeObserver refreshes them together. Legacy targets neither import nor package the
+clock, quality-profile or large-screen sizing lifecycle.
 
 The generated desktop shell remains DOM-owned and dispatches actions through one allowlisted action
 registry. It provides status/actions, settings/result dialogs, keyboard shortcuts and autosave at

@@ -228,7 +228,7 @@ async function verifySettingsAndInputGate(page) {
   await page.waitForTimeout(120);
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const before = await viewportSnapshot(page);
-  await page.locator("#desktop-quality").focus();
+  await page.locator("#desktop-ui-scale").focus();
   await page.keyboard.press("KeyA");
   await dispatchWheelToPlayfield(page, probe.point);
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -264,7 +264,18 @@ async function verifyAccessibleDesktopShell(page, entry) {
     targetFps: 24
   });
   if (entry.renderer === "canvas") expect(appliedQuality.effectiveMaxDevicePixelRatio).toBe(1);
-  else expect(appliedQuality.effectiveTargetFps).toBe(24);
+  else {
+    expect(appliedQuality.effectiveTargetFps).toBe(24);
+    expect(appliedQuality.effectiveSchedulerDelay).toBeCloseTo(1000 / 24, 5);
+    const backbuffer = await readPhaserBackbuffer(page);
+    expect(backbuffer.drawingBufferPixels).toBeLessThanOrEqual(appliedQuality.pixelBudget);
+    expect(backbuffer.drawingBufferWidth).toBe(Math.floor(Math.floor(backbuffer.cssWidth) * appliedQuality.resolution));
+    expect(backbuffer.drawingBufferHeight).toBe(Math.floor(Math.floor(backbuffer.cssHeight) * appliedQuality.resolution));
+    expect(backbuffer.cssWidth).toBeGreaterThan(backbuffer.drawingBufferWidth);
+    expect(backbuffer.cssHeight).toBeGreaterThan(backbuffer.drawingBufferHeight);
+    expect(backbuffer.cssWidth).toBeCloseTo(backbuffer.playfieldCssWidth, 5);
+    expect(backbuffer.cssHeight).toBeCloseTo(backbuffer.playfieldCssHeight, 5);
+  }
   const stored = await page.evaluate(() => Object.keys(localStorage)
     .filter((key) => key.startsWith("towerforge:preferences:"))
     .map((key) => JSON.parse(localStorage.getItem(key))));
@@ -272,6 +283,40 @@ async function verifyAccessibleDesktopShell(page, entry) {
   expect(stored[0]).toMatchObject({ schemaVersion: 1, quality: "low" });
   await page.locator("#desktop-settings-close").click();
   await expect(page.locator("#desktop-settings")).toBeFocused();
+  if (entry.renderer === "phaser") {
+    const probe = await findVisibleBuildable(page);
+    expect(await page.evaluate((point) => window.__towerforgePickPoint(point), probe.point)).toEqual(probe.coord);
+    await page.mouse.click(probe.point.x, probe.point.y);
+    expect(await page.evaluate(() => window.__towerforgeLastPointerCoord)).toEqual(probe.coord);
+
+    await page.reload();
+    await page.waitForFunction(() => window.__towerforgeBootOk === true);
+    await expect(page.locator("body")).toHaveAttribute("data-quality", "low");
+    await expect.poll(async () => (await readPhaserBackbuffer(page)).drawingBufferPixels).toBeLessThanOrEqual(appliedQuality.pixelBudget);
+
+    await page.setViewportSize({ width: entry.width - 240, height: entry.height });
+    await expect.poll(async () => (await readPhaserBackbuffer(page)).drawingBufferPixels).toBeLessThanOrEqual(appliedQuality.pixelBudget);
+  }
+}
+
+async function readPhaserBackbuffer(page) {
+  return page.evaluate(() => {
+    const canvas = document.querySelector("#playfield canvas");
+    const rect = canvas.getBoundingClientRect();
+    const playfieldRect = document.querySelector("#playfield").getBoundingClientRect();
+    const gl = canvas.getContext("webgl2") ?? canvas.getContext("webgl");
+    const drawingBufferWidth = gl?.drawingBufferWidth ?? canvas.width;
+    const drawingBufferHeight = gl?.drawingBufferHeight ?? canvas.height;
+    return {
+      drawingBufferWidth,
+      drawingBufferHeight,
+      drawingBufferPixels: drawingBufferWidth * drawingBufferHeight,
+      cssWidth: rect.width,
+      cssHeight: rect.height,
+      playfieldCssWidth: playfieldRect.width,
+      playfieldCssHeight: playfieldRect.height
+    };
+  });
 }
 
 async function verifyContinueRestore(page, entry) {

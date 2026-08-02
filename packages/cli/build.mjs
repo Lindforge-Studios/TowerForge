@@ -1128,6 +1128,8 @@ let disposePromise = null;
 function disposeDesktopPhaserPlayer() {
   if (disposePromise) return disposePromise;
   disposePromise = new Promise((resolve, reject) => {
+    phaserPresentationResizeObserver?.disconnect();
+    phaserPresentationResizeObserver = null;
     const currentGame = phaserGame;
     phaserGame = null;
     const canvas = currentGame?.canvas ?? null;
@@ -2784,9 +2786,55 @@ ${largeScreenPlayer ? `let phaserPresentationQuality = resolvePlayerPresentation
   width: globalThis.innerWidth,
   height: globalThis.innerHeight
 });
+let phaserPresentationResizeObserver = null;
+function resolvePhaserPresentationSurface(profile) {
+  const rect = $("playfield").getBoundingClientRect();
+  const displayWidth = Math.max(1, Math.floor(rect.width));
+  const displayHeight = Math.max(1, Math.floor(rect.height));
+  return Object.freeze({
+    displayWidth,
+    displayHeight,
+    backingWidth: Math.max(1, Math.floor(displayWidth * profile.resolution)),
+    backingHeight: Math.max(1, Math.floor(displayHeight * profile.resolution))
+  });
+}
+let phaserInitialPresentationSurface = resolvePhaserPresentationSurface(phaserPresentationQuality);
+function syncPhaserPresentationBackbuffer(profile = phaserPresentationQuality) {
+  const surface = resolvePhaserPresentationSurface(profile);
+  const scale = phaserGame?.scale;
+  const canvas = phaserGame?.canvas;
+  if (!scale || !canvas) return surface;
+  canvas.style.width = "100%";
+  canvas.style.height = "100%";
+  if (scale.baseSize?.width !== surface.backingWidth || scale.baseSize?.height !== surface.backingHeight) {
+    scale.resize(surface.backingWidth, surface.backingHeight);
+  } else {
+    scale.refresh();
+  }
+  return surface;
+}
+function startPhaserPresentationSizing() {
+  if (!phaserGame?.canvas) return;
+  phaserGame.canvas.style.width = "100%";
+  phaserGame.canvas.style.height = "100%";
+  phaserPresentationResizeObserver?.disconnect();
+  if (typeof ResizeObserver === "function") {
+    phaserPresentationResizeObserver = new ResizeObserver(() => {
+      phaserPresentationQuality = resolvePlayerPresentationQualityV1(phaserPresentationQuality.quality, {
+        width: globalThis.innerWidth,
+        height: globalThis.innerHeight
+      });
+      syncPhaserPresentationBackbuffer(phaserPresentationQuality);
+    });
+    phaserPresentationResizeObserver.observe($("playfield"));
+  }
+  syncPhaserPresentationBackbuffer(phaserPresentationQuality);
+  requestAnimationFrame(() => syncPhaserPresentationBackbuffer(phaserPresentationQuality));
+}
 function applyPlayerPresentationQuality(quality) {
   const profile = resolvePlayerPresentationQualityV1(quality, { width: globalThis.innerWidth, height: globalThis.innerHeight });
   phaserPresentationQuality = profile;
+  phaserInitialPresentationSurface = resolvePhaserPresentationSurface(profile);
   const loop = phaserGame?.loop;
   if (loop) {
     loop.targetFps = profile.targetFps;
@@ -2794,12 +2842,17 @@ function applyPlayerPresentationQuality(quality) {
     loop.hasFpsLimit = true;
     loop._limitRate = 1000 / profile.targetFps;
     loop._target = 1000 / profile.targetFps;
+    if (loop.raf) loop.raf.delay = 1000 / profile.targetFps;
   }
+  syncPhaserPresentationBackbuffer(profile);
   return profile;
 }
 globalThis.__towerforgePresentationQuality = () => Object.freeze({
   ...phaserPresentationQuality,
-  effectiveTargetFps: phaserGame?.loop?.targetFps ?? phaserPresentationQuality.targetFps
+  effectiveTargetFps: phaserGame?.loop?.targetFps ?? phaserPresentationQuality.targetFps,
+  effectiveSchedulerDelay: phaserGame?.loop?.raf?.delay ?? (1000 / phaserPresentationQuality.targetFps),
+  effectiveBackingWidth: phaserGame?.renderer?.gl?.drawingBufferWidth ?? phaserGame?.canvas?.width ?? null,
+  effectiveBackingHeight: phaserGame?.renderer?.gl?.drawingBufferHeight ?? phaserGame?.canvas?.height ?? null
 });` : ""}
 
 const rendererTheme = content.visuals?.theme?.renderer ?? {};
@@ -3907,15 +3960,15 @@ phaserGame = new Phaser.Game({
   type: Phaser.AUTO,
   parent: "playfield",
   transparent: true,
-  ${largeScreenPlayer ? "resolution: phaserPresentationQuality.resolution," : ""}
   // Low-end-Android render hardening (ported from a shipped Capacitor game): no MSAA (fill-rate is
   // the #1 killer on cheap GPUs), request the high-performance GPU, and a low-latency canvas.
   // panicMax bounds delta catch-up so a background stall can't trigger a spiral-of-death on resume.
   render: { antialias: false, powerPreference: "high-performance", desynchronized: true, roundPixels: true },
   fps: ${largeScreenPlayer ? "{ target: phaserPresentationQuality.targetFps, limit: phaserPresentationQuality.targetFps, panicMax: 120, forceSetTimeOut: true }" : "{ target: 60, limit: 60, panicMax: 120 }"},
-  scale: { mode: Phaser.Scale.RESIZE, width: "100%", height: "100%" },
+  scale: ${largeScreenPlayer ? "{ mode: Phaser.Scale.NONE, width: phaserInitialPresentationSurface.backingWidth, height: phaserInitialPresentationSurface.backingHeight }" : "{ mode: Phaser.Scale.RESIZE, width: \"100%\", height: \"100%\" }"},
   scene: PlayScene
 });
+${largeScreenPlayer ? "startPhaserPresentationSizing();" : ""}
 window.__towerforgeInspect = () => {
   const snapshot = game.getRenderSnapshot();
   if (snapshot.lastEvents.length === 0 && lastObservedEvents.length > 0) {

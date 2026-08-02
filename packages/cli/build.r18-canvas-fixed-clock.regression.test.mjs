@@ -46,6 +46,7 @@ describe("R18 generated Canvas fixed simulation cadence (RED)", () => {
     expect(desktop.player).toMatch(/__towerforgePresentationQuality/);
     expect(phaserDesktop.player).toMatch(/loop\.targetFps\s*=\s*profile\.targetFps/);
     expect(phaserDesktop.player).toMatch(/loop\._target\s*=\s*1000\s*\/\s*profile\.targetFps/);
+    expect(phaserDesktop.player).toMatch(/loop\.raf\.delay\s*=\s*1000\s*\/\s*profile\.targetFps/);
     expect(phaserDesktop.player).toMatch(/__towerforgePresentationQuality/);
   });
 

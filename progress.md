@@ -2861,3 +2861,65 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   Canvas/Phaser, hex/square and DPR 1/2. Typecheck, engine build, web build and plugin
   build/validate/smoke are GREEN. A new exact commit and complete repository gates remain required
   before the candidate can be frozen again.
+
+## 2026-08-02 — R18 Phaser live scheduler cadence verifier RED
+
+- Independent Constructor Integration Verification rejected exact candidate `d8733d7`. With
+  Phaser `forceSetTimeOut: true`, changing `loop.targetFps`, `_target` and `_limitRate` did not
+  update the already-started `loop.raf.delay`; Balanced → High continued scheduling 33.333 ms
+  callbacks, and Low was still quantized by the same 30 Hz timer.
+- The generated-player contract now requires the live adapter to update `loop.raf.delay`. Browser
+  acceptance reads the actual scheduler delay after selecting Low, not only the target-FPS field.
+  The focused generated-player contract and the 3440×1440 Phaser browser case are expected RED:
+  current generated code neither writes nor reports the live scheduler delay.
+
+## 2026-08-02 — R18 Phaser live scheduler cadence focused GREEN
+
+- The Phaser Quality adapter now updates the active timeout driver's `raf.delay` together with the
+  TimeStep FPS fields. The next scheduled callback uses the selected cadence; no engine clock,
+  snapshot or digest field changes.
+- Focused generated-player contracts passed 10/10. The executable 3440×1440 Phaser case passed
+  1/1 and verified Low as an actual `41.66667 ms` scheduler delay instead of the previous retained
+  Balanced `33.33333 ms`. A fresh exact candidate, full CI and both renewed sign-offs are required.
+
+## 2026-08-02 — R18 verifier repair RED: actual Phaser backbuffer and Studio target identity
+
+- Independent verification found that Phaser 3.80.1 ignores the authored top-level `resolution`
+  option and `Scale.RESIZE` writes the full parent dimensions into the canvas. On the real
+  3440×1440 Low-quality acceptance viewport the desired 1,500,000-pixel budget therefore still
+  produced a 3,596,864-pixel drawing buffer. The browser regression now reads the existing WebGL
+  context and requires its actual `drawingBufferWidth × drawingBufferHeight` to stay inside the
+  selected profile budget while the canvas retains the large CSS viewport and inverse hit testing.
+- The same verification found that Studio's `Large-screen desktop` button always used
+  `desktop-large`, silently replacing an authored target through the otherwise guarded upsert API.
+  New pure and browser regressions require a bounded deterministic free ID, preservation of the
+  existing target and creation of `desktop-large-2` through the real Studio workflow.
+- The browser contract also requires a suffixed output directory (`dist-desktop-2`) so the newly
+  allocated target cannot overwrite the existing target's generated player on its first build.
+- Expected RED commands:
+  `npx vitest run packages/studio/public/player-target-id.contract.test.mjs --reporter=verbose` must
+  fail collection because the allocator does not exist;
+  `npx playwright test tests/e2e/r18-studio-player-targets.spec.mjs --workers=1` must fail because
+  the existing target is overwritten; and the 3440×1440 case in
+  `tests/e2e/r18-large-screen-player.spec.mjs` must fail because the actual drawing buffer exceeds
+  Low's pixel budget. Production code has not been changed for either new defect.
+
+## 2026-08-02 — R18 actual backbuffer and Studio target identity focused GREEN
+
+- Large-screen Phaser now uses the documented `Scale.NONE` resize path. The quality profile derives
+  a bounded logical backbuffer, CSS preserves the full playfield, and ScaleManager, cameras, input
+  coordinates and the WebGL renderer receive the same dimensions. Runtime quality changes, saved
+  preferences and ResizeObserver updates all use the same adapter; disposal disconnects the scoped
+  observer. Legacy Phaser remains on its previous `Scale.RESIZE` carrier.
+- Studio now allocates the first free ID in the bounded `desktop-large[-N]` range from the guarded
+  server read and gives suffixed targets a distinct output directory. The real browser flow
+  preserved an authored Phaser/high target and created a Canvas/balanced `desktop-large-2` at
+  `dist-desktop-2`.
+- Focused Vitest passed 24/24 files and 116/116 tests. Focused browser acceptance passed 10/10:
+  Studio allocation, lifecycle/BFCache, 1024 px hit targets, and Canvas/Phaser × hex/square from
+  1024×720 through 3440×1440. The ultrawide case reads the actual WebGL drawing buffer, applies Low
+  live, verifies the timeout cadence, CSS/logical scaling and real pointer input, then repeats the
+  budget assertion after persisted reload and a viewport resize.
+- The Codex plugin runtime was rebuilt and the generated CLI mirror is byte-identical. This is
+  focused GREEN only; the next exact candidate still requires complete repository gates and two
+  fresh independent sign-offs.
