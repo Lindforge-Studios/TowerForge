@@ -42,6 +42,16 @@ function installAudioHarness() {
 }
 
 describe("TowerForgeAudio music", () => {
+  it("does not allocate or resume audio hardware while sound is disabled", () => {
+    const contexts = installAudioHarness();
+    const player = createAudioPlayer();
+
+    player.setEnabled(false);
+    player.resume();
+
+    expect(contexts).toHaveLength(0);
+  });
+
   it("loads, loops, switches, and independently mixes mission music", async () => {
     const contexts = installAudioHarness();
     const player = createAudioPlayer({

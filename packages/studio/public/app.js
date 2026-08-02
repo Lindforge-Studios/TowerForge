@@ -1,6 +1,7 @@
 import { createCanvasRenderer, projectElevationCues } from "/renderer/index.mjs";
 import { AUDIO_EVENTS } from "/renderer/audio.mjs";
 import { LANGUAGES, getLanguage, initI18n, setLanguage } from "/i18n.js";
+import { allocatePlayerTargetId } from "/player-target-id.mjs";
 import { layoutTowerScriptGraph } from "/towerscript-layout.mjs";
 
 initI18n();
@@ -12929,6 +12930,18 @@ async function setupMcpSettings() {
 // ─────────────────────────────────────────────────────────────────────────────
 // BUILD TARGETS
 // ─────────────────────────────────────────────────────────────────────────────
+function wireLegacyBuildTargetAdd(bt) {
+  const addBtn = $("btn-add-target");
+  if (addBtn) {
+    addBtn.onclick = () => {
+      const id = "target_" + Math.random().toString(36).slice(-6);
+      bt.targets[id] = { id, platform: "web", market: "pwa", storeChannel: "pwa", appId: "com.example.game", appName: "My Game", appTitle: "My Game", webDir: "dist", backgroundColor: "#111111", appVersion: "0.1.0" };
+      if (!S.project.buildTargets) S.project.buildTargets = bt;
+      markDirty(true); renderBuildTargetsTab();
+    };
+  }
+}
+
 function renderBuildTargetsTab() {
   const bt   = S.project.buildTargets ?? { schemaVersion: 1, targets: {} };
   const body = $("buildtargets-body");
@@ -12938,6 +12951,22 @@ function renderBuildTargetsTab() {
   for (const [tid, target] of Object.entries(bt.targets ?? {})) {
     const card = document.createElement("div");
     card.className = "target-card";
+    const desktopFields = bt.schemaVersion === 2 ? `
+      <div class="form-row">
+        <div class="field"><label>formFactor</label><select class="bt-field" data-tid="${esc(tid)}" data-f="formFactor">
+          ${["legacy", "desktop", "responsive"].map(value => `<option value="${value}"${target.formFactor===value?" selected":""}>${value}</option>`).join("")}
+        </select></div>
+        <div class="field"><label>quality</label><select class="bt-field" data-tid="${esc(tid)}" data-f="quality">
+          ${["auto", "low", "balanced", "high"].map(value => `<option value="${value}"${target.quality===value?" selected":""}>${value}</option>`).join("")}
+        </select></div>
+        <div class="field"><label>locale</label><input class="bt-field" data-tid="${esc(tid)}" data-f="locale" value="${esc(target.locale??"auto")}"></div>
+        <div class="field"><label>inputProfile</label><select class="bt-field" data-tid="${esc(tid)}" data-f="inputProfile">
+          ${["keyboard_mouse", "touch", "hybrid"].map(value => `<option value="${value}"${target.inputProfile===value?" selected":""}>${value}</option>`).join("")}
+        </select></div>
+      </div>
+      <div class="form-row">
+        ${["padding", "minZoom", "maxZoom", "initialZoom"].map(field => `<div class="field"><label>viewport.${field}</label><input class="bt-field" type="number" step="0.1" data-tid="${esc(tid)}" data-f="viewport.${field}" value="${esc(target.viewport?.[field]??"")}"></div>`).join("")}
+      </div>` : "";
     card.innerHTML = `
       <div class="target-card-head">
         <div class="target-card-title">${esc(tid)}</div>
@@ -12973,7 +13002,7 @@ function renderBuildTargetsTab() {
       <div class="form-row">
         ${["webDir","backgroundColor","appVersion"].map(f => `
           <div class="field"><label>${f}</label><input class="bt-field" data-tid="${esc(tid)}" data-f="${f}" value="${esc(target[f]??"")}"></div>`).join("")}
-      </div>`;
+      </div>${desktopFields}`;
     body.appendChild(card);
   }
 
@@ -12990,6 +13019,9 @@ function renderBuildTargetsTab() {
           bt.targets[newId] = { ...t, id: newId };
           delete bt.targets[tid];
         }
+      } else if (f.startsWith("viewport.")) {
+        t.viewport ??= { fit: "contain" };
+        t.viewport[f.slice("viewport.".length)] = Number(inp.value);
       } else { t[f] = inp.value; }
       markDirty(true);
     });
@@ -13046,13 +13078,34 @@ function renderBuildTargetsTab() {
     });
   });
 
-  const addBtn = $("btn-add-target");
-  if (addBtn) {
-    addBtn.onclick = () => {
-      const id = "target_" + Math.random().toString(36).slice(-6);
-      bt.targets[id] = { id, platform: "web", market: "pwa", storeChannel: "pwa", appId: "com.example.game", appName: "My Game", appTitle: "My Game", webDir: "dist", backgroundColor: "#111111", appVersion: "0.1.0" };
-      if (!S.project.buildTargets) S.project.buildTargets = bt;
-      markDirty(true); renderBuildTargetsTab();
+  wireLegacyBuildTargetAdd(bt);
+
+  const addDesktopBtn = $("btn-add-desktop-target");
+  if (addDesktopBtn) {
+    addDesktopBtn.onclick = async () => {
+      try {
+        const read = await apiGet("/api/player-targets");
+        const targetId = allocatePlayerTargetId(read.targets);
+        const recipe = await apiPost("/api/player-targets/recipe", {
+          recipeId: "desktop_large_screen",
+          targetId
+        });
+        const target = recipe.target;
+        const preview = await apiPost("/api/player-targets/preview", { targetId, target });
+        if (!preview.ok) throw new Error("Desktop target does not pass validation.");
+        const applied = await apiPost("/api/player-targets/apply", { targetId, target, ifRevision: read.revision });
+        if (!applied.ok) throw new Error("Desktop target could not be saved.");
+        bt.schemaVersion = 2;
+        S.project.manifest.schemaVersion = 5;
+        S.project.buildTargets = { ...bt, schemaVersion: 2, targets: { ...bt.targets, [targetId]: target } };
+        S.contentHash = applied.newHash;
+        S.serverSnapshot = deep(S.project);
+        markDirty(false);
+        renderBuildTargetsTab();
+        toast("Large-screen desktop target added.", "ok");
+      } catch (error) {
+        toast("Could not add desktop target: " + error.message, "err");
+      }
     };
   }
 }

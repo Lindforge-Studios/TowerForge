@@ -101,6 +101,7 @@ export class TowerForgeAudio {
 
   /** Must be called from a user gesture (click/keydown) before sound can play in most browsers. */
   resume() {
+    if (!this.enabled) return;
     this.ensureContext();
     if (this.ctx && this.ctx.state === "suspended") this.ctx.resume().catch(() => {});
     this.preload();

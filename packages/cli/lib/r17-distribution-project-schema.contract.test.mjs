@@ -56,8 +56,8 @@ function projectFixture({ schemaVersion = 4, distribution } = {}) {
 
 describe("R17.1a project schema v4 distribution boundary (RED)", () => {
   it("raises the current project schema to v4 while preserving absent v1-v3 projects", () => {
-    expect(PROJECT_SCHEMA_VERSION).toBe(4);
-    for (const schemaVersion of [1, 2, 3, 4]) {
+    expect(PROJECT_SCHEMA_VERSION).toBe(5);
+    for (const schemaVersion of [1, 2, 3, 4, 5]) {
       const result = validateProjectSchemas(schemaFiles(schemaVersion, undefined));
       expect(result.issues.some((issue) => issue.entityKind === "distribution"), `schema v${schemaVersion}`).toBe(false);
       expect(result.issues.some((issue) => issue.entityKind === "project" && issue.fieldPath === "schemaVersion"), `schema v${schemaVersion}`).toBe(false);
@@ -76,8 +76,10 @@ describe("R17.1a project schema v4 distribution boundary (RED)", () => {
       }));
     }
 
-    const current = validateProjectSchemas(schemaFiles(4, distributionConfig()));
-    expect(current.issues.filter((issue) => issue.severity === "error")).toEqual([]);
+    for (const schemaVersion of [4, 5]) {
+      const current = validateProjectSchemas(schemaFiles(schemaVersion, distributionConfig()));
+      expect(current.issues.filter((issue) => issue.severity === "error")).toEqual([]);
+    }
   });
 
   it("loads the optional authored file and keeps an absent project distribution-free", () => {

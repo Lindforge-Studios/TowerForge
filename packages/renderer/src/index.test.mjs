@@ -60,6 +60,27 @@ describe("canvas renderer backbuffer cap (mobile hardening)", () => {
       globalThis.devicePixelRatio = prev;
     }
   });
+
+  it("applies a changed presentation DPR immediately without touching simulation state", () => {
+    const previous = globalThis.devicePixelRatio;
+    globalThis.devicePixelRatio = 2;
+    try {
+      const canvas = sizedCanvas(600, 400);
+      const renderer = createCanvasRenderer({
+        canvas,
+        content: { towers: {}, enemies: {} },
+        maxDevicePixelRatio: 2
+      });
+      renderer.resize();
+      expect(canvas.width).toBe(1200);
+      expect(renderer.setMaxDevicePixelRatio(1)).toBe(true);
+      expect(canvas.width).toBe(600);
+      expect(renderer.setMaxDevicePixelRatio(0)).toBe(false);
+      expect(canvas.width).toBe(600);
+    } finally {
+      globalThis.devicePixelRatio = previous;
+    }
+  });
 });
 
 describe("canvas renderer contract", () => {

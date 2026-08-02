@@ -22,6 +22,7 @@ const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
 const FNV1A_64_OFFSET = 0xcbf29ce484222325n;
 const FNV1A_64_PRIME = 0x100000001b3n;
 const UINT64_MASK = 0xffffffffffffffffn;
+const CAPABILITY_DIGEST_DOMAIN = "towerforge:replay-capabilities:v1\u0000";
 
 function checkedBudget(name: string, value: number | undefined, fallback: number): number {
   const resolved = value ?? fallback;
@@ -258,6 +259,31 @@ function hashUtf8(value: string): string {
 
 export function stableDigest(value: unknown, options?: CanonicalStringifyOptions): string {
   return `tf-state-v1:${hashUtf8(canonicalStringify(value, options))}`;
+}
+
+/**
+ * Digest the engine-owned capability selection for one mission.
+ *
+ * Replay archives and resumable player sessions intentionally share this
+ * version domain. Keeping the primitive in the ordinary engine entrypoint
+ * avoids pulling the opt-in Replay Lab runtime into a single-player bundle.
+ */
+export function computeMissionCapabilityDigestV1(options: {
+  readonly content: GameContentRegistry;
+  readonly missionId: string;
+}): string {
+  const mission = Object.prototype.hasOwnProperty.call(options.content.missions, options.missionId)
+    ? options.content.missions[options.missionId]
+    : undefined;
+  if (!mission) {
+    throw new Error(`Replay capability mission "${options.missionId}" does not exist.`);
+  }
+  const canonical = canonicalStringify({
+    schemaVersion: 1,
+    missionId: options.missionId,
+    capabilities: mission.capabilities
+  });
+  return `tf-capabilities-v1:${hashUtf8(CAPABILITY_DIGEST_DOMAIN + canonical)}`;
 }
 
 const EXCLUDED_CONTENT_DOMAINS = new Set([

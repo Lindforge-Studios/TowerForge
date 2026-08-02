@@ -93,6 +93,8 @@ try {
   emptyDir(outDir);
 
   const renderer = target.renderer === "phaser" ? "phaser" : "canvas";
+  const largeScreenPlayer = files.buildTargets.schemaVersion === 2
+    && (target.formFactor === "desktop" || target.formFactor === "responsive");
   const multiplayerActive = hasActiveMultiplayer(files);
   const macroEconomyActive = hasActiveMacroEconomy(files);
   const hostMonetization = files.distributionAuthored && Array.isArray(files.distribution?.monetization?.placements)
@@ -109,11 +111,35 @@ try {
   const playerRuntimeSource = path.join(repoRoot, "packages", "player-runtime", "src");
   const playerRuntimeOutput = path.join(outDir, "player-runtime");
   fs.mkdirSync(playerRuntimeOutput, { recursive: true });
-  for (const fileName of ["index.mjs", "player-profile-store.mjs", ...(hostMonetizationActive ? ["host-monetization.mjs"] : [])]) {
+  const largeScreenRuntimeFiles = largeScreenPlayer
+    ? ["player-actions.mjs", "player-preferences.mjs", "player-session-store.mjs", "indexeddb-session-storage.mjs", "localized-strings.mjs", "fixed-simulation-clock.mjs", "presentation-quality.mjs"]
+    : [];
+  for (const fileName of ["index.mjs", "player-profile-store.mjs", ...largeScreenRuntimeFiles, ...(hostMonetizationActive ? ["host-monetization.mjs"] : [])]) {
     fs.copyFileSync(path.join(playerRuntimeSource, fileName), path.join(playerRuntimeOutput, fileName));
   }
+  if (!largeScreenPlayer) {
+    const runtimeIndex = path.join(playerRuntimeOutput, "index.mjs");
+    let runtimeSource = fs.readFileSync(runtimeIndex, "utf8");
+    for (const specifier of ["./player-actions.mjs", "./player-preferences.mjs", "./player-session-store.mjs", "./indexeddb-session-storage.mjs", "./localized-strings.mjs", "./fixed-simulation-clock.mjs", "./presentation-quality.mjs"]) {
+      runtimeSource = pruneSingleModuleExport(runtimeSource, specifier);
+    }
+    fs.writeFileSync(runtimeIndex, runtimeSource, "utf8");
+  }
   // Renderer dir ships for both players — the canvas player needs index.mjs, both need audio.mjs.
-  copyDir(path.join(repoRoot, "packages", "renderer", "src"), path.join(outDir, "renderer"));
+  copyDir(path.join(repoRoot, "packages", "renderer", "src"), path.join(outDir, "renderer"), {
+    excludeRootEntries: new Set(largeScreenPlayer ? [] : ["viewport-transform.mjs"])
+  });
+  if (largeScreenPlayer) {
+    const pwaAssets = [
+      [path.join("packages", "desktop", "src-tauri", "icons", "android", "mipmap-xxxhdpi", "ic_launcher.png"), "icon-192.png"],
+      [path.join("packages", "desktop", "src-tauri", "icons", "icon.png"), "icon-512.png"],
+      [path.join("packages", "desktop", "src-tauri", "icons", "32x32.png"), "favicon.png"],
+      [path.join("assets", "brand", "towerforge-social-preview.png"), "screenshot-wide.png"]
+    ];
+    for (const [source, destination] of pwaAssets) {
+      fs.copyFileSync(path.join(repoRoot, source), path.join(outDir, destination));
+    }
+  }
   pruneReplayLabTooling(outDir);
   if (!macroEconomyActive) pruneInactiveMacroEconomyRuntime(outDir);
   if (renderer === "phaser") {
@@ -145,8 +171,8 @@ try {
   fs.writeFileSync(
     path.join(outDir, "player.mjs"),
     renderer === "phaser"
-      ? phaserPlayerTemplate(multiplayerActive, macroEconomyActive, hostMonetizationActive)
-      : playerTemplate(multiplayerActive, macroEconomyActive, hostMonetizationActive),
+      ? phaserPlayerTemplate(multiplayerActive, macroEconomyActive, hostMonetizationActive, largeScreenPlayer)
+      : playerTemplate(multiplayerActive, macroEconomyActive, hostMonetizationActive, largeScreenPlayer),
     "utf8"
   );
   fs.writeFileSync(path.join(outDir, "manifest.webmanifest"), JSON.stringify(webManifest(files.manifest, target), null, 2) + "\n", "utf8");
@@ -472,14 +498,26 @@ function escapeInlineScript(value) { return String(value).replace(/<\/script/gi,
 function escapeInlineStyle(value) { return String(value).replace(/<\/style/gi, "<\\/style"); }
 
 function webManifest(manifest, target) {
+  const largeScreenPlayer = target.formFactor === "desktop" || target.formFactor === "responsive";
   return {
     name: target.manifest?.name ?? target.appTitle ?? manifest.name ?? "TowerForge TD",
     short_name: target.manifest?.shortName ?? target.appName ?? manifest.name ?? "TowerForge",
     start_url: ".",
     display: target.manifest?.display ?? "standalone",
+    ...(largeScreenPlayer ? { display_override: ["window-controls-overlay", "standalone"] } : {}),
     orientation: target.manifest?.orientation ?? "any",
     theme_color: target.manifest?.themeColor ?? target.backgroundColor ?? "#111111",
-    background_color: target.manifest?.backgroundColor ?? target.backgroundColor ?? "#111111"
+    background_color: target.manifest?.backgroundColor ?? target.backgroundColor ?? "#111111",
+    ...(largeScreenPlayer ? {
+      lang: target.locale === "auto" ? "en" : target.locale,
+      categories: ["games", "entertainment"],
+      icons: [
+        { src: "./icon-192.png", sizes: "192x192", type: "image/png", purpose: "any maskable" },
+        { src: "./icon-512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" }
+      ],
+      screenshots: [{ src: "./screenshot-wide.png", sizes: "1280x640", type: "image/png", form_factor: "wide", label: "TowerForge battlefield" }],
+      shortcuts: [{ name: "Continue", short_name: "Continue", url: "./?action=continue", icons: [{ src: "./icon-192.png", sizes: "192x192" }] }]
+    } : {})
   };
 }
 
@@ -510,8 +548,9 @@ function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "
     : `<canvas id="playfield" tabindex="0" role="application" aria-label="${battlefieldKind} battlefield. Use arrow keys to move the tile cursor and Enter to act."></canvas>`;
   const phaserScript = renderer === "phaser" ? `\n  <script src="./vendor/phaser.min.js"></script>` : "";
   const monetizationMarkup = hostMonetizationMarkup(hostMonetization);
+  const largeScreenPlayer = target.formFactor === "desktop" || target.formFactor === "responsive";
   return `<!doctype html>
-<html lang="en">
+<html lang="${esc(target.locale && target.locale !== "auto" ? target.locale : "en")}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
@@ -521,21 +560,23 @@ function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>${title}</title>
   <link rel="manifest" href="./manifest.webmanifest">
+  ${largeScreenPlayer ? '<link rel="icon" type="image/png" href="./favicon.png">' : ""}
   <link rel="stylesheet" href="./styles.css">
 </head>
-<body>
+<body${largeScreenPlayer ? ' data-towerforge-player-shell="desktop"' : ""}>
   ${remixEnabled ? '<a class="towerforge-remix" data-towerforge-remix href="./source.tdpack" download>Remix this project</a>' : ""}
   ${monetizationMarkup.top}
   <main id="app">
+    ${largeScreenPlayer ? '<section id="desktop-action-bar" class="desktop-action-bar" aria-label="Player actions"><button id="desktop-continue" type="button" aria-label="Continue saved game">Continue</button><button id="desktop-upgrade" type="button" aria-label="Upgrade selected tower">Upgrade</button><button id="desktop-pause" type="button" aria-label="Pause game">Pause</button><button id="desktop-reset-view" type="button" aria-label="Reset camera view">Reset view</button><button id="desktop-settings" type="button" aria-label="Open settings">Settings</button><button id="desktop-fullscreen" type="button" aria-label="Toggle fullscreen" aria-pressed="false">Fullscreen</button></section>' : ""}
     <header class="hud">
       <div>
         <h1>${title}</h1>
         <p id="mission-caption"></p>
       </div>
       <div class="controls">
-        <label>Mission <select id="mission-select"></select></label>
-        <label>Difficulty <select id="difficulty-select"></select></label>
-        <label>Tower <select id="tower-select"></select></label>
+        <label><span id="label-mission">Mission</span><select id="mission-select"></select></label>
+        <label><span id="label-difficulty">Difficulty</span><select id="difficulty-select"></select></label>
+        <label><span id="label-tower">Tower</span><select id="tower-select"></select></label>
         <button id="start-wave">Start wave</button>
         <button id="pause-run" aria-pressed="false" title="Pause or resume (Space)">Pause</button>
         <button id="sell-mode" aria-pressed="false" title="Sell a tower">Sell</button>
@@ -546,21 +587,21 @@ function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "
     <section class="play-shell">
       ${playfield}
       <aside class="panel">
-        <div class="stat"><span>Outcome</span><strong id="stat-outcome" aria-live="polite">playing</strong></div>
-        <div class="stat"><span>Core</span><strong id="stat-core">-</strong></div>
-        <div class="stat"><span>Resources</span><strong id="stat-resources">-</strong></div>
-        <div class="stat"><span>Wave</span><strong id="stat-wave">-</strong></div>
-        <div class="stat"><span>Enemies</span><strong id="stat-enemies">-</strong></div>
-        <div class="stat"><span>Towers</span><strong id="stat-towers">-</strong></div>
-        <div class="stat"><span>Objectives</span><strong id="stat-objectives">-</strong></div>
-        <label class="targeting">Target priority <select id="target-mode" disabled>
+        <div class="stat"><span id="label-outcome">Outcome</span><strong id="stat-outcome" aria-live="polite">playing</strong></div>
+        <div class="stat"><span id="label-core">Core</span><strong id="stat-core">-</strong></div>
+        <div class="stat"><span id="label-resources">Resources</span><strong id="stat-resources">-</strong></div>
+        <div class="stat"><span id="label-wave">Wave</span><strong id="stat-wave">-</strong></div>
+        <div class="stat"><span id="label-enemies">Enemies</span><strong id="stat-enemies">-</strong></div>
+        <div class="stat"><span id="label-towers">Towers</span><strong id="stat-towers">-</strong></div>
+        <div class="stat"><span id="label-objectives">Objectives</span><strong id="stat-objectives">-</strong></div>
+        <label class="targeting"><span id="label-target-priority">Target priority</span><select id="target-mode" disabled>
           <option value="first">First</option><option value="last">Last</option><option value="closest">Closest</option>
           <option value="furthest">Furthest</option><option value="strongest">Strongest</option><option value="weakest">Weakest</option>
         </select></label>
-        <label class="speed">Speed <input id="speed" type="range" min="0" max="4" step="0.25" value="1"><span id="speed-label">1x</span></label>
-        <label class="speed">Sound <input id="snd" type="checkbox" checked style="width:auto;justify-self:start"></label>
-        <label class="speed">SFX <input id="sfx-volume" type="range" min="0" max="1" step="0.05" value="0.5"><span id="sfx-volume-label">50%</span></label>
-        <label class="speed">Music <input id="music-volume" type="range" min="0" max="1" step="0.05" value="0.35"><span id="music-volume-label">35%</span></label>
+        <label class="speed"><span id="label-speed">Speed</span><input id="speed" type="range" min="0" max="4" step="0.25" value="1"><span id="speed-label">1x</span></label>
+        <label class="speed"><span id="label-sound">Sound</span><input id="snd" type="checkbox" checked style="justify-self:start"></label>
+        <label class="speed"><span id="label-sfx">SFX</span><input id="sfx-volume" type="range" min="0" max="1" step="0.05" value="0.5"><span id="sfx-volume-label">50%</span></label>
+        <label class="speed"><span id="label-music">Music</span><input id="music-volume" type="range" min="0" max="1" step="0.05" value="0.35"><span id="music-volume-label">35%</span></label>
         <div id="ability-bar" class="ability-bar"></div>
         <section id="roguelite-status" class="roguelite-status" aria-label="Tower synergies" hidden></section>
         <section id="wave-draft" class="roguelite-status" aria-label="Wave draft" hidden></section>
@@ -588,6 +629,7 @@ function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "
       </aside>
     </section>
   </main>
+  ${largeScreenPlayer ? '<section id="desktop-settings-dialog" class="desktop-dialog" role="dialog" aria-modal="true" aria-labelledby="desktop-settings-title" hidden><div class="desktop-dialog-card"><h2 id="desktop-settings-title">Settings</h2><label><span id="label-ui-scale">UI scale</span><input id="desktop-ui-scale" type="range" min="0.75" max="2" step="0.05" value="1"></label><label><span id="label-quality">Quality</span><select id="desktop-quality"><option value="auto">Auto</option><option value="low">Low</option><option value="balanced">Balanced</option><option value="high">High</option></select></label><label><input id="desktop-reduced-motion" type="checkbox"><span id="label-reduced-motion">Reduced motion</span></label><fieldset id="desktop-key-bindings"><legend id="label-keyboard">Keyboard</legend><label><span id="label-key-pause">Pause key</span><input data-key-binding="pause" readonly></label><label><span id="label-key-upgrade">Upgrade key</span><input data-key-binding="upgradeTower" readonly></label><label><span id="label-key-camera-reset">Reset camera key</span><input data-key-binding="cameraReset" readonly></label><label><span id="label-key-speed-down">Slower key</span><input data-key-binding="speedDown" readonly></label><label><span id="label-key-speed-up">Faster key</span><input data-key-binding="speedUp" readonly></label></fieldset><button id="desktop-settings-close" type="button">Close</button></div></section><section id="desktop-result-dialog" class="desktop-dialog" role="dialog" aria-modal="true" aria-label="Battle result" hidden><div class="desktop-dialog-card"><h2 id="desktop-result-title">Battle result</h2><p id="desktop-result-copy"></p><button id="desktop-result-close" type="button">Close</button></div></section>' : ""}
   ${monetizationMarkup.bottom}
   ${monetizationMarkup.betweenWaves}
   <section id="boot-error" class="boot-error" role="alertdialog" aria-modal="true" aria-labelledby="boot-error-title" hidden>
@@ -625,6 +667,19 @@ function bootRecoveryTemplate(manifest = {}, target = {}, storyComics = {}) {
   const scope = target.appId || manifest.name || "game";
   const profileKey = `towerforge:progress:${scope}`;
   const storyNamespace = `${storyComics.seenStoragePrefix || "story_seen_"}${scope}:`;
+  const largeScreenPlayer = target.formFactor === "desktop" || target.formFactor === "responsive";
+  const resetPersistence = largeScreenPlayer
+    ? `try {
+        const request = indexedDB.deleteDatabase(${JSON.stringify(`towerforge-player-${scope}`)});
+        request.onsuccess = request.onerror = request.onblocked = () => location.reload();
+      } catch { location.reload(); }`
+    : `try {
+        for (let i = localStorage.length - 1; i >= 0; i -= 1) {
+          const key = localStorage.key(i) || "";
+          if (key === ${JSON.stringify(profileKey)} || key.startsWith(${JSON.stringify(storyNamespace)})) localStorage.removeItem(key);
+        }
+      } catch {}
+      location.reload();`;
   return `(() => {
   const reveal = (reason) => {
     const overlay = document.getElementById("boot-error");
@@ -634,13 +689,7 @@ function bootRecoveryTemplate(manifest = {}, target = {}, storyComics = {}) {
     overlay.hidden = false;
     document.getElementById("boot-reload").onclick = () => location.reload();
     document.getElementById("boot-reset").onclick = () => {
-      try {
-        for (let i = localStorage.length - 1; i >= 0; i -= 1) {
-          const key = localStorage.key(i) || "";
-          if (key === ${JSON.stringify(profileKey)} || key.startsWith(${JSON.stringify(storyNamespace)})) localStorage.removeItem(key);
-        }
-      } catch {}
-      location.reload();
+      ${resetPersistence}
     };
     document.getElementById("boot-reload").focus();
   };
@@ -653,7 +702,33 @@ function bootRecoveryTemplate(manifest = {}, target = {}, storyComics = {}) {
 function cssTemplate(target, hostMonetization = null) {
   const bg = target.backgroundColor ?? "#111111";
   const monetizationStyles = hostMonetization ? `.host-monetization{position:relative;z-index:5;min-height:0}.host-monetization[data-surface="top"],.host-monetization[data-surface="bottom"]{display:grid;gap:6px;padding:6px 16px;background:var(--surface);border-color:var(--border)}.host-monetization[data-surface="top"]{border-bottom:1px solid var(--border)}.host-monetization[data-surface="bottom"]{border-top:1px solid var(--border)}.host-monetization[data-surface="menu"]{display:grid;gap:6px}.host-monetization[data-surface="between_waves"]{position:fixed;inset:0;z-index:30;pointer-events:none}.host-monetization-placement:empty{display:none}` : "";
-  return `:root{--bg:${bg};--surface:#191b19;--panel:#222620;--border:#364036;--text:#eff3ea;--muted:#9ca895;--accent:#8ac783;--path:#6b5540;--danger:#df6a59;--water:#427b88;--font:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+  const desktopStyles = target.formFactor === "desktop" || target.formFactor === "responsive" ? `
+body[data-towerforge-player-shell="desktop"] #app{position:relative;isolation:isolate}
+body[data-towerforge-player-shell="desktop"] .play-shell{position:relative;display:block;min-height:100vh;height:100vh}
+body[data-towerforge-player-shell="desktop"] #playfield{position:absolute;inset:0;width:100%;height:100%}
+body[data-towerforge-player-shell="desktop"] .hud{position:fixed;z-index:8;inset:calc(8px + env(safe-area-inset-top)) 8px auto;min-height:52px;display:flex;gap:8px;padding:4px 6px;border:1px solid var(--border);border-radius:10px;background:#111611e8;box-shadow:0 8px 28px #0006}
+body[data-towerforge-player-shell="desktop"] .hud h1{display:none}
+body[data-towerforge-player-shell="desktop"] .hud p{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
+body[data-towerforge-player-shell="desktop"] .controls{min-width:0;margin-left:auto;display:flex;flex-wrap:nowrap;align-items:center;gap:4px;overflow-x:auto}
+body[data-towerforge-player-shell="desktop"] .controls label{display:flex;flex-direction:row;align-items:center;gap:4px;font-size:11px;white-space:nowrap}
+body[data-towerforge-player-shell="desktop"] .controls select{max-width:128px}
+.desktop-action-bar{position:fixed;z-index:9;left:50%;bottom:calc(8px + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(760px,calc(100% - 16px));display:flex;flex-wrap:nowrap;justify-content:center;gap:6px;padding:6px;overflow-x:auto;border:1px solid var(--border);border-radius:10px;background:#111611e8;box-shadow:0 8px 28px #0006}
+body[data-towerforge-player-shell="desktop"] .panel{position:fixed;z-index:7;top:70px;right:8px;width:min(240px,24vw);max-height:48vh;padding:8px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:4px;overflow:auto;border:1px solid var(--border);border-radius:10px;background:#191d19e8;box-shadow:0 8px 28px #0006}
+body[data-towerforge-player-shell="desktop"] .panel>.stat{min-width:0;padding:3px 0;font-size:11px}
+body[data-towerforge-player-shell="desktop"] .panel>.stat strong{overflow:hidden;text-overflow:ellipsis}
+body[data-towerforge-player-shell="desktop"] .panel>.targeting,body[data-towerforge-player-shell="desktop"] .panel>.speed,body[data-towerforge-player-shell="desktop"] .panel>#message,body[data-towerforge-player-shell="desktop"] .panel>section,body[data-towerforge-player-shell="desktop"] .panel>.ability-bar{grid-column:1/-1}
+body[data-towerforge-player-shell="desktop"] button,body[data-towerforge-player-shell="desktop"] select,body[data-towerforge-player-shell="desktop"] input[type="range"],body[data-towerforge-player-shell="desktop"] input[data-key-binding]{min-height:var(--player-action-min-size)}
+body[data-towerforge-player-shell="desktop"] input[type="checkbox"]{width:var(--player-action-min-size);height:var(--player-action-min-size);min-width:var(--player-action-min-size);min-height:var(--player-action-min-size)}
+.desktop-action-bar button{min-width:var(--player-action-min-size);min-height:var(--player-action-min-size)}
+.desktop-dialog{position:fixed;inset:0;z-index:40;display:grid;place-items:center;padding:24px;background:#050705cc}
+.desktop-dialog[hidden]{display:none}
+.desktop-dialog-card{width:min(520px,100%);max-height:90vh;overflow:auto;display:grid;gap:16px;padding:24px;border:1px solid var(--border);border-radius:12px;background:var(--surface);box-shadow:0 20px 70px #000a}
+.desktop-dialog-card h2{margin:0}.desktop-dialog-card label{display:grid;gap:8px}.desktop-dialog-card button{min-height:var(--player-action-min-size)}
+#desktop-key-bindings{display:grid;grid-template-columns:1fr 1fr;gap:8px;border:1px solid var(--border);border-radius:8px;padding:10px}
+#desktop-key-bindings legend{color:var(--muted)}#desktop-key-bindings input{width:100%;background:#111611;color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px}
+body[data-motion="reduced"] *{animation-duration:.001ms!important;transition-duration:.001ms!important}
+` : "";
+  return `:root{--bg:${bg};--surface:#191b19;--panel:#222620;--border:#364036;--text:#eff3ea;--muted:#9ca895;--accent:#8ac783;--path:#6b5540;--danger:#df6a59;--water:#427b88;--player-action-min-size:44px;--font:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
 *{box-sizing:border-box}html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:var(--font)}
 /* Native-app touch hardening (ported from a shipped Capacitor game): no pinch-zoom/pull-to-refresh,
    no long-press text selection or blue tap-highlight, and respect the notch via safe-area insets. */
@@ -661,10 +736,10 @@ body{overflow:hidden;overscroll-behavior:none;touch-action:manipulation;-webkit-
 .hud{padding-top:calc(12px + env(safe-area-inset-top))}
 .panel{padding-bottom:calc(14px + env(safe-area-inset-bottom))}
 .campaign-run-node{flex-wrap:wrap}.campaign-run-choices{flex-basis:100%;display:grid;gap:4px}.campaign-run-choice{display:flex;justify-content:space-between;gap:6px;padding:5px 7px;font-size:11px}
-button,select,input{font:inherit}button,select{border:1px solid var(--border);border-radius:6px;background:#111611;color:var(--text);padding:8px 10px}button{cursor:pointer}button:hover{border-color:var(--accent)}button:focus-visible,select:focus-visible,input:focus-visible,#playfield:focus-visible{outline:2px solid var(--accent);outline-offset:2px}button[aria-pressed="true"]{border-color:var(--danger);color:var(--danger)}#app{height:100%;display:flex;flex-direction:column}.hud{display:flex;gap:18px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface)}h1{font-size:18px;line-height:1.1;margin:0;color:var(--accent);letter-spacing:0}p{margin:4px 0 0;color:var(--muted)}.controls{margin-left:auto;display:flex;gap:10px;align-items:end;flex-wrap:wrap}.controls label{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:12px}.play-shell{min-height:0;flex:1;display:grid;grid-template-columns:minmax(0,1fr) 280px}#playfield{width:100%;height:100%;display:block;background:#101410;overflow:hidden;background-position:center;background-size:cover;background-repeat:no-repeat;touch-action:none}#playfield canvas{display:block}.panel{border-left:1px solid var(--border);background:var(--panel);padding:14px;display:flex;flex-direction:column;gap:10px;overflow:auto}.stat{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)}.stat span{color:var(--muted)}.stat strong{font-variant-numeric:tabular-nums}.targeting{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:center;color:var(--muted);font-size:13px}.targeting select{min-width:0}.speed{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;color:var(--muted);margin-top:8px}#message{min-height:42px;padding:10px;border:1px solid var(--border);border-radius:6px;background:#161a16;color:var(--text)}.ability-bar{display:flex;flex-wrap:wrap;gap:6px}.ability-bar:empty{display:none}.ability-bar button{padding:6px 9px;font-size:12px}.ability-bar button.armed{border-color:var(--accent);color:var(--accent)}.ability-bar button:disabled{opacity:.45;cursor:default}.roguelite-status{display:grid;gap:5px;border-top:1px solid var(--border);padding-top:10px}.roguelite-status[hidden]{display:none}.roguelite-status strong{font-size:12px;color:var(--accent)}.roguelite-status span{font-size:12px;color:var(--muted)}.campaign-run-panel{display:grid;gap:7px;border-top:1px solid var(--border);padding-top:10px}.campaign-run-panel[hidden]{display:none}.campaign-run-panel>strong{font-size:12px;color:var(--accent)}.campaign-run-panel>span,.campaign-run-nodes{font-size:12px;color:var(--muted)}.campaign-run-nodes{display:grid;gap:4px}.campaign-run-node{display:flex;justify-content:space-between;gap:8px}.campaign-run-node[data-state="available"]{color:var(--accent)}.campaign-run-node[data-state="current"]{color:var(--text);font-weight:700}.campaign-run-actions{display:flex;gap:6px;flex-wrap:wrap}.campaign-run-actions button{padding:5px 7px;font-size:11px}.meta-panel{border-top:1px solid var(--border);padding-top:10px}.meta-title{display:flex;justify-content:space-between;gap:8px;color:var(--muted);font-size:12px;text-transform:uppercase}.meta-upgrades{display:grid;gap:6px;margin-top:8px}.meta-upgrade{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center;padding:7px;border:1px solid var(--border);border-radius:6px;background:#161a16}.meta-upgrade span{min-width:0;font-size:12px}.meta-upgrade button{padding:5px 7px;font-size:11px}.boot-error,.story-overlay{position:fixed;inset:0;z-index:20;display:grid;place-items:center;padding:24px;background:#0b0e0bdd}.boot-error[hidden],.story-overlay[hidden]{display:none}.boot-error-panel{width:min(460px,100%);padding:22px;border:1px solid var(--danger);border-radius:6px;background:var(--surface);box-shadow:0 20px 60px #0009}.boot-error-panel h2{margin:0 0 8px;font-size:20px}.boot-error-actions,.story-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}.story-panel{width:min(820px,100%);max-height:min(680px,90vh);display:grid;grid-template-columns:minmax(0,1.2fr) minmax(280px,.8fr);overflow:hidden;border:1px solid var(--border);border-radius:6px;background:var(--surface);box-shadow:0 20px 60px #0009}.story-art{min-height:360px;background-position:center;background-size:cover;background-repeat:no-repeat;background-color:#101410}.story-copy{padding:24px;align-self:end}.story-copy h2{margin:0 0 18px;font-size:24px}.story-speaker{min-height:18px;color:var(--accent);font-weight:700}.story-text{color:var(--text);font-size:16px;line-height:1.55;white-space:pre-wrap}@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}}@media(max-width:820px){body{overflow:auto}.hud{align-items:flex-start;flex-direction:column}.controls{margin-left:0}.play-shell{grid-template-columns:1fr;grid-template-rows:65vh auto}.panel{border-left:0;border-top:1px solid var(--border)}.story-panel{grid-template-columns:1fr}.story-art{min-height:220px}.story-copy{padding:18px}}${monetizationStyles}`;
+button,select,input{font:inherit}button,select{border:1px solid var(--border);border-radius:6px;background:#111611;color:var(--text);padding:8px 10px}button{cursor:pointer}button:hover{border-color:var(--accent)}button:focus-visible,select:focus-visible,input:focus-visible,#playfield:focus-visible{outline:2px solid var(--accent);outline-offset:2px}button[aria-pressed="true"]{border-color:var(--danger);color:var(--danger)}#app{height:100%;display:flex;flex-direction:column}.hud{display:flex;gap:18px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface)}h1{font-size:18px;line-height:1.1;margin:0;color:var(--accent);letter-spacing:0}p{margin:4px 0 0;color:var(--muted)}.controls{margin-left:auto;display:flex;gap:10px;align-items:end;flex-wrap:wrap}.controls label{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:12px}.play-shell{min-height:0;flex:1;display:grid;grid-template-columns:minmax(0,1fr) 280px}#playfield{width:100%;height:100%;display:block;background:#101410;overflow:hidden;background-position:center;background-size:cover;background-repeat:no-repeat;touch-action:none}#playfield canvas{display:block}.panel{border-left:1px solid var(--border);background:var(--panel);padding:14px;display:flex;flex-direction:column;gap:10px;overflow:auto}.stat{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)}.stat span{color:var(--muted)}.stat strong{font-variant-numeric:tabular-nums}.targeting{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:center;color:var(--muted);font-size:13px}.targeting select{min-width:0}.speed{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;color:var(--muted);margin-top:8px}#message{min-height:42px;padding:10px;border:1px solid var(--border);border-radius:6px;background:#161a16;color:var(--text)}.ability-bar{display:flex;flex-wrap:wrap;gap:6px}.ability-bar:empty{display:none}.ability-bar button{padding:6px 9px;font-size:12px}.ability-bar button.armed{border-color:var(--accent);color:var(--accent)}.ability-bar button:disabled{opacity:.45;cursor:default}.roguelite-status{display:grid;gap:5px;border-top:1px solid var(--border);padding-top:10px}.roguelite-status[hidden]{display:none}.roguelite-status strong{font-size:12px;color:var(--accent)}.roguelite-status span{font-size:12px;color:var(--muted)}.campaign-run-panel{display:grid;gap:7px;border-top:1px solid var(--border);padding-top:10px}.campaign-run-panel[hidden]{display:none}.campaign-run-panel>strong{font-size:12px;color:var(--accent)}.campaign-run-panel>span,.campaign-run-nodes{font-size:12px;color:var(--muted)}.campaign-run-nodes{display:grid;gap:4px}.campaign-run-node{display:flex;justify-content:space-between;gap:8px}.campaign-run-node[data-state="available"]{color:var(--accent)}.campaign-run-node[data-state="current"]{color:var(--text);font-weight:700}.campaign-run-actions{display:flex;gap:6px;flex-wrap:wrap}.campaign-run-actions button{padding:5px 7px;font-size:11px}.meta-panel{border-top:1px solid var(--border);padding-top:10px}.meta-title{display:flex;justify-content:space-between;gap:8px;color:var(--muted);font-size:12px;text-transform:uppercase}.meta-upgrades{display:grid;gap:6px;margin-top:8px}.meta-upgrade{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center;padding:7px;border:1px solid var(--border);border-radius:6px;background:#161a16}.meta-upgrade span{min-width:0;font-size:12px}.meta-upgrade button{padding:5px 7px;font-size:11px}.boot-error,.story-overlay{position:fixed;inset:0;z-index:20;display:grid;place-items:center;padding:24px;background:#0b0e0bdd}.boot-error[hidden],.story-overlay[hidden]{display:none}.boot-error-panel{width:min(460px,100%);padding:22px;border:1px solid var(--danger);border-radius:6px;background:var(--surface);box-shadow:0 20px 60px #0009}.boot-error-panel h2{margin:0 0 8px;font-size:20px}.boot-error-actions,.story-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}.story-panel{width:min(820px,100%);max-height:min(680px,90vh);display:grid;grid-template-columns:minmax(0,1.2fr) minmax(280px,.8fr);overflow:hidden;border:1px solid var(--border);border-radius:6px;background:var(--surface);box-shadow:0 20px 60px #0009}.story-art{min-height:360px;background-position:center;background-size:cover;background-repeat:no-repeat;background-color:#101410}.story-copy{padding:24px;align-self:end}.story-copy h2{margin:0 0 18px;font-size:24px}.story-speaker{min-height:18px;color:var(--accent);font-weight:700}.story-text{color:var(--text);font-size:16px;line-height:1.55;white-space:pre-wrap}@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}}@media(max-width:820px){body{overflow:auto}.hud{align-items:flex-start;flex-direction:column}.controls{margin-left:0}.play-shell{grid-template-columns:1fr;grid-template-rows:65vh auto}.panel{border-left:0;border-top:1px solid var(--border)}.story-panel{grid-template-columns:1fr}.story-art{min-height:220px}.story-copy{padding:18px}}${desktopStyles}${monetizationStyles}`;
 }
 
-function playerProfileRuntimeTemplate() {
+function playerProfileRuntimeTemplate(largeScreenPlayer = false) {
   return `// TOWERFORGE_PROFILE_RUNTIME_BEGIN
 const playerProfileCodec = Object.freeze({
   createEmptyPlayerProfile,
@@ -677,7 +752,42 @@ const playerProfileKey = derivePlayerProfileStorageKey({
 });
 const playerProfileScope = playerProfileKey.slice("towerforge:progress:".length);
 
+${largeScreenPlayer ? `let desktopPlayerDataWriteTail = Promise.resolve();
+let desktopPlayerDataPort;
+try {
+  const desktopProfileAndStoryStorage = createIndexedDbSessionStorage({
+    dbName: "towerforge-player-" + playerProfileScope,
+    storeName: "player-data"
+  });
+  const desktopPlayerDataCache = new Map();
+  const desktopPlayerDataKeys = [
+    playerProfileKey,
+    ...Object.keys(content.storyComics || {}).map((comicId) => content.storySeenStoragePrefix + playerProfileScope + ":" + comicId)
+  ];
+  for (const key of desktopPlayerDataKeys) {
+    const value = await desktopProfileAndStoryStorage.getItem(key);
+    if (value !== null) desktopPlayerDataCache.set(key, value);
+  }
+  const enqueueDesktopPlayerDataWrite = (operation) => {
+    desktopPlayerDataWriteTail = desktopPlayerDataWriteTail.then(operation, operation);
+  };
+  desktopPlayerDataPort = Object.freeze({
+    getItem: (key) => desktopPlayerDataCache.get(key) ?? null,
+    setItem: (key, value) => {
+      desktopPlayerDataCache.set(key, value);
+      enqueueDesktopPlayerDataWrite(() => desktopProfileAndStoryStorage.setItem(key, value));
+    },
+    removeItem: (key) => {
+      desktopPlayerDataCache.delete(key);
+      enqueueDesktopPlayerDataWrite(() => desktopProfileAndStoryStorage.removeItem(key));
+    }
+  });
+} catch {
+  desktopPlayerDataPort = undefined;
+}` : ""}
+
 function createBrowserProfileStoragePort() {
+  ${largeScreenPlayer ? "return desktopPlayerDataPort;" : `
   let storage;
   try { storage = globalThis.localStorage; } catch { return undefined; }
   if (!storage) return undefined;
@@ -685,8 +795,10 @@ function createBrowserProfileStoragePort() {
     getItem: (key) => storage.getItem(key),
     setItem: (key, value) => storage.setItem(key, value),
     removeItem: (key) => storage.removeItem(key)
-  });
+  });`}
 }
+
+const storyStorage = createBrowserProfileStoragePort() ?? Object.freeze({ getItem: () => null, setItem: () => {}, removeItem: () => {} });
 
 const playerProfileStore = createPlayerProfileStore({
   storage: createBrowserProfileStoragePort(),
@@ -836,7 +948,7 @@ function resetPlayerProgress() {
 // TOWERFORGE_PROFILE_RUNTIME_END`;
 }
 
-function arsenalPlayerRuntimeTemplate() {
+function arsenalPlayerRuntimeTemplate(largeScreenPlayer = false) {
   return `function updateArsenalStatus(snap) {
   const panel = $("arsenal-status");
   if (!panel) return;
@@ -871,11 +983,12 @@ function arsenalPlayerRuntimeTemplate() {
     apply.textContent = "Apply modules";
     apply.disabled = !presentation.managementAllowed;
     apply.addEventListener("click", () => {
-      const result = dispatchGameCommand(game, {
+      const command = {
         schemaVersion: 7, type: "configureTowerModules", towerId: tower.towerId,
         modules: { base: selects.base.value, barrel: selects.barrel.value, core: selects.core.value }
-      });
-      report(result);
+      };
+      const result = ${largeScreenPlayer ? 'playerActionRegistry.invoke("configureTowerModules", { command })' : "dispatchGameCommand(game, command)"};
+      ${largeScreenPlayer ? "" : "report(result);"}
       if (result.ok) updateArsenalStatus(game.getSnapshot());
     });
     panel.append(apply);
@@ -958,10 +1071,502 @@ function macroEconomyPlayerRuntimeTemplate() {
 }`;
 }
 
-function playerTemplate(includeMultiplayer = false, includeMacroEconomy = false, includeHostMonetization = false) {
+function phaserViewportMethodsTemplate(enabled) {
+  if (!enabled) return `  geometry(tiles, grid) {
+    let maxQ = 1, maxR = 1;
+    for (const t of tiles) { if (t.q > maxQ) maxQ = t.q; if (t.r > maxR) maxR = t.r; }
+    const W = this.scale.width, H = this.scale.height;
+    if (grid?.kind === "square") {
+      const cell = Math.min(W / (maxQ + 2), H / (maxR + 2));
+      return { r: cell / 2, ox: cell, oy: cell, grid };
+    }
+    const r = Math.min(W / ((maxQ + 2) * 1.65), H / ((maxR + 2) * 1.45));
+    return { r, ox: r * 1.5, oy: r * 1.5, grid: grid || { kind: "hex", layout: "odd-r" } };
+  }
+  center(coord, g) {
+    if (g.grid.kind === "square") return { x: g.ox + coord.q * g.r * 2, y: g.oy + coord.r * g.r * 2 };
+    return { x: g.ox + coord.q * g.r * 1.48 + (coord.r % 2) * g.r * 0.74, y: g.oy + coord.r * g.r * 1.28 };
+  }`;
+  return `  geometry(tiles, grid) {
+    let maxQ = 1, maxR = 1;
+    for (const t of tiles) { if (t.q > maxQ) maxQ = t.q; if (t.r > maxR) maxR = t.r; }
+    const W = this.scale.width, H = this.scale.height;
+    let base;
+    if (grid?.kind === "square") {
+      const cell = Math.min(W / (maxQ + 2), H / (maxR + 2));
+      base = { r: cell / 2, ox: cell, oy: cell, grid };
+    } else {
+      const r = Math.min(W / ((maxQ + 2) * 1.65), H / ((maxR + 2) * 1.45));
+      base = { r, ox: r * 1.5, oy: r * 1.5, grid: grid || { kind: "hex", layout: "odd-r" } };
+    }
+    if (!tiles.length) return base;
+    const signature = W + "x" + H + "|" + base.grid.kind + "|" + maxQ + "," + maxR;
+    if (!this.viewportController || this.viewportSignature !== signature) {
+      const baseCenter = (coord) => base.grid.kind === "square"
+        ? { x: base.ox + coord.q * base.r * 2, y: base.oy + coord.r * base.r * 2 }
+        : { x: base.ox + coord.q * base.r * 1.48 + (coord.r % 2) * base.r * 0.74, y: base.oy + coord.r * base.r * 1.28 };
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const tile of tiles) {
+        const point = baseCenter(tile);
+        minX = Math.min(minX, point.x - base.r); minY = Math.min(minY, point.y - base.r);
+        maxX = Math.max(maxX, point.x + base.r); maxY = Math.max(maxY, point.y + base.r);
+      }
+      const profile = project.buildTarget.viewport;
+      const baseOptions = { viewport: { width: W, height: H }, worldBounds: { minX, minY, maxX, maxY }, padding: profile.padding };
+      const probe = createViewportTransformV1({ ...baseOptions, minZoom: 0.0001, maxZoom: 10000 });
+      const fitZoom = probe.getSnapshot().zoom;
+      this.viewportController = createViewportTransformV1({
+        ...baseOptions,
+        minZoom: fitZoom * profile.minZoom,
+        maxZoom: fitZoom * profile.maxZoom,
+        initialZoom: fitZoom * profile.initialZoom
+      });
+      this.viewportSignature = signature;
+    }
+    const view = this.viewportController.getSnapshot();
+    return { ...base, worldR: base.r, r: base.r * view.zoom, viewportTransform: this.viewportController };
+  }
+  center(coord, g) {
+    const radius = g.worldR ?? g.r;
+    const point = g.grid.kind === "square"
+      ? { x: g.ox + coord.q * radius * 2, y: g.oy + coord.r * radius * 2 }
+      : { x: g.ox + coord.q * radius * 1.48 + (coord.r % 2) * radius * 0.74, y: g.oy + coord.r * radius * 1.28 };
+    return g.viewportTransform ? g.viewportTransform.worldToScreen(point) : point;
+  }
+  cameraPan(delta) {
+    if (!this.viewportController) return null;
+    return this.viewportController.panBy(delta);
+  }
+  cameraZoom(point, factor) {
+    if (!this.viewportController) return null;
+    const current = this.viewportController.getSnapshot();
+    return this.viewportController.zoomAt(point, current.zoom * factor);
+  }
+  cameraReset() {
+    return this.viewportController?.reset() ?? null;
+  }`;
+}
+
+function desktopPlayerRuntimeTemplate(rendererKind) {
+  const cameraBridge = rendererKind === "phaser" ? `const desktopScene = () => phaserGame?.scene?.getScene?.("PlayScene") ?? phaserGame?.scene?.getScenes?.(true)?.[0] ?? null;
+let disposePromise = null;
+function disposeDesktopPhaserPlayer() {
+  if (disposePromise) return disposePromise;
+  disposePromise = new Promise((resolve, reject) => {
+    phaserPresentationResizeObserver?.disconnect();
+    phaserPresentationResizeObserver = null;
+    const currentGame = phaserGame;
+    phaserGame = null;
+    const canvas = currentGame?.canvas ?? null;
+    const graphics = currentGame?.renderer?.gl ?? canvas?.getContext?.("webgl2") ?? canvas?.getContext?.("webgl") ?? null;
+    let failure = null;
+    try {
+      currentGame?.destroy(true);
+    } catch (error) {
+      failure = error;
+    }
+    try {
+      graphics?.getExtension?.("WEBGL_lose_context")?.loseContext();
+    } catch (error) {
+      failure ??= error;
+    }
+    try {
+      canvas?.remove();
+    } catch (error) {
+      failure ??= error;
+    }
+    if (failure) reject(failure);
+    else resolve();
+  });
+  return disposePromise;
+}
+globalThis.__towerforgeDispose = disposeDesktopPhaserPlayer;
+window.addEventListener("pagehide", (event) => {
+  if (!event.persisted) void disposeDesktopPhaserPlayer();
+});
+const desktopViewportActions = Object.freeze({
+  cameraPan(delta) { const scene = desktopScene(); return scene?.viewportController?.panBy(delta) ?? null; },
+  cameraZoom(point, factor) { const scene = desktopScene(); const viewport = scene?.viewportController; if (!viewport) return null; const current = viewport.getSnapshot(); return viewport.zoomAt(point, current.zoom * factor); },
+  cameraReset() { const scene = desktopScene(); return scene?.viewportController?.reset() ?? null; },
+  cameraSnapshot() { const scene = desktopScene(); return scene?.viewportController?.getSnapshot() ?? null; }
+});` : `const desktopViewportActions = Object.freeze({
+  cameraPan(delta) { return renderer.panViewportBy(delta); },
+  cameraZoom(point, factor) { return renderer.zoomViewportAt({ clientX: point.x, clientY: point.y }, factor); },
+  cameraReset() { return renderer.resetViewport(); },
+  cameraSnapshot() { return renderer.getViewportSnapshot(); }
+});`;
+  const pointerControls = rendererKind === "canvas" ? `let cameraPanActive = false;
+let cameraPanPoint = null;
+canvas.addEventListener("wheel", (event) => {
+  if (desktopCameraInputBlocked()) return;
+  event.preventDefault();
+  playerActionRegistry.invoke("cameraZoom", {
+    point: { x: event.clientX, y: event.clientY },
+    factor: event.deltaY > 0 ? 0.9 : 1.1
+  });
+}, { passive: false });
+canvas.addEventListener("pointerdown", (event) => {
+  if (event.button !== 1 || desktopCameraInputBlocked()) return;
+  cameraPanActive = true; cameraPanPoint = { x: event.clientX, y: event.clientY }; event.preventDefault();
+});
+canvas.addEventListener("pointermove", (event) => {
+  if (!cameraPanActive || !cameraPanPoint) return;
+  desktopViewportActions.cameraPan({ x: event.clientX - cameraPanPoint.x, y: event.clientY - cameraPanPoint.y });
+  cameraPanPoint = { x: event.clientX, y: event.clientY };
+});
+for (const type of ["pointerup", "pointercancel", "pointerleave"]) canvas.addEventListener(type, () => { cameraPanActive = false; cameraPanPoint = null; });` : "";
+  return `
+${cameraBridge}
+globalThis.__towerforgeViewportSnapshot = () => desktopViewportActions.cameraSnapshot();
+function desktopCameraCenterPoint() {
+  ${rendererKind === "phaser"
+    ? 'const scene = desktopScene(); return { x: (scene?.scale?.width ?? 1) / 2, y: (scene?.scale?.height ?? 1) / 2 };'
+    : 'const rect = $("playfield").getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };'}
+}
+function desktopCameraInputBlocked() {
+  const active = document.activeElement;
+  const tag = active?.tagName;
+  return Boolean(document.querySelector('.desktop-dialog:not([hidden]), .story-overlay:not([hidden]), [aria-modal="true"]:not([hidden])'))
+    || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || Boolean(active?.isContentEditable);
+}
+
+const playerActionDescriptors = createDefaultPlayerActionDescriptors();
+const playerPreferencesKey = "towerforge:preferences:" + playerProfileScope;
+const defaultPlayerPreferences = createDefaultPlayerPreferences();
+let playerPreferences = parsePlayerPreferencesV1(serializePlayerPreferencesV1({
+  ...defaultPlayerPreferences,
+  quality: project.buildTarget.quality || defaultPlayerPreferences.quality
+}));
+try {
+  const playerPreferencesRaw = localStorage.getItem(playerPreferencesKey);
+  if (playerPreferencesRaw) playerPreferences = parsePlayerPreferencesV1(playerPreferencesRaw);
+} catch {}
+if (playerPreferences.fullscreen && !document.fullscreenElement) {
+  playerPreferences = parsePlayerPreferencesV1(serializePlayerPreferencesV1({ ...playerPreferences, fullscreen: false }));
+}
+const playerStrings = createPlayerStrings({
+  locale: project.buildTarget.locale && project.buildTarget.locale !== "auto"
+    ? project.buildTarget.locale
+    : playerPreferences.locale,
+  navigatorLanguage: navigator.language
+});
+const desktopLabels = { "desktop-continue": "continue", "desktop-upgrade": "upgrade", "desktop-pause": "pause", "desktop-reset-view": "resetView", "desktop-settings": "settings", "desktop-fullscreen": "fullscreen" };
+for (const [id, labelId] of Object.entries(desktopLabels)) { const element = $(id); if (element) element.textContent = playerStrings.text(labelId); }
+const desktopShellLabels = Object.freeze({
+  "label-mission": "mission", "label-difficulty": "difficulty", "label-tower": "tower",
+  "start-wave": "startWave", "pause-run": "pause", "sell-mode": "sell", "reset-run": "reset",
+  "reset-progress": "resetProgress", "label-outcome": "outcome", "label-core": "core",
+  "label-resources": "resources", "label-wave": "wave", "label-enemies": "enemies",
+  "label-towers": "towers", "label-objectives": "objectives", "label-target-priority": "targetPriority",
+  "label-speed": "speed", "label-sound": "sound", "label-sfx": "sfx", "label-music": "music",
+  "desktop-settings-title": "settings", "label-ui-scale": "uiScale", "label-quality": "quality",
+  "label-reduced-motion": "reducedMotion", "label-keyboard": "keyboard", "label-key-pause": "pauseKey",
+  "label-key-upgrade": "upgradeKey", "label-key-camera-reset": "cameraResetKey",
+  "label-key-speed-down": "speedDownKey", "label-key-speed-up": "speedUpKey",
+  "desktop-settings-close": "close", "desktop-result-title": "battleResult", "desktop-result-close": "close"
+});
+for (const [id, labelId] of Object.entries(desktopShellLabels)) {
+  const element = $(id);
+  if (element) element.textContent = playerStrings.text(labelId);
+}
+
+const defaultDesktopKeyBindings = Object.freeze({
+  pause: "Space", upgradeTower: "KeyU", cameraReset: "Digit0",
+  speedDown: "BracketLeft", speedUp: "BracketRight"
+});
+function playerKeyCode(actionId) {
+  return playerPreferences.keyBindings[actionId] || defaultDesktopKeyBindings[actionId] || "";
+}
+function matchesPlayerKeyBinding(actionId, event) {
+  const keyBindings = playerPreferences.keyBindings;
+  return (keyBindings[actionId] || defaultDesktopKeyBindings[actionId] || "") === event.code;
+}
+function syncDesktopPreferenceControls() {
+  $("desktop-ui-scale").value = String(playerPreferences.uiScale);
+  $("desktop-quality").value = playerPreferences.quality;
+  $("desktop-reduced-motion").checked = playerPreferences.motion === "reduced";
+  $("snd").checked = playerPreferences.soundEnabled;
+  $("sfx-volume").value = String(playerPreferences.sfxVolume);
+  $("music-volume").value = String(playerPreferences.musicVolume);
+  for (const input of document.querySelectorAll("[data-key-binding]")) {
+    input.value = playerKeyCode(input.dataset.keyBinding);
+  }
+  $("desktop-fullscreen")?.setAttribute("aria-pressed", String(Boolean(document.fullscreenElement)));
+  syncAudioSettings();
+}
+
+function storePlayerPreferences(next) {
+  playerPreferences = parsePlayerPreferencesV1(serializePlayerPreferencesV1(next));
+  try { localStorage.setItem(playerPreferencesKey, serializePlayerPreferencesV1(playerPreferences)); } catch {}
+  return playerPreferences;
+}
+function persistPlayerPreferences(next) {
+  storePlayerPreferences(next);
+  document.documentElement.style.fontSize = String(playerPreferences.uiScale * 100) + "%";
+  document.body.dataset.quality = playerPreferences.quality;
+  document.body.dataset.motion = playerPreferences.motion;
+  applyPlayerPresentationQuality(playerPreferences.quality);
+  syncDesktopPreferenceControls();
+}
+persistPlayerPreferences(playerPreferences);
+
+let playerSessionStore = null;
+try {
+  const currentContentDigest = game.createCheckpoint().contentDigest;
+  playerSessionStore = createRotatingPlayerSessionStore({
+    storage: createIndexedDbSessionStorage({ dbName: "towerforge-player-" + playerProfileScope, storeName: "player-data" }),
+    baseKey: "towerforge:session:" + playerProfileScope,
+    expectedContentDigest: currentContentDigest,
+    expectedCapabilityDigest: (save) => computeMissionCapabilityDigestV1({ content, missionId: save.activeMissionId }),
+    codec: { parse: parsePlayerSessionSaveV1, serialize: serializePlayerSessionSaveV1 },
+    restore(save) {
+      const restoredGame = TowerDefenseGame.fromCheckpoint({ content, checkpoint: save.checkpoint });
+      if (restoredGame.createCheckpoint().contentDigest !== save.contentDigest || save.activeMissionId !== save.checkpoint.identity.missionId) throw new Error("Session identity mismatch.");
+      game = restoredGame;
+      resetPlayerSimulationClock();
+      missionId = save.activeMissionId;
+      selectedTowerId = null;
+      setTargetingMode({ kind: "build" });
+      clearNavigationOverlay();
+      return Object.freeze({ missionId, stateDigest: game.getStateDigest() });
+    }
+  });
+} catch {}
+
+let desktopAutosaveTimer = 0;
+async function saveDesktopSession() {
+  if (!playerSessionStore) return { code: "session_unavailable" };
+  const checkpoint = game.createCheckpoint();
+  return playerSessionStore.save({
+    schemaVersion: 1,
+    activeMissionId: missionId,
+    checkpoint,
+    journalSuffix: [],
+    contentDigest: checkpoint.contentDigest,
+    capabilityDigest: computeMissionCapabilityDigestV1({ content, missionId }),
+    savedAt: new Date().toISOString()
+  });
+}
+function scheduleDesktopAutosave() {
+  clearTimeout(desktopAutosaveTimer);
+  desktopAutosaveTimer = setTimeout(() => { void saveDesktopSession(); }, 100);
+}
+function scheduleDesktopAutosaveForEvents(events) {
+  if (Array.isArray(events) && events.some(event => event?.type === "waveCleared")) {
+    scheduleDesktopAutosave();
+  }
+}
+document.addEventListener("visibilitychange", () => { if (document.hidden) void saveDesktopSession(); });
+window.addEventListener("pagehide", () => { void saveDesktopSession(); });
+
+const desktopSettingsDialog = $("desktop-settings-dialog");
+const desktopSettingsPreviousFocus = { current: null };
+function openDesktopSettings() {
+  desktopSettingsPreviousFocus.current = document.activeElement;
+  $("desktop-ui-scale").value = String(playerPreferences.uiScale);
+  $("desktop-quality").value = playerPreferences.quality;
+  $("desktop-reduced-motion").checked = playerPreferences.motion === "reduced";
+  desktopSettingsDialog.hidden = false;
+  $("desktop-settings-close").focus();
+}
+function closeDesktopSettings() {
+  desktopSettingsDialog.hidden = true;
+  desktopSettingsPreviousFocus.current?.focus?.();
+}
+
+function invalidPlayerActionPayload(actionId) {
+  return Object.freeze({ ok: false, code: "invalid_player_action_payload", actionId });
+}
+function dispatchRegisteredCommand(actionId, payload) {
+  const command = payload && payload.command;
+  if (!command || command.type !== actionId) return invalidPlayerActionPayload(actionId);
+  const result = dispatchGameCommand(game, command);
+  report(result);
+  return result;
+}
+async function continueDesktopSession() {
+  const result = playerSessionStore ? await playerSessionStore.loadLatest() : { code: "session_unavailable" };
+  if (result.code === "session_loaded") syncMissionDependentPlayerUiAfterRestore();
+  message = result.code === "session_loaded" ? playerStrings.text("sessionRestored") : playerStrings.text("noSave");
+  return result;
+}
+function syncMissionDependentPlayerUiAfterRestore() {
+  towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0] || "";
+  refreshMissionOptions();
+  initDifficultySelector();
+  initTowerSelector();
+  initAbilityBar();
+  syncKeyboardCursor(null);
+  setSellMode(false);
+  clearNavigationOverlay();
+  applyBattleBackground();
+  selectMissionMusic();
+  renderMetaPanel();
+}
+function changeDesktopSpeed(delta) {
+  const control = $("speed");
+  const next = Math.min(Number(control.max), Math.max(Number(control.min), Number(control.value) + delta));
+  control.value = String(next);
+  control.dispatchEvent(new Event("input", { bubbles: true }));
+  return Object.freeze({ ok: true, speed: next });
+}
+function selectDesktopBuildSlot(index) {
+  const select = $("tower-select");
+  const option = select?.options?.[index];
+  if (!option || option.disabled) return invalidPlayerActionPayload("selectBuildSlot");
+  select.value = option.value;
+  towerId = option.value;
+  refreshNavigationOverlay();
+  return Object.freeze({ ok: true, towerId, index });
+}
+function selectDesktopAbilitySlot(index) {
+  const button = document.querySelectorAll("#ability-bar button")[index];
+  if (!button || button.disabled) return invalidPlayerActionPayload("selectAbilitySlot");
+  button.click();
+  return Object.freeze({ ok: true, abilityId: button.dataset.aid, index });
+}
+function persistDesktopCameraZoom(previous, result) {
+  if (!previous || !result || !Number.isFinite(previous.zoom) || previous.zoom <= 0 || !Number.isFinite(result.zoom)) return result;
+  storePlayerPreferences({
+    ...playerPreferences,
+    cameraZoom: Number(Math.min(8, Math.max(0.1, playerPreferences.cameraZoom * (result.zoom / previous.zoom))).toFixed(6))
+  });
+  return result;
+}
+function applyStoredDesktopCameraZoom(attempt = 0) {
+  if (playerPreferences.cameraZoom === 1) return;
+  if (!desktopViewportActions.cameraSnapshot()) {
+    if (attempt < 120) requestAnimationFrame(() => applyStoredDesktopCameraZoom(attempt + 1));
+    return;
+  }
+  desktopViewportActions.cameraZoom(desktopCameraCenterPoint(), playerPreferences.cameraZoom);
+}
+
+const playerActionRegistry = createPlayerActionRegistry({
+  descriptors: playerActionDescriptors,
+  handlers: {
+    "continueSession": () => continueDesktopSession(),
+    "pause": () => setPaused(Number($("speed").value) > 0),
+    "cameraPan": (payload) => desktopViewportActions.cameraPan(payload),
+    "cameraZoom": (payload) => {
+      const previous = desktopViewportActions.cameraSnapshot();
+      return persistDesktopCameraZoom(previous, desktopViewportActions.cameraZoom(payload.point, payload.factor));
+    },
+    "cameraReset": () => {
+      const result = desktopViewportActions.cameraReset();
+      if (result) storePlayerPreferences({ ...playerPreferences, cameraZoom: 1 });
+      return result;
+    },
+    "selectBuildSlot": (payload) => selectDesktopBuildSlot(payload.index),
+    "selectAbilitySlot": (payload) => selectDesktopAbilitySlot(payload.index),
+    "speedDown": () => changeDesktopSpeed(-0.25),
+    "speedUp": () => changeDesktopSpeed(0.25),
+    "fullscreen": async () => {
+      try {
+        if (document.fullscreenElement) await document.exitFullscreen();
+        else await document.documentElement.requestFullscreen();
+        return Object.freeze({ ok: true });
+      } catch { return Object.freeze({ ok: false, code: "fullscreen_failed" }); }
+    },
+    "openSettings": () => { openDesktopSettings(); return Object.freeze({ ok: true }); },
+    "startWave": () => report(game.startNextWave()),
+    "placeTower": (payload) => dispatchRegisteredCommand("placeTower", payload),
+    "upgradeTower": (payload) => payload && payload.command
+      ? dispatchRegisteredCommand("upgradeTower", payload)
+      : selectedTowerId ? report(game.upgradeTower(selectedTowerId, payload.branchId)) : invalidPlayerActionPayload("upgradeTower"),
+    "sellTower": (payload) => payload && payload.command
+      ? dispatchRegisteredCommand("sellTower", payload)
+      : selectedTowerId ? report(game.sellTower(selectedTowerId)) : invalidPlayerActionPayload("sellTower"),
+    "setTargetMode": (payload) => payload && payload.command
+      ? dispatchRegisteredCommand("setTargetMode", payload)
+      : selectedTowerId ? report(game.setTowerTargetMode(selectedTowerId, payload.mode)) : invalidPlayerActionPayload("setTargetMode"),
+    "useAbility": (payload) => dispatchRegisteredCommand("useAbility", payload),
+    "moveHero": (payload) => dispatchRegisteredCommand("moveHero", payload),
+    "useHeroAbility": (payload) => dispatchRegisteredCommand("useHeroAbility", payload),
+    "unlockHeroSkill": (payload) => dispatchRegisteredCommand("unlockHeroSkill", payload),
+    "socketArtifact": (payload) => dispatchRegisteredCommand("socketArtifact", payload),
+    "unsocketArtifact": (payload) => dispatchRegisteredCommand("unsocketArtifact", payload),
+    "configureTowerModules": (payload) => dispatchRegisteredCommand("configureTowerModules", payload),
+    "emitSignal": (payload) => payload && payload.command
+      ? dispatchRegisteredCommand("emitSignal", payload)
+      : report(dispatchGameCommand(game, { schemaVersion: 1, type: "emitSignal", signal: payload.signalId, payload: payload.payload }))
+  }
+});
+
+$("desktop-continue")?.addEventListener("click", () => playerActionRegistry.invoke("continueSession"));
+$("desktop-upgrade")?.addEventListener("click", () => playerActionRegistry.invoke("upgradeTower"));
+$("desktop-pause")?.addEventListener("click", () => playerActionRegistry.invoke("pause"));
+$("desktop-reset-view")?.addEventListener("click", () => playerActionRegistry.invoke("cameraReset"));
+$("desktop-fullscreen")?.addEventListener("click", () => playerActionRegistry.invoke("fullscreen"));
+$("desktop-settings")?.addEventListener("click", () => playerActionRegistry.invoke("openSettings"));
+$("desktop-settings-close")?.addEventListener("click", closeDesktopSettings);
+document.addEventListener("fullscreenchange", () => {
+  storePlayerPreferences({ ...playerPreferences, fullscreen: Boolean(document.fullscreenElement) });
+  $("desktop-fullscreen")?.setAttribute("aria-pressed", String(Boolean(document.fullscreenElement)));
+});
+for (const id of ["desktop-ui-scale", "desktop-quality", "desktop-reduced-motion"]) $(id)?.addEventListener("change", () => persistPlayerPreferences({
+  ...playerPreferences,
+  uiScale: Number($("desktop-ui-scale").value),
+  quality: $("desktop-quality").value,
+  motion: $("desktop-reduced-motion").checked ? "reduced" : "auto"
+}));
+for (const input of document.querySelectorAll("[data-key-binding]")) {
+  input.addEventListener("keydown", (event) => {
+    if (!event.code || ["Tab", "Escape"].includes(event.code)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    storePlayerPreferences({
+      ...playerPreferences,
+      keyBindings: { ...playerPreferences.keyBindings, [input.dataset.keyBinding]: event.code }
+    });
+    input.value = event.code;
+  });
+}
+function persistDesktopAudioPreferences() {
+  storePlayerPreferences({
+    ...playerPreferences,
+    soundEnabled: $("snd").checked,
+    sfxVolume: Number($("sfx-volume").value),
+    musicVolume: Number($("music-volume").value)
+  });
+  syncAudioSettings();
+  if (playerPreferences.soundEnabled) audio.resume();
+}
+
+${pointerControls}
+document.addEventListener("keydown", (event) => {
+  const tag = event.target?.tagName;
+  if (event.key === "Escape" && !desktopSettingsDialog.hidden) { event.preventDefault(); closeDesktopSettings(); return; }
+  if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;
+  if (desktopCameraInputBlocked()) return;
+  const cameraPan = { KeyA: [-32, 0], KeyD: [32, 0], KeyW: [0, -32], KeyS: [0, 32] };
+  if (cameraPan[event.code]) { event.preventDefault(); event.stopImmediatePropagation(); playerActionRegistry.invoke("cameraPan", { x: cameraPan[event.code][0], y: cameraPan[event.code][1] }); return; }
+  if (["Equal", "NumpadAdd", "Minus", "NumpadSubtract"].includes(event.code)) {
+    event.preventDefault(); event.stopImmediatePropagation(); playerActionRegistry.invoke("cameraZoom", { point: desktopCameraCenterPoint(), factor: event.code === "Equal" || event.code === "NumpadAdd" ? 1.1 : 0.9 }); return;
+  }
+  if (matchesPlayerKeyBinding("cameraReset", event)) { event.preventDefault(); event.stopImmediatePropagation(); playerActionRegistry.invoke("cameraReset"); return; }
+  if (matchesPlayerKeyBinding("upgradeTower", event) && selectedTowerId) { event.preventDefault(); event.stopImmediatePropagation(); playerActionRegistry.invoke("upgradeTower"); return; }
+  if (matchesPlayerKeyBinding("speedDown", event)) { event.preventDefault(); event.stopImmediatePropagation(); playerActionRegistry.invoke("speedDown"); return; }
+  if (matchesPlayerKeyBinding("speedUp", event)) { event.preventDefault(); event.stopImmediatePropagation(); playerActionRegistry.invoke("speedUp"); return; }
+  const buildCodes = ["Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6", "Digit7", "Digit8", "Digit9"];
+  const buildIndex = buildCodes.indexOf(event.code);
+  if (buildIndex >= 0) { event.preventDefault(); event.stopImmediatePropagation(); playerActionRegistry.invoke("selectBuildSlot", { index: buildIndex }); return; }
+  const abilityCodes = ["KeyQ", "KeyE", "KeyR", "KeyF"];
+  const abilityIndex = abilityCodes.indexOf(event.code);
+  if (abilityIndex >= 0) { event.preventDefault(); event.stopImmediatePropagation(); playerActionRegistry.invoke("selectAbilitySlot", { index: abilityIndex }); }
+});
+
+requestAnimationFrame(() => applyStoredDesktopCameraZoom());
+const desktopLaunchAction = new URL(location.href).searchParams.get("action");
+if (desktopLaunchAction === "continue") playerActionRegistry.invoke("continueSession");
+globalThis.__towerforgePlayerActions = playerActionRegistry;
+`;
+}
+
+function playerTemplate(includeMultiplayer = false, includeMacroEconomy = false, includeHostMonetization = false, largeScreenPlayer = false) {
   return `import {
   createCampaignRun,
-  createEmptyPlayerProfile,
+  ${largeScreenPlayer ? "computeMissionCapabilityDigestV1,\n  " : ""}createEmptyPlayerProfile,
   createGameContentRegistry,
   dispatchGameCommand,
   exportCampaignRun,
@@ -983,7 +1588,8 @@ function playerTemplate(includeMultiplayer = false, includeMacroEconomy = false,
   validateCampaignRunAgainstContent
 } from "./engine/index.js";
 ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multiplayer/index.js";' : ""}
-import { createPlayerProfileStore, derivePlayerProfileStorageKey } from "./player-runtime/index.mjs";
+import { createPlayerProfileStore, derivePlayerProfileStorageKey${largeScreenPlayer ? ", createDefaultPlayerActionDescriptors, createPlayerActionRegistry, createDefaultPlayerPreferences, createFixedSimulationClockV1, createRotatingPlayerSessionStore, parsePlayerPreferencesV1, parsePlayerSessionSaveV1, resolvePlayerPresentationQualityV1, serializePlayerPreferencesV1, serializePlayerSessionSaveV1" : ""} } from "./player-runtime/index.mjs";
+${largeScreenPlayer ? 'import { createIndexedDbSessionStorage } from "./player-runtime/indexeddb-session-storage.mjs";\nimport { createPlayerStrings } from "./player-runtime/localized-strings.mjs";\nimport { createViewportTransformV1 } from "./renderer/viewport-transform.mjs";' : ""}
 ${includeHostMonetization ? 'import { createHostMonetizationRuntimeV1 } from "./player-runtime/host-monetization.mjs";' : ""}
 import { createCanvasRenderer, hitTestHeroesPresentation, projectArsenalPresentation${includeMacroEconomy ? ", projectMacroEconomyPresentation" : ""}, projectCampaignPresentation, projectDirectorDecisionCues, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectProceduralJuicePresentation, projectQuestPresentation, projectRoguelitePresentation, projectVanguardProtectionPresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
 import { createAudioPlayer } from "./renderer/audio.mjs";
@@ -1002,8 +1608,8 @@ const content = createGameContentRegistry({
 ${includeMultiplayer ? "globalThis.__towerforgeMultiplayer = TowerForgeMultiplayer;" : ""}
 ${includeHostMonetization ? "const hostMonetization = createHostMonetizationRuntimeV1({ hook: project.hostMonetization });\nhostMonetization.mount();\nglobalThis.__towerforgeHostMonetization = hostMonetization;" : ""}
 
-${playerProfileRuntimeTemplate()}
-${arsenalPlayerRuntimeTemplate()}
+${playerProfileRuntimeTemplate(largeScreenPlayer)}
+${arsenalPlayerRuntimeTemplate(largeScreenPlayer)}
 ${includeMacroEconomy ? macroEconomyPlayerRuntimeTemplate() : ""}
 
 const $ = (id) => document.getElementById(id);
@@ -1013,11 +1619,22 @@ const canvas = $("playfield");
 let missionId = content.defaultMissionId || Object.keys(content.missions)[0];
 let towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
 let game = new TowerDefenseGame({ missionId, content, ...currentPlayerLaunchOptions() });
+${largeScreenPlayer ? "const playerSimulationClock = createFixedSimulationClockV1({ timeUnitSeconds: content.constants.timeUnitSeconds || 1 });\nconst resetPlayerSimulationClock = () => playerSimulationClock.reset();\nlet canvasPresentationQuality = resolvePlayerPresentationQualityV1(project.buildTarget.quality, { width: globalThis.innerWidth, height: globalThis.innerHeight });" : ""}
 const activeCampaign = resolveWorldCampaign(content);
 let campaignRun = activeCampaign ? createCampaignRun("campaign") : null;
 let pendingCampaignNodeId = null;
 let pendingCampaignBattle = false;
-const renderer = createCanvasRenderer({ canvas, content, theme: content.visuals?.theme?.renderer });
+const renderer = createCanvasRenderer({ canvas, content, theme: content.visuals?.theme?.renderer${largeScreenPlayer ? ", createViewportTransform: createViewportTransformV1, viewportProfile: project.buildTarget.viewport, maxDevicePixelRatio: canvasPresentationQuality.maxDevicePixelRatio" : ""} });
+${largeScreenPlayer ? `function applyPlayerPresentationQuality(quality) {
+  const profile = resolvePlayerPresentationQualityV1(quality, { width: globalThis.innerWidth, height: globalThis.innerHeight });
+  canvasPresentationQuality = profile;
+  renderer.setMaxDevicePixelRatio(profile.maxDevicePixelRatio);
+  return profile;
+}
+globalThis.__towerforgePresentationQuality = () => Object.freeze({
+  ...canvasPresentationQuality,
+  effectiveMaxDevicePixelRatio: renderer.maxDevicePixelRatio
+});` : ""}
 let lastFrame = performance.now();
 let message = "Choose a tower, click a buildable tile, then start the wave.";
 let targetingMode = { kind: "build" };
@@ -1052,25 +1669,26 @@ document.addEventListener("visibilitychange", () => {
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker.register("./offline-sw.js").catch(() => {}));
 }
-$("start-wave").addEventListener("click", () => { audio.resume(); report(game.startNextWave()); });
-$("pause-run").addEventListener("click", () => setPaused(Number($("speed").value) > 0));
+$("start-wave").addEventListener("click", () => { ${largeScreenPlayer ? 'if (playerPreferences.soundEnabled) audio.resume(); playerActionRegistry.invoke("startWave");' : 'audio.resume(); report(game.startNextWave());'} });
+$("pause-run").addEventListener("click", () => ${largeScreenPlayer ? 'playerActionRegistry.invoke("pause")' : 'setPaused(Number($("speed").value) > 0)'});
 $("sell-mode").addEventListener("click", () => setSellMode(targetingMode.kind !== "sell"));
-$("reset-run").addEventListener("click", () => { game.reset(); renderer.resetProceduralJuicePresentation(); audio.disposeProceduralVoices(); victoryRewarded = false; selectedTowerId = null; setTargetingMode({ kind: "build" }); initAbilityBar(); clearNavigationOverlay(); message = "Run reset."; });
+$("reset-run").addEventListener("click", () => { game.reset(); ${largeScreenPlayer ? "resetPlayerSimulationClock();" : ""} renderer.resetProceduralJuicePresentation(); audio.disposeProceduralVoices(); victoryRewarded = false; selectedTowerId = null; setTargetingMode({ kind: "build" }); initAbilityBar(); clearNavigationOverlay(); message = "Run reset."; });
 $("reset-progress")?.addEventListener("click", resetPlayerProgress);
 $("speed").addEventListener("input", syncSpeedUi);
-$("snd").addEventListener("change", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
-$("sfx-volume").addEventListener("input", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
-$("music-volume").addEventListener("input", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
+$("snd").addEventListener("change", () => { ${largeScreenPlayer ? "persistDesktopAudioPreferences();" : 'syncAudioSettings(); if ($("snd").checked) audio.resume();'} });
+$("sfx-volume").addEventListener("input", () => { ${largeScreenPlayer ? "persistDesktopAudioPreferences();" : 'syncAudioSettings(); if ($("snd").checked) audio.resume();'} });
+$("music-volume").addEventListener("input", () => { ${largeScreenPlayer ? "persistDesktopAudioPreferences();" : 'syncAudioSettings(); if ($("snd").checked) audio.resume();'} });
 $("target-mode").addEventListener("change", () => {
   if (!selectedTowerId) return;
-  report(game.setTowerTargetMode(selectedTowerId, $("target-mode").value));
+  ${largeScreenPlayer ? 'playerActionRegistry.invoke("setTargetMode", { mode: $("target-mode").value });' : 'report(game.setTowerTargetMode(selectedTowerId, $("target-mode").value));'}
 });
 $("story-next").addEventListener("click", advanceStory);
 $("story-skip").addEventListener("click", finishStory);
+${largeScreenPlayer ? desktopPlayerRuntimeTemplate("canvas") : ""}
 document.addEventListener("keydown", (event) => {
   const tag = event.target?.tagName;
   if (tag === "BUTTON" || tag === "A" || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;
-  if (event.code === "Space") { event.preventDefault(); setPaused(Number($("speed").value) > 0); return; }
+  if (event.code === ${largeScreenPlayer ? 'playerKeyCode("pause")' : '"Space"'}) { event.preventDefault(); ${largeScreenPlayer ? 'playerActionRegistry.invoke("pause");' : 'setPaused(Number($("speed").value) > 0);'} return; }
   if (document.activeElement !== canvas) return;
   if (event.code === "Digit1") { event.preventDefault(); armCurrentHeroAbility(); return; }
   const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
@@ -1137,6 +1755,7 @@ const bootError = document.getElementById("boot-error");
 if (bootError) bootError.hidden = true;
 canvas.addEventListener("focus", () => syncKeyboardCursor(ensureKeyboardCoord()));
 canvas.addEventListener("pointermove", (event) => {
+  ${largeScreenPlayer ? "if (cameraPanActive) return;" : ""}
   const coord = pickTile(event);
   if (coord?.q === navigationHoverCoord?.q && coord?.r === navigationHoverCoord?.r) return;
   navigationHoverCoord = coord;
@@ -1147,6 +1766,7 @@ canvas.addEventListener("pointerleave", () => {
   refreshNavigationOverlay(keyboardCoord);
 });
 canvas.addEventListener("pointerdown", (event) => {
+  ${largeScreenPlayer ? "if (event.button === 1 || cameraPanActive) return;" : ""}
   audio.resume();
   const coord = pickTile(event);
   if (!coord) return;
@@ -1290,35 +1910,32 @@ function actAtCoord(coord, heroHitId = null, enemyHitId = null) {
   if (!coord) return;
   if (targetingMode.kind === "sell") {
     const towerAt = game.getTowerIdAt(coord);
-    report(towerAt ? game.sellTower(towerAt) : { ok: false, reason: "Choose a tower tile." });
+    if (towerAt) {
+      ${largeScreenPlayer ? 'playerActionRegistry.invoke("sellTower", { command: { schemaVersion: 1, type: "sellTower", towerId: towerAt } });' : "report(game.sellTower(towerAt));"}
+    } else report({ ok: false, reason: "Choose a tower tile." });
     if (towerAt === selectedTowerId) selectedTowerId = null;
     setSellMode(false);
     return;
   }
   if (targetingMode.kind === "missionAbility") {
-    report(game.useAbility(targetingMode.abilityId, coord));
+    ${largeScreenPlayer ? 'playerActionRegistry.invoke("useAbility", { command: { schemaVersion: 1, type: "useAbility", abilityId: targetingMode.abilityId, center: { q: coord.q, r: coord.r } } });' : "report(game.useAbility(targetingMode.abilityId, coord));"}
     setTargetingMode({ kind: "build" });
     return;
   }
   if (targetingMode.kind === "heroAbility") {
     if (!enemyHitId) { message = "Choose a live enemy target."; return; }
-    const result = dispatchGameCommand(game, {
-      schemaVersion: 5,
-      type: "useHeroAbility",
-      heroId: targetingMode.heroId,
-      abilityId: targetingMode.abilityId,
-      targetEnemyId: enemyHitId
-    });
-    report(result);
+    const result = ${largeScreenPlayer
+      ? 'playerActionRegistry.invoke("useHeroAbility", { command: { schemaVersion: 5, type: "useHeroAbility", heroId: targetingMode.heroId, abilityId: targetingMode.abilityId, targetEnemyId: enemyHitId } })'
+      : 'dispatchGameCommand(game, { schemaVersion: 5, type: "useHeroAbility", heroId: targetingMode.heroId, abilityId: targetingMode.abilityId, targetEnemyId: enemyHitId })'};
+    ${largeScreenPlayer ? "" : "report(result);"}
     if (result.ok) setTargetingMode({ kind: "build" });
     return;
   }
   if (targetingMode.kind === "heroMove") {
-    const result = dispatchGameCommand(game, {
-      schemaVersion: 4, type: "moveHero", heroId: targetingMode.heroId,
-      target: { q: coord.q, r: coord.r }
-    });
-    report(result);
+    const result = ${largeScreenPlayer
+      ? 'playerActionRegistry.invoke("moveHero", { command: { schemaVersion: 4, type: "moveHero", heroId: targetingMode.heroId, target: { q: coord.q, r: coord.r } } })'
+      : 'dispatchGameCommand(game, { schemaVersion: 4, type: "moveHero", heroId: targetingMode.heroId, target: { q: coord.q, r: coord.r } })'};
+    ${largeScreenPlayer ? "" : "report(result);"}
     if (result.ok) setTargetingMode({ kind: "build" });
     return;
   }
@@ -1328,8 +1945,8 @@ function actAtCoord(coord, heroHitId = null, enemyHitId = null) {
   if (!towerId) return;
   const preflight = game.canPlaceTower(towerId, coord);
   if (!preflight.ok) { report(preflight); refreshNavigationOverlay(coord); return; }
-  const result = game.placeTower(towerId, coord);
-  report(result);
+  const result = ${largeScreenPlayer ? 'playerActionRegistry.invoke("placeTower", { command: { schemaVersion: 1, type: "placeTower", towerTypeId: towerId, coord: { q: coord.q, r: coord.r } } })' : "game.placeTower(towerId, coord)"};
+  ${largeScreenPlayer ? "" : "report(result);"}
   if (result.ok) selectedTowerId = game.getTowerIdAt(coord);
   refreshNavigationOverlay(coord);
 }
@@ -1388,7 +2005,7 @@ function syncSpeedUi() {
   const speed = Number($("speed").value) || 0;
   if (speed > 0) lastRunningSpeed = speed;
   $("speed-label").textContent = speed + "x";
-  $("pause-run").textContent = speed > 0 ? "Pause" : "Resume";
+  $("pause-run").textContent = speed > 0 ? ${largeScreenPlayer ? 'playerStrings.text("pause")' : '"Pause"'} : ${largeScreenPlayer ? 'playerStrings.text("resume")' : '"Resume"'};
   $("pause-run").setAttribute("aria-pressed", String(speed === 0));
 }
 
@@ -1608,13 +2225,10 @@ function updateHeroSkillTree(snap) {
       button.type = "button";
       button.dataset.heroSkillId = node.id;
       button.addEventListener("click", () => {
-        const result = dispatchGameCommand(game, {
-          schemaVersion: 6,
-          type: "unlockHeroSkill",
-          heroId: button.dataset.heroId,
-          skillId: button.dataset.heroSkillId
-        });
-        report(result);
+        const result = ${largeScreenPlayer
+          ? 'playerActionRegistry.invoke("unlockHeroSkill", { command: { schemaVersion: 6, type: "unlockHeroSkill", heroId: button.dataset.heroId, skillId: button.dataset.heroSkillId } })'
+          : 'dispatchGameCommand(game, { schemaVersion: 6, type: "unlockHeroSkill", heroId: button.dataset.heroId, skillId: button.dataset.heroSkillId })'};
+        ${largeScreenPlayer ? "" : "report(result);"}
         updateHeroSkillTree(game.getRenderSnapshot());
       });
       button.addEventListener("touchend", (event) => {
@@ -1720,6 +2334,7 @@ function selectCampaignNode(nodeId) {
     pendingCampaignNodeId = prepared.nodeId;
     missionId = prepared.missionId;
     game = prepared.game;
+    ${largeScreenPlayer ? "resetPlayerSimulationClock();" : ""}
   } else if (prepared.code === "campaign_handoff_inactive") {
     // Campaign marker v1 retains the legacy graph reducer without battle carry.
     const availableNodeIds = getAvailableCampaignNodeIds(campaignRun, content);
@@ -1829,7 +2444,7 @@ function showStoryForMission(trigger) {
   if (shownStories.has(runKey)) return;
   const seenKey = content.storySeenStoragePrefix + playerProfileScope + ":" + comicId;
   if (comic.replay !== "always") {
-    try { if (localStorage.getItem(seenKey) === "1") return; } catch {}
+    try { if (storyStorage.getItem(seenKey) === "1") return; } catch {}
   }
   shownStories.add(runKey);
   storyWasRunning = Number($("speed").value) > 0;
@@ -1864,7 +2479,7 @@ function advanceStory() {
 
 function finishStory() {
   if (!activeStory) return;
-  try { localStorage.setItem(activeStory.seenKey, "1"); } catch {}
+  try { storyStorage.setItem(activeStory.seenKey, "1"); } catch {}
   activeStory = null;
   $("story-overlay").hidden = true;
   if (storyWasRunning) setPaused(false);
@@ -1881,14 +2496,25 @@ function loop(now) {
   // deep-copy getSnapshot() calls).
   let snap = game.getRenderSnapshot();
   const pending = snap.lastEvents;
-  const ticked = speed > 0 && snap.outcome === "playing";
+  ${largeScreenPlayer ? `let ticked = false;
+  const events = [...pending];
+  if (speed > 0 && snap.outcome === "playing") {
+    const advanced = playerSimulationClock.advance(dtSeconds * 1000, speed, (units) => {
+      game.tick(units);
+      ticked = true;
+      const stepSnapshot = game.getRenderSnapshot();
+      if (stepSnapshot.lastEvents.length > 0) events.push(...stepSnapshot.lastEvents);
+    });
+    if (advanced.fixedSteps > 0) snap = game.getRenderSnapshot();
+  }` : `const ticked = speed > 0 && snap.outcome === "playing";
   if (ticked) {
     const timeUnitSeconds = content.constants.timeUnitSeconds || 1;
     game.tick((dtSeconds / timeUnitSeconds) * speed);
     snap = game.getRenderSnapshot();
-  }
+  }`}
   syncNavigationOverlaySnapshot(snap);
-  const events = ticked ? pending.concat(snap.lastEvents) : pending;
+  ${largeScreenPlayer ? "" : "const events = ticked ? pending.concat(snap.lastEvents) : pending;"}
+  ${largeScreenPlayer ? "scheduleDesktopAutosaveForEvents(events);" : ""}
   if (events.length > 0) lastObservedEvents = events;
   game.lastEvents = []; // consumed this frame — clear so nothing replays on the next frame
   draw(snap, events);
@@ -2049,28 +2675,24 @@ function updateRogueliteStatus(snap) {
         button.disabled = presentation.artifacts.management?.allowed !== true;
         button.addEventListener("click", () => {
           const result = activate();
-          report(result);
+          ${largeScreenPlayer ? "" : "report(result);"}
           if (result.ok) updateRogueliteStatus(game.getSnapshot());
         });
         row.append(button);
       };
       if (artifact.socket) {
-        addAction("unsocket", "Unsocket", () => dispatchGameCommand(game, {
-          schemaVersion: 2, type: "unsocketArtifact",
-          artifactInstanceId: artifact.instanceId,
-          towerId: artifact.socket.towerId,
-          slotId: artifact.socket.slotId
-        }));
+        addAction("unsocket", "Unsocket", () => {
+          const command = { schemaVersion: 2, type: "unsocketArtifact", artifactInstanceId: artifact.instanceId, towerId: artifact.socket.towerId, slotId: artifact.socket.slotId };
+          return ${largeScreenPlayer ? 'playerActionRegistry.invoke("unsocketArtifact", { command })' : "dispatchGameCommand(game, command)"};
+        });
       } else {
         const tower = presentation.artifacts.towerSlots?.find((item) => item.towerId === selectedTowerId);
         for (const slot of tower?.slots ?? []) {
           if (slot.slotType !== artifact.slotType || slot.artifactInstanceId !== null) continue;
-          addAction("socket", "Socket in " + slot.slotId, () => dispatchGameCommand(game, {
-            schemaVersion: 2, type: "socketArtifact",
-            artifactInstanceId: artifact.instanceId,
-            towerId: tower.towerId,
-            slotId: slot.slotId
-          }));
+          addAction("socket", "Socket in " + slot.slotId, () => {
+            const command = { schemaVersion: 2, type: "socketArtifact", artifactInstanceId: artifact.instanceId, towerId: tower.towerId, slotId: slot.slotId };
+            return ${largeScreenPlayer ? 'playerActionRegistry.invoke("socketArtifact", { command })' : "dispatchGameCommand(game, command)"};
+          });
         }
       }
       artifactPanel.append(row);
@@ -2201,6 +2823,7 @@ function updateTargetMode(snap) {
 
 function report(result) {
   message = result.ok ? "Action accepted." : (result.reason || "Action rejected.");
+  ${largeScreenPlayer ? "if (result.ok) scheduleDesktopAutosave();" : ""}
 }
 
 function pickTile(event) {
@@ -2228,10 +2851,10 @@ function applyProjectTheme() {
 `;
 }
 
-function phaserPlayerTemplate(includeMultiplayer = false, includeMacroEconomy = false, includeHostMonetization = false) {
+function phaserPlayerTemplate(includeMultiplayer = false, includeMacroEconomy = false, includeHostMonetization = false, largeScreenPlayer = false) {
   return `import {
   createCampaignRun,
-  createEmptyPlayerProfile,
+  ${largeScreenPlayer ? "computeMissionCapabilityDigestV1,\n  " : ""}createEmptyPlayerProfile,
   createGameContentRegistry,
   dispatchGameCommand,
   exportCampaignRun,
@@ -2253,7 +2876,8 @@ function phaserPlayerTemplate(includeMultiplayer = false, includeMacroEconomy = 
   validateCampaignRunAgainstContent
 } from "./engine/index.js";
 ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multiplayer/index.js";' : ""}
-import { createPlayerProfileStore, derivePlayerProfileStorageKey } from "./player-runtime/index.mjs";
+import { createPlayerProfileStore, derivePlayerProfileStorageKey${largeScreenPlayer ? ", createDefaultPlayerActionDescriptors, createPlayerActionRegistry, createDefaultPlayerPreferences, createFixedSimulationClockV1, createRotatingPlayerSessionStore, parsePlayerPreferencesV1, parsePlayerSessionSaveV1, resolvePlayerPresentationQualityV1, serializePlayerPreferencesV1, serializePlayerSessionSaveV1" : ""} } from "./player-runtime/index.mjs";
+${largeScreenPlayer ? 'import { createIndexedDbSessionStorage } from "./player-runtime/indexeddb-session-storage.mjs";\nimport { createPlayerStrings } from "./player-runtime/localized-strings.mjs";\nimport { createViewportTransformV1 } from "./renderer/viewport-transform.mjs";' : ""}
 ${includeHostMonetization ? 'import { createHostMonetizationRuntimeV1 } from "./player-runtime/host-monetization.mjs";' : ""}
 import { createAudioPlayer } from "./renderer/audio.mjs";
 import {
@@ -2321,8 +2945,8 @@ function ownDataValue(record, key) {
   }
 }
 
-${playerProfileRuntimeTemplate()}
-${arsenalPlayerRuntimeTemplate()}
+${playerProfileRuntimeTemplate(largeScreenPlayer)}
+${arsenalPlayerRuntimeTemplate(largeScreenPlayer)}
 ${includeMacroEconomy ? macroEconomyPlayerRuntimeTemplate() : ""}
 
 const $ = (id) => document.getElementById(id);
@@ -2331,6 +2955,8 @@ const audio = createAudioPlayer({ audio: project.visuals && project.visuals.audi
 let missionId = content.defaultMissionId || Object.keys(content.missions)[0];
 let towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
 let game = new TowerDefenseGame({ missionId, content, ...currentPlayerLaunchOptions() });
+${largeScreenPlayer ? "const phaserSimulationClock = createFixedSimulationClockV1({ timeUnitSeconds: content.constants.timeUnitSeconds || 1 });" : ""}
+${largeScreenPlayer ? "const resetPlayerSimulationClock = () => phaserSimulationClock.reset();" : ""}
 const activeCampaign = resolveWorldCampaign(content);
 let campaignRun = activeCampaign ? createCampaignRun("campaign") : null;
 let pendingCampaignNodeId = null;
@@ -2350,6 +2976,78 @@ let victoryRewarded = false;
 let lastObservedEvents = [];
 const shownStories = new Set();
 let phaserGame = null;
+${largeScreenPlayer ? `let phaserPresentationQuality = resolvePlayerPresentationQualityV1(project.buildTarget?.quality, {
+  width: globalThis.innerWidth,
+  height: globalThis.innerHeight
+});
+let phaserPresentationResizeObserver = null;
+function resolvePhaserPresentationSurface(profile) {
+  const rect = $("playfield").getBoundingClientRect();
+  const displayWidth = Math.max(1, Math.floor(rect.width));
+  const displayHeight = Math.max(1, Math.floor(rect.height));
+  return Object.freeze({
+    displayWidth,
+    displayHeight,
+    backingWidth: Math.max(1, Math.floor(displayWidth * profile.resolution)),
+    backingHeight: Math.max(1, Math.floor(displayHeight * profile.resolution))
+  });
+}
+let phaserInitialPresentationSurface = resolvePhaserPresentationSurface(phaserPresentationQuality);
+function syncPhaserPresentationBackbuffer(profile = phaserPresentationQuality) {
+  const surface = resolvePhaserPresentationSurface(profile);
+  const scale = phaserGame?.scale;
+  const canvas = phaserGame?.canvas;
+  if (!scale || !canvas) return surface;
+  canvas.style.width = "100%";
+  canvas.style.height = "100%";
+  if (scale.baseSize?.width !== surface.backingWidth || scale.baseSize?.height !== surface.backingHeight) {
+    scale.resize(surface.backingWidth, surface.backingHeight);
+  } else {
+    scale.refresh();
+  }
+  return surface;
+}
+function startPhaserPresentationSizing() {
+  if (!phaserGame?.canvas) return;
+  phaserGame.canvas.style.width = "100%";
+  phaserGame.canvas.style.height = "100%";
+  phaserPresentationResizeObserver?.disconnect();
+  if (typeof ResizeObserver === "function") {
+    phaserPresentationResizeObserver = new ResizeObserver(() => {
+      phaserPresentationQuality = resolvePlayerPresentationQualityV1(phaserPresentationQuality.quality, {
+        width: globalThis.innerWidth,
+        height: globalThis.innerHeight
+      });
+      syncPhaserPresentationBackbuffer(phaserPresentationQuality);
+    });
+    phaserPresentationResizeObserver.observe($("playfield"));
+  }
+  syncPhaserPresentationBackbuffer(phaserPresentationQuality);
+  requestAnimationFrame(() => syncPhaserPresentationBackbuffer(phaserPresentationQuality));
+}
+function applyPlayerPresentationQuality(quality) {
+  const profile = resolvePlayerPresentationQualityV1(quality, { width: globalThis.innerWidth, height: globalThis.innerHeight });
+  phaserPresentationQuality = profile;
+  phaserInitialPresentationSurface = resolvePhaserPresentationSurface(profile);
+  const loop = phaserGame?.loop;
+  if (loop) {
+    loop.targetFps = profile.targetFps;
+    loop.fpsLimit = profile.targetFps;
+    loop.hasFpsLimit = true;
+    loop._limitRate = 1000 / profile.targetFps;
+    loop._target = 1000 / profile.targetFps;
+    if (loop.raf) loop.raf.delay = 1000 / profile.targetFps;
+  }
+  syncPhaserPresentationBackbuffer(profile);
+  return profile;
+}
+globalThis.__towerforgePresentationQuality = () => Object.freeze({
+  ...phaserPresentationQuality,
+  effectiveTargetFps: phaserGame?.loop?.targetFps ?? phaserPresentationQuality.targetFps,
+  effectiveSchedulerDelay: phaserGame?.loop?.raf?.delay ?? (1000 / phaserPresentationQuality.targetFps),
+  effectiveBackingWidth: phaserGame?.renderer?.gl?.drawingBufferWidth ?? phaserGame?.canvas?.width ?? null,
+  effectiveBackingHeight: phaserGame?.renderer?.gl?.drawingBufferHeight ?? phaserGame?.canvas?.height ?? null
+});` : ""}
 
 const rendererTheme = content.visuals?.theme?.renderer ?? {};
 const TERRAIN_COLORS = {
@@ -2367,25 +3065,26 @@ initAbilityBar();
 renderMetaPanel();
 setupCampaignRunControls();
 updateCampaignRun();
-$("start-wave").addEventListener("click", () => { audio.resume(); report(game.startNextWave()); });
-$("pause-run").addEventListener("click", () => setPaused(Number($("speed").value) > 0));
+$("start-wave").addEventListener("click", () => { ${largeScreenPlayer ? 'if (playerPreferences.soundEnabled) audio.resume(); playerActionRegistry.invoke("startWave");' : 'audio.resume(); report(game.startNextWave());'} });
+$("pause-run").addEventListener("click", () => ${largeScreenPlayer ? 'playerActionRegistry.invoke("pause")' : 'setPaused(Number($("speed").value) > 0)'});
 $("sell-mode").addEventListener("click", () => setSellMode(targetingMode.kind !== "sell"));
-$("reset-run").addEventListener("click", () => { game.reset(); resetPlayerPresentation(); victoryRewarded = false; selectedTowerId = null; setTargetingMode({ kind: "build" }); initAbilityBar(); clearNavigationOverlay(); message = "Run reset."; });
+$("reset-run").addEventListener("click", () => { game.reset(); ${largeScreenPlayer ? "resetPlayerSimulationClock();" : ""} resetPlayerPresentation(); victoryRewarded = false; selectedTowerId = null; setTargetingMode({ kind: "build" }); initAbilityBar(); clearNavigationOverlay(); message = "Run reset."; });
 $("reset-progress")?.addEventListener("click", resetPlayerProgress);
 $("speed").addEventListener("input", syncSpeedUi);
-$("snd").addEventListener("change", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
-$("sfx-volume").addEventListener("input", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
-$("music-volume").addEventListener("input", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
+$("snd").addEventListener("change", () => { ${largeScreenPlayer ? "persistDesktopAudioPreferences();" : 'syncAudioSettings(); if ($("snd").checked) audio.resume();'} });
+$("sfx-volume").addEventListener("input", () => { ${largeScreenPlayer ? "persistDesktopAudioPreferences();" : 'syncAudioSettings(); if ($("snd").checked) audio.resume();'} });
+$("music-volume").addEventListener("input", () => { ${largeScreenPlayer ? "persistDesktopAudioPreferences();" : 'syncAudioSettings(); if ($("snd").checked) audio.resume();'} });
 $("target-mode").addEventListener("change", () => {
   if (!selectedTowerId) return;
-  report(game.setTowerTargetMode(selectedTowerId, $("target-mode").value));
+  ${largeScreenPlayer ? 'playerActionRegistry.invoke("setTargetMode", { mode: $("target-mode").value });' : 'report(game.setTowerTargetMode(selectedTowerId, $("target-mode").value));'}
 });
 $("story-next").addEventListener("click", advanceStory);
 $("story-skip").addEventListener("click", finishStory);
+${largeScreenPlayer ? desktopPlayerRuntimeTemplate("phaser") : ""}
 document.addEventListener("keydown", (event) => {
   const tag = event.target?.tagName;
   if (tag === "BUTTON" || tag === "A" || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;
-  if (event.code === "Space") { event.preventDefault(); setPaused(Number($("speed").value) > 0); return; }
+  if (event.code === ${largeScreenPlayer ? 'playerKeyCode("pause")' : '"Space"'}) { event.preventDefault(); ${largeScreenPlayer ? 'playerActionRegistry.invoke("pause");' : 'setPaused(Number($("speed").value) > 0);'} return; }
   if (document.activeElement !== $("playfield")) return;
   if (event.code === "Digit1") { event.preventDefault(); armCurrentHeroAbility(); return; }
   const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
@@ -2408,6 +3107,7 @@ function resetPlayerPresentation() {
 
 function createGame() {
   resetPlayerPresentation();
+  ${largeScreenPlayer ? "resetPlayerSimulationClock();" : ""}
   return new TowerDefenseGame({ missionId, content, ...currentPlayerLaunchOptions() });
 }
 
@@ -2515,35 +3215,32 @@ function actAtCoord(coord, heroHitId = null, enemyHitId = null) {
   if (!coord) return;
   if (targetingMode.kind === "sell") {
     const towerAt = game.getTowerIdAt(coord);
-    report(towerAt ? game.sellTower(towerAt) : { ok: false, reason: "Choose a tower tile." });
+    if (towerAt) {
+      ${largeScreenPlayer ? 'playerActionRegistry.invoke("sellTower", { command: { schemaVersion: 1, type: "sellTower", towerId: towerAt } });' : "report(game.sellTower(towerAt));"}
+    } else report({ ok: false, reason: "Choose a tower tile." });
     if (towerAt === selectedTowerId) selectedTowerId = null;
     setSellMode(false);
     return;
   }
   if (targetingMode.kind === "missionAbility") {
-    report(game.useAbility(targetingMode.abilityId, coord));
+    ${largeScreenPlayer ? 'playerActionRegistry.invoke("useAbility", { command: { schemaVersion: 1, type: "useAbility", abilityId: targetingMode.abilityId, center: { q: coord.q, r: coord.r } } });' : "report(game.useAbility(targetingMode.abilityId, coord));"}
     setTargetingMode({ kind: "build" });
     return;
   }
   if (targetingMode.kind === "heroAbility") {
     if (!enemyHitId) { message = "Choose a live enemy target."; return; }
-    const result = dispatchGameCommand(game, {
-      schemaVersion: 5,
-      type: "useHeroAbility",
-      heroId: targetingMode.heroId,
-      abilityId: targetingMode.abilityId,
-      targetEnemyId: enemyHitId
-    });
-    report(result);
+    const result = ${largeScreenPlayer
+      ? 'playerActionRegistry.invoke("useHeroAbility", { command: { schemaVersion: 5, type: "useHeroAbility", heroId: targetingMode.heroId, abilityId: targetingMode.abilityId, targetEnemyId: enemyHitId } })'
+      : 'dispatchGameCommand(game, { schemaVersion: 5, type: "useHeroAbility", heroId: targetingMode.heroId, abilityId: targetingMode.abilityId, targetEnemyId: enemyHitId })'};
+    ${largeScreenPlayer ? "" : "report(result);"}
     if (result.ok) setTargetingMode({ kind: "build" });
     return;
   }
   if (targetingMode.kind === "heroMove") {
-    const result = dispatchGameCommand(game, {
-      schemaVersion: 4, type: "moveHero", heroId: targetingMode.heroId,
-      target: { q: coord.q, r: coord.r }
-    });
-    report(result);
+    const result = ${largeScreenPlayer
+      ? 'playerActionRegistry.invoke("moveHero", { command: { schemaVersion: 4, type: "moveHero", heroId: targetingMode.heroId, target: { q: coord.q, r: coord.r } } })'
+      : 'dispatchGameCommand(game, { schemaVersion: 4, type: "moveHero", heroId: targetingMode.heroId, target: { q: coord.q, r: coord.r } })'};
+    ${largeScreenPlayer ? "" : "report(result);"}
     if (result.ok) setTargetingMode({ kind: "build" });
     return;
   }
@@ -2553,8 +3250,8 @@ function actAtCoord(coord, heroHitId = null, enemyHitId = null) {
   if (!towerId) return;
   const preflight = game.canPlaceTower(towerId, coord);
   if (!preflight.ok) { report(preflight); refreshNavigationOverlay(coord); return; }
-  const result = game.placeTower(towerId, coord);
-  report(result);
+  const result = ${largeScreenPlayer ? 'playerActionRegistry.invoke("placeTower", { command: { schemaVersion: 1, type: "placeTower", towerTypeId: towerId, coord: { q: coord.q, r: coord.r } } })' : "game.placeTower(towerId, coord)"};
+  ${largeScreenPlayer ? "" : "report(result);"}
   if (result.ok) selectedTowerId = game.getTowerIdAt(coord);
   refreshNavigationOverlay(coord);
 }
@@ -2605,7 +3302,7 @@ function syncSpeedUi() {
   const speed = Number($("speed").value) || 0;
   if (speed > 0) lastRunningSpeed = speed;
   $("speed-label").textContent = speed + "x";
-  $("pause-run").textContent = speed > 0 ? "Pause" : "Resume";
+  $("pause-run").textContent = speed > 0 ? ${largeScreenPlayer ? 'playerStrings.text("pause")' : '"Pause"'} : ${largeScreenPlayer ? 'playerStrings.text("resume")' : '"Resume"'};
   $("pause-run").setAttribute("aria-pressed", String(speed === 0));
 }
 
@@ -2650,6 +3347,7 @@ class PlayScene extends Phaser.Scene {
     this.previousEnemyPositions = new Map();
     this.previousTowerPositions = new Map();
     this.previousCombat = null;
+    ${largeScreenPlayer ? 'this.viewportController = null;\n    this.viewportSignature = "";\n    this.cameraPanActive = false;\n    this.cameraPanPoint = null;' : ""}
     const reducedMotion = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
     this.proceduralJuiceRuntime = proceduralJuiceEnabled
       ? createProceduralJuicePresentationRuntime({ motionPreference: reducedMotion ? "reduced" : "full" })
@@ -2664,6 +3362,7 @@ class PlayScene extends Phaser.Scene {
     this.elevationLabels = new Map();
     this.registerAtlasFrames();
     this.input.on("pointerdown", (p) => {
+      ${largeScreenPlayer ? 'if (p?.event?.button === 1 && !desktopCameraInputBlocked()) { this.cameraPanActive = true; this.cameraPanPoint = this.pointerScenePoint(p); p.event.preventDefault?.(); return; }' : ""}
       audio.resume();
       const point = this.pointerScenePoint(p);
       const coord = point && this.pickTile(point.x, point.y);
@@ -2674,15 +3373,18 @@ class PlayScene extends Phaser.Scene {
     });
     this.input.on("pointermove", (p) => {
       const point = this.pointerScenePoint(p);
+      ${largeScreenPlayer ? 'if (this.cameraPanActive && point && this.cameraPanPoint) { this.cameraPan({ x: point.x - this.cameraPanPoint.x, y: point.y - this.cameraPanPoint.y }); this.cameraPanPoint = point; return; }' : ""}
       const coord = point && this.pickTile(point.x, point.y);
       if (coord?.q === navigationHoverCoord?.q && coord?.r === navigationHoverCoord?.r) return;
       navigationHoverCoord = coord;
       refreshNavigationOverlay(navigationHoverCoord);
     });
     this.input.on("pointerout", () => {
+      ${largeScreenPlayer ? 'this.cameraPanActive = false; this.cameraPanPoint = null;' : ""}
       navigationHoverCoord = null;
       refreshNavigationOverlay(keyboardCoord);
     });
+    ${largeScreenPlayer ? 'this.input.on("pointerup", () => { this.cameraPanActive = false; this.cameraPanPoint = null; });\n    this.input.on("wheel", (pointer, _objects, _dx, dy, _dz, event) => { if (desktopCameraInputBlocked()) return; event?.preventDefault?.(); const point = this.pointerScenePoint(pointer); if (point) playerActionRegistry.invoke("cameraZoom", { point, factor: dy > 0 ? 0.9 : 1.1 }); });' : ""}
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.resetProceduralJuicePresentation();
     });
@@ -2743,21 +3445,7 @@ class PlayScene extends Phaser.Scene {
     if (sprite.src && this.textures.exists("tf-sprite:" + spriteId)) return { key: "tf-sprite:" + spriteId };
     return null;
   }
-  geometry(tiles, grid) {
-    let maxQ = 1, maxR = 1;
-    for (const t of tiles) { if (t.q > maxQ) maxQ = t.q; if (t.r > maxR) maxR = t.r; }
-    const W = this.scale.width, H = this.scale.height;
-    if (grid?.kind === "square") {
-      const cell = Math.min(W / (maxQ + 2), H / (maxR + 2));
-      return { r: cell / 2, ox: cell, oy: cell, grid };
-    }
-    const r = Math.min(W / ((maxQ + 2) * 1.65), H / ((maxR + 2) * 1.45));
-    return { r, ox: r * 1.5, oy: r * 1.5, grid: grid || { kind: "hex", layout: "odd-r" } };
-  }
-  center(coord, g) {
-    if (g.grid.kind === "square") return { x: g.ox + coord.q * g.r * 2, y: g.oy + coord.r * g.r * 2 };
-    return { x: g.ox + coord.q * g.r * 1.48 + (coord.r % 2) * g.r * 0.74, y: g.oy + coord.r * g.r * 1.28 };
-  }
+${phaserViewportMethodsTemplate(largeScreenPlayer)}
   pickTile(x, y) {
     const snap = game.getRenderSnapshot();
     const g = this.geometry(snap.tiles, snap.grid);
@@ -2905,14 +3593,25 @@ class PlayScene extends Phaser.Scene {
     // Capture player-action events before tick() clears them (see canvas loop note).
     let snap = game.getRenderSnapshot();
     const pending = snap.lastEvents;
-    const ticked = speed > 0 && snap.outcome === "playing";
+    ${largeScreenPlayer ? `let ticked = false;
+    const events = [...pending];
+    if (speed > 0 && snap.outcome === "playing") {
+      const advanced = phaserSimulationClock.advance(delta, speed, (units) => {
+        game.tick(units);
+        ticked = true;
+        const stepSnapshot = game.getRenderSnapshot();
+        if (stepSnapshot.lastEvents.length > 0) events.push(...stepSnapshot.lastEvents);
+      });
+      if (advanced.fixedSteps > 0) snap = game.getRenderSnapshot();
+    }` : `const ticked = speed > 0 && snap.outcome === "playing";
     if (ticked) {
       const tu = content.constants.timeUnitSeconds || 1;
       game.tick((Math.min(50, delta) / 1000 / tu) * speed);
       snap = game.getRenderSnapshot();
-    }
+    }`}
     syncNavigationOverlaySnapshot(snap);
-    const events = ticked ? pending.concat(snap.lastEvents) : pending;
+    ${largeScreenPlayer ? "" : "const events = ticked ? pending.concat(snap.lastEvents) : pending;"}
+    ${largeScreenPlayer ? "scheduleDesktopAutosaveForEvents(events);" : ""}
     if (events.length > 0) lastObservedEvents = events;
     game.lastEvents = []; // consumed this frame — clear so nothing replays next frame
     const authoritativeSnapshot = snap;
@@ -3460,10 +4159,11 @@ phaserGame = new Phaser.Game({
   // the #1 killer on cheap GPUs), request the high-performance GPU, and a low-latency canvas.
   // panicMax bounds delta catch-up so a background stall can't trigger a spiral-of-death on resume.
   render: { antialias: false, powerPreference: "high-performance", desynchronized: true, roundPixels: true },
-  fps: { target: 60, limit: 60, panicMax: 120 },
-  scale: { mode: Phaser.Scale.RESIZE, width: "100%", height: "100%" },
+  fps: ${largeScreenPlayer ? "{ target: phaserPresentationQuality.targetFps, limit: phaserPresentationQuality.targetFps, panicMax: 120, forceSetTimeOut: true }" : "{ target: 60, limit: 60, panicMax: 120 }"},
+  scale: ${largeScreenPlayer ? "{ mode: Phaser.Scale.NONE, width: phaserInitialPresentationSurface.backingWidth, height: phaserInitialPresentationSurface.backingHeight }" : "{ mode: Phaser.Scale.RESIZE, width: \"100%\", height: \"100%\" }"},
   scene: PlayScene
 });
+${largeScreenPlayer ? "startPhaserPresentationSizing();" : ""}
 window.__towerforgeInspect = () => {
   const snapshot = game.getRenderSnapshot();
   if (snapshot.lastEvents.length === 0 && lastObservedEvents.length > 0) {
@@ -3738,13 +4438,10 @@ function updateHeroSkillTree(snap) {
       button.type = "button";
       button.dataset.heroSkillId = node.id;
       button.addEventListener("click", () => {
-        const result = dispatchGameCommand(game, {
-          schemaVersion: 6,
-          type: "unlockHeroSkill",
-          heroId: button.dataset.heroId,
-          skillId: button.dataset.heroSkillId
-        });
-        report(result);
+        const result = ${largeScreenPlayer
+          ? 'playerActionRegistry.invoke("unlockHeroSkill", { command: { schemaVersion: 6, type: "unlockHeroSkill", heroId: button.dataset.heroId, skillId: button.dataset.heroSkillId } })'
+          : 'dispatchGameCommand(game, { schemaVersion: 6, type: "unlockHeroSkill", heroId: button.dataset.heroId, skillId: button.dataset.heroSkillId })'};
+        ${largeScreenPlayer ? "" : "report(result);"}
         updateHeroSkillTree(game.getRenderSnapshot());
       });
       button.addEventListener("touchend", (event) => {
@@ -3850,6 +4547,7 @@ function selectCampaignNode(nodeId) {
     pendingCampaignNodeId = prepared.nodeId;
     missionId = prepared.missionId;
     game = prepared.game;
+    ${largeScreenPlayer ? "resetPlayerSimulationClock();" : ""}
   } else if (prepared.code === "campaign_handoff_inactive") {
     // Campaign marker v1 retains the legacy graph reducer without battle carry.
     const availableNodeIds = getAvailableCampaignNodeIds(campaignRun, content);
@@ -3959,7 +4657,7 @@ function showStoryForMission(trigger) {
   if (shownStories.has(runKey)) return;
   const seenKey = content.storySeenStoragePrefix + playerProfileScope + ":" + comicId;
   if (comic.replay !== "always") {
-    try { if (localStorage.getItem(seenKey) === "1") return; } catch {}
+    try { if (storyStorage.getItem(seenKey) === "1") return; } catch {}
   }
   shownStories.add(runKey);
   storyWasRunning = Number($("speed").value) > 0;
@@ -3994,7 +4692,7 @@ function advanceStory() {
 
 function finishStory() {
   if (!activeStory) return;
-  try { localStorage.setItem(activeStory.seenKey, "1"); } catch {}
+  try { storyStorage.setItem(activeStory.seenKey, "1"); } catch {}
   activeStory = null;
   $("story-overlay").hidden = true;
   if (storyWasRunning) setPaused(false);
@@ -4134,28 +4832,24 @@ function updateRogueliteStatus(snap) {
         button.disabled = presentation.artifacts.management?.allowed !== true;
         button.addEventListener("click", () => {
           const result = activate();
-          report(result);
+          ${largeScreenPlayer ? "" : "report(result);"}
           if (result.ok) updateRogueliteStatus(game.getSnapshot());
         });
         row.append(button);
       };
       if (artifact.socket) {
-        addAction("unsocket", "Unsocket", () => dispatchGameCommand(game, {
-          schemaVersion: 2, type: "unsocketArtifact",
-          artifactInstanceId: artifact.instanceId,
-          towerId: artifact.socket.towerId,
-          slotId: artifact.socket.slotId
-        }));
+        addAction("unsocket", "Unsocket", () => {
+          const command = { schemaVersion: 2, type: "unsocketArtifact", artifactInstanceId: artifact.instanceId, towerId: artifact.socket.towerId, slotId: artifact.socket.slotId };
+          return ${largeScreenPlayer ? 'playerActionRegistry.invoke("unsocketArtifact", { command })' : "dispatchGameCommand(game, command)"};
+        });
       } else {
         const tower = presentation.artifacts.towerSlots?.find((item) => item.towerId === selectedTowerId);
         for (const slot of tower?.slots ?? []) {
           if (slot.slotType !== artifact.slotType || slot.artifactInstanceId !== null) continue;
-          addAction("socket", "Socket in " + slot.slotId, () => dispatchGameCommand(game, {
-            schemaVersion: 2, type: "socketArtifact",
-            artifactInstanceId: artifact.instanceId,
-            towerId: tower.towerId,
-            slotId: slot.slotId
-          }));
+          addAction("socket", "Socket in " + slot.slotId, () => {
+            const command = { schemaVersion: 2, type: "socketArtifact", artifactInstanceId: artifact.instanceId, towerId: tower.towerId, slotId: slot.slotId };
+            return ${largeScreenPlayer ? 'playerActionRegistry.invoke("socketArtifact", { command })' : "dispatchGameCommand(game, command)"};
+          });
         }
       }
       artifactPanel.append(row);
@@ -4284,7 +4978,7 @@ function updateTargetMode(snap) {
   if (tower && tower.targetMode) select.value = tower.targetMode === "largest_hp" ? "strongest" : tower.targetMode === "fastest_ahead" ? "first" : tower.targetMode;
 }
 
-function report(result) { message = result.ok ? "Action accepted." : (result.reason || "Action rejected."); }
+function report(result) { message = result.ok ? "Action accepted." : (result.reason || "Action rejected."); ${largeScreenPlayer ? "if (result.ok) scheduleDesktopAutosave();" : ""} }
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({

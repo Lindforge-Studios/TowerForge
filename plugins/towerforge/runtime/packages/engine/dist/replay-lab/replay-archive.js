@@ -1,6 +1,6 @@
 import { SIMULATION_ENGINE_VERSION } from "../simulation/checkpoint.js";
 import { decodeGameCommandJournal } from "../simulation/journal.js";
-import { canonicalStringify, getSimulationContentDigest } from "../simulation/stable-digest.js";
+import { canonicalStringify, computeMissionCapabilityDigestV1, getSimulationContentDigest } from "../simulation/stable-digest.js";
 export const REPLAY_ARCHIVE_SCHEMA_VERSION = 1;
 export const REPLAY_ARCHIVE_MAGIC = Object.freeze([0x54, 0x46, 0x52, 0x50]);
 export const REPLAY_ARCHIVE_HEADER_BYTES = 20;
@@ -14,7 +14,6 @@ const FNV1A_64_PRIME = 0x100000001b3n;
 const UINT64_MASK = 0xffffffffffffffffn;
 const CHECKSUM_DOMAIN = "towerforge:replay-archive:v1:checksum\u0000";
 const ARCHIVE_DIGEST_DOMAIN = "towerforge:replay-archive:v1:digest\u0000";
-const CAPABILITY_DIGEST_DOMAIN = "towerforge:replay-capabilities:v1\u0000";
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
@@ -51,6 +50,9 @@ function domainDigest(prefix, domain, bytes) {
 /** Package-internal domain-separated digest primitive shared by Replay Lab codecs. */
 export function replayLabDomainDigestV1(prefix, domain, canonicalPayload) {
     return domainDigest(prefix, domain, textEncoder.encode(canonicalPayload));
+}
+export function computeReplayCapabilityDigestV1(options) {
+    return computeMissionCapabilityDigestV1(options);
 }
 function checksumBytes(payload) {
     const output = new Uint8Array(8);
@@ -121,20 +123,6 @@ function dataValue(descriptors, key) {
 }
 function missionIdFromJournal(journal) {
     return journal.initialCheckpoint.identity.missionId;
-}
-export function computeReplayCapabilityDigestV1(options) {
-    const mission = Object.prototype.hasOwnProperty.call(options.content.missions, options.missionId)
-        ? options.content.missions[options.missionId]
-        : undefined;
-    if (!mission) {
-        throw new Error(`Replay capability mission "${options.missionId}" does not exist.`);
-    }
-    const canonical = canonicalStringify({
-        schemaVersion: 1,
-        missionId: options.missionId,
-        capabilities: mission.capabilities
-    });
-    return domainDigest("tf-capabilities-v1", CAPABILITY_DIGEST_DOMAIN, textEncoder.encode(canonical));
 }
 export function encodeReplayArchiveV1(options) {
     // The existing decoder is the sole journal contract. It validates closed own

@@ -64,6 +64,10 @@ service. Нет соответствующего выбора или локал�
 | R15 — Deterministic Macro-Economy | Завершён; code + constructor sign-off; ADR Accepted | Independent `macroEconomy` v1, seeded local market, explicit deposits, atomic rituals, GameCommand/Journal v8 и constructor surfaces |
 | R16 — Ghost Replay Lab | Завершён; full gates green; code + constructor sign-off; ADR Accepted | Checksummed ReplayArchiveV1, detached bounded ghost с реальным Studio overlay, immutable What-If branches, read-only Studio/MCP surfaces и отдельный gameplay-free reference relay |
 | R17 — Web Publish, Remix & Monetization | Завершён; full gates; code + constructor sign-off; ADR Accepted | Opt-in Distribution v1/project v4, reproducible publish manifest, explicit-confirm provider adapters, licensed Remix provenance и host-only monetization hooks |
+| R18 — Large-Screen Web Player | Реализация завершена; ожидает exact-commit gates и два sign-off; ADR In Review | Explicit project-v5/BuildTargets-v2 desktop target, shared viewport, desktop shell, IndexedDB recovery, localized accessible PWA и unchanged legacy targets |
+| R19 — Native Desktop Distribution | Запланирован после R18 | First-class desktop target, native storage/lifecycle, cross-platform installers и optional signed updater |
+| R20 — Camera Projection Studio | Запланирован после R19 | Renderer-owned top-down/isometric/dimetric projection, shared hit testing/depth и guarded view assets |
+| R21 — Player Shell & HUD Constructor | Запланирован после R20 | Data-only responsive HUD/screen graph, action registry, presets, guarded Studio/MCP и package parity |
 
 ### Delivery snapshot на 2026-08-01
 
@@ -79,6 +83,21 @@ roadmap-строки не считается capability. R14 `arsenal` и R15 `m
 только для чтения Replay Lab с отдельным engine entrypoint; обычный player/build его
 не включает. R17 принят как constructor-only distribution capability; отсутствующий `content/distribution.json` сохраняет
 distribution-free Studio/player/package path.
+
+R18 вводит отдельный presentation/build opt-in: project schema v5 вместе с BuildTargets v2
+активируются только guarded-сохранением desktop/responsive target. Legacy BuildTargets v1 не
+получает новые импорты, DOM shell, IndexedDB session state или PWA metadata. Canvas и Phaser
+используют один pure `ViewportTransformV1`; desktop shell вызывает gameplay только через общий
+`PlayerActionDescriptorV1` registry. Session save и preferences версионируются независимо от
+profile/checkpoint/journal. Решение описано в [ADR 0059](adr/0059-r18-large-screen-web-player.md).
+
+Для R18–R21 действует поуровневый TDD gate. Каждый небольшой срез фиксирует focused RED, затем
+проходит focused GREEN и регрессии только затронутых слоёв. Полный unit/E2E/plugin/package набор
+запускается на замороженном exact commit один раз перед двумя независимыми sign-off каждого R;
+любое последующее source-изменение аннулирует этот gate и оба sign-off. После последовательного
+merge R18, R19, R20 и R21 итоговый `main` дополнительно проходит общий cross-target/release gate.
+Таким образом, промежуточные циклы остаются быстрыми, но ни один R и ни один релиз не принимаются
+только по локальным модульным тестам.
 
 ## Порядок поставки
 
@@ -963,6 +982,16 @@ verifier-led RED/GREEN repair-волн и независимых Code Verifier �
 6. Constructor integration verifier независимо проверяет enable/edit/save/reload/disable/re-enable, AI flow, player/package и legacy path.
 
 Автор реализации не выполняет ни один из двух sign-off. Фаза считается завершённой только вместе с opt-in reference fixture, disabled-capability regression и затронутыми release gates из `AGENTS.md`.
+
+Тесты запускаются слоями, а не полным repository sweep после каждого изменения:
+
+1. каждый RED/GREEN micro-slice гоняет только новый contract и непосредственно связанные regressions;
+2. после engine/surface GREEN запускаются тесты всех затронутых пакетов и compatibility fixtures;
+3. перед exact-commit freeze выполняются полный Vitest, полный Playwright и все gates затронутых слоёв;
+4. любое source-изменение после freeze аннулирует полный evidence и оба sign-off, поэтому полный набор
+   повторяется на новом точном кандидате.
+
+Такой cadence сохраняет быстрый TDD feedback, но не позволяет принять R только по focused-тестам.
 
 ## Запрещённые объединения
 

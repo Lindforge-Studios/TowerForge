@@ -989,6 +989,14 @@ AI Chat accepts up to eight JPEG/PNG/GIF/WebP images per turn, at most 4 MB each
 - Linux AppImage agent runtime issues: the bundled Claude executable is stored with a masked ELF header plus a SHA-256 manifest so `linuxdeploy` does not rewrite or inspect the standalone runtime. On first use Studio verifies it, restores a `0700` copy under the private desktop app-data `agent-runtimes/bin` directory, verifies it again, and only then executes it. Do not unpack or patch this file manually.
 - Desktop menu/bridge issues: confirm `packages/desktop/src-tauri/build.rs` registers every command in the Rust `generate_handler!` list and `packages/desktop/src-tauri/capabilities/main.json` grants the matching `allow-desktop-*` permissions only to the main `http://127.0.0.1:*` WebView. Then inspect the WebView console for `Desktop bridge setup failed`. Delete only `<app-data>/desktop-state.json` to reset last/recent projects without touching project data.
 - E2E browser issues: install Playwright browsers with `npx playwright install chromium` if the local browser binary is missing.
+- Large-screen player issues: confirm the selected target is BuildTargets v2 with
+  `formFactor: "desktop"` or `"responsive"`. Use Studio's **Large-screen desktop** preset or the
+  guarded AI flow `describe_schema(playerTargets) -> read_player_targets ->
+  get_player_target_recipe(desktop_large_screen) -> preview_player_target ->
+  apply_player_target(ifRevision) -> validate_project`. Camera input intentionally stops while a
+  dialog/menu/editable control owns focus. A disabled Continue button or recoverable message means
+  the two-slot IndexedDB save was missing, corrupt, future, or did not match the current
+  engine/content/capability digest; do not copy it into localStorage or bypass digest checks.
 
 ## Deploy
 

@@ -134,7 +134,7 @@ describe("mcp tool registry", () => {
 
   it("describes the schema with no project context at all — pure metadata", async () => {
     const result = await callTool("describe_schema", {}, {});
-    expect(result.schemaVersion).toBe(4);
+    expect(result.schemaVersion).toBe(5);
     expect(Object.keys(result.attackKinds).sort()).toEqual(
       ["antiair", "pipeline", "pulse", "single", "splash", "sniper", "support", "support_buff"].sort()
     );

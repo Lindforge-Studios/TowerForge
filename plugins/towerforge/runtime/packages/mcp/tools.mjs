@@ -43,6 +43,12 @@ import {
   previewPublishCandidate,
   readDistributionConfigV1
 } from "../cli/lib/distribution/index.mjs";
+import {
+  applyPlayerTarget,
+  getPlayerTargetRecipe,
+  previewPlayerTarget,
+  readPlayerTargets
+} from "../cli/lib/player-target-authoring.mjs";
 import { PROCEDURAL_JUICE_SUPPORTED_EVENTS, validateProjectSchemas } from "../cli/lib/project-schema.mjs";
 import { previewTiledTilesetImport } from "../cli/lib/tileset-importer.mjs";
 import { inspectTileSetCoverage, TILE_PRESETS } from "../renderer/src/autotile.mjs";
@@ -101,7 +107,7 @@ const BALANCE_PATCH_KEYS = [
   "enemies", "towers", "waveSets", "missions", "abilities", "constants", "currencies", "defaultMissionId",
   "defaultDifficultyId", "difficulties", "metaProgression", "terrainTypes"
 ];
-const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "arsenal", "macroEconomy", "heroes", "logistics", "director", "quests", "enemyBehaviors", "personaQa", "multiplayer", "replayLab", "distribution", "proceduralJuice", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
+const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "arsenal", "macroEconomy", "heroes", "logistics", "director", "quests", "enemyBehaviors", "personaQa", "multiplayer", "replayLab", "distribution", "playerTargets", "proceduralJuice", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
 
 // Maps an upsert_entity/delete_entity `collection` to (a) the balance.json key, (b) the shape
 // (a map keyed by id, or an array of {id,...} items — currencies only), and (c) the
@@ -214,6 +220,41 @@ const IF_REVISION_PROPERTY = {
   type: "string",
   description: "Optional. The revision hash last read (from get_project_summary/validate_project/a prior write's response). If the file has since changed, the write is rejected with {conflict:true} instead of clobbering it."
 };
+const PLAYER_TARGET_SCHEMA = Object.freeze({
+  type: "object",
+  maxProperties: 32,
+  properties: Object.freeze({
+    id: Object.freeze({ type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }),
+    platform: Object.freeze({ type: "string", enum: ["web", "android", "ios"] }),
+    renderer: Object.freeze({ type: "string", enum: ["canvas", "phaser"] }),
+    webDir: Object.freeze({ type: "string", maxLength: 256 }),
+    market: Object.freeze({ type: "string", maxLength: 64 }),
+    storeChannel: Object.freeze({ type: "string", maxLength: 64 }),
+    appId: Object.freeze({ type: "string", maxLength: 160 }),
+    appName: Object.freeze({ type: "string", maxLength: 160 }),
+    appTitle: Object.freeze({ type: "string", maxLength: 160 }),
+    backgroundColor: Object.freeze({ type: "string", maxLength: 32 }),
+    appVersion: Object.freeze({ type: "string", maxLength: 64 }),
+    formFactor: Object.freeze({ type: "string", enum: ["legacy", "desktop", "responsive"] }),
+    viewport: Object.freeze({
+      type: "object",
+      properties: Object.freeze({
+        fit: Object.freeze({ type: "string", enum: ["contain"] }),
+        padding: Object.freeze({ type: "number", minimum: 0, maximum: 512 }),
+        minZoom: Object.freeze({ type: "number", exclusiveMinimum: 0 }),
+        maxZoom: Object.freeze({ type: "number", exclusiveMinimum: 0 }),
+        initialZoom: Object.freeze({ type: "number", exclusiveMinimum: 0 })
+      }),
+      required: Object.freeze(["fit", "padding", "minZoom", "maxZoom", "initialZoom"]),
+      additionalProperties: false
+    }),
+    quality: Object.freeze({ type: "string", enum: ["auto", "low", "balanced", "high"] }),
+    locale: Object.freeze({ type: "string", minLength: 1, maxLength: 64 }),
+    inputProfile: Object.freeze({ type: "string", enum: ["keyboard_mouse", "touch", "hybrid"] })
+  }),
+  required: Object.freeze(["id", "platform", "renderer", "formFactor", "viewport", "quality", "locale", "inputProfile"]),
+  additionalProperties: false
+});
 const DESTRUCTIBLE_COORD_SCHEMA = {
   type: "object",
   properties: { q: { type: "integer", minimum: 0 }, r: { type: "integer", minimum: 0 } },
@@ -902,6 +943,58 @@ export const TOOLS = [
         commands: { type: "array", maxItems: 100000, items: { type: "object" } }
       },
       required: ["archiveBase64", "forkSequence", "commands"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "read_player_targets",
+    description: "Read exact authored player build targets and the project/build-target schema revision without writing or migrating files.",
+    inputSchema: {
+      type: "object",
+      properties: { projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server project." } },
+      additionalProperties: false
+    }
+  },
+  {
+    name: "get_player_target_recipe",
+    description: "Return an inert detached large-screen desktop player target recipe without changing project files.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server project." },
+        recipeId: { type: "string", enum: ["desktop_large_screen"] },
+        targetId: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }
+      },
+      required: ["recipeId", "targetId"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "preview_player_target",
+    description: "Validate one exact target-local BuildTargets v2 candidate and project v5 promotion in memory without writing files.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server project." },
+        targetId: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+        target: PLAYER_TARGET_SCHEMA
+      },
+      required: ["targetId", "target"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "apply_player_target",
+    description: "Guardedly apply one exact previewed player target, atomically promoting project v5 and BuildTargets v2 with validation, backup, and rollback.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server project." },
+        targetId: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+        target: PLAYER_TARGET_SCHEMA,
+        ifRevision: IF_REVISION_PROPERTY
+      },
+      required: ["targetId", "target", "ifRevision"],
       additionalProperties: false
     }
   },
@@ -2071,6 +2164,10 @@ const TOOL_RISK = {
   inspect_replay_archive: { riskClass: "compute_only", sideEffect: "loads @towerforge/engine/replay-lab; writes no project files and performs no network access" },
   verify_replay_archive: { riskClass: "compute_only", sideEffect: "loads @towerforge/engine/replay-lab and builds engine dist if stale; writes no project files and performs no network access" },
   analyze_replay_branch: { riskClass: "compute_only", sideEffect: "loads @towerforge/engine/replay-lab; writes no project files and performs no network access" },
+  read_player_targets: { riskClass: "read_only", sideEffect: "none" },
+  get_player_target_recipe: { riskClass: "read_only", sideEffect: "none" },
+  preview_player_target: { riskClass: "compute_only", sideEffect: "none" },
+  apply_player_target: { riskClass: "write_local", sideEffect: "writes project.json and build-targets.json with revision guard, validation, backup, and rollback" },
   read_distribution_config: { riskClass: "read_only", sideEffect: "none" },
   preview_distribution_config: { riskClass: "compute_only", sideEffect: "none" },
   apply_distribution_config: { riskClass: "write_local", sideEffect: "writes project.json and optional content/distribution.json with revision guard, validation, backup, and rollback" },
@@ -2689,8 +2786,26 @@ export async function callTool(name, args = {}, ctx = {}) {
       aiCanUpload: false,
       aiCanMintApproval: false
     };
+    const playerTargets = {
+      projectSchemaVersion: 5,
+      buildTargetsSchemaVersion: 2,
+      desktop: {
+        formFactor: "desktop",
+        viewport: { fit: "contain" },
+        inputProfile: "keyboard_mouse"
+      },
+      recipes: ["desktop_large_screen"],
+      authoringTransaction: {
+        read: "read_player_targets",
+        recipe: "get_player_target_recipe",
+        preview: "preview_player_target",
+        apply: "apply_player_target",
+        revisionGuard: "ifRevision"
+      },
+      compatibility: "BuildTargets schema v1 and legacy player targets remain byte-path isolated until an explicit v2 candidate is applied."
+    };
     return {
-      schemaVersion: 4,
+      schemaVersion: 5,
       agentGuideVersion: TOWERFORGE_AGENT_GUIDE_VERSION,
       requestedDomain: domain,
       availableDomains: SCHEMA_DOMAINS,
@@ -2713,6 +2828,7 @@ export async function callTool(name, args = {}, ctx = {}) {
         abilityNote:
           "Mission ability ids are open. Presets work without effects; a custom id composes damage/status effects without engine code."
       } : {}),
+      ...(includes("playerTargets") ? { playerTargets } : {}),
       ...(includes("missions") ? {
         currencyRules: engine.CURRENCY_RULES,
         missionEconomy: engine.MISSION_ECONOMY_SCHEMA,
@@ -3255,6 +3371,18 @@ export async function callTool(name, args = {}, ctx = {}) {
         revisions: { balance: computeRevision(files.balance) }
       };
     }
+
+    case "read_player_targets":
+      return { projectDir, ...readPlayerTargets(projectDir) };
+
+    case "get_player_target_recipe":
+      return { projectDir, ...getPlayerTargetRecipe(projectDir, args.recipeId, args.targetId) };
+
+    case "preview_player_target":
+      return { projectDir, ...previewPlayerTarget(projectDir, args.targetId, args.target) };
+
+    case "apply_player_target":
+      return { projectDir, ...applyPlayerTarget(projectDir, args.targetId, args.target, { ifRevision: args.ifRevision }) };
 
     case "read_distribution_config": {
       const read = readDistributionConfigV1(projectDir);

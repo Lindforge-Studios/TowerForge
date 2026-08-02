@@ -635,6 +635,18 @@ function normalizeBuildTargets(input) {
     if (target.title && !target.appTitle) target.appTitle = target.title;
     target.backgroundColor ??= "#111111";
     target.appVersion ??= "0.1.0";
+    if (buildTargets.schemaVersion === 2) {
+      target.formFactor ??= "legacy";
+      target.viewport ??= {};
+      target.viewport.fit ??= "contain";
+      target.viewport.padding ??= 24;
+      target.viewport.minZoom ??= 0.5;
+      target.viewport.maxZoom ??= 4;
+      target.viewport.initialZoom ??= 1;
+      target.quality ??= "auto";
+      target.locale ??= "auto";
+      target.inputProfile ??= target.formFactor === "desktop" ? "keyboard_mouse" : "hybrid";
+    }
   }
   if (!buildTargets.defaults.web) {
     const firstWeb = Object.entries(buildTargets.targets).find(([, target]) => target.platform === "web");

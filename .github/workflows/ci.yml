@@ -28,4 +28,36 @@ jobs:
       - run: npm run sim tutorial_01 60
       - run: npm run maps:compile -- --project examples/starter.tdproj
       - run: npm run build
-      - run: npm run test:e2e
+      # Keep the GPU-heavy six-viewport R18 matrix on separate fresh runners below. On Linux the
+      # runner-level SwiftShader resources can degrade after the preceding renderer suites even
+      # when every generated player owns and disposes a separate Chromium process correctly.
+      - name: Run core E2E
+        run: npm run test:e2e -- --grep-invert "@r18-large-screen"
+
+  r18-large-screen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build:engine
+      - name: Run five bounded large-screen cases on a fresh runner
+        run: npx playwright test tests/e2e/r18-large-screen-player.spec.mjs --grep-invert "3440x1440" --workers=1
+
+  r18-ultrawide:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build:engine
+      - name: Run the ultrawide Phaser case on its own fresh runner
+        run: npx playwright test tests/e2e/r18-large-screen-player.spec.mjs --grep "3440x1440" --workers=1
