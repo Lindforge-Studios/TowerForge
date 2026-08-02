@@ -71,13 +71,25 @@ function directProfileMutations(source) {
 function addOutputViolations(violations, result, renderer, sourceRuntime) {
   const label = renderer;
   const outputRuntimeDir = path.join(result.outDir, "player-runtime");
-  for (const fileName of ["index.mjs", "player-profile-store.mjs"]) {
+  for (const fileName of ["player-profile-store.mjs"]) {
     const outputPath = path.join(outputRuntimeDir, fileName);
     const sourcePath = path.join(sourceRuntime, fileName);
     if (!fs.existsSync(outputPath)) {
       violations.push(`${label}: missing player-runtime/${fileName}`);
     } else if (!fs.readFileSync(outputPath).equals(fs.readFileSync(sourcePath))) {
       violations.push(`${label}: player-runtime/${fileName} differs from source bytes`);
+    }
+  }
+  const runtimeIndexPath = path.join(outputRuntimeDir, "index.mjs");
+  if (!fs.existsSync(runtimeIndexPath)) {
+    violations.push(`${label}: missing player-runtime/index.mjs`);
+  } else {
+    const runtimeIndex = fs.readFileSync(runtimeIndexPath, "utf8");
+    if (!runtimeIndex.includes('from "./player-profile-store.mjs"')) {
+      violations.push(`${label}: player-runtime/index.mjs does not export the profile store`);
+    }
+    for (const r18Specifier of ["player-actions", "player-preferences", "player-session-store", "indexeddb-session-storage", "localized-strings"]) {
+      if (runtimeIndex.includes(r18Specifier)) violations.push(`${label}: legacy runtime index includes R18 module ${r18Specifier}`);
     }
   }
   if (fs.existsSync(path.join(outputRuntimeDir, "player-profile-store.test.mjs"))) {

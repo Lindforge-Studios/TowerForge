@@ -1,6 +1,7 @@
 export const PLAYER_ACTION_DESCRIPTOR_SCHEMA_VERSION = 1;
 
 const DEFINITIONS = [
+  ["continueSession", "player.action.continue_session", "ui"],
   ["pause", "player.action.pause", "ui"],
   ["cameraPan", "player.action.camera_pan", "ui"],
   ["cameraZoom", "player.action.camera_zoom", "ui"],
@@ -31,4 +32,29 @@ const REGISTRY = Object.freeze(DEFINITIONS.map(([id, labelKey, kind]) => Object.
 
 export function createDefaultPlayerActionDescriptors() {
   return REGISTRY;
+}
+
+export function createPlayerActionRegistry(options) {
+  if (!options || typeof options !== "object" || Array.isArray(options)) throw new TypeError("Player action registry options must be an object.");
+  const descriptors = options.descriptors;
+  const handlers = options.handlers;
+  if (!Array.isArray(descriptors)) throw new TypeError("Player action descriptors must be an array.");
+  if (!handlers || typeof handlers !== "object" || Array.isArray(handlers)) throw new TypeError("Player action handlers must be an object.");
+  const ids = new Set();
+  const detachedDescriptors = descriptors.map((descriptor) => {
+    if (!descriptor || typeof descriptor !== "object" || Array.isArray(descriptor)
+      || typeof descriptor.id !== "string" || !descriptor.id || ids.has(descriptor.id)) {
+      throw new TypeError("Player action descriptors must have unique string ids.");
+    }
+    if (typeof handlers[descriptor.id] !== "function") throw new TypeError(`Missing player action handler "${descriptor.id}".`);
+    ids.add(descriptor.id);
+    return Object.freeze({ ...descriptor });
+  });
+  return Object.freeze({
+    descriptors: Object.freeze(detachedDescriptors),
+    invoke(id, payload = {}) {
+      if (!ids.has(id)) return Object.freeze({ ok: false, code: "unsupported_player_action" });
+      return handlers[id](payload);
+    }
+  });
 }

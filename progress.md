@@ -2311,6 +2311,62 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   viewport, camera, pointer, placement, action, and shell prerequisites reached this shared
   accessibility boundary without browser errors.
 
+## 2026-08-02 — R18 verifier repair RED: storage ordering, ownership and action registry
+
+- Contract/Test Designer added only
+  `packages/player-runtime/src/r18-verifier-repairs.regression.test.mjs` and
+  `packages/cli/build.r18-verifier-repairs.regression.test.mjs`; production was not changed by
+  this repair slice. The regressions freeze invocation-order serialization for concurrent rotating
+  saves, IndexedDB ownership of desktop PlayerProfileV3/session/story data with localStorage
+  reserved for PlayerPreferencesV1, one complete runtime action registry, registry-routed desktop
+  shell/hotkeys, and the unchanged legacy storage/output path.
+- Exact RED command:
+  `npx vitest run packages/player-runtime/src/r18-verifier-repairs.regression.test.mjs packages/cli/build.r18-verifier-repairs.regression.test.mjs --reporter=verbose`.
+  Result: expected failure, 2 files; 4 failed and 1 passed of 5 tests. A controlled delayed older
+  save overwrites the newer successful call and loads `older`; `createPlayerActionRegistry` is not
+  exported; the generated desktop player still creates the PlayerProfileV3 port from localStorage
+  and reads/writes story markers there; and its shell/hotkeys call game/camera functions directly
+  instead of the shared registry. The legacy target control is GREEN and retains its existing
+  localStorage path without R18 IndexedDB/action-registry imports.
+
+## 2026-08-02 — R18 verifier repair RED: hostile authoring, IndexedDB commit and PWA shortcut
+
+- Contract/Test Designer added only
+  `packages/cli/lib/r18-player-target-authoring-hardening.regression.test.mjs`,
+  `packages/player-runtime/src/indexeddb-session-storage.regression.test.mjs`, and
+  `packages/cli/build.r18-pwa-shortcut.regression.test.mjs`; this slice changed no production.
+  The tests require direct preview/apply to reject accessor, Proxy, symbol, sparse, cyclic and
+  over-budget candidates without executing getters/traps or writing, require IndexedDB writes and
+  removals to settle on transaction completion and reject transaction abort/error, and require the
+  advertised Continue shortcut either to use the implemented root URL or invoke Continue through
+  the shared registry exactly once.
+- Exact focused command:
+  `npx vitest run packages/cli/lib/r18-player-target-authoring-hardening.regression.test.mjs packages/player-runtime/src/indexeddb-session-storage.regression.test.mjs packages/cli/build.r18-pwa-shortcut.regression.test.mjs --reporter=verbose`.
+  Result: expected failure, 3 files; 3 failed and 8 passed of 11 tests. Direct authoring executes an
+  enumerable accessor getter and accepts a symbol-keyed target; the PWA manifest publishes
+  `./?action=continue`, but generated player source never consumes `action` or invokes Continue via
+  the registry. Proxy, sparse, cyclic and over-budget controls already reject without observed
+  traps/writes. The four IndexedDB durability regressions are GREEN on the concurrently repaired
+  shared source: set/remove wait for transaction completion and abort/error reject after request
+  success.
+
+## 2026-08-02 — R18 verifier repair focused GREEN
+
+- Serialized the rotating session-store mutation queue, made IndexedDB write/remove operations
+  settle only after transaction commit, and moved desktop profile/story/session ownership to one
+  IndexedDB data port while keeping localStorage limited to `PlayerPreferencesV1`.
+- Added one complete `PlayerActionDescriptorV1` registry used by the desktop shell, camera hotkeys,
+  gameplay shortcuts and the PWA Continue launch action. Direct player-target preview/apply now
+  rejects accessors, proxies, symbol keys, sparse/cyclic inputs and authored data over budget before
+  executing input code or writing project files.
+- Exact focused GREEN command:
+  `npx vitest run packages/player-runtime/src/r18-verifier-repairs.regression.test.mjs packages/player-runtime/src/indexeddb-session-storage.regression.test.mjs packages/cli/build.r18-verifier-repairs.regression.test.mjs packages/cli/lib/r18-player-target-authoring-hardening.regression.test.mjs packages/cli/build.r18-pwa-shortcut.regression.test.mjs`.
+  Result: 5 files, 16/16 tests passed.
+- Combined R18 contract command (the original 12 focused files plus all five verifier-repair files)
+  passed 17 files and 75/75 tests. The exact browser acceptance command
+  `npx playwright test tests/e2e/r18-large-screen-player.spec.mjs --workers=1` passed 6/6 after
+  repair for Canvas/Phaser, hex/square, all six required desktop viewports and DPR 1/2.
+
 ## 2026-08-02 — R18.1 shared viewport integration RED
 
 - Contract/Test Designer added only

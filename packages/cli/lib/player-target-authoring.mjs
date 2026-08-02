@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { types as utilTypes } from "node:util";
 import { normalizeProjectFiles, readRawProjectFiles } from "./project-loader.mjs";
 import { validateProjectSchemas } from "./project-schema.mjs";
 
@@ -53,7 +54,8 @@ export function getPlayerTargetRecipe(projectDir, recipeId, targetId) {
 
 export function previewPlayerTarget(projectDir, targetId, target) {
   const raw = readRawProjectFiles(projectDir);
-  const candidateRaw = candidateProject(raw, targetId, target);
+  const detachedTarget = cloneClosedPlayerTarget(target);
+  const candidateRaw = candidateProject(raw, targetId, detachedTarget);
   const validation = validateProjectSchemas(normalizeProjectFiles(candidateRaw));
   return Object.freeze({
     ok: validation.ok,
@@ -63,7 +65,7 @@ export function previewPlayerTarget(projectDir, targetId, target) {
     projectSchemaVersion: 5,
     buildTargetsSchemaVersion: 2,
     validation,
-    candidate: validation.ok ? Object.freeze({ targetId, target: Object.freeze(structuredClone(target)) }) : undefined
+    candidate: validation.ok ? Object.freeze({ targetId, target: Object.freeze(detachedTarget) }) : undefined
   });
 }
 
@@ -115,12 +117,7 @@ export function applyPlayerTarget(projectDir, targetId, target, options = {}) {
 
 function candidateProject(raw, targetId, target) {
   assertTargetId(targetId);
-  if (!target || typeof target !== "object" || Array.isArray(target)) {
-    const error = new Error("Player target candidate must be an object.");
-    error.code = "invalid_player_target";
-    throw error;
-  }
-  const nextTarget = structuredClone(target);
+  const nextTarget = cloneClosedPlayerTarget(target);
   nextTarget.id = targetId;
   return {
     ...raw,
@@ -132,6 +129,75 @@ function candidateProject(raw, targetId, target) {
       targets: { ...(raw.buildTargets?.targets ?? {}), [targetId]: nextTarget }
     }
   };
+}
+
+function cloneClosedPlayerTarget(target) {
+  const budget = { entries: 0 };
+  const seen = new Set();
+  const clone = cloneClosedOwnData(target, "$", seen, budget, 0);
+  if (!clone || typeof clone !== "object" || Array.isArray(clone)) {
+    const error = new Error("Player target candidate must be an object.");
+    error.code = "invalid_player_target";
+    throw error;
+  }
+  return clone;
+}
+
+function cloneClosedOwnData(value, location, seen, budget, depth) {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (Number.isFinite(value)) return value;
+    throw invalidPlayerTarget(`${location} must contain finite numbers.`);
+  }
+  if (typeof value !== "object" || utilTypes.isProxy(value)) {
+    throw invalidPlayerTarget(`${location} must contain only plain own data.`);
+  }
+  if (depth > 16) throw invalidPlayerTarget("Player target exceeds the maximum nesting depth.");
+  if (seen.has(value)) throw invalidPlayerTarget("Player target must not contain cycles.");
+  seen.add(value);
+  try {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== Array.prototype && prototype !== null) {
+      throw invalidPlayerTarget(`${location} must contain only plain objects and arrays.`);
+    }
+    const keys = Reflect.ownKeys(value);
+    if (keys.some((key) => typeof key === "symbol")) throw invalidPlayerTarget(`${location} must not contain symbol keys.`);
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const enumerableKeys = keys.filter((key) => key !== "length");
+    budget.entries += enumerableKeys.length;
+    if (budget.entries > 64) throw invalidPlayerTarget("Player target exceeds the authored data budget.");
+
+    if (Array.isArray(value)) {
+      const length = descriptors.length?.value;
+      if (!Number.isSafeInteger(length) || length < 0 || length > 64) throw invalidPlayerTarget(`${location} has an invalid array length.`);
+      const allowed = new Set(Array.from({ length }, (_, index) => String(index)));
+      if (enumerableKeys.some((key) => !allowed.has(key))) throw invalidPlayerTarget(`${location} has unsupported array properties.`);
+      const output = [];
+      for (let index = 0; index < length; index += 1) {
+        const descriptor = descriptors[String(index)];
+        if (!descriptor || !("value" in descriptor)) throw invalidPlayerTarget(`${location} must not contain sparse arrays or accessors.`);
+        output.push(cloneClosedOwnData(descriptor.value, `${location}[${index}]`, seen, budget, depth + 1));
+      }
+      return output;
+    }
+
+    const output = Object.create(null);
+    for (const key of enumerableKeys) {
+      const descriptor = descriptors[key];
+      if (!descriptor || !("value" in descriptor)) throw invalidPlayerTarget(`${location}.${key} must be an own data property.`);
+      if (!descriptor.enumerable) throw invalidPlayerTarget(`${location}.${key} must be enumerable.`);
+      output[key] = cloneClosedOwnData(descriptor.value, `${location}.${key}`, seen, budget, depth + 1);
+    }
+    return output;
+  } finally {
+    seen.delete(value);
+  }
+}
+
+function invalidPlayerTarget(message) {
+  const error = new Error(message);
+  error.code = "invalid_player_target";
+  return error;
 }
 
 function assertTargetId(targetId) {

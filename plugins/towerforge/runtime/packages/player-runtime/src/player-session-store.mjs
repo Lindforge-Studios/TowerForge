@@ -92,17 +92,27 @@ export function createRotatingPlayerSessionStore(options) {
   const headKey = `${baseKey}:head`;
   const slotKeys = Object.freeze([`${baseKey}:slot-0`, `${baseKey}:slot-1`]);
   const slotKey = (slot) => slotKeys[slot];
+  let mutationTail = Promise.resolve();
 
-  const save = async (value) => {
+  const enqueueMutation = (operation) => {
+    const pending = mutationTail.then(operation, operation);
+    mutationTail = pending.then(() => undefined, () => undefined);
+    return pending;
+  };
+
+  const save = (value) => {
     const serialized = codec.serialize(value);
-    const current = await storage.getItem(headKey);
-    const slot = current === "0" ? 1 : 0;
-    await storage.setItem(slotKey(slot), serialized);
-    await storage.setItem(headKey, String(slot));
-    return Object.freeze({ code: "session_saved", slot });
+    return enqueueMutation(async () => {
+      const current = await storage.getItem(headKey);
+      const slot = current === "0" ? 1 : 0;
+      await storage.setItem(slotKey(slot), serialized);
+      await storage.setItem(headKey, String(slot));
+      return Object.freeze({ code: "session_saved", slot });
+    });
   };
 
   const loadLatest = async () => {
+    await mutationTail;
     let head;
     try { head = await storage.getItem(headKey); } catch { return Object.freeze({ code: "session_unavailable" }); }
     const primary = head === "1" ? 1 : 0;
@@ -128,12 +138,12 @@ export function createRotatingPlayerSessionStore(options) {
     return Object.freeze({ code: contentMismatch ? "session_content_mismatch" : found ? "session_corrupt" : "session_missing" });
   };
 
-  const reset = async () => {
+  const reset = () => enqueueMutation(async () => {
     if (typeof storage.removeItem !== "function") return Object.freeze({ code: "session_remove_unavailable" });
     await storage.removeItem(slotKey(0));
     await storage.removeItem(slotKey(1));
     await storage.removeItem(headKey);
     return Object.freeze({ code: "session_reset" });
-  };
+  });
   return Object.freeze({ save, loadLatest, reset });
 }

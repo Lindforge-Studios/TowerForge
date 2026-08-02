@@ -24,8 +24,14 @@ export function createIndexedDbSessionStorage(options = {}) {
       const store = transaction.objectStore(storeName);
       let request;
       try { request = operation(store); } catch (error) { reject(error); return; }
-      request.onsuccess = () => resolve(request.result ?? null);
+      let requestResult = null;
+      request.onsuccess = () => {
+        requestResult = request.result ?? null;
+        if (mode === "readonly") resolve(requestResult);
+      };
       request.onerror = () => reject(request.error ?? transaction.error ?? new Error("IndexedDB operation failed."));
+      transaction.oncomplete = () => { if (mode === "readwrite") resolve(requestResult); };
+      transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB transaction failed."));
       transaction.onabort = () => reject(transaction.error ?? new Error("IndexedDB transaction aborted."));
     });
   };

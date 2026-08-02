@@ -246,8 +246,8 @@ async function readSessionSlots(page, entry) {
       request.onerror = () => reject(request.error);
     });
     const read = (key) => new Promise((resolve, reject) => {
-      const transaction = db.transaction("session-saves", "readonly");
-      const request = transaction.objectStore("session-saves").get(key);
+      const transaction = db.transaction("player-data", "readonly");
+      const request = transaction.objectStore("player-data").get(key);
       request.onsuccess = () => resolve(request.result ?? null);
       request.onerror = () => reject(request.error);
     });

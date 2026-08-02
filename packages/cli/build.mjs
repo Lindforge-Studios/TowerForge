@@ -667,6 +667,19 @@ function bootRecoveryTemplate(manifest = {}, target = {}, storyComics = {}) {
   const scope = target.appId || manifest.name || "game";
   const profileKey = `towerforge:progress:${scope}`;
   const storyNamespace = `${storyComics.seenStoragePrefix || "story_seen_"}${scope}:`;
+  const largeScreenPlayer = target.formFactor === "desktop" || target.formFactor === "responsive";
+  const resetPersistence = largeScreenPlayer
+    ? `try {
+        const request = indexedDB.deleteDatabase(${JSON.stringify(`towerforge-player-${scope}`)});
+        request.onsuccess = request.onerror = request.onblocked = () => location.reload();
+      } catch { location.reload(); }`
+    : `try {
+        for (let i = localStorage.length - 1; i >= 0; i -= 1) {
+          const key = localStorage.key(i) || "";
+          if (key === ${JSON.stringify(profileKey)} || key.startsWith(${JSON.stringify(storyNamespace)})) localStorage.removeItem(key);
+        }
+      } catch {}
+      location.reload();`;
   return `(() => {
   const reveal = (reason) => {
     const overlay = document.getElementById("boot-error");
@@ -676,13 +689,7 @@ function bootRecoveryTemplate(manifest = {}, target = {}, storyComics = {}) {
     overlay.hidden = false;
     document.getElementById("boot-reload").onclick = () => location.reload();
     document.getElementById("boot-reset").onclick = () => {
-      try {
-        for (let i = localStorage.length - 1; i >= 0; i -= 1) {
-          const key = localStorage.key(i) || "";
-          if (key === ${JSON.stringify(profileKey)} || key.startsWith(${JSON.stringify(storyNamespace)})) localStorage.removeItem(key);
-        }
-      } catch {}
-      location.reload();
+      ${resetPersistence}
     };
     document.getElementById("boot-reload").focus();
   };
@@ -707,7 +714,7 @@ body{overflow:hidden;overscroll-behavior:none;touch-action:manipulation;-webkit-
 button,select,input{font:inherit}button,select{border:1px solid var(--border);border-radius:6px;background:#111611;color:var(--text);padding:8px 10px}button{cursor:pointer}button:hover{border-color:var(--accent)}button:focus-visible,select:focus-visible,input:focus-visible,#playfield:focus-visible{outline:2px solid var(--accent);outline-offset:2px}button[aria-pressed="true"]{border-color:var(--danger);color:var(--danger)}#app{height:100%;display:flex;flex-direction:column}.hud{display:flex;gap:18px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface)}h1{font-size:18px;line-height:1.1;margin:0;color:var(--accent);letter-spacing:0}p{margin:4px 0 0;color:var(--muted)}.controls{margin-left:auto;display:flex;gap:10px;align-items:end;flex-wrap:wrap}.controls label{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:12px}.play-shell{min-height:0;flex:1;display:grid;grid-template-columns:minmax(0,1fr) 280px}#playfield{width:100%;height:100%;display:block;background:#101410;overflow:hidden;background-position:center;background-size:cover;background-repeat:no-repeat;touch-action:none}#playfield canvas{display:block}.panel{border-left:1px solid var(--border);background:var(--panel);padding:14px;display:flex;flex-direction:column;gap:10px;overflow:auto}.stat{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)}.stat span{color:var(--muted)}.stat strong{font-variant-numeric:tabular-nums}.targeting{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:center;color:var(--muted);font-size:13px}.targeting select{min-width:0}.speed{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;color:var(--muted);margin-top:8px}#message{min-height:42px;padding:10px;border:1px solid var(--border);border-radius:6px;background:#161a16;color:var(--text)}.ability-bar{display:flex;flex-wrap:wrap;gap:6px}.ability-bar:empty{display:none}.ability-bar button{padding:6px 9px;font-size:12px}.ability-bar button.armed{border-color:var(--accent);color:var(--accent)}.ability-bar button:disabled{opacity:.45;cursor:default}.roguelite-status{display:grid;gap:5px;border-top:1px solid var(--border);padding-top:10px}.roguelite-status[hidden]{display:none}.roguelite-status strong{font-size:12px;color:var(--accent)}.roguelite-status span{font-size:12px;color:var(--muted)}.campaign-run-panel{display:grid;gap:7px;border-top:1px solid var(--border);padding-top:10px}.campaign-run-panel[hidden]{display:none}.campaign-run-panel>strong{font-size:12px;color:var(--accent)}.campaign-run-panel>span,.campaign-run-nodes{font-size:12px;color:var(--muted)}.campaign-run-nodes{display:grid;gap:4px}.campaign-run-node{display:flex;justify-content:space-between;gap:8px}.campaign-run-node[data-state="available"]{color:var(--accent)}.campaign-run-node[data-state="current"]{color:var(--text);font-weight:700}.campaign-run-actions{display:flex;gap:6px;flex-wrap:wrap}.campaign-run-actions button{padding:5px 7px;font-size:11px}.meta-panel{border-top:1px solid var(--border);padding-top:10px}.meta-title{display:flex;justify-content:space-between;gap:8px;color:var(--muted);font-size:12px;text-transform:uppercase}.meta-upgrades{display:grid;gap:6px;margin-top:8px}.meta-upgrade{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center;padding:7px;border:1px solid var(--border);border-radius:6px;background:#161a16}.meta-upgrade span{min-width:0;font-size:12px}.meta-upgrade button{padding:5px 7px;font-size:11px}.boot-error,.story-overlay{position:fixed;inset:0;z-index:20;display:grid;place-items:center;padding:24px;background:#0b0e0bdd}.boot-error[hidden],.story-overlay[hidden]{display:none}.boot-error-panel{width:min(460px,100%);padding:22px;border:1px solid var(--danger);border-radius:6px;background:var(--surface);box-shadow:0 20px 60px #0009}.boot-error-panel h2{margin:0 0 8px;font-size:20px}.boot-error-actions,.story-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}.story-panel{width:min(820px,100%);max-height:min(680px,90vh);display:grid;grid-template-columns:minmax(0,1.2fr) minmax(280px,.8fr);overflow:hidden;border:1px solid var(--border);border-radius:6px;background:var(--surface);box-shadow:0 20px 60px #0009}.story-art{min-height:360px;background-position:center;background-size:cover;background-repeat:no-repeat;background-color:#101410}.story-copy{padding:24px;align-self:end}.story-copy h2{margin:0 0 18px;font-size:24px}.story-speaker{min-height:18px;color:var(--accent);font-weight:700}.story-text{color:var(--text);font-size:16px;line-height:1.55;white-space:pre-wrap}@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}}@media(max-width:820px){body{overflow:auto}.hud{align-items:flex-start;flex-direction:column}.controls{margin-left:0}.play-shell{grid-template-columns:1fr;grid-template-rows:65vh auto}.panel{border-left:0;border-top:1px solid var(--border)}.story-panel{grid-template-columns:1fr}.story-art{min-height:220px}.story-copy{padding:18px}}${desktopStyles}${monetizationStyles}`;
 }
 
-function playerProfileRuntimeTemplate() {
+function playerProfileRuntimeTemplate(largeScreenPlayer = false) {
   return `// TOWERFORGE_PROFILE_RUNTIME_BEGIN
 const playerProfileCodec = Object.freeze({
   createEmptyPlayerProfile,
@@ -720,7 +727,42 @@ const playerProfileKey = derivePlayerProfileStorageKey({
 });
 const playerProfileScope = playerProfileKey.slice("towerforge:progress:".length);
 
+${largeScreenPlayer ? `let desktopPlayerDataWriteTail = Promise.resolve();
+let desktopPlayerDataPort;
+try {
+  const desktopProfileAndStoryStorage = createIndexedDbSessionStorage({
+    dbName: "towerforge-player-" + playerProfileScope,
+    storeName: "player-data"
+  });
+  const desktopPlayerDataCache = new Map();
+  const desktopPlayerDataKeys = [
+    playerProfileKey,
+    ...Object.keys(content.storyComics || {}).map((comicId) => content.storySeenStoragePrefix + playerProfileScope + ":" + comicId)
+  ];
+  for (const key of desktopPlayerDataKeys) {
+    const value = await desktopProfileAndStoryStorage.getItem(key);
+    if (value !== null) desktopPlayerDataCache.set(key, value);
+  }
+  const enqueueDesktopPlayerDataWrite = (operation) => {
+    desktopPlayerDataWriteTail = desktopPlayerDataWriteTail.then(operation, operation);
+  };
+  desktopPlayerDataPort = Object.freeze({
+    getItem: (key) => desktopPlayerDataCache.get(key) ?? null,
+    setItem: (key, value) => {
+      desktopPlayerDataCache.set(key, value);
+      enqueueDesktopPlayerDataWrite(() => desktopProfileAndStoryStorage.setItem(key, value));
+    },
+    removeItem: (key) => {
+      desktopPlayerDataCache.delete(key);
+      enqueueDesktopPlayerDataWrite(() => desktopProfileAndStoryStorage.removeItem(key));
+    }
+  });
+} catch {
+  desktopPlayerDataPort = undefined;
+}` : ""}
+
 function createBrowserProfileStoragePort() {
+  ${largeScreenPlayer ? "return desktopPlayerDataPort;" : `
   let storage;
   try { storage = globalThis.localStorage; } catch { return undefined; }
   if (!storage) return undefined;
@@ -728,8 +770,10 @@ function createBrowserProfileStoragePort() {
     getItem: (key) => storage.getItem(key),
     setItem: (key, value) => storage.setItem(key, value),
     removeItem: (key) => storage.removeItem(key)
-  });
+  });`}
 }
+
+const storyStorage = createBrowserProfileStoragePort() ?? Object.freeze({ getItem: () => null, setItem: () => {}, removeItem: () => {} });
 
 const playerProfileStore = createPlayerProfileStore({
   storage: createBrowserProfileStoragePort(),
@@ -1138,7 +1182,7 @@ let playerSessionStore = null;
 try {
   const currentContentDigest = game.createCheckpoint().contentDigest;
   playerSessionStore = createRotatingPlayerSessionStore({
-    storage: createIndexedDbSessionStorage({ dbName: "towerforge-player-" + playerProfileScope, storeName: "session-saves" }),
+    storage: createIndexedDbSessionStorage({ dbName: "towerforge-player-" + playerProfileScope, storeName: "player-data" }),
     baseKey: "towerforge:session:" + playerProfileScope,
     expectedContentDigest: currentContentDigest,
     codec: { parse: parsePlayerSessionSaveV1, serialize: serializePlayerSessionSaveV1 },
@@ -1175,20 +1219,6 @@ function scheduleDesktopAutosave() {
 document.addEventListener("visibilitychange", () => { if (document.hidden) void saveDesktopSession(); });
 window.addEventListener("pagehide", () => { void saveDesktopSession(); });
 
-$("desktop-continue")?.addEventListener("click", async () => {
-  const result = playerSessionStore ? await playerSessionStore.loadLatest() : { code: "session_unavailable" };
-  message = result.code === "session_loaded" ? playerStrings.text("sessionRestored") : playerStrings.text("noSave");
-});
-$("desktop-upgrade")?.addEventListener("click", () => {
-  if (!selectedTowerId) { message = "Select a tower first."; return; }
-  report(game.upgradeTower(selectedTowerId));
-});
-$("desktop-pause")?.addEventListener("click", () => setPaused(Number($("speed").value) > 0));
-$("desktop-reset-view")?.addEventListener("click", () => desktopViewportActions.cameraReset());
-$("desktop-fullscreen")?.addEventListener("click", async () => {
-  try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); } catch {}
-});
-
 const desktopSettingsDialog = $("desktop-settings-dialog");
 const desktopSettingsPreviousFocus = { current: null };
 function openDesktopSettings() {
@@ -1203,7 +1233,61 @@ function closeDesktopSettings() {
   desktopSettingsDialog.hidden = true;
   desktopSettingsPreviousFocus.current?.focus?.();
 }
-$("desktop-settings")?.addEventListener("click", openDesktopSettings);
+
+function invalidPlayerActionPayload(actionId) {
+  return Object.freeze({ ok: false, code: "invalid_player_action_payload", actionId });
+}
+function dispatchRegisteredCommand(actionId, payload) {
+  const command = payload && payload.command;
+  if (!command || command.type !== actionId) return invalidPlayerActionPayload(actionId);
+  return report(dispatchGameCommand(game, command));
+}
+async function continueDesktopSession() {
+  const result = playerSessionStore ? await playerSessionStore.loadLatest() : { code: "session_unavailable" };
+  message = result.code === "session_loaded" ? playerStrings.text("sessionRestored") : playerStrings.text("noSave");
+  return result;
+}
+
+const playerActionRegistry = createPlayerActionRegistry({
+  descriptors: playerActionDescriptors,
+  handlers: {
+    "continueSession": () => continueDesktopSession(),
+    "pause": () => setPaused(Number($("speed").value) > 0),
+    "cameraPan": (payload) => desktopViewportActions.cameraPan(payload),
+    "cameraZoom": (payload) => desktopViewportActions.cameraZoom(payload.point, payload.factor),
+    "cameraReset": () => desktopViewportActions.cameraReset(),
+    "fullscreen": async () => {
+      try {
+        if (document.fullscreenElement) await document.exitFullscreen();
+        else await document.documentElement.requestFullscreen();
+        return Object.freeze({ ok: true });
+      } catch { return Object.freeze({ ok: false, code: "fullscreen_failed" }); }
+    },
+    "openSettings": () => { openDesktopSettings(); return Object.freeze({ ok: true }); },
+    "startWave": () => report(game.startNextWave()),
+    "placeTower": (payload) => dispatchRegisteredCommand("placeTower", payload),
+    "upgradeTower": (payload) => selectedTowerId ? report(game.upgradeTower(selectedTowerId, payload.branchId)) : invalidPlayerActionPayload("upgradeTower"),
+    "sellTower": () => selectedTowerId ? report(game.sellTower(selectedTowerId)) : invalidPlayerActionPayload("sellTower"),
+    "setTargetMode": (payload) => selectedTowerId ? report(game.setTowerTargetMode(selectedTowerId, payload.mode)) : invalidPlayerActionPayload("setTargetMode"),
+    "useAbility": (payload) => dispatchRegisteredCommand("useAbility", payload),
+    "moveHero": (payload) => dispatchRegisteredCommand("moveHero", payload),
+    "useHeroAbility": (payload) => dispatchRegisteredCommand("useHeroAbility", payload),
+    "unlockHeroSkill": (payload) => dispatchRegisteredCommand("unlockHeroSkill", payload),
+    "socketArtifact": (payload) => dispatchRegisteredCommand("socketArtifact", payload),
+    "unsocketArtifact": (payload) => dispatchRegisteredCommand("unsocketArtifact", payload),
+    "configureTowerModules": (payload) => dispatchRegisteredCommand("configureTowerModules", payload),
+    "emitSignal": (payload) => payload && payload.command
+      ? dispatchRegisteredCommand("emitSignal", payload)
+      : report(dispatchGameCommand(game, { schemaVersion: 1, type: "emitSignal", signal: payload.signalId, payload: payload.payload }))
+  }
+});
+
+$("desktop-continue")?.addEventListener("click", () => playerActionRegistry.invoke("continueSession"));
+$("desktop-upgrade")?.addEventListener("click", () => playerActionRegistry.invoke("upgradeTower"));
+$("desktop-pause")?.addEventListener("click", () => playerActionRegistry.invoke("pause"));
+$("desktop-reset-view")?.addEventListener("click", () => playerActionRegistry.invoke("cameraReset"));
+$("desktop-fullscreen")?.addEventListener("click", () => playerActionRegistry.invoke("fullscreen"));
+$("desktop-settings")?.addEventListener("click", () => playerActionRegistry.invoke("openSettings"));
 $("desktop-settings-close")?.addEventListener("click", closeDesktopSettings);
 for (const id of ["desktop-ui-scale", "desktop-quality", "desktop-reduced-motion"]) $(id)?.addEventListener("change", () => persistPlayerPreferences({
   ...playerPreferences,
@@ -1219,30 +1303,16 @@ document.addEventListener("keydown", (event) => {
   if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;
   if (desktopCameraInputBlocked()) return;
   const cameraPan = { KeyA: [-32, 0], KeyD: [32, 0], KeyW: [0, -32], KeyS: [0, 32] };
-  if (cameraPan[event.code]) { event.preventDefault(); desktopViewportActions.cameraPan({ x: cameraPan[event.code][0], y: cameraPan[event.code][1] }); return; }
+  if (cameraPan[event.code]) { event.preventDefault(); playerActionRegistry.invoke("cameraPan", { x: cameraPan[event.code][0], y: cameraPan[event.code][1] }); return; }
   if (["Equal", "NumpadAdd", "Minus", "NumpadSubtract"].includes(event.code)) {
-    event.preventDefault(); const rect = $("playfield").getBoundingClientRect(); desktopViewportActions.cameraZoom({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }, event.code === "Equal" || event.code === "NumpadAdd" ? 1.1 : 0.9); return;
+    event.preventDefault(); const rect = $("playfield").getBoundingClientRect(); playerActionRegistry.invoke("cameraZoom", { point: { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }, factor: event.code === "Equal" || event.code === "NumpadAdd" ? 1.1 : 0.9 }); return;
   }
-  if (event.code === "Digit0") { event.preventDefault(); desktopViewportActions.cameraReset(); }
-  else if (event.code === "KeyU" && selectedTowerId) { event.preventDefault(); report(game.upgradeTower(selectedTowerId)); }
+  if (event.code === "Digit0") { event.preventDefault(); playerActionRegistry.invoke("cameraReset"); }
+  else if (event.code === "KeyU" && selectedTowerId) { event.preventDefault(); playerActionRegistry.invoke("upgradeTower"); }
 });
 
-const playerActionRegistry = Object.freeze({
-  descriptors: playerActionDescriptors,
-  invoke(id, payload = {}) {
-    if (id === "pause") return setPaused(Number($("speed").value) > 0);
-    if (id === "cameraPan") return desktopViewportActions.cameraPan(payload);
-    if (id === "cameraZoom") return desktopViewportActions.cameraZoom(payload.point, payload.factor);
-    if (id === "cameraReset") return desktopViewportActions.cameraReset();
-    if (id === "fullscreen") return $("desktop-fullscreen")?.click();
-    if (id === "startWave") return report(game.startNextWave());
-    if (id === "upgradeTower") return selectedTowerId ? report(game.upgradeTower(selectedTowerId, payload.branchId)) : undefined;
-    if (id === "sellTower") return selectedTowerId ? report(game.sellTower(selectedTowerId)) : undefined;
-    if (id === "setTargetMode") return selectedTowerId ? report(game.setTowerTargetMode(selectedTowerId, payload.mode)) : undefined;
-    if (id === "emitSignal") return dispatchGameCommand(game, { schemaVersion: 1, type: "emitSignal", signal: payload.signalId, payload: payload.payload });
-    return Object.freeze({ ok: false, reason: "Unsupported player action." });
-  }
-});
+const desktopLaunchAction = new URL(location.href).searchParams.get("action");
+if (desktopLaunchAction === "continue") playerActionRegistry.invoke("continueSession");
 globalThis.__towerforgePlayerActions = playerActionRegistry;
 `;
 }
@@ -1272,7 +1342,7 @@ function playerTemplate(includeMultiplayer = false, includeMacroEconomy = false,
   validateCampaignRunAgainstContent
 } from "./engine/index.js";
 ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multiplayer/index.js";' : ""}
-import { createPlayerProfileStore, derivePlayerProfileStorageKey${largeScreenPlayer ? ", createDefaultPlayerActionDescriptors, createDefaultPlayerPreferences, createRotatingPlayerSessionStore, parsePlayerPreferencesV1, parsePlayerSessionSaveV1, serializePlayerPreferencesV1, serializePlayerSessionSaveV1" : ""} } from "./player-runtime/index.mjs";
+import { createPlayerProfileStore, derivePlayerProfileStorageKey${largeScreenPlayer ? ", createDefaultPlayerActionDescriptors, createPlayerActionRegistry, createDefaultPlayerPreferences, createRotatingPlayerSessionStore, parsePlayerPreferencesV1, parsePlayerSessionSaveV1, serializePlayerPreferencesV1, serializePlayerSessionSaveV1" : ""} } from "./player-runtime/index.mjs";
 ${largeScreenPlayer ? 'import { createIndexedDbSessionStorage } from "./player-runtime/indexeddb-session-storage.mjs";\nimport { createPlayerStrings } from "./player-runtime/localized-strings.mjs";\nimport { createViewportTransformV1 } from "./renderer/viewport-transform.mjs";' : ""}
 ${includeHostMonetization ? 'import { createHostMonetizationRuntimeV1 } from "./player-runtime/host-monetization.mjs";' : ""}
 import { createCanvasRenderer, hitTestHeroesPresentation, projectArsenalPresentation${includeMacroEconomy ? ", projectMacroEconomyPresentation" : ""}, projectCampaignPresentation, projectDirectorDecisionCues, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectProceduralJuicePresentation, projectQuestPresentation, projectRoguelitePresentation, projectVanguardProtectionPresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
@@ -1292,7 +1362,7 @@ const content = createGameContentRegistry({
 ${includeMultiplayer ? "globalThis.__towerforgeMultiplayer = TowerForgeMultiplayer;" : ""}
 ${includeHostMonetization ? "const hostMonetization = createHostMonetizationRuntimeV1({ hook: project.hostMonetization });\nhostMonetization.mount();\nglobalThis.__towerforgeHostMonetization = hostMonetization;" : ""}
 
-${playerProfileRuntimeTemplate()}
+${playerProfileRuntimeTemplate(largeScreenPlayer)}
 ${arsenalPlayerRuntimeTemplate()}
 ${includeMacroEconomy ? macroEconomyPlayerRuntimeTemplate() : ""}
 
@@ -1342,8 +1412,8 @@ document.addEventListener("visibilitychange", () => {
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker.register("./offline-sw.js").catch(() => {}));
 }
-$("start-wave").addEventListener("click", () => { audio.resume(); report(game.startNextWave()); });
-$("pause-run").addEventListener("click", () => setPaused(Number($("speed").value) > 0));
+$("start-wave").addEventListener("click", () => { audio.resume(); ${largeScreenPlayer ? 'playerActionRegistry.invoke("startWave");' : "report(game.startNextWave());"} });
+$("pause-run").addEventListener("click", () => ${largeScreenPlayer ? 'playerActionRegistry.invoke("pause")' : 'setPaused(Number($("speed").value) > 0)'});
 $("sell-mode").addEventListener("click", () => setSellMode(targetingMode.kind !== "sell"));
 $("reset-run").addEventListener("click", () => { game.reset(); renderer.resetProceduralJuicePresentation(); audio.disposeProceduralVoices(); victoryRewarded = false; selectedTowerId = null; setTargetingMode({ kind: "build" }); initAbilityBar(); clearNavigationOverlay(); message = "Run reset."; });
 $("reset-progress")?.addEventListener("click", resetPlayerProgress);
@@ -1353,14 +1423,15 @@ $("sfx-volume").addEventListener("input", () => { syncAudioSettings(); if ($("sn
 $("music-volume").addEventListener("input", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
 $("target-mode").addEventListener("change", () => {
   if (!selectedTowerId) return;
-  report(game.setTowerTargetMode(selectedTowerId, $("target-mode").value));
+  ${largeScreenPlayer ? 'playerActionRegistry.invoke("setTargetMode", { mode: $("target-mode").value });' : 'report(game.setTowerTargetMode(selectedTowerId, $("target-mode").value));'}
 });
 $("story-next").addEventListener("click", advanceStory);
 $("story-skip").addEventListener("click", finishStory);
+${largeScreenPlayer ? desktopPlayerRuntimeTemplate("canvas") : ""}
 document.addEventListener("keydown", (event) => {
   const tag = event.target?.tagName;
   if (tag === "BUTTON" || tag === "A" || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;
-  if (event.code === "Space") { event.preventDefault(); setPaused(Number($("speed").value) > 0); return; }
+  if (event.code === "Space") { event.preventDefault(); ${largeScreenPlayer ? 'playerActionRegistry.invoke("pause");' : 'setPaused(Number($("speed").value) > 0);'} return; }
   if (document.activeElement !== canvas) return;
   if (event.code === "Digit1") { event.preventDefault(); armCurrentHeroAbility(); return; }
   const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
@@ -2121,7 +2192,7 @@ function showStoryForMission(trigger) {
   if (shownStories.has(runKey)) return;
   const seenKey = content.storySeenStoragePrefix + playerProfileScope + ":" + comicId;
   if (comic.replay !== "always") {
-    try { if (localStorage.getItem(seenKey) === "1") return; } catch {}
+    try { if (storyStorage.getItem(seenKey) === "1") return; } catch {}
   }
   shownStories.add(runKey);
   storyWasRunning = Number($("speed").value) > 0;
@@ -2156,7 +2227,7 @@ function advanceStory() {
 
 function finishStory() {
   if (!activeStory) return;
-  try { localStorage.setItem(activeStory.seenKey, "1"); } catch {}
+  try { storyStorage.setItem(activeStory.seenKey, "1"); } catch {}
   activeStory = null;
   $("story-overlay").hidden = true;
   if (storyWasRunning) setPaused(false);
@@ -2518,7 +2589,6 @@ function applyProjectTheme() {
     }
   }
 }
-${largeScreenPlayer ? desktopPlayerRuntimeTemplate("canvas") : ""}
 `;
 }
 
@@ -2547,7 +2617,7 @@ function phaserPlayerTemplate(includeMultiplayer = false, includeMacroEconomy = 
   validateCampaignRunAgainstContent
 } from "./engine/index.js";
 ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multiplayer/index.js";' : ""}
-import { createPlayerProfileStore, derivePlayerProfileStorageKey${largeScreenPlayer ? ", createDefaultPlayerActionDescriptors, createDefaultPlayerPreferences, createRotatingPlayerSessionStore, parsePlayerPreferencesV1, parsePlayerSessionSaveV1, serializePlayerPreferencesV1, serializePlayerSessionSaveV1" : ""} } from "./player-runtime/index.mjs";
+import { createPlayerProfileStore, derivePlayerProfileStorageKey${largeScreenPlayer ? ", createDefaultPlayerActionDescriptors, createPlayerActionRegistry, createDefaultPlayerPreferences, createRotatingPlayerSessionStore, parsePlayerPreferencesV1, parsePlayerSessionSaveV1, serializePlayerPreferencesV1, serializePlayerSessionSaveV1" : ""} } from "./player-runtime/index.mjs";
 ${largeScreenPlayer ? 'import { createIndexedDbSessionStorage } from "./player-runtime/indexeddb-session-storage.mjs";\nimport { createPlayerStrings } from "./player-runtime/localized-strings.mjs";\nimport { createViewportTransformV1 } from "./renderer/viewport-transform.mjs";' : ""}
 ${includeHostMonetization ? 'import { createHostMonetizationRuntimeV1 } from "./player-runtime/host-monetization.mjs";' : ""}
 import { createAudioPlayer } from "./renderer/audio.mjs";
@@ -2616,7 +2686,7 @@ function ownDataValue(record, key) {
   }
 }
 
-${playerProfileRuntimeTemplate()}
+${playerProfileRuntimeTemplate(largeScreenPlayer)}
 ${arsenalPlayerRuntimeTemplate()}
 ${includeMacroEconomy ? macroEconomyPlayerRuntimeTemplate() : ""}
 
@@ -2662,8 +2732,8 @@ initAbilityBar();
 renderMetaPanel();
 setupCampaignRunControls();
 updateCampaignRun();
-$("start-wave").addEventListener("click", () => { audio.resume(); report(game.startNextWave()); });
-$("pause-run").addEventListener("click", () => setPaused(Number($("speed").value) > 0));
+$("start-wave").addEventListener("click", () => { audio.resume(); ${largeScreenPlayer ? 'playerActionRegistry.invoke("startWave");' : "report(game.startNextWave());"} });
+$("pause-run").addEventListener("click", () => ${largeScreenPlayer ? 'playerActionRegistry.invoke("pause")' : 'setPaused(Number($("speed").value) > 0)'});
 $("sell-mode").addEventListener("click", () => setSellMode(targetingMode.kind !== "sell"));
 $("reset-run").addEventListener("click", () => { game.reset(); resetPlayerPresentation(); victoryRewarded = false; selectedTowerId = null; setTargetingMode({ kind: "build" }); initAbilityBar(); clearNavigationOverlay(); message = "Run reset."; });
 $("reset-progress")?.addEventListener("click", resetPlayerProgress);
@@ -2673,14 +2743,15 @@ $("sfx-volume").addEventListener("input", () => { syncAudioSettings(); if ($("sn
 $("music-volume").addEventListener("input", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
 $("target-mode").addEventListener("change", () => {
   if (!selectedTowerId) return;
-  report(game.setTowerTargetMode(selectedTowerId, $("target-mode").value));
+  ${largeScreenPlayer ? 'playerActionRegistry.invoke("setTargetMode", { mode: $("target-mode").value });' : 'report(game.setTowerTargetMode(selectedTowerId, $("target-mode").value));'}
 });
 $("story-next").addEventListener("click", advanceStory);
 $("story-skip").addEventListener("click", finishStory);
+${largeScreenPlayer ? desktopPlayerRuntimeTemplate("phaser") : ""}
 document.addEventListener("keydown", (event) => {
   const tag = event.target?.tagName;
   if (tag === "BUTTON" || tag === "A" || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;
-  if (event.code === "Space") { event.preventDefault(); setPaused(Number($("speed").value) > 0); return; }
+  if (event.code === "Space") { event.preventDefault(); ${largeScreenPlayer ? 'playerActionRegistry.invoke("pause");' : 'setPaused(Number($("speed").value) > 0);'} return; }
   if (document.activeElement !== $("playfield")) return;
   if (event.code === "Digit1") { event.preventDefault(); armCurrentHeroAbility(); return; }
   const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
@@ -4245,7 +4316,7 @@ function showStoryForMission(trigger) {
   if (shownStories.has(runKey)) return;
   const seenKey = content.storySeenStoragePrefix + playerProfileScope + ":" + comicId;
   if (comic.replay !== "always") {
-    try { if (localStorage.getItem(seenKey) === "1") return; } catch {}
+    try { if (storyStorage.getItem(seenKey) === "1") return; } catch {}
   }
   shownStories.add(runKey);
   storyWasRunning = Number($("speed").value) > 0;
@@ -4280,7 +4351,7 @@ function advanceStory() {
 
 function finishStory() {
   if (!activeStory) return;
-  try { localStorage.setItem(activeStory.seenKey, "1"); } catch {}
+  try { storyStorage.setItem(activeStory.seenKey, "1"); } catch {}
   activeStory = null;
   $("story-overlay").hidden = true;
   if (storyWasRunning) setPaused(false);
@@ -4594,7 +4665,6 @@ function applyProjectTheme() {
     }
   }
 }
-${largeScreenPlayer ? desktopPlayerRuntimeTemplate("phaser") : ""}
 `;
 }
 

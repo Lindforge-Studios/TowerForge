@@ -2805,7 +2805,7 @@ export async function callTool(name, args = {}, ctx = {}) {
       compatibility: "BuildTargets schema v1 and legacy player targets remain byte-path isolated until an explicit v2 candidate is applied."
     };
     return {
-      schemaVersion: 4,
+      schemaVersion: 5,
       agentGuideVersion: TOWERFORGE_AGENT_GUIDE_VERSION,
       requestedDomain: domain,
       availableDomains: SCHEMA_DOMAINS,

@@ -39,7 +39,9 @@ describe("R18.3 desktop session and preferences carrier (RED)", () => {
     expect(player).toMatch(/createIndexedDbSessionStorage/);
     expect(player).toMatch(/localStorage[\s\S]{0,240}(?:PlayerPreferences|playerPreferences)/i);
     expect(player).toMatch(/(?:pagehide|visibilitychange)[\s\S]{0,600}(?:save|autosave)/i);
-    expect(player).toMatch(/desktop-continue[\s\S]{0,600}loadLatest/);
+    expect(player).toMatch(/desktop-continue[\s\S]{0,600}playerActionRegistry\.invoke\("continueSession"\)/);
+    expect(player).toMatch(/"continueSession"\s*:\s*\(\)\s*=>\s*continueDesktopSession\(\)/);
+    expect(player).toMatch(/continueDesktopSession[\s\S]{0,300}loadLatest/);
   }, 60_000);
 
   it("checks the content digest before restore and never exposes a future/corrupt partial save", async () => {
