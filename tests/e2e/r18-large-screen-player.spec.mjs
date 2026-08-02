@@ -82,6 +82,7 @@ for (const entry of cases) {
     });
     const page = await context.newPage();
     const browserErrors = [];
+    let graphicsTeardown = null;
     page.on("pageerror", (error) => browserErrors.push(error.message));
     try {
       await page.goto(`${origin}/${entry.id}/`);
@@ -153,8 +154,42 @@ for (const entry of cases) {
       if (entry.session) await verifyContinueRestore(page, entry);
       expect(browserErrors).toEqual([]);
     } finally {
-      await context.close();
+      try {
+        graphicsTeardown = await releaseGeneratedGraphics(page, entry.renderer);
+      } finally {
+        await context.close();
+      }
+      if (entry.renderer === "phaser") {
+        expect(graphicsTeardown).toMatchObject({
+          disposeHookAvailable: true,
+          canvasConnected: false,
+          contextLost: true
+        });
+      }
     }
+  });
+}
+
+async function releaseGeneratedGraphics(page, renderer) {
+  if (renderer !== "phaser" || page.isClosed()) return null;
+  return page.evaluate(async () => {
+    const canvas = document.querySelector("#playfield canvas");
+    const graphics = canvas?.getContext("webgl2") ?? canvas?.getContext("webgl") ?? null;
+    const disposeHookAvailable = typeof globalThis.__towerforgeDispose === "function";
+    if (disposeHookAvailable) {
+      await globalThis.__towerforgeDispose();
+    } else {
+      // RED runs still release the scarce CI GPU resource. The assertion below requires the
+      // generated player to own this lifecycle before the candidate can become GREEN.
+      graphics?.getExtension("WEBGL_lose_context")?.loseContext();
+      canvas?.remove();
+    }
+    await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+    return {
+      disposeHookAvailable,
+      canvasConnected: canvas?.isConnected ?? false,
+      contextLost: graphics ? graphics.isContextLost() : true
+    };
   });
 }
 

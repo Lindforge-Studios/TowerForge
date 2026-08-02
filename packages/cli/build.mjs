@@ -1124,6 +1124,24 @@ function phaserViewportMethodsTemplate(enabled) {
 
 function desktopPlayerRuntimeTemplate(rendererKind) {
   const cameraBridge = rendererKind === "phaser" ? `const desktopScene = () => phaserGame?.scene?.getScene?.("PlayScene") ?? phaserGame?.scene?.getScenes?.(true)?.[0] ?? null;
+let desktopPlayerDisposed = false;
+async function disposeDesktopPhaserPlayer() {
+  if (desktopPlayerDisposed) return;
+  desktopPlayerDisposed = true;
+  const currentGame = phaserGame;
+  phaserGame = null;
+  const canvas = currentGame?.canvas ?? null;
+  const graphics = currentGame?.renderer?.gl ?? canvas?.getContext?.("webgl2") ?? canvas?.getContext?.("webgl") ?? null;
+  try {
+    currentGame?.destroy(true);
+  } finally {
+    graphics?.getExtension?.("WEBGL_lose_context")?.loseContext();
+    canvas?.remove();
+  }
+  await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+globalThis.__towerforgeDispose = disposeDesktopPhaserPlayer;
+window.addEventListener("pagehide", () => { void disposeDesktopPhaserPlayer(); }, { once: true });
 const desktopViewportActions = Object.freeze({
   cameraPan(delta) { const scene = desktopScene(); return scene?.viewportController?.panBy(delta) ?? null; },
   cameraZoom(point, factor) { const scene = desktopScene(); const viewport = scene?.viewportController; if (!viewport) return null; const current = viewport.getSnapshot(); return viewport.zoomAt(point, current.zoom * factor); },

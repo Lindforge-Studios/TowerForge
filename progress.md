@@ -2369,6 +2369,38 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   `elementFromPoint` at the center of `#mission-select` returns `#desktop-action-bar`, proving the
   overlay blocks the primary HUD before the actual-click assertions can run.
 
+## 2026-08-02 — R18 CI repair RED: deterministic Phaser/WebGL teardown
+
+- GitHub run `30735063278` reached 153/154 existing acceptance tests, then the final Phaser
+  3440×1440 case exhausted its 120-second budget inside `context.close()` after all gameplay
+  assertions had passed; Chromium logged SharedImageManager GPU mailbox failures. Contract/Test
+  Designer changed only `tests/e2e/r18-large-screen-player.spec.mjs`: every Phaser case must now
+  expose a generated-player `__towerforgeDispose` lifecycle hook which removes its canvas and loses
+  the WebGL context before Playwright closes the browser context. Viewport coverage and timeout stay
+  unchanged. A test-side fallback explicitly releases the graphics context during RED so the
+  regression itself cannot strand the constrained CI GPU process.
+- Exact focused RED command:
+  `npx playwright test tests/e2e/r18-large-screen-player.spec.mjs --workers=1 --grep "phaser/square desktop target works at 3440x1440"`.
+  Result: expected failure, 1/1 failed in 4.5 seconds after all prior assertions. Teardown proof was
+  `{ disposeHookAvailable: false, canvasConnected: false, contextLost: true }`: the bounded fallback
+  deterministically released WebGL and removed the canvas, while the missing generated hook remains
+  the sole RED boundary. GREEN requires the same proof with `disposeHookAvailable: true`, followed
+  by the unchanged full 6-case acceptance matrix on the exact candidate.
+
+## 2026-08-02 — R18 CI repair focused GREEN
+
+- Generated large-screen Phaser players now own an idempotent `__towerforgeDispose` lifecycle:
+  the Phaser game is destroyed, its WebGL context is explicitly lost, its canvas is removed, and a
+  `pagehide` listener invokes the same path during real navigation/close. Legacy and Canvas players
+  do not receive this desktop-Phaser-only hook.
+- Exact former-failure command passed 1/1 in 6.1 seconds:
+  `npx playwright test tests/e2e/r18-large-screen-player.spec.mjs --workers=1 --grep "phaser/square desktop target works at 3440x1440"`.
+  The unchanged six-viewport matrix plus compact hit-target regression passed 7/7 with one worker
+  in 15.0 seconds, and the combined R18 unit/contract set remained GREEN at 18 files, 78/78 tests.
+- GitHub run `30735063278` is retained as the RED evidence (153/154, timeout in WebGL teardown).
+  Because this production change invalidates the previous freeze and both sign-offs, the full exact
+  gates and both independent verifiers must run again before PR merge.
+
 ## 2026-08-02 — R18 verifier repair GREEN: hit targets, action routing and camera evidence
 
 - Replaced the compact desktop action overlay with an in-flow, wrapping action bar, so its real
