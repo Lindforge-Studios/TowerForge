@@ -2539,3 +2539,48 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   the test-only viewport expansion, plugin build/validate/smoke, mobile and desktop package
   generation, and Tauri `cargo test` 9/9. The exact candidate still requires the final full E2E
   rerun and both independent sign-offs after commit freeze.
+
+## 2026-08-02 — R18 verifier repair RED: BFCache-safe Phaser lifecycle
+
+- For Code Verifier finding P1 against candidate `070ffd2`, the Contract/Test Designer added only
+  `packages/cli/build.r18-phaser-lifecycle.regression.test.mjs` and
+  `tests/e2e/r18-phaser-lifecycle.spec.mjs`; no production source was changed. The contract requires
+  a persisted BFCache `pagehide` to preserve the Phaser game and connected canvas, a subsequent
+  persisted `pageshow` to remain interactive, and only a non-persisted `pagehide` to dispose. It
+  also requires repeated or concurrent `__towerforgeDispose()` calls to share one stable promise,
+  settle idempotently, and never depend on `requestAnimationFrame`, which may be suspended while a
+  page is hidden. A schema-v1 Phaser target remains the legacy compatibility control.
+- Exact static RED command:
+  `npx vitest run packages/cli/build.r18-phaser-lifecycle.regression.test.mjs --reporter=verbose`.
+  Result: expected failure, 1 file; 2 failed and 1 passed of 3 tests. The generated desktop Phaser
+  player ignores `PageTransitionEvent.persisted`, registers the lifecycle listener with
+  `{ once: true }`, and its disposer awaits `requestAnimationFrame` instead of returning a stable
+  single-flight promise. The legacy target correctly emits none of the R18 lifecycle bridge.
+- Exact browser RED command:
+  `npx playwright test tests/e2e/r18-phaser-lifecycle.spec.mjs --workers=1`.
+  Result: expected failure, 2/2 tests failed. Dispatching `pagehide` with `persisted: true`
+  immediately removed the Phaser canvas, so the following persisted `pageshow` had no connected
+  `#playfield canvas`. Three concurrent disposer calls returned different promises and observed
+  `{ canvasConnected: false, rafCalls: 1, samePromise: false, settled: true }`, while the frozen
+  contract requires zero animation-frame calls and one shared promise. GREEN must preserve an
+  operational canvas and hit test across the BFCache cycle, dispose on `persisted: false`, and keep
+  repeated disposal hidden-page-safe and idempotent.
+
+## 2026-08-02 — R18 verifier repair focused GREEN: BFCache-safe Phaser lifecycle
+
+- Replaced the async/rAF disposer with one stable `disposePromise` owned by a regular function.
+  Graphics teardown executes synchronously, every caller receives the same settling promise, and
+  destroy/context-loss/canvas-removal are attempted independently so one cleanup failure cannot
+  skip the remaining resources.
+- The persistent `pagehide` listener now ignores `event.persisted === true`; the live Phaser game,
+  canvas and hit-testing survive the paired persisted `pageshow`. Only a final non-persisted
+  `pagehide` invokes teardown. Canvas and legacy generated players remain free of the lifecycle
+  hook.
+- Exact static GREEN command passed 3/3:
+  `npx vitest run packages/cli/build.r18-phaser-lifecycle.regression.test.mjs --reporter=verbose`.
+  Exact browser GREEN command passed 2/2:
+  `npx playwright test tests/e2e/r18-phaser-lifecycle.spec.mjs --workers=1`.
+  The combined R18 browser acceptance passed 9/9 with one worker in 17.6 seconds, and the combined
+  R18 unit/contract set passed 19 files, 81/81 tests.
+- This source repair invalidates candidate `070ffd2` and its incomplete verifier cycle. A new exact
+  commit must repeat all gates and both independent sign-offs before PR merge.
