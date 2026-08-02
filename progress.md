@@ -2350,6 +2350,43 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   shared source: set/remove wait for transaction completion and abort/error reject after request
   success.
 
+## 2026-08-02 — R18 verifier repair RED: 1024 px hit targets and central action routing
+
+- Contract/Test Designer added only `tests/e2e/r18-desktop-hit-targets.spec.mjs` and
+  `packages/cli/build.r18-central-actions-registry.regression.test.mjs`; this slice changed no
+  production. The browser regression uses `elementFromPoint` plus real pointer clicks to protect
+  Mission, Difficulty, Tower, Start and Pause at 1024×720. The generated-source regression
+  requires Canvas and Phaser pointer/touch/keyboard gameplay plus artifact, module and hero-skill
+  management to pass through PlayerActionRegistry, with the untouched legacy target as control.
+- Exact RED commands:
+  `npx vitest run packages/cli/build.r18-central-actions-registry.regression.test.mjs --reporter=verbose`
+  and
+  `npx playwright test tests/e2e/r18-desktop-hit-targets.spec.mjs --workers=1`.
+  Results: Vitest expected failure, 1 file with 2 failed and 1 passed of 3 tests; both generated
+  Canvas and Phaser `actAtCoord` paths still call placement, sell, mission ability, hero move and
+  hero ability mutations directly instead of `playerActionRegistry.invoke`, while the legacy
+  direct-path control is GREEN. Playwright expected failure, 1/1 failed: at 1024×720
+  `elementFromPoint` at the center of `#mission-select` returns `#desktop-action-bar`, proving the
+  overlay blocks the primary HUD before the actual-click assertions can run.
+
+## 2026-08-02 — R18 verifier repair GREEN: hit targets, action routing and camera evidence
+
+- Replaced the compact desktop action overlay with an in-flow, wrapping action bar, so its real
+  pointer hit region no longer covers Mission, Difficulty, Tower, Start or Pause at 1024×720.
+- Routed Canvas and Phaser central map interactions plus artifact socketing, runtime module
+  configuration and hero-skill unlocks through the shared `PlayerActionRegistry` for desktop
+  targets. Compile-time legacy branches retain their direct action path and unchanged output.
+- Exposed a desktop-only read-only viewport snapshot for browser acceptance. Camera tests now
+  assert authoritative zoom/pan state: zoom-at-pointer is no longer incorrectly inferred from
+  movement of the anchored world point, and modal input blocking tolerates Phaser vertical
+  recentering while proving that horizontal pan and zoom did not consume keyboard/wheel input.
+- Exact focused GREEN command:
+  `npx vitest run packages/renderer/src/viewport-transform.contract.test.mjs packages/renderer/src/r18-canvas-viewport-integration.contract.test.mjs packages/player-runtime/src/player-actions.contract.test.mjs packages/player-runtime/src/player-preferences.contract.test.mjs packages/player-runtime/src/player-session-store.contract.test.mjs packages/player-runtime/src/r18-player-runtime.contract.test.mjs packages/cli/lib/r18-build-targets.contract.test.mjs packages/cli/build.r18-large-screen-package.contract.test.mjs packages/cli/build.r18-viewport-integration.contract.test.mjs packages/cli/build.r18-session-pwa.contract.test.mjs packages/mcp/r18-player-targets-authoring.contract.test.mjs packages/studio/r18-player-targets-surface.contract.test.mjs packages/player-runtime/src/r18-verifier-repairs.regression.test.mjs packages/player-runtime/src/indexeddb-session-storage.regression.test.mjs packages/cli/build.r18-verifier-repairs.regression.test.mjs packages/cli/lib/r18-player-target-authoring-hardening.regression.test.mjs packages/cli/build.r18-pwa-shortcut.regression.test.mjs packages/cli/build.r18-central-actions-registry.regression.test.mjs --reporter=dot`.
+  Result: 18 files, 78/78 tests passed.
+- Exact focused browser command:
+  `npx playwright test tests/e2e/r18-large-screen-player.spec.mjs tests/e2e/r18-desktop-hit-targets.spec.mjs --workers=1`.
+  Result: 7/7 passed for the six required viewports plus the compact hit-target regression.
+
 ## 2026-08-02 — R18 verifier repair focused GREEN
 
 - Serialized the rotating session-store mutation queue, made IndexedDB write/remove operations

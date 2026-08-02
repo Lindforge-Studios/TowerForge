@@ -702,7 +702,7 @@ function bootRecoveryTemplate(manifest = {}, target = {}, storyComics = {}) {
 function cssTemplate(target, hostMonetization = null) {
   const bg = target.backgroundColor ?? "#111111";
   const monetizationStyles = hostMonetization ? `.host-monetization{position:relative;z-index:5;min-height:0}.host-monetization[data-surface="top"],.host-monetization[data-surface="bottom"]{display:grid;gap:6px;padding:6px 16px;background:var(--surface);border-color:var(--border)}.host-monetization[data-surface="top"]{border-bottom:1px solid var(--border)}.host-monetization[data-surface="bottom"]{border-top:1px solid var(--border)}.host-monetization[data-surface="menu"]{display:grid;gap:6px}.host-monetization[data-surface="between_waves"]{position:fixed;inset:0;z-index:30;pointer-events:none}.host-monetization-placement:empty{display:none}` : "";
-  const desktopStyles = target.formFactor === "desktop" || target.formFactor === "responsive" ? `.desktop-action-bar{position:absolute;z-index:8;top:calc(8px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);display:flex;gap:6px;padding:6px;border:1px solid var(--border);border-radius:10px;background:#111611e8;box-shadow:0 8px 28px #0006}.desktop-action-bar button{min-width:var(--player-action-min-size);min-height:var(--player-action-min-size)}.desktop-dialog{position:fixed;inset:0;z-index:40;display:grid;place-items:center;padding:24px;background:#050705cc}.desktop-dialog[hidden]{display:none}.desktop-dialog-card{width:min(440px,100%);display:grid;gap:16px;padding:24px;border:1px solid var(--border);border-radius:12px;background:var(--surface);box-shadow:0 20px 70px #000a}.desktop-dialog-card h2{margin:0}.desktop-dialog-card label{display:grid;gap:8px}.desktop-dialog-card button{min-height:var(--player-action-min-size)}body[data-towerforge-player-shell="desktop"] .hud{padding-block:8px}body[data-towerforge-player-shell="desktop"] .hud h1{font-size:15px}body[data-towerforge-player-shell="desktop"] .controls{gap:6px}body[data-towerforge-player-shell="desktop"] .controls label{font-size:11px}body[data-towerforge-player-shell="desktop"] .play-shell{grid-template-columns:minmax(0,1fr) minmax(240px,20vw)}body[data-towerforge-player-shell="desktop"] .panel{padding:10px;gap:7px}body[data-motion="reduced"] *{animation-duration:.001ms!important;transition-duration:.001ms!important}` : "";
+  const desktopStyles = target.formFactor === "desktop" || target.formFactor === "responsive" ? `.desktop-action-bar{position:relative;z-index:8;flex:0 0 auto;align-self:center;width:min(760px,calc(100% - 16px));margin:calc(8px + env(safe-area-inset-top)) auto 0;display:flex;flex-wrap:wrap;justify-content:center;gap:6px;padding:6px;border:1px solid var(--border);border-radius:10px;background:#111611e8;box-shadow:0 8px 28px #0006}.desktop-action-bar button{min-width:var(--player-action-min-size);min-height:var(--player-action-min-size)}.desktop-dialog{position:fixed;inset:0;z-index:40;display:grid;place-items:center;padding:24px;background:#050705cc}.desktop-dialog[hidden]{display:none}.desktop-dialog-card{width:min(440px,100%);display:grid;gap:16px;padding:24px;border:1px solid var(--border);border-radius:12px;background:var(--surface);box-shadow:0 20px 70px #000a}.desktop-dialog-card h2{margin:0}.desktop-dialog-card label{display:grid;gap:8px}.desktop-dialog-card button{min-height:var(--player-action-min-size)}body[data-towerforge-player-shell="desktop"] .hud{padding-block:8px}body[data-towerforge-player-shell="desktop"] .hud h1{font-size:15px}body[data-towerforge-player-shell="desktop"] .controls{gap:6px}body[data-towerforge-player-shell="desktop"] .controls label{font-size:11px}body[data-towerforge-player-shell="desktop"] .play-shell{grid-template-columns:minmax(0,1fr) minmax(240px,20vw)}body[data-towerforge-player-shell="desktop"] .panel{padding:10px;gap:7px}body[data-motion="reduced"] *{animation-duration:.001ms!important;transition-duration:.001ms!important}` : "";
   return `:root{--bg:${bg};--surface:#191b19;--panel:#222620;--border:#364036;--text:#eff3ea;--muted:#9ca895;--accent:#8ac783;--path:#6b5540;--danger:#df6a59;--water:#427b88;--player-action-min-size:44px;--font:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
 *{box-sizing:border-box}html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:var(--font)}
 /* Native-app touch hardening (ported from a shipped Capacitor game): no pinch-zoom/pull-to-refresh,
@@ -923,7 +923,7 @@ function resetPlayerProgress() {
 // TOWERFORGE_PROFILE_RUNTIME_END`;
 }
 
-function arsenalPlayerRuntimeTemplate() {
+function arsenalPlayerRuntimeTemplate(largeScreenPlayer = false) {
   return `function updateArsenalStatus(snap) {
   const panel = $("arsenal-status");
   if (!panel) return;
@@ -958,11 +958,12 @@ function arsenalPlayerRuntimeTemplate() {
     apply.textContent = "Apply modules";
     apply.disabled = !presentation.managementAllowed;
     apply.addEventListener("click", () => {
-      const result = dispatchGameCommand(game, {
+      const command = {
         schemaVersion: 7, type: "configureTowerModules", towerId: tower.towerId,
         modules: { base: selects.base.value, barrel: selects.barrel.value, core: selects.core.value }
-      });
-      report(result);
+      };
+      const result = ${largeScreenPlayer ? 'playerActionRegistry.invoke("configureTowerModules", { command })' : "dispatchGameCommand(game, command)"};
+      ${largeScreenPlayer ? "" : "report(result);"}
       if (result.ok) updateArsenalStatus(game.getSnapshot());
     });
     panel.append(apply);
@@ -1126,11 +1127,13 @@ function desktopPlayerRuntimeTemplate(rendererKind) {
 const desktopViewportActions = Object.freeze({
   cameraPan(delta) { const scene = desktopScene(); return scene?.viewportController?.panBy(delta) ?? null; },
   cameraZoom(point, factor) { const scene = desktopScene(); const viewport = scene?.viewportController; if (!viewport) return null; const current = viewport.getSnapshot(); return viewport.zoomAt(point, current.zoom * factor); },
-  cameraReset() { const scene = desktopScene(); return scene?.viewportController?.reset() ?? null; }
+  cameraReset() { const scene = desktopScene(); return scene?.viewportController?.reset() ?? null; },
+  cameraSnapshot() { const scene = desktopScene(); return scene?.viewportController?.getSnapshot() ?? null; }
 });` : `const desktopViewportActions = Object.freeze({
   cameraPan(delta) { return renderer.panViewportBy(delta); },
   cameraZoom(point, factor) { return renderer.zoomViewportAt({ clientX: point.x, clientY: point.y }, factor); },
-  cameraReset() { return renderer.resetViewport(); }
+  cameraReset() { return renderer.resetViewport(); },
+  cameraSnapshot() { return renderer.getViewportSnapshot(); }
 });`;
   const pointerControls = rendererKind === "canvas" ? `let cameraPanActive = false;
 let cameraPanPoint = null;
@@ -1151,6 +1154,7 @@ canvas.addEventListener("pointermove", (event) => {
 for (const type of ["pointerup", "pointercancel", "pointerleave"]) canvas.addEventListener(type, () => { cameraPanActive = false; cameraPanPoint = null; });` : "";
   return `
 ${cameraBridge}
+globalThis.__towerforgeViewportSnapshot = () => desktopViewportActions.cameraSnapshot();
 function desktopCameraInputBlocked() {
   const active = document.activeElement;
   const tag = active?.tagName;
@@ -1240,7 +1244,9 @@ function invalidPlayerActionPayload(actionId) {
 function dispatchRegisteredCommand(actionId, payload) {
   const command = payload && payload.command;
   if (!command || command.type !== actionId) return invalidPlayerActionPayload(actionId);
-  return report(dispatchGameCommand(game, command));
+  const result = dispatchGameCommand(game, command);
+  report(result);
+  return result;
 }
 async function continueDesktopSession() {
   const result = playerSessionStore ? await playerSessionStore.loadLatest() : { code: "session_unavailable" };
@@ -1266,9 +1272,15 @@ const playerActionRegistry = createPlayerActionRegistry({
     "openSettings": () => { openDesktopSettings(); return Object.freeze({ ok: true }); },
     "startWave": () => report(game.startNextWave()),
     "placeTower": (payload) => dispatchRegisteredCommand("placeTower", payload),
-    "upgradeTower": (payload) => selectedTowerId ? report(game.upgradeTower(selectedTowerId, payload.branchId)) : invalidPlayerActionPayload("upgradeTower"),
-    "sellTower": () => selectedTowerId ? report(game.sellTower(selectedTowerId)) : invalidPlayerActionPayload("sellTower"),
-    "setTargetMode": (payload) => selectedTowerId ? report(game.setTowerTargetMode(selectedTowerId, payload.mode)) : invalidPlayerActionPayload("setTargetMode"),
+    "upgradeTower": (payload) => payload && payload.command
+      ? dispatchRegisteredCommand("upgradeTower", payload)
+      : selectedTowerId ? report(game.upgradeTower(selectedTowerId, payload.branchId)) : invalidPlayerActionPayload("upgradeTower"),
+    "sellTower": (payload) => payload && payload.command
+      ? dispatchRegisteredCommand("sellTower", payload)
+      : selectedTowerId ? report(game.sellTower(selectedTowerId)) : invalidPlayerActionPayload("sellTower"),
+    "setTargetMode": (payload) => payload && payload.command
+      ? dispatchRegisteredCommand("setTargetMode", payload)
+      : selectedTowerId ? report(game.setTowerTargetMode(selectedTowerId, payload.mode)) : invalidPlayerActionPayload("setTargetMode"),
     "useAbility": (payload) => dispatchRegisteredCommand("useAbility", payload),
     "moveHero": (payload) => dispatchRegisteredCommand("moveHero", payload),
     "useHeroAbility": (payload) => dispatchRegisteredCommand("useHeroAbility", payload),
@@ -1363,7 +1375,7 @@ ${includeMultiplayer ? "globalThis.__towerforgeMultiplayer = TowerForgeMultiplay
 ${includeHostMonetization ? "const hostMonetization = createHostMonetizationRuntimeV1({ hook: project.hostMonetization });\nhostMonetization.mount();\nglobalThis.__towerforgeHostMonetization = hostMonetization;" : ""}
 
 ${playerProfileRuntimeTemplate(largeScreenPlayer)}
-${arsenalPlayerRuntimeTemplate()}
+${arsenalPlayerRuntimeTemplate(largeScreenPlayer)}
 ${includeMacroEconomy ? macroEconomyPlayerRuntimeTemplate() : ""}
 
 const $ = (id) => document.getElementById(id);
@@ -1653,35 +1665,34 @@ function actAtCoord(coord, heroHitId = null, enemyHitId = null) {
   if (!coord) return;
   if (targetingMode.kind === "sell") {
     const towerAt = game.getTowerIdAt(coord);
-    report(towerAt ? game.sellTower(towerAt) : { ok: false, reason: "Choose a tower tile." });
+    if (towerAt) {
+      ${largeScreenPlayer ? 'playerActionRegistry.invoke("sellTower", { command: { schemaVersion: 1, type: "sellTower", towerId: towerAt } });' : "report(game.sellTower(towerAt));"}
+    } else report({ ok: false, reason: "Choose a tower tile." });
     if (towerAt === selectedTowerId) selectedTowerId = null;
     setSellMode(false);
     return;
   }
   if (targetingMode.kind === "missionAbility") {
-    report(game.useAbility(targetingMode.abilityId, coord));
+    ${largeScreenPlayer ? 'playerActionRegistry.invoke("useAbility", { command: { schemaVersion: 1, type: "useAbility", abilityId: targetingMode.abilityId, center: { q: coord.q, r: coord.r } } });' : "report(game.useAbility(targetingMode.abilityId, coord));"}
     setTargetingMode({ kind: "build" });
     return;
   }
   if (targetingMode.kind === "heroAbility") {
     if (!enemyHitId) { message = "Choose a live enemy target."; return; }
-    const result = dispatchGameCommand(game, {
-      schemaVersion: 5,
-      type: "useHeroAbility",
-      heroId: targetingMode.heroId,
-      abilityId: targetingMode.abilityId,
-      targetEnemyId: enemyHitId
-    });
-    report(result);
+    const result = ${largeScreenPlayer ? 'playerActionRegistry.invoke("useHeroAbility", { command: {' : "dispatchGameCommand(game, {"}
+      schemaVersion: 5, type: "useHeroAbility", heroId: targetingMode.heroId,
+      abilityId: targetingMode.abilityId, targetEnemyId: enemyHitId
+    }${largeScreenPlayer ? " })" : ")"};
+    ${largeScreenPlayer ? "" : "report(result);"}
     if (result.ok) setTargetingMode({ kind: "build" });
     return;
   }
   if (targetingMode.kind === "heroMove") {
-    const result = dispatchGameCommand(game, {
+    const result = ${largeScreenPlayer ? 'playerActionRegistry.invoke("moveHero", { command: {' : "dispatchGameCommand(game, {"}
       schemaVersion: 4, type: "moveHero", heroId: targetingMode.heroId,
       target: { q: coord.q, r: coord.r }
-    });
-    report(result);
+    }${largeScreenPlayer ? " })" : ")"};
+    ${largeScreenPlayer ? "" : "report(result);"}
     if (result.ok) setTargetingMode({ kind: "build" });
     return;
   }
@@ -1691,8 +1702,8 @@ function actAtCoord(coord, heroHitId = null, enemyHitId = null) {
   if (!towerId) return;
   const preflight = game.canPlaceTower(towerId, coord);
   if (!preflight.ok) { report(preflight); refreshNavigationOverlay(coord); return; }
-  const result = game.placeTower(towerId, coord);
-  report(result);
+  const result = ${largeScreenPlayer ? 'playerActionRegistry.invoke("placeTower", { command: { schemaVersion: 1, type: "placeTower", towerTypeId: towerId, coord: { q: coord.q, r: coord.r } } })' : "game.placeTower(towerId, coord)"};
+  ${largeScreenPlayer ? "" : "report(result);"}
   if (result.ok) selectedTowerId = game.getTowerIdAt(coord);
   refreshNavigationOverlay(coord);
 }
@@ -1971,13 +1982,14 @@ function updateHeroSkillTree(snap) {
       button.type = "button";
       button.dataset.heroSkillId = node.id;
       button.addEventListener("click", () => {
-        const result = dispatchGameCommand(game, {
+        const command = {
           schemaVersion: 6,
           type: "unlockHeroSkill",
           heroId: button.dataset.heroId,
           skillId: button.dataset.heroSkillId
-        });
-        report(result);
+        };
+        const result = ${largeScreenPlayer ? 'playerActionRegistry.invoke("unlockHeroSkill", { command })' : "dispatchGameCommand(game, command)"};
+        ${largeScreenPlayer ? "" : "report(result);"}
         updateHeroSkillTree(game.getRenderSnapshot());
       });
       button.addEventListener("touchend", (event) => {
@@ -2412,28 +2424,24 @@ function updateRogueliteStatus(snap) {
         button.disabled = presentation.artifacts.management?.allowed !== true;
         button.addEventListener("click", () => {
           const result = activate();
-          report(result);
+          ${largeScreenPlayer ? "" : "report(result);"}
           if (result.ok) updateRogueliteStatus(game.getSnapshot());
         });
         row.append(button);
       };
       if (artifact.socket) {
-        addAction("unsocket", "Unsocket", () => dispatchGameCommand(game, {
-          schemaVersion: 2, type: "unsocketArtifact",
-          artifactInstanceId: artifact.instanceId,
-          towerId: artifact.socket.towerId,
-          slotId: artifact.socket.slotId
-        }));
+        addAction("unsocket", "Unsocket", () => {
+          const command = { schemaVersion: 2, type: "unsocketArtifact", artifactInstanceId: artifact.instanceId, towerId: artifact.socket.towerId, slotId: artifact.socket.slotId };
+          return ${largeScreenPlayer ? 'playerActionRegistry.invoke("unsocketArtifact", { command })' : "dispatchGameCommand(game, command)"};
+        });
       } else {
         const tower = presentation.artifacts.towerSlots?.find((item) => item.towerId === selectedTowerId);
         for (const slot of tower?.slots ?? []) {
           if (slot.slotType !== artifact.slotType || slot.artifactInstanceId !== null) continue;
-          addAction("socket", "Socket in " + slot.slotId, () => dispatchGameCommand(game, {
-            schemaVersion: 2, type: "socketArtifact",
-            artifactInstanceId: artifact.instanceId,
-            towerId: tower.towerId,
-            slotId: slot.slotId
-          }));
+          addAction("socket", "Socket in " + slot.slotId, () => {
+            const command = { schemaVersion: 2, type: "socketArtifact", artifactInstanceId: artifact.instanceId, towerId: tower.towerId, slotId: slot.slotId };
+            return ${largeScreenPlayer ? 'playerActionRegistry.invoke("socketArtifact", { command })' : "dispatchGameCommand(game, command)"};
+          });
         }
       }
       artifactPanel.append(row);
@@ -2687,7 +2695,7 @@ function ownDataValue(record, key) {
 }
 
 ${playerProfileRuntimeTemplate(largeScreenPlayer)}
-${arsenalPlayerRuntimeTemplate()}
+${arsenalPlayerRuntimeTemplate(largeScreenPlayer)}
 ${includeMacroEconomy ? macroEconomyPlayerRuntimeTemplate() : ""}
 
 const $ = (id) => document.getElementById(id);
@@ -2881,35 +2889,34 @@ function actAtCoord(coord, heroHitId = null, enemyHitId = null) {
   if (!coord) return;
   if (targetingMode.kind === "sell") {
     const towerAt = game.getTowerIdAt(coord);
-    report(towerAt ? game.sellTower(towerAt) : { ok: false, reason: "Choose a tower tile." });
+    if (towerAt) {
+      ${largeScreenPlayer ? 'playerActionRegistry.invoke("sellTower", { command: { schemaVersion: 1, type: "sellTower", towerId: towerAt } });' : "report(game.sellTower(towerAt));"}
+    } else report({ ok: false, reason: "Choose a tower tile." });
     if (towerAt === selectedTowerId) selectedTowerId = null;
     setSellMode(false);
     return;
   }
   if (targetingMode.kind === "missionAbility") {
-    report(game.useAbility(targetingMode.abilityId, coord));
+    ${largeScreenPlayer ? 'playerActionRegistry.invoke("useAbility", { command: { schemaVersion: 1, type: "useAbility", abilityId: targetingMode.abilityId, center: { q: coord.q, r: coord.r } } });' : "report(game.useAbility(targetingMode.abilityId, coord));"}
     setTargetingMode({ kind: "build" });
     return;
   }
   if (targetingMode.kind === "heroAbility") {
     if (!enemyHitId) { message = "Choose a live enemy target."; return; }
-    const result = dispatchGameCommand(game, {
-      schemaVersion: 5,
-      type: "useHeroAbility",
-      heroId: targetingMode.heroId,
-      abilityId: targetingMode.abilityId,
-      targetEnemyId: enemyHitId
-    });
-    report(result);
+    const result = ${largeScreenPlayer ? 'playerActionRegistry.invoke("useHeroAbility", { command: {' : "dispatchGameCommand(game, {"}
+      schemaVersion: 5, type: "useHeroAbility", heroId: targetingMode.heroId,
+      abilityId: targetingMode.abilityId, targetEnemyId: enemyHitId
+    }${largeScreenPlayer ? " })" : ")"};
+    ${largeScreenPlayer ? "" : "report(result);"}
     if (result.ok) setTargetingMode({ kind: "build" });
     return;
   }
   if (targetingMode.kind === "heroMove") {
-    const result = dispatchGameCommand(game, {
+    const result = ${largeScreenPlayer ? 'playerActionRegistry.invoke("moveHero", { command: {' : "dispatchGameCommand(game, {"}
       schemaVersion: 4, type: "moveHero", heroId: targetingMode.heroId,
       target: { q: coord.q, r: coord.r }
-    });
-    report(result);
+    }${largeScreenPlayer ? " })" : ")"};
+    ${largeScreenPlayer ? "" : "report(result);"}
     if (result.ok) setTargetingMode({ kind: "build" });
     return;
   }
@@ -2919,8 +2926,8 @@ function actAtCoord(coord, heroHitId = null, enemyHitId = null) {
   if (!towerId) return;
   const preflight = game.canPlaceTower(towerId, coord);
   if (!preflight.ok) { report(preflight); refreshNavigationOverlay(coord); return; }
-  const result = game.placeTower(towerId, coord);
-  report(result);
+  const result = ${largeScreenPlayer ? 'playerActionRegistry.invoke("placeTower", { command: { schemaVersion: 1, type: "placeTower", towerTypeId: towerId, coord: { q: coord.q, r: coord.r } } })' : "game.placeTower(towerId, coord)"};
+  ${largeScreenPlayer ? "" : "report(result);"}
   if (result.ok) selectedTowerId = game.getTowerIdAt(coord);
   refreshNavigationOverlay(coord);
 }
@@ -4095,13 +4102,14 @@ function updateHeroSkillTree(snap) {
       button.type = "button";
       button.dataset.heroSkillId = node.id;
       button.addEventListener("click", () => {
-        const result = dispatchGameCommand(game, {
+        const command = {
           schemaVersion: 6,
           type: "unlockHeroSkill",
           heroId: button.dataset.heroId,
           skillId: button.dataset.heroSkillId
-        });
-        report(result);
+        };
+        const result = ${largeScreenPlayer ? 'playerActionRegistry.invoke("unlockHeroSkill", { command })' : "dispatchGameCommand(game, command)"};
+        ${largeScreenPlayer ? "" : "report(result);"}
         updateHeroSkillTree(game.getRenderSnapshot());
       });
       button.addEventListener("touchend", (event) => {
@@ -4491,28 +4499,24 @@ function updateRogueliteStatus(snap) {
         button.disabled = presentation.artifacts.management?.allowed !== true;
         button.addEventListener("click", () => {
           const result = activate();
-          report(result);
+          ${largeScreenPlayer ? "" : "report(result);"}
           if (result.ok) updateRogueliteStatus(game.getSnapshot());
         });
         row.append(button);
       };
       if (artifact.socket) {
-        addAction("unsocket", "Unsocket", () => dispatchGameCommand(game, {
-          schemaVersion: 2, type: "unsocketArtifact",
-          artifactInstanceId: artifact.instanceId,
-          towerId: artifact.socket.towerId,
-          slotId: artifact.socket.slotId
-        }));
+        addAction("unsocket", "Unsocket", () => {
+          const command = { schemaVersion: 2, type: "unsocketArtifact", artifactInstanceId: artifact.instanceId, towerId: artifact.socket.towerId, slotId: artifact.socket.slotId };
+          return ${largeScreenPlayer ? 'playerActionRegistry.invoke("unsocketArtifact", { command })' : "dispatchGameCommand(game, command)"};
+        });
       } else {
         const tower = presentation.artifacts.towerSlots?.find((item) => item.towerId === selectedTowerId);
         for (const slot of tower?.slots ?? []) {
           if (slot.slotType !== artifact.slotType || slot.artifactInstanceId !== null) continue;
-          addAction("socket", "Socket in " + slot.slotId, () => dispatchGameCommand(game, {
-            schemaVersion: 2, type: "socketArtifact",
-            artifactInstanceId: artifact.instanceId,
-            towerId: tower.towerId,
-            slotId: slot.slotId
-          }));
+          addAction("socket", "Socket in " + slot.slotId, () => {
+            const command = { schemaVersion: 2, type: "socketArtifact", artifactInstanceId: artifact.instanceId, towerId: tower.towerId, slotId: slot.slotId };
+            return ${largeScreenPlayer ? 'playerActionRegistry.invoke("socketArtifact", { command })' : "dispatchGameCommand(game, command)"};
+          });
         }
       }
       artifactPanel.append(row);

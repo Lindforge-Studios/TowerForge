@@ -103,15 +103,15 @@ for (const entry of cases) {
       await page.locator("#desktop-reset-view").click();
       await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       const initialPoint = await tilePoint(page, probe.coord);
+      const initialViewport = await viewportSnapshot(page);
       expect(await page.evaluate((point) => window.__towerforgePickPoint(point), initialPoint)).toEqual(probe.coord);
 
       await page.mouse.move(initialPoint.x, initialPoint.y);
       await page.mouse.wheel(0, -360);
-      await expect.poll(() => tilePoint(page, probe.coord)).not.toEqual(initialPoint);
-      const zoomedPoint = await tilePoint(page, probe.coord);
-      expect(pointDistance(zoomedPoint, initialPoint)).toBeGreaterThan(0.5);
+      await expect.poll(async () => (await viewportSnapshot(page)).zoom).toBeGreaterThan(initialViewport.zoom * 1.01);
 
       await page.locator("#desktop-reset-view").click();
+      await expect.poll(async () => (await viewportSnapshot(page)).zoom).toBeCloseTo(initialViewport.zoom, 5);
       await expect.poll(async () => pointDistance(await tilePoint(page, probe.coord), initialPoint)).toBeLessThan(0.75);
 
       const box = await playfield.boundingBox();
@@ -170,13 +170,16 @@ async function verifySettingsAndInputGate(page) {
   const probe = await findVisibleBuildable(page, { allowDialog: true, preferEdge: true });
   await page.waitForTimeout(120);
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  const before = await tilePoint(page, probe.coord);
+  const before = await viewportSnapshot(page);
   await page.locator("#desktop-quality").focus();
   await page.keyboard.press("KeyA");
   await dispatchWheelToPlayfield(page, probe.point);
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  const after = await tilePoint(page, probe.coord);
-  expect(pointDistance(after, before)).toBeLessThan(0.1);
+  const after = await viewportSnapshot(page);
+  // Phaser can recompute vertical centering after a modal changes the compact viewport,
+  // but blocked A/wheel input must not change horizontal pan or zoom.
+  expect(after.zoom).toBe(before.zoom);
+  expect(after.offsetX).toBe(before.offsetX);
 
   // A modal must remain keyboard-dismissible from its form controls, not only from its close button.
   await page.keyboard.press("Escape");
@@ -306,6 +309,10 @@ function tilePoint(page, coord) {
 
 function pointDistance(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+async function viewportSnapshot(page) {
+  return page.evaluate(() => window.__towerforgeViewportSnapshot?.() ?? null);
 }
 
 function authorDesktopTarget(projectDir, entry) {
