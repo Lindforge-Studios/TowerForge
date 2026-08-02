@@ -48,6 +48,15 @@ describe("R18 generated Phaser lifecycle contract (RED)", () => {
     expect(desktopPlayer).toMatch(/Math\.sqrt\(\s*pixelBudget\s*\/\s*viewportPixels\s*\)/);
     expect(legacyPlayer).not.toMatch(/phaserPresentationQuality|forceSetTimeOut/);
   });
+
+  it("keeps presentation FPS detached from fixed simulation cadence and retains substep events", () => {
+    expect(desktopPlayer).toMatch(/createFixedSimulationClockV1/);
+    expect(desktopPlayer).toMatch(/phaserSimulationClock\.advance\(delta,\s*speed/);
+    expect(desktopPlayer).toMatch(/game\.tick\(units\)/);
+    expect(desktopPlayer).toMatch(/events\.push\(\.\.\.stepSnapshot\.lastEvents\)/);
+    expect(desktopPlayer).not.toMatch(/game\.tick\(\(Math\.min\(50,\s*delta\)[\s\S]{0,120}\*\s*speed\)/);
+    expect(legacyPlayer).not.toMatch(/createFixedSimulationClockV1|phaserSimulationClock|fixed-simulation-clock/);
+  });
 });
 
 function lifecycleBlock(source) {

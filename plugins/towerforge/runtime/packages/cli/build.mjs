@@ -112,7 +112,7 @@ try {
   const playerRuntimeOutput = path.join(outDir, "player-runtime");
   fs.mkdirSync(playerRuntimeOutput, { recursive: true });
   const largeScreenRuntimeFiles = largeScreenPlayer
-    ? ["player-actions.mjs", "player-preferences.mjs", "player-session-store.mjs", "indexeddb-session-storage.mjs", "localized-strings.mjs"]
+    ? ["player-actions.mjs", "player-preferences.mjs", "player-session-store.mjs", "indexeddb-session-storage.mjs", "localized-strings.mjs", "fixed-simulation-clock.mjs"]
     : [];
   for (const fileName of ["index.mjs", "player-profile-store.mjs", ...largeScreenRuntimeFiles, ...(hostMonetizationActive ? ["host-monetization.mjs"] : [])]) {
     fs.copyFileSync(path.join(playerRuntimeSource, fileName), path.join(playerRuntimeOutput, fileName));
@@ -120,7 +120,7 @@ try {
   if (!largeScreenPlayer) {
     const runtimeIndex = path.join(playerRuntimeOutput, "index.mjs");
     let runtimeSource = fs.readFileSync(runtimeIndex, "utf8");
-    for (const specifier of ["./player-actions.mjs", "./player-preferences.mjs", "./player-session-store.mjs", "./indexeddb-session-storage.mjs", "./localized-strings.mjs"]) {
+    for (const specifier of ["./player-actions.mjs", "./player-preferences.mjs", "./player-session-store.mjs", "./indexeddb-session-storage.mjs", "./localized-strings.mjs", "./fixed-simulation-clock.mjs"]) {
       runtimeSource = pruneSingleModuleExport(runtimeSource, specifier);
     }
     fs.writeFileSync(runtimeIndex, runtimeSource, "utf8");
@@ -1227,6 +1227,7 @@ try {
       const restoredGame = TowerDefenseGame.fromCheckpoint({ content, checkpoint: save.checkpoint });
       if (restoredGame.createCheckpoint().contentDigest !== save.contentDigest || save.activeMissionId !== save.checkpoint.identity.missionId) throw new Error("Session identity mismatch.");
       game = restoredGame;
+      resetPlayerSimulationClock();
       missionId = save.activeMissionId;
       selectedTowerId = null;
       setTargetingMode({ kind: "build" });
@@ -1418,6 +1419,7 @@ const canvas = $("playfield");
 let missionId = content.defaultMissionId || Object.keys(content.missions)[0];
 let towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
 let game = new TowerDefenseGame({ missionId, content, ...currentPlayerLaunchOptions() });
+${largeScreenPlayer ? "const resetPlayerSimulationClock = () => {};" : ""}
 const activeCampaign = resolveWorldCampaign(content);
 let campaignRun = activeCampaign ? createCampaignRun("campaign") : null;
 let pendingCampaignNodeId = null;
@@ -2122,6 +2124,7 @@ function selectCampaignNode(nodeId) {
     pendingCampaignNodeId = prepared.nodeId;
     missionId = prepared.missionId;
     game = prepared.game;
+    ${largeScreenPlayer ? "resetPlayerSimulationClock();" : ""}
   } else if (prepared.code === "campaign_handoff_inactive") {
     // Campaign marker v1 retains the legacy graph reducer without battle carry.
     const availableNodeIds = getAvailableCampaignNodeIds(campaignRun, content);
@@ -2652,7 +2655,7 @@ function phaserPlayerTemplate(includeMultiplayer = false, includeMacroEconomy = 
   validateCampaignRunAgainstContent
 } from "./engine/index.js";
 ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multiplayer/index.js";' : ""}
-import { createPlayerProfileStore, derivePlayerProfileStorageKey${largeScreenPlayer ? ", createDefaultPlayerActionDescriptors, createPlayerActionRegistry, createDefaultPlayerPreferences, createRotatingPlayerSessionStore, parsePlayerPreferencesV1, parsePlayerSessionSaveV1, serializePlayerPreferencesV1, serializePlayerSessionSaveV1" : ""} } from "./player-runtime/index.mjs";
+import { createPlayerProfileStore, derivePlayerProfileStorageKey${largeScreenPlayer ? ", createDefaultPlayerActionDescriptors, createPlayerActionRegistry, createDefaultPlayerPreferences, createFixedSimulationClockV1, createRotatingPlayerSessionStore, parsePlayerPreferencesV1, parsePlayerSessionSaveV1, serializePlayerPreferencesV1, serializePlayerSessionSaveV1" : ""} } from "./player-runtime/index.mjs";
 ${largeScreenPlayer ? 'import { createIndexedDbSessionStorage } from "./player-runtime/indexeddb-session-storage.mjs";\nimport { createPlayerStrings } from "./player-runtime/localized-strings.mjs";\nimport { createViewportTransformV1 } from "./renderer/viewport-transform.mjs";' : ""}
 ${includeHostMonetization ? 'import { createHostMonetizationRuntimeV1 } from "./player-runtime/host-monetization.mjs";' : ""}
 import { createAudioPlayer } from "./renderer/audio.mjs";
@@ -2731,6 +2734,8 @@ const audio = createAudioPlayer({ audio: project.visuals && project.visuals.audi
 let missionId = content.defaultMissionId || Object.keys(content.missions)[0];
 let towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
 let game = new TowerDefenseGame({ missionId, content, ...currentPlayerLaunchOptions() });
+${largeScreenPlayer ? "const phaserSimulationClock = createFixedSimulationClockV1({ timeUnitSeconds: content.constants.timeUnitSeconds || 1 });" : ""}
+${largeScreenPlayer ? "const resetPlayerSimulationClock = () => phaserSimulationClock.reset();" : ""}
 const activeCampaign = resolveWorldCampaign(content);
 let campaignRun = activeCampaign ? createCampaignRun("campaign") : null;
 let pendingCampaignNodeId = null;
@@ -2823,6 +2828,7 @@ function resetPlayerPresentation() {
 
 function createGame() {
   resetPlayerPresentation();
+  ${largeScreenPlayer ? "resetPlayerSimulationClock();" : ""}
   return new TowerDefenseGame({ missionId, content, ...currentPlayerLaunchOptions() });
 }
 
@@ -3308,14 +3314,24 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer)}
     // Capture player-action events before tick() clears them (see canvas loop note).
     let snap = game.getRenderSnapshot();
     const pending = snap.lastEvents;
-    const ticked = speed > 0 && snap.outcome === "playing";
+    ${largeScreenPlayer ? `let ticked = false;
+    const events = [...pending];
+    if (speed > 0 && snap.outcome === "playing") {
+      const advanced = phaserSimulationClock.advance(delta, speed, (units) => {
+        game.tick(units);
+        ticked = true;
+        const stepSnapshot = game.getRenderSnapshot();
+        if (stepSnapshot.lastEvents.length > 0) events.push(...stepSnapshot.lastEvents);
+      });
+      if (advanced.fixedSteps > 0) snap = game.getRenderSnapshot();
+    }` : `const ticked = speed > 0 && snap.outcome === "playing";
     if (ticked) {
       const tu = content.constants.timeUnitSeconds || 1;
       game.tick((Math.min(50, delta) / 1000 / tu) * speed);
       snap = game.getRenderSnapshot();
-    }
+    }`}
     syncNavigationOverlaySnapshot(snap);
-    const events = ticked ? pending.concat(snap.lastEvents) : pending;
+    ${largeScreenPlayer ? "" : "const events = ticked ? pending.concat(snap.lastEvents) : pending;"}
     if (events.length > 0) lastObservedEvents = events;
     game.lastEvents = []; // consumed this frame — clear so nothing replays next frame
     const authoritativeSnapshot = snap;
@@ -4251,6 +4267,7 @@ function selectCampaignNode(nodeId) {
     pendingCampaignNodeId = prepared.nodeId;
     missionId = prepared.missionId;
     game = prepared.game;
+    ${largeScreenPlayer ? "resetPlayerSimulationClock();" : ""}
   } else if (prepared.code === "campaign_handoff_inactive") {
     // Campaign marker v1 retains the legacy graph reducer without battle carry.
     const availableNodeIds = getAvailableCampaignNodeIds(campaignRun, content);

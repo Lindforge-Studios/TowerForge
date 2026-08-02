@@ -91,6 +91,14 @@ R18 вводит отдельный presentation/build opt-in: project schema v5
 `PlayerActionDescriptorV1` registry. Session save и preferences версионируются независимо от
 profile/checkpoint/journal. Решение описано в [ADR 0059](adr/0059-r18-large-screen-web-player.md).
 
+Для R18–R21 действует поуровневый TDD gate. Каждый небольшой срез фиксирует focused RED, затем
+проходит focused GREEN и регрессии только затронутых слоёв. Полный unit/E2E/plugin/package набор
+запускается на замороженном exact commit один раз перед двумя независимыми sign-off каждого R;
+любое последующее source-изменение аннулирует этот gate и оба sign-off. После последовательного
+merge R18, R19, R20 и R21 итоговый `main` дополнительно проходит общий cross-target/release gate.
+Таким образом, промежуточные циклы остаются быстрыми, но ни один R и ни один релиз не принимаются
+только по локальным модульным тестам.
+
 ## Порядок поставки
 
 ### R0 — Extension Platform

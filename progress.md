@@ -2792,3 +2792,34 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   seconds. The 3440×1440 product case itself fell from 5.4 to 3.0 seconds locally while retaining
   dialog semantics, input blocking, viewport/hit tests, placement, upgrade, accessibility and
   explicit Phaser/WebGL disposal assertions.
+
+## 2026-08-02 — R18 fixed-simulation cadence verifier RED
+
+- Independent constructor verification rejected candidate `b1a82d9`: the R18 Phaser quality preset
+  changed the Phaser loop from 60 FPS to 24/30/45/60 FPS while `Scene.update` passed each render
+  delta directly into `TowerDefenseGame.tick`. A 12-second run with the same seed therefore produced
+  different authoritative state digests at 30 and 60 FPS. Presentation quality was incorrectly
+  changing enemy movement and replay state.
+- New contract `packages/player-runtime/src/fixed-simulation-clock.contract.test.mjs` runs the real
+  starter simulation for the same 12 seconds at every R18 presentation cadence and requires the
+  same fixed-step count, state digest and snapshot.
+- Exact RED command:
+  `npx vitest run packages/player-runtime/src/fixed-simulation-clock.contract.test.mjs --reporter=verbose`.
+  Result: suite import failed because `fixed-simulation-clock.mjs` did not exist. Production repair
+  must keep Phaser quality presentation-only, retain the R18 ultrawide performance bound, preserve
+  all intermediate engine events, and keep legacy targets free of the new runtime module.
+
+## 2026-08-02 — R18 fixed-simulation cadence focused GREEN
+
+- `packages/player-runtime/src/fixed-simulation-clock.mjs` now owns a renderer-neutral fixed 60 Hz
+  schedule for large-screen Phaser. It bounds a render delta at 50 ms, keeps playback speed within
+  the authored player range and subdivides each fixed step so no engine call exceeds the existing
+  `0.2` tick-unit clamp. Render FPS and backbuffer resolution remain presentation-only.
+- The generated Phaser adapter drains every engine substep event into the current presentation
+  frame and resets its clock whenever a mission, campaign battle or checkpoint replaces the game.
+  Schema-v1/legacy builds prune both the export and runtime file.
+- Exact deterministic contract passed 2/2, including the real 12-second starter run at
+  24/30/45/60 FPS with one snapshot and state digest. Static generated-player contracts passed
+  5/5, the 3440×1440 Phaser browser case passed 1/1 in 5.5 seconds, and the remaining large-screen
+  matrix passed 5/5 in 9.9 seconds. Plugin source parity was rebuilt and its focused parity test is
+  GREEN. Full exact-commit gates and renewed independent sign-offs remain required before merge.

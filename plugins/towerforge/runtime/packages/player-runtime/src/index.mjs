@@ -8,3 +8,4 @@ export * from "./player-preferences.mjs";
 export * from "./player-session-store.mjs";
 export * from "./indexeddb-session-storage.mjs";
 export * from "./localized-strings.mjs";
+export * from "./fixed-simulation-clock.mjs";
