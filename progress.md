@@ -2722,3 +2722,18 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - The ordinary 150-case gate and local `npm run test:e2e` discovery remain unchanged; the tagged
   matrix still contributes exactly the same six scenarios. Full exact-commit gates, GitHub CI and
   both independent sign-offs remain required before merge.
+
+## 2026-08-02 — R18 runner-level SwiftShader isolation RED
+
+- GitHub CI run `30743125954` passed the complete 150-case core gate on candidate `b8ca204` and
+  then passed the first five manually browser-isolated large-screen cases. The final 3440×1440
+  Phaser case again exhausted its scoped 180-second budget without a product assertion failure.
+  This proves the remaining pressure is shared by the Linux runner after the core GPU matrix, not
+  by Playwright's browser fixture or the generated player's Phaser lifecycle.
+- CI preserves exact 156-scenario coverage but assigns it to fresh runners: 150 ordinary cases,
+  five bounded large-screen cases excluding 3440×1440, and the single ultrawide Phaser case. Each
+  large-screen job installs Chromium and builds the engine from the same exact source commit. No
+  retry, timeout, trace setting, product assertion or local `npm run test:e2e` behavior is changed.
+- Candidate `b8ca204` and its incomplete verifier cycle are superseded. The next exact candidate
+  requires all three GitHub jobs, local focused evidence and both independent sign-offs before
+  merge.
