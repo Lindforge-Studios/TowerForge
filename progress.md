@@ -2584,3 +2584,34 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   R18 unit/contract set passed 19 files, 81/81 tests.
 - This source repair invalidates candidate `070ffd2` and its incomplete verifier cycle. A new exact
   commit must repeat all gates and both independent sign-offs before PR merge.
+
+## 2026-08-02 — R18 GitHub Linux/SwiftShader teardown RED
+
+- GitHub CI run `30737080851` supplied the exact post-freeze RED on candidate `2aad7ed`: full
+  Playwright completed 154/156, then the 3440×1440 Phaser case timed out while Playwright closed
+  its browser context after the generated disposer had already destroyed Phaser, lost WebGL and
+  detached the canvas. Chromium reported stale `SharedImage` mailboxes during trace finalization.
+- The same run exposed an over-specific BFCache assertion: the live marked canvas remained attached
+  and interactive, but responsive layout legitimately resized its backing height from 587 to 544
+  after the synthetic persisted page transition. BFCache identity and hit-testing are the contract;
+  a frozen pixel size is not.
+- The test repair must navigate the already-disposed Phaser document to `about:blank` before closing
+  the Playwright context, avoid scheduling an animation frame after teardown, and prove same-canvas
+  identity with a marker plus live hit-testing while allowing responsive backing-size changes.
+  Production runtime contracts remain unchanged. Any test-source change invalidates both previous
+  sign-offs and requires a new exact candidate, full gates and independent re-verification.
+
+## 2026-08-02 — R18 GitHub Linux/SwiftShader test repair focused GREEN
+
+- The BFCache browser contract now marks the live canvas, permits responsive backing-size changes,
+  requires positive dimensions, and proves inverse hit-testing still returns the exact authored
+  tile after persisted `pagehide`/`pageshow`.
+- Phaser acceptance captures and asserts successful generated disposal, then navigates the already
+  detached WebGL document to `about:blank` before Playwright closes its context. The redundant
+  post-disposal animation-frame wait was removed, so trace finalization cannot depend on a stale
+  SwiftShader `SharedImage` mailbox.
+- Exact focused GREEN command:
+  `npx playwright test tests/e2e/r18-phaser-lifecycle.spec.mjs tests/e2e/r18-desktop-hit-targets.spec.mjs tests/e2e/r18-large-screen-player.spec.mjs --workers=1`.
+  Result: 9/9 passed in 18.0 seconds. Static lifecycle regression remains GREEN at 3/3. Production
+  runtime code was not changed; the test-source repair still requires a new freeze, full gates and
+  both independent sign-offs.

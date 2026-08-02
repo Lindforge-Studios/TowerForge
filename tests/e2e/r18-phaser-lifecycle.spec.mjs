@@ -71,17 +71,28 @@ test("persisted BFCache transition preserves the live Phaser canvas until final 
   const page = await context.newPage();
   try {
     await boot(page);
-    const before = await page.locator("#playfield canvas").evaluate((canvas) => ({ width: canvas.width, height: canvas.height }));
+    await page.locator("#playfield canvas").evaluate((canvas) => {
+      canvas.dataset.towerforgeLifecycleProbe = "same-live-canvas";
+    });
     await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true })));
     await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
     await expect(page.locator("#playfield canvas")).toBeAttached();
     await expect(page.locator("#playfield canvas")).toBeVisible();
-    expect(await page.locator("#playfield canvas").evaluate((canvas) => ({ width: canvas.width, height: canvas.height }))).toEqual(before);
-    expect(await page.evaluate(() => {
+    const canvasProbe = await page.locator("#playfield canvas").evaluate((canvas) => ({
+      marker: canvas.dataset.towerforgeLifecycleProbe,
+      width: canvas.width,
+      height: canvas.height
+    }));
+    expect(canvasProbe.marker).toBe("same-live-canvas");
+    expect(canvasProbe.width).toBeGreaterThan(0);
+    expect(canvasProbe.height).toBeGreaterThan(0);
+    const hitProbe = await page.evaluate(() => {
       const tile = window.__towerforgeInspect().tiles.find((entry) => entry.terrain === "buildable");
       const point = window.__towerforgeTilePoint(tile);
       return { point, picked: window.__towerforgePickPoint(point), tile: { q: tile.q, r: tile.r } };
-    })).toMatchObject({ point: { x: expect.any(Number), y: expect.any(Number) }, picked: expect.any(Object) });
+    });
+    expect(hitProbe.point).toEqual({ x: expect.any(Number), y: expect.any(Number) });
+    expect(hitProbe.picked).toEqual(hitProbe.tile);
 
     await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: false })));
     await page.evaluate(() => globalThis.__towerforgeDispose());

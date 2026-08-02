@@ -156,6 +156,12 @@ for (const entry of cases) {
     } finally {
       try {
         graphicsTeardown = await releaseGeneratedGraphics(page, entry.renderer);
+        if (entry.renderer === "phaser" && !page.isClosed()) {
+          // Detach the already-disposed WebGL document before asking Playwright to close the
+          // context. Linux/SwiftShader can otherwise leave trace finalization waiting on a stale
+          // SharedImage mailbox even though Phaser and the WebGL context are already gone.
+          await page.goto("about:blank", { waitUntil: "commit" });
+        }
       } finally {
         await context.close();
       }
@@ -184,7 +190,6 @@ async function releaseGeneratedGraphics(page, renderer) {
       graphics?.getExtension("WEBGL_lose_context")?.loseContext();
       canvas?.remove();
     }
-    await new Promise((resolve) => requestAnimationFrame(() => resolve()));
     return {
       disposeHookAvailable,
       canvasConnected: canvas?.isConnected ?? false,
