@@ -2695,3 +2695,30 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   a second sequential Playwright process. The commands remain one-worker and cover the same 156
   scenarios; no test is skipped from the combined gate. Local `npm run test:e2e` remains unchanged
   and continues to run the whole suite in one command.
+
+## 2026-08-02 — R18 per-viewport browser lifecycle RED
+
+- GitHub CI run `30742324708` proved that a fresh Playwright command was not a sufficient graphics
+  boundary: the 150-case core gate passed and the isolated matrix completed its first five cases,
+  but the sixth 3440×1440 Phaser case timed out while focusing `#desktop-quality` after the same
+  worker-scoped Chromium/SwiftShader process had rendered the preceding five large surfaces.
+- The failure occurred before the final case's interaction assertions and did not report a player
+  exception, missing control, failed WebGL disposal or product contract mismatch. The matrix now
+  launches and closes one Chromium process per viewport case while retaining every viewport/DPR,
+  input, inverse-hit-test, gameplay, accessibility, session and explicit WebGL teardown assertion.
+  No production source, global timeout, retry or assertion is weakened.
+- Expected focused GREEN command:
+  `npx playwright test tests/e2e/r18-large-screen-player.spec.mjs --workers=1`.
+  This test-source change invalidates candidate `22dd6ba`, both prior sign-offs and its failed CI;
+  the next exact candidate must repeat the complete gate and independent verification cycle.
+
+## 2026-08-02 — R18 per-viewport browser lifecycle focused GREEN
+
+- The exact focused command
+  `npx playwright test tests/e2e/r18-large-screen-player.spec.mjs --workers=1` passed 6/6 in
+  18.7 seconds. Every case creates a real Chromium process with its authored viewport, DPR, touch
+  and reduced-motion settings, executes the unchanged product assertions, proves explicit Phaser
+  disposal where applicable, and closes its context and browser before the next large surface.
+- The ordinary 150-case gate and local `npm run test:e2e` discovery remain unchanged; the tagged
+  matrix still contributes exactly the same six scenarios. Full exact-commit gates, GitHub CI and
+  both independent sign-offs remain required before merge.
