@@ -62,7 +62,7 @@ describe("R5.7A MCP/AI Logistics power authoring RED", () => {
     const logistics = await callTool("describe_schema", { domain: "logistics" }, {});
     const mechanics = await callTool("describe_schema", { domain: "mechanics" }, {});
     expect(logistics).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 5,
       requestedDomain: "logistics",
       availableDomains: expect.arrayContaining(["logistics"]),
       logistics: {

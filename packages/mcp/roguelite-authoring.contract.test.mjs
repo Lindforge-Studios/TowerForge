@@ -41,7 +41,7 @@ describe("R4.1A/R4.2E roguelite MCP and AI authoring contract", () => {
     const capabilities = await callTool("get_capabilities", { projectDir, missionId: "tutorial_01" }, {});
 
     expect(roguelite).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 5,
       requestedDomain: "roguelite",
       roguelite: {
         authoring: engine.ROGUELITE_MECHANICS_SCHEMA,
@@ -79,7 +79,7 @@ describe("R4.1A/R4.2E roguelite MCP and AI authoring contract", () => {
     const roguelite = await callTool("describe_schema", { domain: "roguelite" }, {});
 
     expect(roguelite).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 5,
       requestedDomain: "roguelite",
       roguelite: {
         authoring: engine.ROGUELITE_MECHANICS_SCHEMA,

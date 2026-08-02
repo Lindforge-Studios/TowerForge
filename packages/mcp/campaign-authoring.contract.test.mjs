@@ -156,7 +156,7 @@ describe("R4.4A MCP campaign authoring contract", () => {
   it("describes roguelite profile v4 and a bounded campaign graph without extending generic mechanics writes", async () => {
     const roguelite = await callTool("describe_schema", { domain: "roguelite" }, {});
     expect(roguelite).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 5,
       requestedDomain: "roguelite",
       roguelite: {
         authoring: {
