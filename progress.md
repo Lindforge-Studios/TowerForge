@@ -2761,3 +2761,34 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - The complementary command using `--grep-invert "3440x1440"` passed the other 5/5 in 11.7
   seconds. Together with exact discovery, the fresh-runner split remains 150 + 5 + 1 = 156 without
   overlap. A new exact commit, GitHub run and both independent sign-offs remain mandatory.
+
+## 2026-08-02 — R18 Phaser quality scheduling RED
+
+- Exact candidate `7bc585f` kept fixture teardown outside the product-test budget, and GitHub run
+  `30744349720` therefore exposed the actual failure: at 3440×1440 the generated Phaser player made
+  the settings dialog visible, but the continuously saturated software-rendering main thread could
+  not answer a bounded read of its static `role="dialog"` attribute before the 180-second deadline.
+- The generated Canvas player already caps quality-dependent DPR, while the Phaser path still
+  hardcodes a 60 FPS request and has no large-surface backbuffer quality policy. New regression
+  `bounds desktop Phaser backbuffer and frame scheduling through the selected quality preset`
+  requires a presentation-only quality profile, bounded resolution, quality-selected FPS and
+  yielding timeout scheduling, while proving the legacy Phaser target remains byte-contract free
+  of R18 quality runtime.
+- Exact RED command:
+  `npx vitest run packages/cli/build.r18-phaser-lifecycle.regression.test.mjs --reporter=verbose`.
+  Result: 3 existing tests passed and the new contract failed because
+  `phaserPresentationQuality` was absent. Gameplay simulation, engine timing and legacy targets
+  must remain unchanged.
+
+## 2026-08-02 — R18 Phaser quality scheduling focused GREEN
+
+- The generated large-screen Phaser player now derives a bounded presentation profile from the
+  selected build-target quality. It caps backing resolution by viewport pixel budget, selects a
+  presentation-only FPS target and uses Phaser's yielding timeout scheduler. Engine ticks,
+  commands, checkpoint/journal state and legacy Phaser output are unchanged.
+- Exact contract command passed 4/4:
+  `npx vitest run packages/cli/build.r18-phaser-lifecycle.regression.test.mjs --reporter=verbose`.
+  Exact browser commands passed 1/1 ultrawide in 5.1 seconds and the complementary 5/5 in 10.4
+  seconds. The 3440×1440 product case itself fell from 5.4 to 3.0 seconds locally while retaining
+  dialog semantics, input blocking, viewport/hit tests, placement, upgrade, accessibility and
+  explicit Phaser/WebGL disposal assertions.

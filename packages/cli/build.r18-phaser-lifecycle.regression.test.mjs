@@ -38,6 +38,16 @@ describe("R18 generated Phaser lifecycle contract (RED)", () => {
   it("keeps the legacy Phaser target free of the R18 disposal lifecycle", () => {
     expect(legacyPlayer).not.toMatch(/__towerforgeDispose|disposeDesktopPhaserPlayer|WEBGL_lose_context/);
   });
+
+  it("bounds desktop Phaser backbuffer and frame scheduling through the selected quality preset", () => {
+    expect(desktopPlayer).toMatch(/const\s+phaserPresentationQuality\s*=/);
+    expect(desktopPlayer).toMatch(/resolution\s*:\s*phaserPresentationQuality\.resolution/);
+    expect(desktopPlayer).toMatch(/target\s*:\s*phaserPresentationQuality\.targetFps/);
+    expect(desktopPlayer).toMatch(/limit\s*:\s*phaserPresentationQuality\.targetFps/);
+    expect(desktopPlayer).toMatch(/forceSetTimeOut\s*:\s*true/);
+    expect(desktopPlayer).toMatch(/Math\.sqrt\(\s*pixelBudget\s*\/\s*viewportPixels\s*\)/);
+    expect(legacyPlayer).not.toMatch(/phaserPresentationQuality|forceSetTimeOut/);
+  });
 });
 
 function lifecycleBlock(source) {
