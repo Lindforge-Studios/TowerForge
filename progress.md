@@ -2671,3 +2671,15 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   report lost, then explicitly closes the already-blank page before fixture teardown. The other
   five cases remain at 120 seconds, and neither production code nor global Playwright limits are
   changed.
+
+## 2026-08-02 — R18 touch-context wheel delivery RED
+
+- The exact full local browser gate after the ultrawide repair completed 154/156. The 3440×1440
+  case passed, while the existing 1280×720 `hasTouch` case exposed a Playwright/Chromium host-input
+  flake: `page.mouse.wheel` was occasionally suppressed by touch-only emulation and the authored
+  viewport therefore remained at its reset zoom. The same run also reported an unrelated existing
+  R17 Studio save-poll timeout, which must pass on focused rerun before freeze but is outside R18.
+- The touch case now dispatches the same bounded, cancelable `WheelEvent` directly to the real
+  playfield target through the existing helper. Non-touch desktop cases continue to use the host
+  mouse wheel, while touch placement still uses the real touchscreen API. This changes only the
+  acceptance harness and keeps the camera input contract intact.

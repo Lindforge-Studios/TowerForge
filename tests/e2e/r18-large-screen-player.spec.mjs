@@ -117,8 +117,15 @@ for (const entry of cases) {
       const initialViewport = await viewportSnapshot(page);
       expect(await page.evaluate((point) => window.__towerforgePickPoint(point), initialPoint)).toEqual(probe.coord);
 
-      await page.mouse.move(initialPoint.x, initialPoint.y);
-      await page.mouse.wheel(0, -360);
+      if (entry.touch) {
+        // Chromium may suppress the host mouse wheel while Playwright emulates a touch-only
+        // context. Dispatch the same cancelable wheel event to the real playfield target so this
+        // case verifies the player handler instead of the host input-device emulation.
+        await dispatchWheelToPlayfield(page, initialPoint);
+      } else {
+        await page.mouse.move(initialPoint.x, initialPoint.y);
+        await page.mouse.wheel(0, -360);
+      }
       await expect.poll(async () => (await viewportSnapshot(page)).zoom).toBeGreaterThan(initialViewport.zoom * 1.01);
 
       await page.locator("#desktop-reset-view").click();
