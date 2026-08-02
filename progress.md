@@ -2387,6 +2387,22 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   `npx playwright test tests/e2e/r18-large-screen-player.spec.mjs tests/e2e/r18-desktop-hit-targets.spec.mjs --workers=1`.
   Result: 7/7 passed for the six required viewports plus the compact hit-target regression.
 
+## 2026-08-02 — R18 freeze compatibility repair
+
+- The first full `npm run test` freeze attempt correctly rejected the candidate: 30/3983 tests
+  failed because split compile-time template expressions made the legacy source-contract brace
+  scanner lose the end of both player templates, and the R14 source assertion still required the
+  former no-argument arsenal helper call. Runtime-focused R18 tests had remained GREEN, so this was
+  treated as a compatibility-contract failure rather than ignored as test noise.
+- Re-expressed hero move, hero ability and skill commands as balanced complete compile-time
+  alternatives. Generated legacy players retain the original inline `dispatchGameCommand` command
+  envelopes, while desktop players emit only the registry invocation. Updated the R14 assertion to
+  the parameterized helper contract used to keep desktop and legacy outputs separate.
+- Exact compatibility GREEN command:
+  `npx vitest run packages/cli/build.logistics-power.contract.test.mjs packages/cli/build.logistics-ammunition.contract.test.mjs packages/cli/build.logistics-ammunition-supply.contract.test.mjs packages/cli/build.heroes-skill-tree.contract.test.mjs packages/cli/build.heroes-passive-aura.contract.test.mjs packages/cli/build.heroes-movement.contract.test.mjs packages/cli/build.heroes-foundation.contract.test.mjs packages/cli/build.heroes-active-ability.contract.test.mjs packages/cli/build.heroes-blocking.contract.test.mjs packages/cli/build.r14-arsenal-package.contract.test.mjs --reporter=dot`.
+  Result: 10 files, 33/33 tests passed. The combined R18/legacy command covering the new central
+  registry regression plus R14 and the three command-envelope contracts passed 5 files, 13/13.
+
 ## 2026-08-02 — R18 verifier repair focused GREEN
 
 - Serialized the rotating session-store mutation queue, made IndexedDB write/remove operations

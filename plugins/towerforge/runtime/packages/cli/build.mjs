@@ -1679,19 +1679,17 @@ function actAtCoord(coord, heroHitId = null, enemyHitId = null) {
   }
   if (targetingMode.kind === "heroAbility") {
     if (!enemyHitId) { message = "Choose a live enemy target."; return; }
-    const result = ${largeScreenPlayer ? 'playerActionRegistry.invoke("useHeroAbility", { command: {' : "dispatchGameCommand(game, {"}
-      schemaVersion: 5, type: "useHeroAbility", heroId: targetingMode.heroId,
-      abilityId: targetingMode.abilityId, targetEnemyId: enemyHitId
-    }${largeScreenPlayer ? " })" : ")"};
+    const result = ${largeScreenPlayer
+      ? 'playerActionRegistry.invoke("useHeroAbility", { command: { schemaVersion: 5, type: "useHeroAbility", heroId: targetingMode.heroId, abilityId: targetingMode.abilityId, targetEnemyId: enemyHitId } })'
+      : 'dispatchGameCommand(game, { schemaVersion: 5, type: "useHeroAbility", heroId: targetingMode.heroId, abilityId: targetingMode.abilityId, targetEnemyId: enemyHitId })'};
     ${largeScreenPlayer ? "" : "report(result);"}
     if (result.ok) setTargetingMode({ kind: "build" });
     return;
   }
   if (targetingMode.kind === "heroMove") {
-    const result = ${largeScreenPlayer ? 'playerActionRegistry.invoke("moveHero", { command: {' : "dispatchGameCommand(game, {"}
-      schemaVersion: 4, type: "moveHero", heroId: targetingMode.heroId,
-      target: { q: coord.q, r: coord.r }
-    }${largeScreenPlayer ? " })" : ")"};
+    const result = ${largeScreenPlayer
+      ? 'playerActionRegistry.invoke("moveHero", { command: { schemaVersion: 4, type: "moveHero", heroId: targetingMode.heroId, target: { q: coord.q, r: coord.r } } })'
+      : 'dispatchGameCommand(game, { schemaVersion: 4, type: "moveHero", heroId: targetingMode.heroId, target: { q: coord.q, r: coord.r } })'};
     ${largeScreenPlayer ? "" : "report(result);"}
     if (result.ok) setTargetingMode({ kind: "build" });
     return;
@@ -1982,13 +1980,9 @@ function updateHeroSkillTree(snap) {
       button.type = "button";
       button.dataset.heroSkillId = node.id;
       button.addEventListener("click", () => {
-        const command = {
-          schemaVersion: 6,
-          type: "unlockHeroSkill",
-          heroId: button.dataset.heroId,
-          skillId: button.dataset.heroSkillId
-        };
-        const result = ${largeScreenPlayer ? 'playerActionRegistry.invoke("unlockHeroSkill", { command })' : "dispatchGameCommand(game, command)"};
+        const result = ${largeScreenPlayer
+          ? 'playerActionRegistry.invoke("unlockHeroSkill", { command: { schemaVersion: 6, type: "unlockHeroSkill", heroId: button.dataset.heroId, skillId: button.dataset.heroSkillId } })'
+          : 'dispatchGameCommand(game, { schemaVersion: 6, type: "unlockHeroSkill", heroId: button.dataset.heroId, skillId: button.dataset.heroSkillId })'};
         ${largeScreenPlayer ? "" : "report(result);"}
         updateHeroSkillTree(game.getRenderSnapshot());
       });
@@ -2903,19 +2897,17 @@ function actAtCoord(coord, heroHitId = null, enemyHitId = null) {
   }
   if (targetingMode.kind === "heroAbility") {
     if (!enemyHitId) { message = "Choose a live enemy target."; return; }
-    const result = ${largeScreenPlayer ? 'playerActionRegistry.invoke("useHeroAbility", { command: {' : "dispatchGameCommand(game, {"}
-      schemaVersion: 5, type: "useHeroAbility", heroId: targetingMode.heroId,
-      abilityId: targetingMode.abilityId, targetEnemyId: enemyHitId
-    }${largeScreenPlayer ? " })" : ")"};
+    const result = ${largeScreenPlayer
+      ? 'playerActionRegistry.invoke("useHeroAbility", { command: { schemaVersion: 5, type: "useHeroAbility", heroId: targetingMode.heroId, abilityId: targetingMode.abilityId, targetEnemyId: enemyHitId } })'
+      : 'dispatchGameCommand(game, { schemaVersion: 5, type: "useHeroAbility", heroId: targetingMode.heroId, abilityId: targetingMode.abilityId, targetEnemyId: enemyHitId })'};
     ${largeScreenPlayer ? "" : "report(result);"}
     if (result.ok) setTargetingMode({ kind: "build" });
     return;
   }
   if (targetingMode.kind === "heroMove") {
-    const result = ${largeScreenPlayer ? 'playerActionRegistry.invoke("moveHero", { command: {' : "dispatchGameCommand(game, {"}
-      schemaVersion: 4, type: "moveHero", heroId: targetingMode.heroId,
-      target: { q: coord.q, r: coord.r }
-    }${largeScreenPlayer ? " })" : ")"};
+    const result = ${largeScreenPlayer
+      ? 'playerActionRegistry.invoke("moveHero", { command: { schemaVersion: 4, type: "moveHero", heroId: targetingMode.heroId, target: { q: coord.q, r: coord.r } } })'
+      : 'dispatchGameCommand(game, { schemaVersion: 4, type: "moveHero", heroId: targetingMode.heroId, target: { q: coord.q, r: coord.r } })'};
     ${largeScreenPlayer ? "" : "report(result);"}
     if (result.ok) setTargetingMode({ kind: "build" });
     return;
@@ -4102,13 +4094,9 @@ function updateHeroSkillTree(snap) {
       button.type = "button";
       button.dataset.heroSkillId = node.id;
       button.addEventListener("click", () => {
-        const command = {
-          schemaVersion: 6,
-          type: "unlockHeroSkill",
-          heroId: button.dataset.heroId,
-          skillId: button.dataset.heroSkillId
-        };
-        const result = ${largeScreenPlayer ? 'playerActionRegistry.invoke("unlockHeroSkill", { command })' : "dispatchGameCommand(game, command)"};
+        const result = ${largeScreenPlayer
+          ? 'playerActionRegistry.invoke("unlockHeroSkill", { command: { schemaVersion: 6, type: "unlockHeroSkill", heroId: button.dataset.heroId, skillId: button.dataset.heroSkillId } })'
+          : 'dispatchGameCommand(game, { schemaVersion: 6, type: "unlockHeroSkill", heroId: button.dataset.heroId, skillId: button.dataset.heroSkillId })'};
         ${largeScreenPlayer ? "" : "report(result);"}
         updateHeroSkillTree(game.getRenderSnapshot());
       });

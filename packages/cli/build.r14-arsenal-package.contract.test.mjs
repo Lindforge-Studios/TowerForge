@@ -8,7 +8,7 @@ describe("R14 generated player/package contract", () => {
     expect(source).toContain('id="arsenal-status"');
     expect(source).toContain('schemaVersion: 7, type: "configureTowerModules"');
     expect(source).toContain('schemaVersion: 7, type: "craftGem"');
-    expect(source.match(/\$\{arsenalPlayerRuntimeTemplate\(\)\}/g)).toHaveLength(2);
+    expect(source.match(/\$\{arsenalPlayerRuntimeTemplate\(largeScreenPlayer\)\}/g)).toHaveLength(2);
     expect(source.match(/updateArsenalStatus\(snap\);/g)).toHaveLength(2);
   });
 });
