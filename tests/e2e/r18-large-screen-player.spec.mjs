@@ -77,21 +77,22 @@ test.afterAll(async () => {
 });
 
 for (const entry of cases) {
-  test(`${entry.renderer}/${entry.grid} desktop target works at ${entry.width}x${entry.height}`, async ({ browser }) => {
-    test.setTimeout(120_000);
-    const context = await browser.newContext({
+  test.describe(entry.id, () => {
+    test.use({
       viewport: { width: entry.width, height: entry.height },
       deviceScaleFactor: entry.dpr,
       hasTouch: entry.touch === true,
       serviceWorkers: "block",
       reducedMotion: "reduce"
     });
-    const page = await context.newPage();
-    const browserErrors = [];
-    let graphicsTeardown = null;
-    page.on("pageerror", (error) => browserErrors.push(error.message));
-    try {
-      await page.goto(`${origin}/${entry.id}/`);
+
+    test(`${entry.renderer}/${entry.grid} desktop target works at ${entry.width}x${entry.height}`, async ({ page }) => {
+      test.setTimeout(120_000);
+      const browserErrors = [];
+      let graphicsTeardown = null;
+      page.on("pageerror", (error) => browserErrors.push(error.message));
+      try {
+        await page.goto(`${origin}/${entry.id}/`);
       await page.waitForFunction(() => window.__towerforgeBootOk === true);
       await expect(page.locator("#boot-error")).toBeHidden();
       await expect(page.locator("body")).toHaveAttribute("data-towerforge-player-shell", "desktop");
@@ -159,9 +160,8 @@ for (const entry of cases) {
 
       if (entry.accessibility) await verifyAccessibleDesktopShell(page);
       if (entry.session) await verifyContinueRestore(page, entry);
-      expect(browserErrors).toEqual([]);
-    } finally {
-      try {
+        expect(browserErrors).toEqual([]);
+      } finally {
         graphicsTeardown = await releaseGeneratedGraphics(page, entry.renderer);
         if (entry.renderer === "phaser" && !page.isClosed()) {
           // Detach the already-disposed WebGL document before asking Playwright to close the
@@ -169,17 +169,15 @@ for (const entry of cases) {
           // SharedImage mailbox even though Phaser and the WebGL context are already gone.
           await page.goto("about:blank", { waitUntil: "commit" });
         }
-      } finally {
-        await context.close();
+        if (entry.renderer === "phaser") {
+          expect(graphicsTeardown).toMatchObject({
+            disposeHookAvailable: true,
+            canvasConnected: false,
+            contextLost: true
+          });
+        }
       }
-      if (entry.renderer === "phaser") {
-        expect(graphicsTeardown).toMatchObject({
-          disposeHookAvailable: true,
-          canvasConnected: false,
-          contextLost: true
-        });
-      }
-    }
+    });
   });
 }
 

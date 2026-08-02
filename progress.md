@@ -2644,3 +2644,17 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   post-reset projected point inverse-picks the exact authored tile. Fixed pixel placement across a
   responsive playfield resize is not required. The combined R18 browser command passed 9/9 in
   18.2 seconds. Full gates must be repeated on the next exact candidate before independent sign-off.
+
+## 2026-08-02 — R18 ultrawide CI deadline RED
+
+- GitHub CI run `30739674600` completed every static, unit, build and plugin gate and 155/156
+  browser scenarios on candidate `e4d05d9`. The final Phaser/square 3440×1440 scenario reached
+  its explicit `context.close()` after the generated disposer had already destroyed Phaser, lost
+  the WebGL context and detached the canvas, but the test-wide 120-second deadline cancelled that
+  close on the slower shared Linux/SwiftShader runner.
+- The harness repair keeps the strict 120-second test bound and moves browser-context ownership to
+  the standard Playwright fixture, whose teardown has its own bounded lifecycle after the test.
+  All product assertions, page-error collection, direct disposer checks and WebGL context-loss
+  checks remain active; no close is swallowed or raced and production code is unchanged. Expected
+  GREEN is the exact focused browser command followed by a fresh GitHub full gate on the new frozen
+  commit.
