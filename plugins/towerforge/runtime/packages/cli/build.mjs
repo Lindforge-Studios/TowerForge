@@ -2750,6 +2750,20 @@ let victoryRewarded = false;
 let lastObservedEvents = [];
 const shownStories = new Set();
 let phaserGame = null;
+${largeScreenPlayer ? `const phaserPresentationQuality = (() => {
+  const quality = project.buildTarget?.quality ?? "auto";
+  const presets = Object.freeze({
+    low: Object.freeze({ pixelBudget: 1_500_000, targetFps: 24 }),
+    balanced: Object.freeze({ pixelBudget: 2_500_000, targetFps: 30 }),
+    high: Object.freeze({ pixelBudget: 5_000_000, targetFps: 60 }),
+    auto: Object.freeze({ pixelBudget: 3_000_000, targetFps: 45 })
+  });
+  const preset = presets[quality] ?? presets.auto;
+  const pixelBudget = preset.pixelBudget;
+  const viewportPixels = Math.max(1, globalThis.innerWidth * globalThis.innerHeight);
+  const resolution = Math.max(0.5, Math.min(1, Math.sqrt(pixelBudget / viewportPixels)));
+  return Object.freeze({ resolution, targetFps: preset.targetFps });
+})();` : ""}
 
 const rendererTheme = content.visuals?.theme?.renderer ?? {};
 const TERRAIN_COLORS = {
@@ -3845,11 +3859,12 @@ phaserGame = new Phaser.Game({
   type: Phaser.AUTO,
   parent: "playfield",
   transparent: true,
+  ${largeScreenPlayer ? "resolution: phaserPresentationQuality.resolution," : ""}
   // Low-end-Android render hardening (ported from a shipped Capacitor game): no MSAA (fill-rate is
   // the #1 killer on cheap GPUs), request the high-performance GPU, and a low-latency canvas.
   // panicMax bounds delta catch-up so a background stall can't trigger a spiral-of-death on resume.
   render: { antialias: false, powerPreference: "high-performance", desynchronized: true, roundPixels: true },
-  fps: { target: 60, limit: 60, panicMax: 120 },
+  fps: ${largeScreenPlayer ? "{ target: phaserPresentationQuality.targetFps, limit: phaserPresentationQuality.targetFps, panicMax: 120, forceSetTimeOut: true }" : "{ target: 60, limit: 60, panicMax: 120 }"},
   scale: { mode: Phaser.Scale.RESIZE, width: "100%", height: "100%" },
   scene: PlayScene
 });
