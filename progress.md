@@ -2403,6 +2403,21 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   Result: 10 files, 33/33 tests passed. The combined R18/legacy command covering the new central
   registry regression plus R14 and the three command-envelope contracts passed 5 files, 13/13.
 
+## 2026-08-02 — R18 exact-candidate gate evidence
+
+- The candidate immediately preceding this evidence-only entry (`62fc0b456dd72adedc5634f58d4e005f99346f1d`)
+  passed the complete required gate set with a clean working tree: `npm run typecheck`,
+  `npm run build:engine`, `npm run test` (408 files, 3983/3983 tests), `npm run validate`,
+  `npm run sim tutorial_01 60`, `npm run build`, and `npm run test:e2e` (154/154).
+- Codex plugin parity passed `npm run plugin:build`, `npm run plugin:validate` and
+  `npm run plugin:smoke`. The exact source also passed both packaging commands for the starter
+  (`mobile` and `desktop`) and `cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml`
+  (9/9). No generated or package artifact dirtied the source tree.
+- This entry is the final documentation-only change before the independent Code Verifier and
+  Constructor Integration Verifier freeze. The same complete gate set is repeated on the commit
+  containing this entry; any later source or documentation change invalidates the evidence and
+  both sign-offs.
+
 ## 2026-08-02 — R18 verifier repair focused GREEN
 
 - Serialized the rotating session-store mutation queue, made IndexedDB write/remove operations
