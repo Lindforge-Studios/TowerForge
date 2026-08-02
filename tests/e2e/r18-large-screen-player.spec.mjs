@@ -86,7 +86,7 @@ for (const entry of cases) {
       reducedMotion: "reduce"
     });
 
-    test(`${entry.renderer}/${entry.grid} desktop target works at ${entry.width}x${entry.height}`, async ({ page }) => {
+    test(`@r18-large-screen ${entry.renderer}/${entry.grid} desktop target works at ${entry.width}x${entry.height}`, async ({ page }) => {
       // Linux/SwiftShader needs more than the ordinary case budget to render and dispose the
       // generated ultrawide surface after the preceding full-suite GPU matrix. The exception stays
       // bounded and applies only to this explicit 3440px Phaser acceptance case.

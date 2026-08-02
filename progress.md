@@ -2683,3 +2683,15 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   playfield target through the existing helper. Non-touch desktop cases continue to use the host
   mouse wheel, while touch placement still uses the real touchscreen API. This changes only the
   acceptance harness and keeps the camera input contract intact.
+
+## 2026-08-02 — R18 Linux shared-GPU process isolation RED
+
+- GitHub CI run `30741585723` passed the first 155 scenarios but the final ultrawide Phaser case
+  exhausted even its scoped 180-second budget after 149 earlier browser scenarios had used the
+  same Linux/SwiftShader process. On a fresh browser the exact six-case matrix repeatedly completes
+  in seconds, so increasing a product-test timeout again would hide process-level resource
+  degradation rather than verify more behavior.
+- CI now runs the 150 ordinary scenarios first and the tagged six-case R18 large-screen matrix in
+  a second sequential Playwright process. The commands remain one-worker and cover the same 156
+  scenarios; no test is skipped from the combined gate. Local `npm run test:e2e` remains unchanged
+  and continues to run the whole suite in one command.
