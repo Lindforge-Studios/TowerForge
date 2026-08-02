@@ -25,6 +25,7 @@ export function getPlayerTargetRecipe(projectDir, recipeId, targetId) {
   }
   assertTargetId(targetId);
   const read = readPlayerTargets(projectDir);
+  const webDir = allocateDesktopWebDir(read.targets, targetId);
   return Object.freeze({
     recipeId,
     targetId,
@@ -35,7 +36,7 @@ export function getPlayerTargetRecipe(projectDir, recipeId, targetId) {
       id: targetId,
       platform: "web",
       renderer: "canvas",
-      webDir: "dist-desktop",
+      webDir,
       market: "pwa",
       storeChannel: "pwa",
       appId: "com.example.game",
@@ -50,6 +51,30 @@ export function getPlayerTargetRecipe(projectDir, recipeId, targetId) {
       inputProfile: "keyboard_mouse"
     })
   });
+}
+
+function allocateDesktopWebDir(targets, targetId) {
+  const occupied = new Set();
+  for (const [existingId, target] of Object.entries(targets)) {
+    if (existingId === targetId || target?.platform !== "web") continue;
+    occupied.add(canonicalOutputDirectory(target.webDir ?? target.outputDir ?? "dist"));
+  }
+  for (let suffix = 1; suffix <= 256; suffix += 1) {
+    const candidate = suffix === 1 ? "dist-desktop" : `dist-desktop-${suffix}`;
+    if (!occupied.has(canonicalOutputDirectory(candidate))) return candidate;
+  }
+  const error = new Error("No free desktop output directory remains in the bounded allocation range.");
+  error.code = "desktop_output_budget_exceeded";
+  throw error;
+}
+
+function canonicalOutputDirectory(value) {
+  return String(value)
+    .split(/[\\/]+/)
+    .filter((part) => part && part !== ".")
+    .join("/")
+    .normalize("NFC")
+    .toLowerCase();
 }
 
 export function previewPlayerTarget(projectDir, targetId, target) {

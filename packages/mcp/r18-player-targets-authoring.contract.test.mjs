@@ -164,6 +164,53 @@ describe("R18 playerTargets MCP/AI authoring (RED)", () => {
     expect(authoredBytes(projectDir)).toEqual(committed);
   }, 30_000);
 
+  it("allocates a free recipe output and rejects duplicate webDir before apply", async () => {
+    const projectDir = fixture();
+    const first = await callTool("get_player_target_recipe", {
+      projectDir, recipeId: "desktop_large_screen", targetId: "desktop-one"
+    }, {});
+    const firstPreview = await callTool("preview_player_target", {
+      projectDir, targetId: first.targetId, target: first.target
+    }, {});
+    expect(firstPreview.ok).toBe(true);
+    expect((await callTool("apply_player_target", {
+      projectDir, targetId: first.targetId, target: first.target, ifRevision: firstPreview.revision
+    }, {})).ok).toBe(true);
+
+    const second = await callTool("get_player_target_recipe", {
+      projectDir, recipeId: "desktop_large_screen", targetId: "desktop-two"
+    }, {});
+    expect(second.target.webDir).toBe("dist-desktop-2");
+
+    const before = authoredBytes(projectDir);
+    const duplicate = { ...second.target, webDir: first.target.webDir };
+    const duplicatePreview = await callTool("preview_player_target", {
+      projectDir, targetId: second.targetId, target: duplicate
+    }, {});
+    expect(duplicatePreview).toMatchObject({
+      ok: false,
+      dryRun: true,
+      written: false,
+      validation: {
+        ok: false,
+        issues: expect.arrayContaining([expect.objectContaining({
+          fieldPath: "targets.desktop-two.webDir",
+          message: expect.stringMatching(/already used|duplicate|unique/i)
+        })])
+      }
+    });
+    expect(authoredBytes(projectDir)).toEqual(before);
+
+    const applied = await callTool("apply_player_target", {
+      projectDir,
+      targetId: second.targetId,
+      target: duplicate,
+      ifRevision: duplicatePreview.revision
+    }, {});
+    expect(applied).toMatchObject({ ok: false, written: false });
+    expect(authoredBytes(projectDir)).toEqual(before);
+  }, 30_000);
+
   it("teaches agents the exact target-local workflow and legacy isolation", () => {
     expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(51);
     expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(

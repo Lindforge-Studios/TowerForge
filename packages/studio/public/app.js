@@ -13086,14 +13086,11 @@ function renderBuildTargetsTab() {
       try {
         const read = await apiGet("/api/player-targets");
         const targetId = allocatePlayerTargetId(read.targets);
-        const targetSuffix = targetId.slice("desktop-large".length);
-        const target = {
-          id: targetId, platform: "web", renderer: "canvas", webDir: `dist-desktop${targetSuffix}`,
-          market: "pwa", storeChannel: "pwa", appId: "com.example.game", appName: "My Game",
-          appTitle: "My Game", backgroundColor: "#111111", appVersion: "0.1.0",
-          formFactor: "desktop", viewport: { fit: "contain", padding: 32, minZoom: 0.5, maxZoom: 3, initialZoom: 1 },
-          quality: "balanced", locale: "auto", inputProfile: "keyboard_mouse"
-        };
+        const recipe = await apiPost("/api/player-targets/recipe", {
+          recipeId: "desktop_large_screen",
+          targetId
+        });
+        const target = recipe.target;
         const preview = await apiPost("/api/player-targets/preview", { targetId, target });
         if (!preview.ok) throw new Error("Desktop target does not pass validation.");
         const applied = await apiPost("/api/player-targets/apply", { targetId, target, ifRevision: read.revision });

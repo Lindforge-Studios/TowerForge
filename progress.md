@@ -2923,3 +2923,81 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - The Codex plugin runtime was rebuilt and the generated CLI mirror is byte-identical. This is
   focused GREEN only; the next exact candidate still requires complete repository gates and two
   fresh independent sign-offs.
+
+## 2026-08-02 — R18 rejected-candidate contract repair RED
+
+- Independent constructor review of exact candidate `70823d2` found three contract gaps. Multiple
+  v2 web targets may resolve to the same `webDir`, so CLI validation and MCP preview/apply can
+  accept two targets that overwrite one build output. The desktop recipe must allocate the first
+  deterministic free `dist-desktop[-N]`; an explicitly duplicated directory must fail preview and
+  remain byte-inert on guarded apply.
+- `PlayerSessionSaveV1` is scheduled after accepted UI commands, visibility changes and page hide,
+  but neither renderer observes the authoritative `waveCleared` event. A real two-wave browser
+  fixture now requires the rotating IndexedDB head to contain `clearedWaveCount >= 1` after the
+  first inter-wave boundary, before any subsequent management command.
+- `PlayerPreferencesV1` codecs carry sound, volumes, fullscreen, camera zoom and key bindings, but
+  the generated shell currently applies only UI scale, quality and motion. Repair contracts require
+  every declared field to drive the corresponding runtime/controls, persist changes, and restore
+  without affecting legacy targets. Fullscreen follows actual `fullscreenchange`; camera zoom uses
+  the renderer viewport snapshot; key bindings map bounded action IDs to `KeyboardEvent.code`.
+- The same rejected-candidate pass requires Continue to rebuild mission-dependent selectors and
+  ability UI, the combat playfield to occupy at least 75% of 1024/1440/1920 viewports, all persistent
+  live controls to expose a 44 px hit dimension, and the Russian target to localize real generated
+  controls including Pause/Resume. Default hotkeys are frozen as Digit1–Digit9 for build slots,
+  BracketLeft/BracketRight for speed, Q/E/R/F for mission abilities, Space for pause and U for
+  upgrade; remapped preferences must traverse the same action registry.
+- Expected RED commands:
+  `npx vitest run packages/cli/lib/r18-build-targets.contract.test.mjs packages/mcp/r18-player-targets-authoring.contract.test.mjs packages/cli/build.r18-verifier-repair.regression.test.mjs --reporter=verbose`
+  and
+  `npx playwright test tests/e2e/r18-large-screen-player.spec.mjs --workers=1`.
+  These additions are tests/evidence only; production remains unchanged.
+- Focused RED evidence: the three-file Vitest command exited 1 with six expected failures (duplicate
+  validation, recipe allocation, event-boundary save, preference application, Continue resync and
+  missing hotkeys). The real Phaser 1920×1080 case reached `waveCleared`, then timed out with the
+  latest IndexedDB checkpoint still at `clearedWaveCount: 0`. The real 1024×720 and 1920×1080
+  playfields occupied only `0.5795` and `0.7015` of the viewport. The Russian 3440×1440 target
+  rendered `Start wave`, proving the generated live shell was not localized. All failures were
+  observed against unchanged production at `70823d2`.
+
+## 2026-08-02 — R18 preference edge-case RED
+
+- Read-only follow-up review found that repeated camera zoom stores the requested multiplicative
+  factor instead of the viewport's bounded result. At authored `maxZoom`, the renderer stops while
+  `PlayerPreferencesV1.cameraZoom` can continue growing, so reload no longer reproduces the visible
+  camera. The regression requires persistence to derive the applied ratio from the previous and
+  returned viewport snapshots.
+- A disabled audio player still allocates and resumes an `AudioContext` when a generic player
+  gesture calls `resume()`. The audio contract now requires `resume()` to remain a hardware-free
+  no-op until sound is enabled; generated Start Wave wiring must also respect `soundEnabled`.
+- Exact RED command:
+  `npx vitest run packages/renderer/src/audio.test.mjs packages/cli/build.r18-verifier-repair.regression.test.mjs --reporter=dot`.
+  Result: 2 expected failures — one context was allocated while disabled and generated camera
+  persistence did not use `result.zoom / previous.zoom`. Production was unchanged for these two
+  assertions when the failures were captured.
+
+## 2026-08-02 — R18 rejected-candidate repair GREEN
+
+- BuildTargets v2 now rejects normalized/case-folded web output collisions. The shared desktop
+  recipe allocates the first free bounded `dist-desktop[-N]`, and Studio obtains that detached
+  candidate through a closed project-bound recipe endpoint before preview and revision-guarded
+  apply. The real Studio E2E preserves the authored `desktop-large` target and creates
+  `desktop-large-2` at `dist-desktop-2`.
+- Both generated renderers autosave the authoritative `waveCleared` boundary. Continue restores the
+  checkpoint and resynchronizes mission selector, tower/ability controls, background, music and
+  overlays; the two-mission browser fixture proves the UI and restored snapshot agree.
+- The desktop canvas fills the viewport and compact DOM surfaces remain bounded overlays. Accepted
+  1024/1440/1920 layouts keep at least 75% playfield coverage, all persistent live controls expose
+  44 px hit targets, and the Russian catalog owns the complete visible shell including
+  Pause/Resume.
+- Player preferences now drive camera, sound, SFX/music volumes, fullscreen state and remapped
+  keys. Bounded zoom persists the ratio actually returned by the viewport, survives reload at
+  authored max zoom and resets through the remapped key. Disabled audio performs no `AudioContext`
+  allocation. Build slots, abilities and speed controls dispatch through the shared action registry.
+- Focused Vitest: 25 files, 104/104 GREEN. R18 browser integration: 10/10 GREEN. Complete Playwright:
+  157/157 GREEN. `typecheck`, `build:engine`, `validate`, `sim tutorial_01 60`, starter balance,
+  maps compile, web build, mobile/desktop package scaffolds, Cargo tests and plugin
+  build/validate/smoke are GREEN. Source/plugin runtime parity is byte-identical.
+- The exact clean-run `npm run test` remains assigned to GitHub CI because two ignored local
+  duplicate runtime directories keep a Vitest worker open after the tracked source tests finish.
+  They are not part of the commit or clean CI checkout. A new frozen commit, clean CI and two fresh
+  independent verifier sign-offs are still required before R18 acceptance.

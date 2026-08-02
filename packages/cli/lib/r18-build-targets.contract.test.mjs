@@ -53,6 +53,24 @@ describe("R18 BuildTargets v2 opt-in contract (RED)", () => {
     }));
   });
 
+  it("rejects two web targets that resolve to the same output directory", () => {
+    const buildTargets = structuredClone(desktopTargets());
+    buildTargets.targets["desktop-copy"] = {
+      ...structuredClone(buildTargets.targets["desktop-web"]),
+      id: "desktop-copy"
+    };
+
+    expect(relevant(validateProjectSchemas(files({ buildTargets })))).toContainEqual(
+      expect.objectContaining({
+        severity: "error",
+        entityKind: "buildTargets",
+        entityId: "desktop-copy",
+        fieldPath: "targets.desktop-copy.webDir",
+        message: expect.stringMatching(/already used|duplicate|unique/i)
+      })
+    );
+  });
+
   it.each([
     ["future schema", (value) => { value.schemaVersion = 3; }, "schemaVersion"],
     ["unknown target key", (value) => { value.targets["desktop-web"].rogue = true; }, "targets.desktop-web.rogue"],

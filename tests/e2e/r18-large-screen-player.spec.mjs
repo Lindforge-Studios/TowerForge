@@ -168,8 +168,16 @@ for (const entry of cases) {
       }, beforeUpgrade)).toBe(true);
       await page.waitForTimeout(250);
 
-      if (entry.accessibility) await verifyAccessibleDesktopShell(page, entry);
-      if (entry.session) await verifyContinueRestore(page, entry);
+      if (entry.accessibility) {
+        await verifyRussianDesktopLocale(page);
+        await verifyAccessibleDesktopShell(page, entry);
+      }
+      if (entry.session) {
+        await verifyWaveBoundaryAutosave(page, entry);
+        await verifyContinueRestore(page, entry);
+      }
+      if (entry.width === 1024) await expectAllLiveControlsReachable(page);
+      if ([1024, 1440, 1920].includes(entry.width)) await expectCombatViewportCoverage(page, entry);
         expect(browserErrors).toEqual([]);
       } finally {
         const pageWasOpen = !page.isClosed();
@@ -255,6 +263,21 @@ async function verifyAccessibleDesktopShell(page, entry) {
 
   await page.locator("#desktop-settings").click();
   await page.locator("#desktop-quality").selectOption("low");
+  await page.locator('[data-key-binding="cameraReset"]').focus();
+  await page.keyboard.press("KeyR");
+  await expect(page.locator('[data-key-binding="cameraReset"]')).toHaveValue("KeyR");
+  await page.locator("#snd").evaluate((element) => {
+    element.checked = false;
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await page.locator("#sfx-volume").evaluate((element) => {
+    element.value = "0.1";
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await page.locator("#music-volume").evaluate((element) => {
+    element.value = "0.2";
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+  });
   await expect(page.locator("body")).toHaveAttribute("data-quality", "low");
   const appliedQuality = await page.evaluate(() => globalThis.__towerforgePresentationQuality?.());
   expect(appliedQuality).toMatchObject({
@@ -280,7 +303,14 @@ async function verifyAccessibleDesktopShell(page, entry) {
     .filter((key) => key.startsWith("towerforge:preferences:"))
     .map((key) => JSON.parse(localStorage.getItem(key))));
   expect(stored).toHaveLength(1);
-  expect(stored[0]).toMatchObject({ schemaVersion: 1, quality: "low" });
+  expect(stored[0]).toMatchObject({
+    schemaVersion: 1,
+    quality: "low",
+    soundEnabled: false,
+    sfxVolume: 0.1,
+    musicVolume: 0.2,
+    keyBindings: { cameraReset: "KeyR" }
+  });
   await page.locator("#desktop-settings-close").click();
   await expect(page.locator("#desktop-settings")).toBeFocused();
   if (entry.renderer === "phaser") {
@@ -289,13 +319,91 @@ async function verifyAccessibleDesktopShell(page, entry) {
     await page.mouse.click(probe.point.x, probe.point.y);
     expect(await page.evaluate(() => window.__towerforgeLastPointerCoord)).toEqual(probe.coord);
 
+    await page.locator("#desktop-reset-view").click();
+    const baseZoom = (await viewportSnapshot(page)).zoom;
+    for (let index = 0; index < 24; index += 1) await dispatchWheelToPlayfield(page, probe.point);
+    await expect.poll(async () => (await viewportSnapshot(page)).zoom).toBeCloseTo(baseZoom * 3, 4);
+    const zoomBeforeReload = (await viewportSnapshot(page)).zoom;
+    expect(await readPlayerPreferences(page)).toMatchObject({ cameraZoom: 3 });
+
     await page.reload();
     await page.waitForFunction(() => window.__towerforgeBootOk === true);
     await expect(page.locator("body")).toHaveAttribute("data-quality", "low");
+    await expect(page.locator("#snd")).not.toBeChecked();
+    await expect(page.locator("#sfx-volume")).toHaveValue("0.1");
+    await expect(page.locator("#music-volume")).toHaveValue("0.2");
+    await expect.poll(async () => (await viewportSnapshot(page))?.zoom ?? 0).toBeCloseTo(zoomBeforeReload, 4);
+    await page.locator("#desktop-reset-view").focus();
+    await page.keyboard.press("KeyR");
+    await expect.poll(async () => (await viewportSnapshot(page))?.zoom ?? 0).toBeCloseTo(baseZoom, 4);
+    expect(await readPlayerPreferences(page)).toMatchObject({ cameraZoom: 1, keyBindings: { cameraReset: "KeyR" } });
     await expect.poll(async () => (await readPhaserBackbuffer(page)).drawingBufferPixels).toBeLessThanOrEqual(appliedQuality.pixelBudget);
 
     await page.setViewportSize({ width: entry.width - 240, height: entry.height });
     await expect.poll(async () => (await readPhaserBackbuffer(page)).drawingBufferPixels).toBeLessThanOrEqual(appliedQuality.pixelBudget);
+  }
+}
+
+async function readPlayerPreferences(page) {
+  return page.evaluate(() => {
+    const key = Object.keys(localStorage).find((candidate) => candidate.startsWith("towerforge:preferences:"));
+    return key ? JSON.parse(localStorage.getItem(key)) : null;
+  });
+}
+
+async function verifyRussianDesktopLocale(page) {
+  await expect(page.locator("#start-wave")).toHaveText(/\u043d\u0430\u0447\u0430\u0442\u044c.*\u0432\u043e\u043b\u043d/i);
+  await expect(page.locator("#pause-run")).toHaveText(/\u043f\u0430\u0443\u0437/i);
+  await page.locator("#pause-run").click();
+  await expect(page.locator("#pause-run")).toHaveText(/\u043f\u0440\u043e\u0434\u043e\u043b\u0436/i);
+  await page.locator("#pause-run").click();
+}
+
+async function verifyWaveBoundaryAutosave(page, entry) {
+  await page.locator("#mission-select").selectOption("mission_2");
+  await expect.poll(() => page.evaluate(() => window.__towerforgeInspect().missionId)).toBe("mission_2");
+  const before = await readSessionSlots(page, entry);
+  const beforeLatest = before.head === null ? null : JSON.parse(before.slots[Number(before.head)]);
+  expect(beforeLatest?.checkpoint?.state?.clearedWaveCount ?? 0).toBe(0);
+
+  await page.locator("#speed").evaluate((element) => {
+    element.value = "4";
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await page.locator("#start-wave").click();
+  await expect.poll(
+    () => page.evaluate(() => window.__towerforgeInspect().clearedWaveCount),
+    { timeout: 20_000 }
+  ).toBeGreaterThanOrEqual(1);
+
+  await expect.poll(async () => {
+    const saved = await readSessionSlots(page, entry);
+    if (saved.head === null || saved.slots[Number(saved.head)] === null) return 0;
+    return JSON.parse(saved.slots[Number(saved.head)]).checkpoint.state.clearedWaveCount;
+  }, { timeout: 10_000 }).toBeGreaterThanOrEqual(1);
+}
+
+async function expectCombatViewportCoverage(page, entry) {
+  const ratio = await page.evaluate(() => {
+    const rect = document.querySelector("#playfield").getBoundingClientRect();
+    return rect.width * rect.height / (window.innerWidth * window.innerHeight);
+  });
+  expect(ratio, `${entry.id} playfield coverage`).toBeGreaterThanOrEqual(0.75);
+}
+
+async function expectAllLiveControlsReachable(page) {
+  const selectors = [
+    "#mission-select", "#difficulty-select", "#tower-select", "#start-wave", "#pause-run",
+    "#sell-mode", "#reset-run", "#speed", "#snd", "#sfx-volume", "#music-volume",
+    "#desktop-continue", "#desktop-upgrade", "#desktop-pause", "#desktop-reset-view",
+    "#desktop-settings", "#desktop-fullscreen"
+  ];
+  for (const selector of selectors) {
+    const control = page.locator(selector);
+    await expect(control).toBeVisible();
+    const box = await control.boundingBox();
+    expect(box?.width ?? 0, `${selector} hit-target width`).toBeGreaterThanOrEqual(44);
+    expect(box?.height ?? 0, `${selector} hit-target height`).toBeGreaterThanOrEqual(44);
   }
 }
 
@@ -333,18 +441,22 @@ async function verifyContinueRestore(page, entry) {
   const expected = await page.evaluate(() => {
     const snapshot = window.__towerforgeInspect();
     return {
+      missionId: snapshot.missionId,
       towers: snapshot.towers.map((tower) => ({ id: tower.id, typeId: tower.typeId, coord: tower.coord, level: tower.level })),
       resources: snapshot.resources
     };
   });
 
-  await page.locator("#reset-run").click();
-  await expect(page.locator("#stat-towers")).toHaveText("0");
+  await page.locator("#mission-select").selectOption("mission_1");
+  await expect.poll(() => page.evaluate(() => window.__towerforgeInspect().missionId)).toBe("mission_1");
   await page.locator("#desktop-continue").click();
+  await expect(page.locator("#mission-select")).toHaveValue(expected.missionId);
+  await expect(page.locator("#tower-select option")).not.toHaveCount(0);
   await expect.poll(() => page.evaluate(() => window.__towerforgeInspect().towers.length)).toBe(expected.towers.length);
   expect(await page.evaluate(() => {
     const snapshot = window.__towerforgeInspect();
     return {
+      missionId: snapshot.missionId,
       towers: snapshot.towers.map((tower) => ({ id: tower.id, typeId: tower.typeId, coord: tower.coord, level: tower.level })),
       resources: snapshot.resources
     };
@@ -448,6 +560,27 @@ function authorDesktopTarget(projectDir, entry) {
     inputProfile: "keyboard_mouse"
   };
   fs.writeFileSync(targetsPath, `${JSON.stringify(targets, null, 2)}\n`, "utf8");
+
+  if (entry.session) {
+    const balancePath = path.join(projectDir, "content", "balance.json");
+    const balance = JSON.parse(fs.readFileSync(balancePath, "utf8"));
+    balance.enemies.grunt = {
+      ...balance.enemies.grunt,
+      maxHp: 10_000,
+      speed: 1
+    };
+    balance.missions.mission_2 = {
+      ...structuredClone(balance.missions.mission_1),
+      id: "mission_2",
+      label: "Mission Two"
+    };
+    balance.missions.mission_1.prepTimeUnits = 100_000;
+    balance.waveSets.waves = [
+      { id: "wave_1", label: "Wave 1", groups: [{ enemyId: "grunt", count: 1, spawnInterval: 1, startDelay: 0 }] },
+      { id: "wave_2", label: "Wave 2", groups: [{ enemyId: "grunt", count: 1, spawnInterval: 1, startDelay: 0 }] }
+    ];
+    fs.writeFileSync(balancePath, `${JSON.stringify(balance, null, 2)}\n`, "utf8");
+  }
 }
 
 function respond404(response) {

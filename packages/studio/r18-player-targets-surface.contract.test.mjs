@@ -11,7 +11,8 @@ describe("R18 Studio large-screen player target authoring (RED)", () => {
     expect(html).toContain('id="btn-add-desktop-target"');
     expect(html).toMatch(/btn-add-desktop-target[^>]*>[\s\S]{0,120}(?:Large-screen|desktop)/i);
 
-    expect(app).toMatch(/btn-add-desktop-target[\s\S]{0,2200}formFactor\s*:\s*["']desktop["']/);
+    expect(app).toMatch(/btn-add-desktop-target[\s\S]{0,2200}\/api\/player-targets\/recipe[\s\S]{0,320}desktop_large_screen/);
+    expect(app).toMatch(/const target = recipe\.target/);
     for (const field of ["viewport", "padding", "minZoom", "maxZoom", "initialZoom", "quality", "locale", "inputProfile"]) {
       expect(app).toContain(field);
     }
@@ -21,6 +22,7 @@ describe("R18 Studio large-screen player target authoring (RED)", () => {
 
   it("uses a narrow preview/apply API so desktop promotion cannot rewrite a legacy target", () => {
     expect(server).toMatch(/GET[\s\S]{0,160}\/api\/player-targets/);
+    expect(server).toMatch(/POST[\s\S]{0,200}\/api\/player-targets\/recipe/);
     expect(server).toMatch(/POST[\s\S]{0,200}\/api\/player-targets\/preview/);
     expect(server).toMatch(/POST[\s\S]{0,200}\/api\/player-targets\/apply/);
     expect(server).toMatch(/ifRevision[\s\S]{0,800}(?:backup|rollback)|(?:backup|rollback)[\s\S]{0,800}ifRevision/i);

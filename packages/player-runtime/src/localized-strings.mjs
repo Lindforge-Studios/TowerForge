@@ -4,12 +4,26 @@ const CATALOGS = Object.freeze({
   en: Object.freeze({
     resetView: "Reset view", settings: "Settings", fullscreen: "Fullscreen", continue: "Continue",
     upgrade: "Upgrade", sell: "Sell", startWave: "Start wave", pause: "Pause", resume: "Resume",
+    mission: "Mission", difficulty: "Difficulty", tower: "Tower", reset: "Reset", resetProgress: "Reset progress",
+    outcome: "Outcome", core: "Core", resources: "Resources", wave: "Wave", enemies: "Enemies",
+    towers: "Towers", objectives: "Objectives", targetPriority: "Target priority", speed: "Speed",
+    sound: "Sound", sfx: "SFX", music: "Music", uiScale: "UI scale", quality: "Quality",
+    reducedMotion: "Reduced motion", keyboard: "Keyboard", pauseKey: "Pause key",
+    upgradeKey: "Upgrade key", cameraResetKey: "Reset camera key", speedDownKey: "Slower key",
+    speedUpKey: "Faster key", close: "Close", battleResult: "Battle result",
     saveReady: "Game saved", saveFailed: "Could not save the session", noSave: "No compatible saved session",
     sessionRestored: "Session restored", confirmResetSession: "Delete the current saved session?"
   }),
   ru: Object.freeze({
     resetView: "Сбросить вид", settings: "Настройки", fullscreen: "Полный экран", continue: "Продолжить",
     upgrade: "Улучшить", sell: "Продать", startWave: "Начать волну", pause: "Пауза", resume: "Продолжить",
+    mission: "Миссия", difficulty: "Сложность", tower: "Башня", reset: "Сбросить", resetProgress: "Сбросить прогресс",
+    outcome: "Исход", core: "Ядро", resources: "Ресурсы", wave: "Волна", enemies: "Враги",
+    towers: "Башни", objectives: "Цели", targetPriority: "Приоритет цели", speed: "Скорость",
+    sound: "Звук", sfx: "Эффекты", music: "Музыка", uiScale: "Масштаб интерфейса", quality: "Качество",
+    reducedMotion: "Уменьшить движение", keyboard: "Клавиатура", pauseKey: "Клавиша паузы",
+    upgradeKey: "Клавиша улучшения", cameraResetKey: "Сброс камеры", speedDownKey: "Замедление",
+    speedUpKey: "Ускорение", close: "Закрыть", battleResult: "Результат боя",
     saveReady: "Игра сохранена", saveFailed: "Не удалось сохранить сессию", noSave: "Совместимое сохранение не найдено",
     sessionRestored: "Сессия восстановлена", confirmResetSession: "Удалить текущее сохранение?"
   })

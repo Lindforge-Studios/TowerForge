@@ -1151,6 +1151,31 @@ function validateBuildTargets(buildTargets, err) {
       err("buildTargets", targetId, `targets.${targetId}.webDir`, safeIssue ?? "webDir must name an output directory.");
     }
   }
+  if (schemaVersion === 2) {
+    const outputOwners = new Map();
+    for (const [targetId, target] of Object.entries(buildTargets.targets ?? {})) {
+      if (target?.platform !== "web") continue;
+      const dir = target.webDir ?? target.outputDir ?? "dist";
+      if (validateSafeAssetPath(dir, `targets.${targetId}.webDir`) || dir === "." || dir === "") continue;
+      const canonicalDir = String(dir)
+        .split(/[\\/]+/)
+        .filter((part) => part && part !== ".")
+        .join("/")
+        .normalize("NFC")
+        .toLowerCase();
+      const existingOwner = outputOwners.get(canonicalDir);
+      if (existingOwner) {
+        err(
+          "buildTargets",
+          targetId,
+          `targets.${targetId}.webDir`,
+          `webDir is already used by build target "${existingOwner}"; output directories must be unique.`
+        );
+      } else {
+        outputOwners.set(canonicalDir, targetId);
+      }
+    }
+  }
 }
 
 function validateMaps(maps, err) {

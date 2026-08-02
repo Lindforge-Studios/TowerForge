@@ -567,16 +567,16 @@ function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "
   ${remixEnabled ? '<a class="towerforge-remix" data-towerforge-remix href="./source.tdpack" download>Remix this project</a>' : ""}
   ${monetizationMarkup.top}
   <main id="app">
-    ${largeScreenPlayer ? '<section id="desktop-action-bar" class="desktop-action-bar" aria-label="Player actions"><button id="desktop-continue" type="button" aria-label="Continue saved game">Continue</button><button id="desktop-upgrade" type="button" aria-label="Upgrade selected tower">Upgrade</button><button id="desktop-pause" type="button" aria-label="Pause game">Pause</button><button id="desktop-reset-view" type="button" aria-label="Reset camera view">Reset view</button><button id="desktop-settings" type="button" aria-label="Open settings">Settings</button><button id="desktop-fullscreen" type="button" aria-label="Toggle fullscreen">Fullscreen</button></section>' : ""}
+    ${largeScreenPlayer ? '<section id="desktop-action-bar" class="desktop-action-bar" aria-label="Player actions"><button id="desktop-continue" type="button" aria-label="Continue saved game">Continue</button><button id="desktop-upgrade" type="button" aria-label="Upgrade selected tower">Upgrade</button><button id="desktop-pause" type="button" aria-label="Pause game">Pause</button><button id="desktop-reset-view" type="button" aria-label="Reset camera view">Reset view</button><button id="desktop-settings" type="button" aria-label="Open settings">Settings</button><button id="desktop-fullscreen" type="button" aria-label="Toggle fullscreen" aria-pressed="false">Fullscreen</button></section>' : ""}
     <header class="hud">
       <div>
         <h1>${title}</h1>
         <p id="mission-caption"></p>
       </div>
       <div class="controls">
-        <label>Mission <select id="mission-select"></select></label>
-        <label>Difficulty <select id="difficulty-select"></select></label>
-        <label>Tower <select id="tower-select"></select></label>
+        <label><span id="label-mission">Mission</span><select id="mission-select"></select></label>
+        <label><span id="label-difficulty">Difficulty</span><select id="difficulty-select"></select></label>
+        <label><span id="label-tower">Tower</span><select id="tower-select"></select></label>
         <button id="start-wave">Start wave</button>
         <button id="pause-run" aria-pressed="false" title="Pause or resume (Space)">Pause</button>
         <button id="sell-mode" aria-pressed="false" title="Sell a tower">Sell</button>
@@ -587,21 +587,21 @@ function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "
     <section class="play-shell">
       ${playfield}
       <aside class="panel">
-        <div class="stat"><span>Outcome</span><strong id="stat-outcome" aria-live="polite">playing</strong></div>
-        <div class="stat"><span>Core</span><strong id="stat-core">-</strong></div>
-        <div class="stat"><span>Resources</span><strong id="stat-resources">-</strong></div>
-        <div class="stat"><span>Wave</span><strong id="stat-wave">-</strong></div>
-        <div class="stat"><span>Enemies</span><strong id="stat-enemies">-</strong></div>
-        <div class="stat"><span>Towers</span><strong id="stat-towers">-</strong></div>
-        <div class="stat"><span>Objectives</span><strong id="stat-objectives">-</strong></div>
-        <label class="targeting">Target priority <select id="target-mode" disabled>
+        <div class="stat"><span id="label-outcome">Outcome</span><strong id="stat-outcome" aria-live="polite">playing</strong></div>
+        <div class="stat"><span id="label-core">Core</span><strong id="stat-core">-</strong></div>
+        <div class="stat"><span id="label-resources">Resources</span><strong id="stat-resources">-</strong></div>
+        <div class="stat"><span id="label-wave">Wave</span><strong id="stat-wave">-</strong></div>
+        <div class="stat"><span id="label-enemies">Enemies</span><strong id="stat-enemies">-</strong></div>
+        <div class="stat"><span id="label-towers">Towers</span><strong id="stat-towers">-</strong></div>
+        <div class="stat"><span id="label-objectives">Objectives</span><strong id="stat-objectives">-</strong></div>
+        <label class="targeting"><span id="label-target-priority">Target priority</span><select id="target-mode" disabled>
           <option value="first">First</option><option value="last">Last</option><option value="closest">Closest</option>
           <option value="furthest">Furthest</option><option value="strongest">Strongest</option><option value="weakest">Weakest</option>
         </select></label>
-        <label class="speed">Speed <input id="speed" type="range" min="0" max="4" step="0.25" value="1"><span id="speed-label">1x</span></label>
-        <label class="speed">Sound <input id="snd" type="checkbox" checked style="width:auto;justify-self:start"></label>
-        <label class="speed">SFX <input id="sfx-volume" type="range" min="0" max="1" step="0.05" value="0.5"><span id="sfx-volume-label">50%</span></label>
-        <label class="speed">Music <input id="music-volume" type="range" min="0" max="1" step="0.05" value="0.35"><span id="music-volume-label">35%</span></label>
+        <label class="speed"><span id="label-speed">Speed</span><input id="speed" type="range" min="0" max="4" step="0.25" value="1"><span id="speed-label">1x</span></label>
+        <label class="speed"><span id="label-sound">Sound</span><input id="snd" type="checkbox" checked style="justify-self:start"></label>
+        <label class="speed"><span id="label-sfx">SFX</span><input id="sfx-volume" type="range" min="0" max="1" step="0.05" value="0.5"><span id="sfx-volume-label">50%</span></label>
+        <label class="speed"><span id="label-music">Music</span><input id="music-volume" type="range" min="0" max="1" step="0.05" value="0.35"><span id="music-volume-label">35%</span></label>
         <div id="ability-bar" class="ability-bar"></div>
         <section id="roguelite-status" class="roguelite-status" aria-label="Tower synergies" hidden></section>
         <section id="wave-draft" class="roguelite-status" aria-label="Wave draft" hidden></section>
@@ -629,7 +629,7 @@ function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "
       </aside>
     </section>
   </main>
-  ${largeScreenPlayer ? '<section id="desktop-settings-dialog" class="desktop-dialog" role="dialog" aria-modal="true" aria-labelledby="desktop-settings-title" hidden><div class="desktop-dialog-card"><h2 id="desktop-settings-title">Settings</h2><label>UI scale <input id="desktop-ui-scale" type="range" min="0.75" max="2" step="0.05" value="1"></label><label>Quality <select id="desktop-quality"><option value="auto">Auto</option><option value="low">Low</option><option value="balanced">Balanced</option><option value="high">High</option></select></label><label><input id="desktop-reduced-motion" type="checkbox"> Reduced motion</label><button id="desktop-settings-close" type="button">Close</button></div></section><section id="desktop-result-dialog" class="desktop-dialog" role="dialog" aria-modal="true" aria-label="Battle result" hidden><div class="desktop-dialog-card"><h2 id="desktop-result-title">Battle result</h2><p id="desktop-result-copy"></p><button id="desktop-result-close" type="button">Close</button></div></section>' : ""}
+  ${largeScreenPlayer ? '<section id="desktop-settings-dialog" class="desktop-dialog" role="dialog" aria-modal="true" aria-labelledby="desktop-settings-title" hidden><div class="desktop-dialog-card"><h2 id="desktop-settings-title">Settings</h2><label><span id="label-ui-scale">UI scale</span><input id="desktop-ui-scale" type="range" min="0.75" max="2" step="0.05" value="1"></label><label><span id="label-quality">Quality</span><select id="desktop-quality"><option value="auto">Auto</option><option value="low">Low</option><option value="balanced">Balanced</option><option value="high">High</option></select></label><label><input id="desktop-reduced-motion" type="checkbox"><span id="label-reduced-motion">Reduced motion</span></label><fieldset id="desktop-key-bindings"><legend id="label-keyboard">Keyboard</legend><label><span id="label-key-pause">Pause key</span><input data-key-binding="pause" readonly></label><label><span id="label-key-upgrade">Upgrade key</span><input data-key-binding="upgradeTower" readonly></label><label><span id="label-key-camera-reset">Reset camera key</span><input data-key-binding="cameraReset" readonly></label><label><span id="label-key-speed-down">Slower key</span><input data-key-binding="speedDown" readonly></label><label><span id="label-key-speed-up">Faster key</span><input data-key-binding="speedUp" readonly></label></fieldset><button id="desktop-settings-close" type="button">Close</button></div></section><section id="desktop-result-dialog" class="desktop-dialog" role="dialog" aria-modal="true" aria-label="Battle result" hidden><div class="desktop-dialog-card"><h2 id="desktop-result-title">Battle result</h2><p id="desktop-result-copy"></p><button id="desktop-result-close" type="button">Close</button></div></section>' : ""}
   ${monetizationMarkup.bottom}
   ${monetizationMarkup.betweenWaves}
   <section id="boot-error" class="boot-error" role="alertdialog" aria-modal="true" aria-labelledby="boot-error-title" hidden>
@@ -702,7 +702,32 @@ function bootRecoveryTemplate(manifest = {}, target = {}, storyComics = {}) {
 function cssTemplate(target, hostMonetization = null) {
   const bg = target.backgroundColor ?? "#111111";
   const monetizationStyles = hostMonetization ? `.host-monetization{position:relative;z-index:5;min-height:0}.host-monetization[data-surface="top"],.host-monetization[data-surface="bottom"]{display:grid;gap:6px;padding:6px 16px;background:var(--surface);border-color:var(--border)}.host-monetization[data-surface="top"]{border-bottom:1px solid var(--border)}.host-monetization[data-surface="bottom"]{border-top:1px solid var(--border)}.host-monetization[data-surface="menu"]{display:grid;gap:6px}.host-monetization[data-surface="between_waves"]{position:fixed;inset:0;z-index:30;pointer-events:none}.host-monetization-placement:empty{display:none}` : "";
-  const desktopStyles = target.formFactor === "desktop" || target.formFactor === "responsive" ? `.desktop-action-bar{position:relative;z-index:8;flex:0 0 auto;align-self:center;width:min(760px,calc(100% - 16px));margin:calc(8px + env(safe-area-inset-top)) auto 0;display:flex;flex-wrap:wrap;justify-content:center;gap:6px;padding:6px;border:1px solid var(--border);border-radius:10px;background:#111611e8;box-shadow:0 8px 28px #0006}.desktop-action-bar button{min-width:var(--player-action-min-size);min-height:var(--player-action-min-size)}.desktop-dialog{position:fixed;inset:0;z-index:40;display:grid;place-items:center;padding:24px;background:#050705cc}.desktop-dialog[hidden]{display:none}.desktop-dialog-card{width:min(440px,100%);display:grid;gap:16px;padding:24px;border:1px solid var(--border);border-radius:12px;background:var(--surface);box-shadow:0 20px 70px #000a}.desktop-dialog-card h2{margin:0}.desktop-dialog-card label{display:grid;gap:8px}.desktop-dialog-card button{min-height:var(--player-action-min-size)}body[data-towerforge-player-shell="desktop"] .hud{padding-block:8px}body[data-towerforge-player-shell="desktop"] .hud h1{font-size:15px}body[data-towerforge-player-shell="desktop"] .controls{gap:6px}body[data-towerforge-player-shell="desktop"] .controls label{font-size:11px}body[data-towerforge-player-shell="desktop"] .play-shell{grid-template-columns:minmax(0,1fr) minmax(240px,20vw)}body[data-towerforge-player-shell="desktop"] .panel{padding:10px;gap:7px}body[data-motion="reduced"] *{animation-duration:.001ms!important;transition-duration:.001ms!important}` : "";
+  const desktopStyles = target.formFactor === "desktop" || target.formFactor === "responsive" ? `
+body[data-towerforge-player-shell="desktop"] #app{position:relative;isolation:isolate}
+body[data-towerforge-player-shell="desktop"] .play-shell{position:relative;display:block;min-height:100vh;height:100vh}
+body[data-towerforge-player-shell="desktop"] #playfield{position:absolute;inset:0;width:100%;height:100%}
+body[data-towerforge-player-shell="desktop"] .hud{position:fixed;z-index:8;inset:calc(8px + env(safe-area-inset-top)) 8px auto;min-height:52px;display:flex;gap:8px;padding:4px 6px;border:1px solid var(--border);border-radius:10px;background:#111611e8;box-shadow:0 8px 28px #0006}
+body[data-towerforge-player-shell="desktop"] .hud h1{display:none}
+body[data-towerforge-player-shell="desktop"] .hud p{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
+body[data-towerforge-player-shell="desktop"] .controls{min-width:0;margin-left:auto;display:flex;flex-wrap:nowrap;align-items:center;gap:4px;overflow-x:auto}
+body[data-towerforge-player-shell="desktop"] .controls label{display:flex;flex-direction:row;align-items:center;gap:4px;font-size:11px;white-space:nowrap}
+body[data-towerforge-player-shell="desktop"] .controls select{max-width:128px}
+.desktop-action-bar{position:fixed;z-index:9;left:50%;bottom:calc(8px + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(760px,calc(100% - 16px));display:flex;flex-wrap:nowrap;justify-content:center;gap:6px;padding:6px;overflow-x:auto;border:1px solid var(--border);border-radius:10px;background:#111611e8;box-shadow:0 8px 28px #0006}
+body[data-towerforge-player-shell="desktop"] .panel{position:fixed;z-index:7;top:70px;right:8px;width:min(240px,24vw);max-height:48vh;padding:8px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:4px;overflow:auto;border:1px solid var(--border);border-radius:10px;background:#191d19e8;box-shadow:0 8px 28px #0006}
+body[data-towerforge-player-shell="desktop"] .panel>.stat{min-width:0;padding:3px 0;font-size:11px}
+body[data-towerforge-player-shell="desktop"] .panel>.stat strong{overflow:hidden;text-overflow:ellipsis}
+body[data-towerforge-player-shell="desktop"] .panel>.targeting,body[data-towerforge-player-shell="desktop"] .panel>.speed,body[data-towerforge-player-shell="desktop"] .panel>#message,body[data-towerforge-player-shell="desktop"] .panel>section,body[data-towerforge-player-shell="desktop"] .panel>.ability-bar{grid-column:1/-1}
+body[data-towerforge-player-shell="desktop"] button,body[data-towerforge-player-shell="desktop"] select,body[data-towerforge-player-shell="desktop"] input[type="range"],body[data-towerforge-player-shell="desktop"] input[data-key-binding]{min-height:var(--player-action-min-size)}
+body[data-towerforge-player-shell="desktop"] input[type="checkbox"]{width:var(--player-action-min-size);height:var(--player-action-min-size);min-width:var(--player-action-min-size);min-height:var(--player-action-min-size)}
+.desktop-action-bar button{min-width:var(--player-action-min-size);min-height:var(--player-action-min-size)}
+.desktop-dialog{position:fixed;inset:0;z-index:40;display:grid;place-items:center;padding:24px;background:#050705cc}
+.desktop-dialog[hidden]{display:none}
+.desktop-dialog-card{width:min(520px,100%);max-height:90vh;overflow:auto;display:grid;gap:16px;padding:24px;border:1px solid var(--border);border-radius:12px;background:var(--surface);box-shadow:0 20px 70px #000a}
+.desktop-dialog-card h2{margin:0}.desktop-dialog-card label{display:grid;gap:8px}.desktop-dialog-card button{min-height:var(--player-action-min-size)}
+#desktop-key-bindings{display:grid;grid-template-columns:1fr 1fr;gap:8px;border:1px solid var(--border);border-radius:8px;padding:10px}
+#desktop-key-bindings legend{color:var(--muted)}#desktop-key-bindings input{width:100%;background:#111611;color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px}
+body[data-motion="reduced"] *{animation-duration:.001ms!important;transition-duration:.001ms!important}
+` : "";
   return `:root{--bg:${bg};--surface:#191b19;--panel:#222620;--border:#364036;--text:#eff3ea;--muted:#9ca895;--accent:#8ac783;--path:#6b5540;--danger:#df6a59;--water:#427b88;--player-action-min-size:44px;--font:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
 *{box-sizing:border-box}html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:var(--font)}
 /* Native-app touch hardening (ported from a shipped Capacitor game): no pinch-zoom/pull-to-refresh,
@@ -1175,7 +1200,10 @@ let cameraPanPoint = null;
 canvas.addEventListener("wheel", (event) => {
   if (desktopCameraInputBlocked()) return;
   event.preventDefault();
-  desktopViewportActions.cameraZoom({ x: event.clientX, y: event.clientY }, event.deltaY > 0 ? 0.9 : 1.1);
+  playerActionRegistry.invoke("cameraZoom", {
+    point: { x: event.clientX, y: event.clientY },
+    factor: event.deltaY > 0 ? 0.9 : 1.1
+  });
 }, { passive: false });
 canvas.addEventListener("pointerdown", (event) => {
   if (event.button !== 1 || desktopCameraInputBlocked()) return;
@@ -1190,6 +1218,11 @@ for (const type of ["pointerup", "pointercancel", "pointerleave"]) canvas.addEve
   return `
 ${cameraBridge}
 globalThis.__towerforgeViewportSnapshot = () => desktopViewportActions.cameraSnapshot();
+function desktopCameraCenterPoint() {
+  ${rendererKind === "phaser"
+    ? 'const scene = desktopScene(); return { x: (scene?.scale?.width ?? 1) / 2, y: (scene?.scale?.height ?? 1) / 2 };'
+    : 'const rect = $("playfield").getBoundingClientRect(); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };'}
+}
 function desktopCameraInputBlocked() {
   const active = document.activeElement;
   const tag = active?.tagName;
@@ -1208,17 +1241,72 @@ try {
   const playerPreferencesRaw = localStorage.getItem(playerPreferencesKey);
   if (playerPreferencesRaw) playerPreferences = parsePlayerPreferencesV1(playerPreferencesRaw);
 } catch {}
-const playerStrings = createPlayerStrings({ locale: project.buildTarget.locale || playerPreferences.locale, navigatorLanguage: navigator.language });
+if (playerPreferences.fullscreen && !document.fullscreenElement) {
+  playerPreferences = parsePlayerPreferencesV1(serializePlayerPreferencesV1({ ...playerPreferences, fullscreen: false }));
+}
+const playerStrings = createPlayerStrings({
+  locale: project.buildTarget.locale && project.buildTarget.locale !== "auto"
+    ? project.buildTarget.locale
+    : playerPreferences.locale,
+  navigatorLanguage: navigator.language
+});
 const desktopLabels = { "desktop-continue": "continue", "desktop-upgrade": "upgrade", "desktop-pause": "pause", "desktop-reset-view": "resetView", "desktop-settings": "settings", "desktop-fullscreen": "fullscreen" };
 for (const [id, labelId] of Object.entries(desktopLabels)) { const element = $(id); if (element) element.textContent = playerStrings.text(labelId); }
+const desktopShellLabels = Object.freeze({
+  "label-mission": "mission", "label-difficulty": "difficulty", "label-tower": "tower",
+  "start-wave": "startWave", "pause-run": "pause", "sell-mode": "sell", "reset-run": "reset",
+  "reset-progress": "resetProgress", "label-outcome": "outcome", "label-core": "core",
+  "label-resources": "resources", "label-wave": "wave", "label-enemies": "enemies",
+  "label-towers": "towers", "label-objectives": "objectives", "label-target-priority": "targetPriority",
+  "label-speed": "speed", "label-sound": "sound", "label-sfx": "sfx", "label-music": "music",
+  "desktop-settings-title": "settings", "label-ui-scale": "uiScale", "label-quality": "quality",
+  "label-reduced-motion": "reducedMotion", "label-keyboard": "keyboard", "label-key-pause": "pauseKey",
+  "label-key-upgrade": "upgradeKey", "label-key-camera-reset": "cameraResetKey",
+  "label-key-speed-down": "speedDownKey", "label-key-speed-up": "speedUpKey",
+  "desktop-settings-close": "close", "desktop-result-title": "battleResult", "desktop-result-close": "close"
+});
+for (const [id, labelId] of Object.entries(desktopShellLabels)) {
+  const element = $(id);
+  if (element) element.textContent = playerStrings.text(labelId);
+}
 
-function persistPlayerPreferences(next) {
+const defaultDesktopKeyBindings = Object.freeze({
+  pause: "Space", upgradeTower: "KeyU", cameraReset: "Digit0",
+  speedDown: "BracketLeft", speedUp: "BracketRight"
+});
+function playerKeyCode(actionId) {
+  return playerPreferences.keyBindings[actionId] || defaultDesktopKeyBindings[actionId] || "";
+}
+function matchesPlayerKeyBinding(actionId, event) {
+  const keyBindings = playerPreferences.keyBindings;
+  return (keyBindings[actionId] || defaultDesktopKeyBindings[actionId] || "") === event.code;
+}
+function syncDesktopPreferenceControls() {
+  $("desktop-ui-scale").value = String(playerPreferences.uiScale);
+  $("desktop-quality").value = playerPreferences.quality;
+  $("desktop-reduced-motion").checked = playerPreferences.motion === "reduced";
+  $("snd").checked = playerPreferences.soundEnabled;
+  $("sfx-volume").value = String(playerPreferences.sfxVolume);
+  $("music-volume").value = String(playerPreferences.musicVolume);
+  for (const input of document.querySelectorAll("[data-key-binding]")) {
+    input.value = playerKeyCode(input.dataset.keyBinding);
+  }
+  $("desktop-fullscreen")?.setAttribute("aria-pressed", String(Boolean(document.fullscreenElement)));
+  syncAudioSettings();
+}
+
+function storePlayerPreferences(next) {
   playerPreferences = parsePlayerPreferencesV1(serializePlayerPreferencesV1(next));
   try { localStorage.setItem(playerPreferencesKey, serializePlayerPreferencesV1(playerPreferences)); } catch {}
+  return playerPreferences;
+}
+function persistPlayerPreferences(next) {
+  storePlayerPreferences(next);
   document.documentElement.style.fontSize = String(playerPreferences.uiScale * 100) + "%";
   document.body.dataset.quality = playerPreferences.quality;
   document.body.dataset.motion = playerPreferences.motion;
   applyPlayerPresentationQuality(playerPreferences.quality);
+  syncDesktopPreferenceControls();
 }
 persistPlayerPreferences(playerPreferences);
 
@@ -1261,6 +1349,11 @@ function scheduleDesktopAutosave() {
   clearTimeout(desktopAutosaveTimer);
   desktopAutosaveTimer = setTimeout(() => { void saveDesktopSession(); }, 100);
 }
+function scheduleDesktopAutosaveForEvents(events) {
+  if (Array.isArray(events) && events.some(event => event?.type === "waveCleared")) {
+    scheduleDesktopAutosave();
+  }
+}
 document.addEventListener("visibilitychange", () => { if (document.hidden) void saveDesktopSession(); });
 window.addEventListener("pagehide", () => { void saveDesktopSession(); });
 
@@ -1291,8 +1384,60 @@ function dispatchRegisteredCommand(actionId, payload) {
 }
 async function continueDesktopSession() {
   const result = playerSessionStore ? await playerSessionStore.loadLatest() : { code: "session_unavailable" };
+  if (result.code === "session_loaded") syncMissionDependentPlayerUiAfterRestore();
   message = result.code === "session_loaded" ? playerStrings.text("sessionRestored") : playerStrings.text("noSave");
   return result;
+}
+function syncMissionDependentPlayerUiAfterRestore() {
+  towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0] || "";
+  refreshMissionOptions();
+  initDifficultySelector();
+  initTowerSelector();
+  initAbilityBar();
+  syncKeyboardCursor(null);
+  setSellMode(false);
+  clearNavigationOverlay();
+  applyBattleBackground();
+  selectMissionMusic();
+  renderMetaPanel();
+}
+function changeDesktopSpeed(delta) {
+  const control = $("speed");
+  const next = Math.min(Number(control.max), Math.max(Number(control.min), Number(control.value) + delta));
+  control.value = String(next);
+  control.dispatchEvent(new Event("input", { bubbles: true }));
+  return Object.freeze({ ok: true, speed: next });
+}
+function selectDesktopBuildSlot(index) {
+  const select = $("tower-select");
+  const option = select?.options?.[index];
+  if (!option || option.disabled) return invalidPlayerActionPayload("selectBuildSlot");
+  select.value = option.value;
+  towerId = option.value;
+  refreshNavigationOverlay();
+  return Object.freeze({ ok: true, towerId, index });
+}
+function selectDesktopAbilitySlot(index) {
+  const button = document.querySelectorAll("#ability-bar button")[index];
+  if (!button || button.disabled) return invalidPlayerActionPayload("selectAbilitySlot");
+  button.click();
+  return Object.freeze({ ok: true, abilityId: button.dataset.aid, index });
+}
+function persistDesktopCameraZoom(previous, result) {
+  if (!previous || !result || !Number.isFinite(previous.zoom) || previous.zoom <= 0 || !Number.isFinite(result.zoom)) return result;
+  storePlayerPreferences({
+    ...playerPreferences,
+    cameraZoom: Number(Math.min(8, Math.max(0.1, playerPreferences.cameraZoom * (result.zoom / previous.zoom))).toFixed(6))
+  });
+  return result;
+}
+function applyStoredDesktopCameraZoom(attempt = 0) {
+  if (playerPreferences.cameraZoom === 1) return;
+  if (!desktopViewportActions.cameraSnapshot()) {
+    if (attempt < 120) requestAnimationFrame(() => applyStoredDesktopCameraZoom(attempt + 1));
+    return;
+  }
+  desktopViewportActions.cameraZoom(desktopCameraCenterPoint(), playerPreferences.cameraZoom);
 }
 
 const playerActionRegistry = createPlayerActionRegistry({
@@ -1301,8 +1446,19 @@ const playerActionRegistry = createPlayerActionRegistry({
     "continueSession": () => continueDesktopSession(),
     "pause": () => setPaused(Number($("speed").value) > 0),
     "cameraPan": (payload) => desktopViewportActions.cameraPan(payload),
-    "cameraZoom": (payload) => desktopViewportActions.cameraZoom(payload.point, payload.factor),
-    "cameraReset": () => desktopViewportActions.cameraReset(),
+    "cameraZoom": (payload) => {
+      const previous = desktopViewportActions.cameraSnapshot();
+      return persistDesktopCameraZoom(previous, desktopViewportActions.cameraZoom(payload.point, payload.factor));
+    },
+    "cameraReset": () => {
+      const result = desktopViewportActions.cameraReset();
+      if (result) storePlayerPreferences({ ...playerPreferences, cameraZoom: 1 });
+      return result;
+    },
+    "selectBuildSlot": (payload) => selectDesktopBuildSlot(payload.index),
+    "selectAbilitySlot": (payload) => selectDesktopAbilitySlot(payload.index),
+    "speedDown": () => changeDesktopSpeed(-0.25),
+    "speedUp": () => changeDesktopSpeed(0.25),
     "fullscreen": async () => {
       try {
         if (document.fullscreenElement) await document.exitFullscreen();
@@ -1342,12 +1498,38 @@ $("desktop-reset-view")?.addEventListener("click", () => playerActionRegistry.in
 $("desktop-fullscreen")?.addEventListener("click", () => playerActionRegistry.invoke("fullscreen"));
 $("desktop-settings")?.addEventListener("click", () => playerActionRegistry.invoke("openSettings"));
 $("desktop-settings-close")?.addEventListener("click", closeDesktopSettings);
+document.addEventListener("fullscreenchange", () => {
+  storePlayerPreferences({ ...playerPreferences, fullscreen: Boolean(document.fullscreenElement) });
+  $("desktop-fullscreen")?.setAttribute("aria-pressed", String(Boolean(document.fullscreenElement)));
+});
 for (const id of ["desktop-ui-scale", "desktop-quality", "desktop-reduced-motion"]) $(id)?.addEventListener("change", () => persistPlayerPreferences({
   ...playerPreferences,
   uiScale: Number($("desktop-ui-scale").value),
   quality: $("desktop-quality").value,
   motion: $("desktop-reduced-motion").checked ? "reduced" : "auto"
 }));
+for (const input of document.querySelectorAll("[data-key-binding]")) {
+  input.addEventListener("keydown", (event) => {
+    if (!event.code || ["Tab", "Escape"].includes(event.code)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    storePlayerPreferences({
+      ...playerPreferences,
+      keyBindings: { ...playerPreferences.keyBindings, [input.dataset.keyBinding]: event.code }
+    });
+    input.value = event.code;
+  });
+}
+function persistDesktopAudioPreferences() {
+  storePlayerPreferences({
+    ...playerPreferences,
+    soundEnabled: $("snd").checked,
+    sfxVolume: Number($("sfx-volume").value),
+    musicVolume: Number($("music-volume").value)
+  });
+  syncAudioSettings();
+  if (playerPreferences.soundEnabled) audio.resume();
+}
 
 ${pointerControls}
 document.addEventListener("keydown", (event) => {
@@ -1356,14 +1538,23 @@ document.addEventListener("keydown", (event) => {
   if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;
   if (desktopCameraInputBlocked()) return;
   const cameraPan = { KeyA: [-32, 0], KeyD: [32, 0], KeyW: [0, -32], KeyS: [0, 32] };
-  if (cameraPan[event.code]) { event.preventDefault(); playerActionRegistry.invoke("cameraPan", { x: cameraPan[event.code][0], y: cameraPan[event.code][1] }); return; }
+  if (cameraPan[event.code]) { event.preventDefault(); event.stopImmediatePropagation(); playerActionRegistry.invoke("cameraPan", { x: cameraPan[event.code][0], y: cameraPan[event.code][1] }); return; }
   if (["Equal", "NumpadAdd", "Minus", "NumpadSubtract"].includes(event.code)) {
-    event.preventDefault(); const rect = $("playfield").getBoundingClientRect(); playerActionRegistry.invoke("cameraZoom", { point: { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }, factor: event.code === "Equal" || event.code === "NumpadAdd" ? 1.1 : 0.9 }); return;
+    event.preventDefault(); event.stopImmediatePropagation(); playerActionRegistry.invoke("cameraZoom", { point: desktopCameraCenterPoint(), factor: event.code === "Equal" || event.code === "NumpadAdd" ? 1.1 : 0.9 }); return;
   }
-  if (event.code === "Digit0") { event.preventDefault(); playerActionRegistry.invoke("cameraReset"); }
-  else if (event.code === "KeyU" && selectedTowerId) { event.preventDefault(); playerActionRegistry.invoke("upgradeTower"); }
+  if (matchesPlayerKeyBinding("cameraReset", event)) { event.preventDefault(); event.stopImmediatePropagation(); playerActionRegistry.invoke("cameraReset"); return; }
+  if (matchesPlayerKeyBinding("upgradeTower", event) && selectedTowerId) { event.preventDefault(); event.stopImmediatePropagation(); playerActionRegistry.invoke("upgradeTower"); return; }
+  if (matchesPlayerKeyBinding("speedDown", event)) { event.preventDefault(); event.stopImmediatePropagation(); playerActionRegistry.invoke("speedDown"); return; }
+  if (matchesPlayerKeyBinding("speedUp", event)) { event.preventDefault(); event.stopImmediatePropagation(); playerActionRegistry.invoke("speedUp"); return; }
+  const buildCodes = ["Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6", "Digit7", "Digit8", "Digit9"];
+  const buildIndex = buildCodes.indexOf(event.code);
+  if (buildIndex >= 0) { event.preventDefault(); event.stopImmediatePropagation(); playerActionRegistry.invoke("selectBuildSlot", { index: buildIndex }); return; }
+  const abilityCodes = ["KeyQ", "KeyE", "KeyR", "KeyF"];
+  const abilityIndex = abilityCodes.indexOf(event.code);
+  if (abilityIndex >= 0) { event.preventDefault(); event.stopImmediatePropagation(); playerActionRegistry.invoke("selectAbilitySlot", { index: abilityIndex }); }
 });
 
+requestAnimationFrame(() => applyStoredDesktopCameraZoom());
 const desktopLaunchAction = new URL(location.href).searchParams.get("action");
 if (desktopLaunchAction === "continue") playerActionRegistry.invoke("continueSession");
 globalThis.__towerforgePlayerActions = playerActionRegistry;
@@ -1476,15 +1667,15 @@ document.addEventListener("visibilitychange", () => {
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker.register("./offline-sw.js").catch(() => {}));
 }
-$("start-wave").addEventListener("click", () => { audio.resume(); ${largeScreenPlayer ? 'playerActionRegistry.invoke("startWave");' : "report(game.startNextWave());"} });
+$("start-wave").addEventListener("click", () => { ${largeScreenPlayer ? 'if (playerPreferences.soundEnabled) audio.resume(); playerActionRegistry.invoke("startWave");' : 'audio.resume(); report(game.startNextWave());'} });
 $("pause-run").addEventListener("click", () => ${largeScreenPlayer ? 'playerActionRegistry.invoke("pause")' : 'setPaused(Number($("speed").value) > 0)'});
 $("sell-mode").addEventListener("click", () => setSellMode(targetingMode.kind !== "sell"));
 $("reset-run").addEventListener("click", () => { game.reset(); ${largeScreenPlayer ? "resetPlayerSimulationClock();" : ""} renderer.resetProceduralJuicePresentation(); audio.disposeProceduralVoices(); victoryRewarded = false; selectedTowerId = null; setTargetingMode({ kind: "build" }); initAbilityBar(); clearNavigationOverlay(); message = "Run reset."; });
 $("reset-progress")?.addEventListener("click", resetPlayerProgress);
 $("speed").addEventListener("input", syncSpeedUi);
-$("snd").addEventListener("change", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
-$("sfx-volume").addEventListener("input", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
-$("music-volume").addEventListener("input", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
+$("snd").addEventListener("change", () => { ${largeScreenPlayer ? "persistDesktopAudioPreferences();" : 'syncAudioSettings(); if ($("snd").checked) audio.resume();'} });
+$("sfx-volume").addEventListener("input", () => { ${largeScreenPlayer ? "persistDesktopAudioPreferences();" : 'syncAudioSettings(); if ($("snd").checked) audio.resume();'} });
+$("music-volume").addEventListener("input", () => { ${largeScreenPlayer ? "persistDesktopAudioPreferences();" : 'syncAudioSettings(); if ($("snd").checked) audio.resume();'} });
 $("target-mode").addEventListener("change", () => {
   if (!selectedTowerId) return;
   ${largeScreenPlayer ? 'playerActionRegistry.invoke("setTargetMode", { mode: $("target-mode").value });' : 'report(game.setTowerTargetMode(selectedTowerId, $("target-mode").value));'}
@@ -1495,7 +1686,7 @@ ${largeScreenPlayer ? desktopPlayerRuntimeTemplate("canvas") : ""}
 document.addEventListener("keydown", (event) => {
   const tag = event.target?.tagName;
   if (tag === "BUTTON" || tag === "A" || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;
-  if (event.code === "Space") { event.preventDefault(); ${largeScreenPlayer ? 'playerActionRegistry.invoke("pause");' : 'setPaused(Number($("speed").value) > 0);'} return; }
+  if (event.code === ${largeScreenPlayer ? 'playerKeyCode("pause")' : '"Space"'}) { event.preventDefault(); ${largeScreenPlayer ? 'playerActionRegistry.invoke("pause");' : 'setPaused(Number($("speed").value) > 0);'} return; }
   if (document.activeElement !== canvas) return;
   if (event.code === "Digit1") { event.preventDefault(); armCurrentHeroAbility(); return; }
   const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
@@ -1812,7 +2003,7 @@ function syncSpeedUi() {
   const speed = Number($("speed").value) || 0;
   if (speed > 0) lastRunningSpeed = speed;
   $("speed-label").textContent = speed + "x";
-  $("pause-run").textContent = speed > 0 ? "Pause" : "Resume";
+  $("pause-run").textContent = speed > 0 ? ${largeScreenPlayer ? 'playerStrings.text("pause")' : '"Pause"'} : ${largeScreenPlayer ? 'playerStrings.text("resume")' : '"Resume"'};
   $("pause-run").setAttribute("aria-pressed", String(speed === 0));
 }
 
@@ -2321,6 +2512,7 @@ function loop(now) {
   }`}
   syncNavigationOverlaySnapshot(snap);
   ${largeScreenPlayer ? "" : "const events = ticked ? pending.concat(snap.lastEvents) : pending;"}
+  ${largeScreenPlayer ? "scheduleDesktopAutosaveForEvents(events);" : ""}
   if (events.length > 0) lastObservedEvents = events;
   game.lastEvents = []; // consumed this frame — clear so nothing replays on the next frame
   draw(snap, events);
@@ -2871,15 +3063,15 @@ initAbilityBar();
 renderMetaPanel();
 setupCampaignRunControls();
 updateCampaignRun();
-$("start-wave").addEventListener("click", () => { audio.resume(); ${largeScreenPlayer ? 'playerActionRegistry.invoke("startWave");' : "report(game.startNextWave());"} });
+$("start-wave").addEventListener("click", () => { ${largeScreenPlayer ? 'if (playerPreferences.soundEnabled) audio.resume(); playerActionRegistry.invoke("startWave");' : 'audio.resume(); report(game.startNextWave());'} });
 $("pause-run").addEventListener("click", () => ${largeScreenPlayer ? 'playerActionRegistry.invoke("pause")' : 'setPaused(Number($("speed").value) > 0)'});
 $("sell-mode").addEventListener("click", () => setSellMode(targetingMode.kind !== "sell"));
 $("reset-run").addEventListener("click", () => { game.reset(); ${largeScreenPlayer ? "resetPlayerSimulationClock();" : ""} resetPlayerPresentation(); victoryRewarded = false; selectedTowerId = null; setTargetingMode({ kind: "build" }); initAbilityBar(); clearNavigationOverlay(); message = "Run reset."; });
 $("reset-progress")?.addEventListener("click", resetPlayerProgress);
 $("speed").addEventListener("input", syncSpeedUi);
-$("snd").addEventListener("change", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
-$("sfx-volume").addEventListener("input", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
-$("music-volume").addEventListener("input", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
+$("snd").addEventListener("change", () => { ${largeScreenPlayer ? "persistDesktopAudioPreferences();" : 'syncAudioSettings(); if ($("snd").checked) audio.resume();'} });
+$("sfx-volume").addEventListener("input", () => { ${largeScreenPlayer ? "persistDesktopAudioPreferences();" : 'syncAudioSettings(); if ($("snd").checked) audio.resume();'} });
+$("music-volume").addEventListener("input", () => { ${largeScreenPlayer ? "persistDesktopAudioPreferences();" : 'syncAudioSettings(); if ($("snd").checked) audio.resume();'} });
 $("target-mode").addEventListener("change", () => {
   if (!selectedTowerId) return;
   ${largeScreenPlayer ? 'playerActionRegistry.invoke("setTargetMode", { mode: $("target-mode").value });' : 'report(game.setTowerTargetMode(selectedTowerId, $("target-mode").value));'}
@@ -2890,7 +3082,7 @@ ${largeScreenPlayer ? desktopPlayerRuntimeTemplate("phaser") : ""}
 document.addEventListener("keydown", (event) => {
   const tag = event.target?.tagName;
   if (tag === "BUTTON" || tag === "A" || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;
-  if (event.code === "Space") { event.preventDefault(); ${largeScreenPlayer ? 'playerActionRegistry.invoke("pause");' : 'setPaused(Number($("speed").value) > 0);'} return; }
+  if (event.code === ${largeScreenPlayer ? 'playerKeyCode("pause")' : '"Space"'}) { event.preventDefault(); ${largeScreenPlayer ? 'playerActionRegistry.invoke("pause");' : 'setPaused(Number($("speed").value) > 0);'} return; }
   if (document.activeElement !== $("playfield")) return;
   if (event.code === "Digit1") { event.preventDefault(); armCurrentHeroAbility(); return; }
   const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
@@ -3108,7 +3300,7 @@ function syncSpeedUi() {
   const speed = Number($("speed").value) || 0;
   if (speed > 0) lastRunningSpeed = speed;
   $("speed-label").textContent = speed + "x";
-  $("pause-run").textContent = speed > 0 ? "Pause" : "Resume";
+  $("pause-run").textContent = speed > 0 ? ${largeScreenPlayer ? 'playerStrings.text("pause")' : '"Pause"'} : ${largeScreenPlayer ? 'playerStrings.text("resume")' : '"Resume"'};
   $("pause-run").setAttribute("aria-pressed", String(speed === 0));
 }
 
@@ -3190,7 +3382,7 @@ class PlayScene extends Phaser.Scene {
       navigationHoverCoord = null;
       refreshNavigationOverlay(keyboardCoord);
     });
-    ${largeScreenPlayer ? 'this.input.on("pointerup", () => { this.cameraPanActive = false; this.cameraPanPoint = null; });\n    this.input.on("wheel", (pointer, _objects, _dx, dy, _dz, event) => { if (desktopCameraInputBlocked()) return; event?.preventDefault?.(); const point = this.pointerScenePoint(pointer); if (point) this.cameraZoom(point, dy > 0 ? 0.9 : 1.1); });' : ""}
+    ${largeScreenPlayer ? 'this.input.on("pointerup", () => { this.cameraPanActive = false; this.cameraPanPoint = null; });\n    this.input.on("wheel", (pointer, _objects, _dx, dy, _dz, event) => { if (desktopCameraInputBlocked()) return; event?.preventDefault?.(); const point = this.pointerScenePoint(pointer); if (point) playerActionRegistry.invoke("cameraZoom", { point, factor: dy > 0 ? 0.9 : 1.1 }); });' : ""}
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.resetProceduralJuicePresentation();
     });
@@ -3417,6 +3609,7 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer)}
     }`}
     syncNavigationOverlaySnapshot(snap);
     ${largeScreenPlayer ? "" : "const events = ticked ? pending.concat(snap.lastEvents) : pending;"}
+    ${largeScreenPlayer ? "scheduleDesktopAutosaveForEvents(events);" : ""}
     if (events.length > 0) lastObservedEvents = events;
     game.lastEvents = []; // consumed this frame — clear so nothing replays next frame
     const authoritativeSnapshot = snap;

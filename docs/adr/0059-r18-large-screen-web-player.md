@@ -18,7 +18,11 @@ bundle path. The guarded authoring transaction is target-local and uses
 `read -> recipe -> preview -> apply(ifRevision)`; apply alone promotes both schemas, preserves other
 targets, validates the complete project, writes backups and rolls back both files together.
 Studio allocates the first free bounded `desktop-large[-N]` identity and a matching output directory;
-the desktop recipe never silently upserts or shares generated output with an existing target.
+the desktop recipe never silently upserts or shares generated output with an existing target. Studio
+materializes that candidate through its narrow project-bound recipe endpoint instead of duplicating
+the recipe in browser code. BuildTargets v2 validation compares normalized case-folded web output
+directories and rejects any collision before preview or apply; schema-v1 legacy targets keep their
+previous validation contract.
 
 `packages/renderer/src/viewport-transform.mjs` owns pure contain/center, bounded pan/zoom and inverse
 hit-test mathematics. Canvas and Phaser consume the same transform; neither changes engine
@@ -30,7 +34,16 @@ menu or editable control owns interaction.
 storage port and a rotating two-slot commit. Browser builds provide IndexedDB; localStorage is used
 only for preferences. Restore validates the content digest before constructing a simulation and the
 engine validates checkpoint identity and state. Corrupt, future and incompatible records fail
-closed.
+closed. A successful restore also rebuilds mission-dependent selectors, abilities, background,
+music and overlays from the restored mission so the DOM shell cannot describe a different session.
+
+Preferences are applied behavior rather than codec-only data. Camera zoom stores the bounded ratio
+actually returned by the viewport and replays it at boot; reset writes the neutral ratio. Key
+bindings dispatch through the same action registry as pointer controls. Audio enablement and both
+volume channels are restored before a user gesture, and a disabled audio runtime does not allocate
+an `AudioContext`. Fullscreen stores only the browser-confirmed `fullscreenchange` state and is
+normalized to windowed on a fresh document because browsers do not permit gesture-free fullscreen
+restoration.
 
 Large-screen quality may lower Canvas DPR or Phaser presentation FPS/backing resolution, but it
 does not change simulation cadence. A renderer-neutral player-runtime clock is shared by both
@@ -50,7 +63,9 @@ The generated desktop shell remains DOM-owned and dispatches actions through one
 registry. It provides status/actions, settings/result dialogs, keyboard shortcuts and autosave at
 management actions, wave boundaries, page visibility changes and normal page exit. It is localized
 through a closed string catalog, uses semantic controls with 44 px minimum targets, honors reduced
-motion and applies presentation-only quality/DPR limits.
+motion and applies presentation-only quality/DPR limits. The combat canvas fills the viewport while
+the compact status, contextual panel and action strip are bounded overlays; the unobstructed
+playfield coverage remains at least 75% in the accepted desktop viewport matrix.
 
 The PWA manifest, icons, screenshot and shortcuts are emitted only for the large-screen carrier.
 The engine, GameCommand v8, checkpoint, journal, profile, campaign and multiplayer version domains

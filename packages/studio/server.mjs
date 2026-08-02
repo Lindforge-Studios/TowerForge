@@ -40,6 +40,7 @@ import { normalizeVisuals } from "../cli/lib/project-schema.mjs";
 import { previewTiledTilesetImport } from "../cli/lib/tileset-importer.mjs";
 import {
   applyPlayerTarget,
+  getPlayerTargetRecipe,
   previewPlayerTarget,
   readPlayerTargets
 } from "../cli/lib/player-target-authoring.mjs";
@@ -1233,6 +1234,24 @@ const server = http.createServer(async (req, res) => {
     } catch (error) {
       const failure = mechanicsErrorResponse(error);
       return jsonResp(res, failure.status, failure.response);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/player-targets/recipe") {
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { code: "malformed_request", error: "Invalid JSON body" }); }
+    const allowed = new Set(["recipeId", "targetId"]);
+    if (!body || typeof body !== "object" || Array.isArray(body)
+      || Object.keys(body).some(key => !allowed.has(key))
+      || typeof body.recipeId !== "string" || typeof body.targetId !== "string") {
+      return jsonResp(res, 400, { code: "invalid_request", error: "Player target recipe request is malformed or contains unsupported fields." });
+    }
+    try {
+      return jsonResp(res, 200, getPlayerTargetRecipe(PROJECT_DIR, body.recipeId, body.targetId));
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
     }
   }
 
