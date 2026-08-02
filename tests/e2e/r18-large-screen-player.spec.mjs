@@ -7,6 +7,12 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { createProject } from "../../packages/cli/lib/create-project.mjs";
 
+// Retained Playwright traces serialize every large GPU-backed surface in this six-viewport matrix.
+// Linux/SwiftShader can time out in the trace fixture after the tested player has already disposed
+// successfully, so this resource-heavy file keeps its direct assertions and pageerror collection
+// but leaves tracing to the dedicated lifecycle suite.
+test.use({ trace: "off" });
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const cases = Object.freeze([
   Object.freeze({ id: "canvas-hex-1024", renderer: "canvas", grid: "hex", width: 1024, height: 720, dpr: 1 }),

@@ -2615,3 +2615,20 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   Result: 9/9 passed in 18.0 seconds. Static lifecycle regression remains GREEN at 3/3. Production
   runtime code was not changed; the test-source repair still requires a new freeze, full gates and
   both independent sign-offs.
+
+## 2026-08-02 — R18 large-surface trace fixture RED
+
+- GitHub CI run `30738248893` validated the first Linux/SwiftShader repair: BFCache passed and
+  155/156 browser scenarios completed. The 3440×1440 Phaser scenario reached the generated
+  disposer and blank-document detachment, then Playwright 1.61.1 failed only in its retained
+  `trace recording` fixture with a 60-second setup timeout and an unbound diagnostic handle. The
+  report contained no production, graphics-disposal or `context.close` failure.
+- The bounded harness repair disables retained tracing only for the six-case R18 large-screen
+  viewport file. All real Chromium contexts, viewport/DPR combinations, Canvas/Phaser assertions,
+  pointer/touch/keyboard input, inverse hit tests, placement, session restore, accessibility,
+  page-error collection and explicit graphics teardown checks remain active. The dedicated Phaser
+  lifecycle suite retains normal tracing.
+- Expected GREEN command:
+  `npx playwright test tests/e2e/r18-large-screen-player.spec.mjs tests/e2e/r18-phaser-lifecycle.spec.mjs tests/e2e/r18-desktop-hit-targets.spec.mjs --workers=1`.
+  Focused result: 9/9 passed in 17.3 seconds. This test-source change creates another exact
+  candidate and requires the complete gate/sign-off cycle before merge.
