@@ -80,6 +80,7 @@ describe("R18.4 localized accessible desktop PWA carrier (RED)", () => {
     const html = text(built.outDir, "index.html");
     const css = text(built.outDir, "styles.css");
     const player = text(built.outDir, "player.mjs");
+    const qualityRuntime = text(built.outDir, "player-runtime/presentation-quality.mjs");
     const manifest = JSON.parse(text(built.outDir, "manifest.webmanifest"));
 
     expect(manifest.lang).toBe("ru");
@@ -101,7 +102,8 @@ describe("R18.4 localized accessible desktop PWA carrier (RED)", () => {
     expect(css).toMatch(/--player-action-min-size:\s*44px/);
     expect(css).toMatch(/min-(?:width|height):\s*var\(--player-action-min-size\)/);
     expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)/);
-    expect(player).toMatch(/(?:quality|pixelRatio)[\s\S]{0,500}(?:low|balanced|high)/i);
+    expect(player).toMatch(/resolvePlayerPresentationQualityV1/);
+    expect(qualityRuntime).toMatch(/low[\s\S]{0,300}balanced[\s\S]{0,300}high/);
   }, 60_000);
 
   it("leaves a schema-v1 target on the legacy output path with no desktop-only imports or metadata", () => {
@@ -116,6 +118,7 @@ describe("R18.4 localized accessible desktop PWA carrier (RED)", () => {
       "player-runtime/indexeddb-session-storage.mjs",
       "player-runtime/localized-strings.mjs",
       "player-runtime/player-preferences.mjs",
+      "player-runtime/presentation-quality.mjs",
       "player-runtime/player-session-store.mjs"
     ]) expect(fs.existsSync(path.join(built.outDir, relative)), relative).toBe(false);
     for (const field of ["lang", "icons", "screenshots", "shortcuts", "categories", "display_override"]) {

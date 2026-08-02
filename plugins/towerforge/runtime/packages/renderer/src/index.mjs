@@ -153,6 +153,14 @@ export class TowerForgeCanvasRenderer {
     this.tileLayerDirtyAll = true;
   }
 
+  setMaxDevicePixelRatio(value) {
+    if (!Number.isFinite(value) || value <= 0) return false;
+    if (this.maxDevicePixelRatio === value) return true;
+    this.maxDevicePixelRatio = value;
+    this.resize();
+    return true;
+  }
+
   panViewportBy(delta) {
     if (!this.viewportController || !delta || !Number.isFinite(delta.x) || !Number.isFinite(delta.y)) return null;
     const rect = this.canvas.getBoundingClientRect();

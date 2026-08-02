@@ -30,11 +30,13 @@ only for preferences. Restore validates the content digest before constructing a
 engine validates checkpoint identity and state. Corrupt, future and incompatible records fail
 closed.
 
-Large-screen Phaser quality may lower presentation FPS and backing resolution, but it does not
-change simulation cadence. A renderer-neutral player-runtime clock consumes bounded render deltas
-through fixed 60 Hz wall-clock steps and subdivides each step to respect the engine's `0.2` tick-unit
-limit. All engine events from those substeps are retained until the rendered frame. Replacing or
-restoring a game resets the clock. Legacy targets neither import nor package this adapter.
+Large-screen quality may lower Canvas DPR or Phaser presentation FPS/backing resolution, but it
+does not change simulation cadence. A renderer-neutral player-runtime clock is shared by both
+renderers, consumes bounded render deltas through fixed 60 Hz wall-clock steps and subdivides each
+step to respect the engine's `0.2` tick-unit limit. All engine events from those substeps are
+retained until the rendered frame. Replacing, restoring or explicitly resetting a game resets the
+clock. A saved `PlayerPreferencesV1.quality` is applied at boot and through a live renderer adapter;
+legacy targets neither import nor package the clock or quality-profile modules.
 
 The generated desktop shell remains DOM-owned and dispatches actions through one allowlisted action
 registry. It provides status/actions, settings/result dialogs, keyboard shortcuts and autosave at

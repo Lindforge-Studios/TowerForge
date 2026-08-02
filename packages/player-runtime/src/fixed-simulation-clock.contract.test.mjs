@@ -12,7 +12,7 @@ const projectDir = path.join(repoRoot, "examples", "starter.tdproj");
 describe("R18 fixed simulation clock", () => {
   it("produces one state digest for low, balanced, auto and high presentation frame rates", async () => {
     const loaded = await loadContentRegistry(projectDir);
-    const qualities = Object.freeze({ low: 24, balanced: 30, auto: 45, high: 60 });
+    const qualities = Object.freeze({ low: 24, balanced: 30, auto: 45, high: 60, fastDisplay: 120 });
     const results = [];
 
     for (const [quality, presentationFps] of Object.entries(qualities)) {

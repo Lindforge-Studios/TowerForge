@@ -112,7 +112,7 @@ try {
   const playerRuntimeOutput = path.join(outDir, "player-runtime");
   fs.mkdirSync(playerRuntimeOutput, { recursive: true });
   const largeScreenRuntimeFiles = largeScreenPlayer
-    ? ["player-actions.mjs", "player-preferences.mjs", "player-session-store.mjs", "indexeddb-session-storage.mjs", "localized-strings.mjs", "fixed-simulation-clock.mjs"]
+    ? ["player-actions.mjs", "player-preferences.mjs", "player-session-store.mjs", "indexeddb-session-storage.mjs", "localized-strings.mjs", "fixed-simulation-clock.mjs", "presentation-quality.mjs"]
     : [];
   for (const fileName of ["index.mjs", "player-profile-store.mjs", ...largeScreenRuntimeFiles, ...(hostMonetizationActive ? ["host-monetization.mjs"] : [])]) {
     fs.copyFileSync(path.join(playerRuntimeSource, fileName), path.join(playerRuntimeOutput, fileName));
@@ -120,7 +120,7 @@ try {
   if (!largeScreenPlayer) {
     const runtimeIndex = path.join(playerRuntimeOutput, "index.mjs");
     let runtimeSource = fs.readFileSync(runtimeIndex, "utf8");
-    for (const specifier of ["./player-actions.mjs", "./player-preferences.mjs", "./player-session-store.mjs", "./indexeddb-session-storage.mjs", "./localized-strings.mjs", "./fixed-simulation-clock.mjs"]) {
+    for (const specifier of ["./player-actions.mjs", "./player-preferences.mjs", "./player-session-store.mjs", "./indexeddb-session-storage.mjs", "./localized-strings.mjs", "./fixed-simulation-clock.mjs", "./presentation-quality.mjs"]) {
       runtimeSource = pruneSingleModuleExport(runtimeSource, specifier);
     }
     fs.writeFileSync(runtimeIndex, runtimeSource, "utf8");
@@ -1197,7 +1197,11 @@ function desktopCameraInputBlocked() {
 
 const playerActionDescriptors = createDefaultPlayerActionDescriptors();
 const playerPreferencesKey = "towerforge:preferences:" + playerProfileScope;
-let playerPreferences = createDefaultPlayerPreferences();
+const defaultPlayerPreferences = createDefaultPlayerPreferences();
+let playerPreferences = parsePlayerPreferencesV1(serializePlayerPreferencesV1({
+  ...defaultPlayerPreferences,
+  quality: project.buildTarget.quality || defaultPlayerPreferences.quality
+}));
 try {
   const playerPreferencesRaw = localStorage.getItem(playerPreferencesKey);
   if (playerPreferencesRaw) playerPreferences = parsePlayerPreferencesV1(playerPreferencesRaw);
@@ -1212,6 +1216,7 @@ function persistPlayerPreferences(next) {
   document.documentElement.style.fontSize = String(playerPreferences.uiScale * 100) + "%";
   document.body.dataset.quality = playerPreferences.quality;
   document.body.dataset.motion = playerPreferences.motion;
+  applyPlayerPresentationQuality(playerPreferences.quality);
 }
 persistPlayerPreferences(playerPreferences);
 
@@ -1388,7 +1393,7 @@ function playerTemplate(includeMultiplayer = false, includeMacroEconomy = false,
   validateCampaignRunAgainstContent
 } from "./engine/index.js";
 ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multiplayer/index.js";' : ""}
-import { createPlayerProfileStore, derivePlayerProfileStorageKey${largeScreenPlayer ? ", createDefaultPlayerActionDescriptors, createPlayerActionRegistry, createDefaultPlayerPreferences, createRotatingPlayerSessionStore, parsePlayerPreferencesV1, parsePlayerSessionSaveV1, serializePlayerPreferencesV1, serializePlayerSessionSaveV1" : ""} } from "./player-runtime/index.mjs";
+import { createPlayerProfileStore, derivePlayerProfileStorageKey${largeScreenPlayer ? ", createDefaultPlayerActionDescriptors, createPlayerActionRegistry, createDefaultPlayerPreferences, createFixedSimulationClockV1, createRotatingPlayerSessionStore, parsePlayerPreferencesV1, parsePlayerSessionSaveV1, resolvePlayerPresentationQualityV1, serializePlayerPreferencesV1, serializePlayerSessionSaveV1" : ""} } from "./player-runtime/index.mjs";
 ${largeScreenPlayer ? 'import { createIndexedDbSessionStorage } from "./player-runtime/indexeddb-session-storage.mjs";\nimport { createPlayerStrings } from "./player-runtime/localized-strings.mjs";\nimport { createViewportTransformV1 } from "./renderer/viewport-transform.mjs";' : ""}
 ${includeHostMonetization ? 'import { createHostMonetizationRuntimeV1 } from "./player-runtime/host-monetization.mjs";' : ""}
 import { createCanvasRenderer, hitTestHeroesPresentation, projectArsenalPresentation${includeMacroEconomy ? ", projectMacroEconomyPresentation" : ""}, projectCampaignPresentation, projectDirectorDecisionCues, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectProceduralJuicePresentation, projectQuestPresentation, projectRoguelitePresentation, projectVanguardProtectionPresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
@@ -1419,12 +1424,22 @@ const canvas = $("playfield");
 let missionId = content.defaultMissionId || Object.keys(content.missions)[0];
 let towerId = content.missions[missionId]?.buildTowerIds?.[0] || Object.keys(content.towers)[0];
 let game = new TowerDefenseGame({ missionId, content, ...currentPlayerLaunchOptions() });
-${largeScreenPlayer ? "const resetPlayerSimulationClock = () => {};" : ""}
+${largeScreenPlayer ? "const playerSimulationClock = createFixedSimulationClockV1({ timeUnitSeconds: content.constants.timeUnitSeconds || 1 });\nconst resetPlayerSimulationClock = () => playerSimulationClock.reset();\nlet canvasPresentationQuality = resolvePlayerPresentationQualityV1(project.buildTarget.quality, { width: globalThis.innerWidth, height: globalThis.innerHeight });" : ""}
 const activeCampaign = resolveWorldCampaign(content);
 let campaignRun = activeCampaign ? createCampaignRun("campaign") : null;
 let pendingCampaignNodeId = null;
 let pendingCampaignBattle = false;
-const renderer = createCanvasRenderer({ canvas, content, theme: content.visuals?.theme?.renderer${largeScreenPlayer ? ", createViewportTransform: createViewportTransformV1, viewportProfile: project.buildTarget.viewport, maxDevicePixelRatio: project.buildTarget.quality === \"low\" ? 1 : project.buildTarget.quality === \"balanced\" ? 1.5 : 2" : ""} });
+const renderer = createCanvasRenderer({ canvas, content, theme: content.visuals?.theme?.renderer${largeScreenPlayer ? ", createViewportTransform: createViewportTransformV1, viewportProfile: project.buildTarget.viewport, maxDevicePixelRatio: canvasPresentationQuality.maxDevicePixelRatio" : ""} });
+${largeScreenPlayer ? `function applyPlayerPresentationQuality(quality) {
+  const profile = resolvePlayerPresentationQualityV1(quality, { width: globalThis.innerWidth, height: globalThis.innerHeight });
+  canvasPresentationQuality = profile;
+  renderer.setMaxDevicePixelRatio(profile.maxDevicePixelRatio);
+  return profile;
+}
+globalThis.__towerforgePresentationQuality = () => Object.freeze({
+  ...canvasPresentationQuality,
+  effectiveMaxDevicePixelRatio: renderer.maxDevicePixelRatio
+});` : ""}
 let lastFrame = performance.now();
 let message = "Choose a tower, click a buildable tile, then start the wave.";
 let targetingMode = { kind: "build" };
@@ -1462,7 +1477,7 @@ if ("serviceWorker" in navigator) {
 $("start-wave").addEventListener("click", () => { audio.resume(); ${largeScreenPlayer ? 'playerActionRegistry.invoke("startWave");' : "report(game.startNextWave());"} });
 $("pause-run").addEventListener("click", () => ${largeScreenPlayer ? 'playerActionRegistry.invoke("pause")' : 'setPaused(Number($("speed").value) > 0)'});
 $("sell-mode").addEventListener("click", () => setSellMode(targetingMode.kind !== "sell"));
-$("reset-run").addEventListener("click", () => { game.reset(); renderer.resetProceduralJuicePresentation(); audio.disposeProceduralVoices(); victoryRewarded = false; selectedTowerId = null; setTargetingMode({ kind: "build" }); initAbilityBar(); clearNavigationOverlay(); message = "Run reset."; });
+$("reset-run").addEventListener("click", () => { game.reset(); ${largeScreenPlayer ? "resetPlayerSimulationClock();" : ""} renderer.resetProceduralJuicePresentation(); audio.disposeProceduralVoices(); victoryRewarded = false; selectedTowerId = null; setTargetingMode({ kind: "build" }); initAbilityBar(); clearNavigationOverlay(); message = "Run reset."; });
 $("reset-progress")?.addEventListener("click", resetPlayerProgress);
 $("speed").addEventListener("input", syncSpeedUi);
 $("snd").addEventListener("change", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });
@@ -2286,14 +2301,24 @@ function loop(now) {
   // deep-copy getSnapshot() calls).
   let snap = game.getRenderSnapshot();
   const pending = snap.lastEvents;
-  const ticked = speed > 0 && snap.outcome === "playing";
+  ${largeScreenPlayer ? `let ticked = false;
+  const events = [...pending];
+  if (speed > 0 && snap.outcome === "playing") {
+    const advanced = playerSimulationClock.advance(dtSeconds * 1000, speed, (units) => {
+      game.tick(units);
+      ticked = true;
+      const stepSnapshot = game.getRenderSnapshot();
+      if (stepSnapshot.lastEvents.length > 0) events.push(...stepSnapshot.lastEvents);
+    });
+    if (advanced.fixedSteps > 0) snap = game.getRenderSnapshot();
+  }` : `const ticked = speed > 0 && snap.outcome === "playing";
   if (ticked) {
     const timeUnitSeconds = content.constants.timeUnitSeconds || 1;
     game.tick((dtSeconds / timeUnitSeconds) * speed);
     snap = game.getRenderSnapshot();
-  }
+  }`}
   syncNavigationOverlaySnapshot(snap);
-  const events = ticked ? pending.concat(snap.lastEvents) : pending;
+  ${largeScreenPlayer ? "" : "const events = ticked ? pending.concat(snap.lastEvents) : pending;"}
   if (events.length > 0) lastObservedEvents = events;
   game.lastEvents = []; // consumed this frame — clear so nothing replays on the next frame
   draw(snap, events);
@@ -2655,7 +2680,7 @@ function phaserPlayerTemplate(includeMultiplayer = false, includeMacroEconomy = 
   validateCampaignRunAgainstContent
 } from "./engine/index.js";
 ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multiplayer/index.js";' : ""}
-import { createPlayerProfileStore, derivePlayerProfileStorageKey${largeScreenPlayer ? ", createDefaultPlayerActionDescriptors, createPlayerActionRegistry, createDefaultPlayerPreferences, createFixedSimulationClockV1, createRotatingPlayerSessionStore, parsePlayerPreferencesV1, parsePlayerSessionSaveV1, serializePlayerPreferencesV1, serializePlayerSessionSaveV1" : ""} } from "./player-runtime/index.mjs";
+import { createPlayerProfileStore, derivePlayerProfileStorageKey${largeScreenPlayer ? ", createDefaultPlayerActionDescriptors, createPlayerActionRegistry, createDefaultPlayerPreferences, createFixedSimulationClockV1, createRotatingPlayerSessionStore, parsePlayerPreferencesV1, parsePlayerSessionSaveV1, resolvePlayerPresentationQualityV1, serializePlayerPreferencesV1, serializePlayerSessionSaveV1" : ""} } from "./player-runtime/index.mjs";
 ${largeScreenPlayer ? 'import { createIndexedDbSessionStorage } from "./player-runtime/indexeddb-session-storage.mjs";\nimport { createPlayerStrings } from "./player-runtime/localized-strings.mjs";\nimport { createViewportTransformV1 } from "./renderer/viewport-transform.mjs";' : ""}
 ${includeHostMonetization ? 'import { createHostMonetizationRuntimeV1 } from "./player-runtime/host-monetization.mjs";' : ""}
 import { createAudioPlayer } from "./renderer/audio.mjs";
@@ -2755,20 +2780,27 @@ let victoryRewarded = false;
 let lastObservedEvents = [];
 const shownStories = new Set();
 let phaserGame = null;
-${largeScreenPlayer ? `const phaserPresentationQuality = (() => {
-  const quality = project.buildTarget?.quality ?? "auto";
-  const presets = Object.freeze({
-    low: Object.freeze({ pixelBudget: 1_500_000, targetFps: 24 }),
-    balanced: Object.freeze({ pixelBudget: 2_500_000, targetFps: 30 }),
-    high: Object.freeze({ pixelBudget: 5_000_000, targetFps: 60 }),
-    auto: Object.freeze({ pixelBudget: 3_000_000, targetFps: 45 })
-  });
-  const preset = presets[quality] ?? presets.auto;
-  const pixelBudget = preset.pixelBudget;
-  const viewportPixels = Math.max(1, globalThis.innerWidth * globalThis.innerHeight);
-  const resolution = Math.max(0.5, Math.min(1, Math.sqrt(pixelBudget / viewportPixels)));
-  return Object.freeze({ resolution, targetFps: preset.targetFps });
-})();` : ""}
+${largeScreenPlayer ? `let phaserPresentationQuality = resolvePlayerPresentationQualityV1(project.buildTarget?.quality, {
+  width: globalThis.innerWidth,
+  height: globalThis.innerHeight
+});
+function applyPlayerPresentationQuality(quality) {
+  const profile = resolvePlayerPresentationQualityV1(quality, { width: globalThis.innerWidth, height: globalThis.innerHeight });
+  phaserPresentationQuality = profile;
+  const loop = phaserGame?.loop;
+  if (loop) {
+    loop.targetFps = profile.targetFps;
+    loop.fpsLimit = profile.targetFps;
+    loop.hasFpsLimit = true;
+    loop._limitRate = 1000 / profile.targetFps;
+    loop._target = 1000 / profile.targetFps;
+  }
+  return profile;
+}
+globalThis.__towerforgePresentationQuality = () => Object.freeze({
+  ...phaserPresentationQuality,
+  effectiveTargetFps: phaserGame?.loop?.targetFps ?? phaserPresentationQuality.targetFps
+});` : ""}
 
 const rendererTheme = content.visuals?.theme?.renderer ?? {};
 const TERRAIN_COLORS = {
@@ -2789,7 +2821,7 @@ updateCampaignRun();
 $("start-wave").addEventListener("click", () => { audio.resume(); ${largeScreenPlayer ? 'playerActionRegistry.invoke("startWave");' : "report(game.startNextWave());"} });
 $("pause-run").addEventListener("click", () => ${largeScreenPlayer ? 'playerActionRegistry.invoke("pause")' : 'setPaused(Number($("speed").value) > 0)'});
 $("sell-mode").addEventListener("click", () => setSellMode(targetingMode.kind !== "sell"));
-$("reset-run").addEventListener("click", () => { game.reset(); resetPlayerPresentation(); victoryRewarded = false; selectedTowerId = null; setTargetingMode({ kind: "build" }); initAbilityBar(); clearNavigationOverlay(); message = "Run reset."; });
+$("reset-run").addEventListener("click", () => { game.reset(); ${largeScreenPlayer ? "resetPlayerSimulationClock();" : ""} resetPlayerPresentation(); victoryRewarded = false; selectedTowerId = null; setTargetingMode({ kind: "build" }); initAbilityBar(); clearNavigationOverlay(); message = "Run reset."; });
 $("reset-progress")?.addEventListener("click", resetPlayerProgress);
 $("speed").addEventListener("input", syncSpeedUi);
 $("snd").addEventListener("change", () => { syncAudioSettings(); if ($("snd").checked) audio.resume(); });

@@ -2823,3 +2823,41 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   5/5, the 3440×1440 Phaser browser case passed 1/1 in 5.5 seconds, and the remaining large-screen
   matrix passed 5/5 in 9.9 seconds. Plugin source parity was rebuilt and its focused parity test is
   GREEN. Full exact-commit gates and renewed independent sign-offs remain required before merge.
+
+## 2026-08-02 — R18 Canvas cadence, reset phase and runtime quality verifier RED
+
+- Independent verification rejected exact candidate `54a19a1`. Large-screen Canvas still passed
+  variable rAF deltas directly to `game.tick`; identical 12-second runs at 24/30/45/60/120 FPS
+  produced different state digests and, below 45 FPS, different actual mission elapsed time because
+  the engine clamps each call at `0.2` units. The shared fixed clock must drive both generated
+  renderers.
+- A second lifecycle defect left sub-frame time pending across in-place `Reset run`. Reusing 10 ms
+  from the old run caused a new run to tick after another 7 ms, while a fresh clock correctly did
+  not. Both Canvas and Phaser reset handlers must clear the clock.
+- Runtime `Settings -> Quality` only persisted a dataset value. Canvas DPR and Phaser resolution/FPS
+  were still calculated once from the build target, so Low/Balanced/High had no presentation effect.
+  A shared closed quality profile and real renderer adapters are required; gameplay state remains
+  outside the profile.
+- Exact RED commands:
+  `npx vitest run packages/player-runtime/src/presentation-quality.contract.test.mjs --reporter=verbose`
+  failed because `presentation-quality.mjs` did not exist. The generated Canvas/Phaser regression
+  failed four active assertions: missing Canvas fixed clock, missing reset hook in both renderers,
+  and missing runtime quality application. Legacy isolation already passed.
+
+## 2026-08-02 — R18 Canvas cadence, reset phase and runtime quality focused GREEN
+
+- Canvas and Phaser large-screen players now share `createFixedSimulationClockV1`; render cadence
+  advances the same fixed engine steps and every substep event is retained for the rendered frame.
+  Explicit Reset, checkpoint restore and game replacement clear pending sub-frame time.
+- The real starter digest contract is identical at 24/30/45/60/120 presentation FPS.
+- `presentation-quality.mjs` supplies one bounded renderer-neutral profile. Saved settings apply
+  Canvas DPR immediately and Phaser FPS immediately; the selected Phaser backing resolution is
+  applied at construction/reload. A read-only browser probe lets E2E verify the actual adapter,
+  rather than only the persisted dataset value. Legacy builds prune both R18 runtime modules.
+- Focused command:
+  `npx vitest run packages/player-runtime/src/presentation-quality.contract.test.mjs packages/player-runtime/src/fixed-simulation-clock.contract.test.mjs packages/renderer/src/index.test.mjs packages/cli/build.r18-canvas-fixed-clock.regression.test.mjs packages/cli/build.r18-phaser-lifecycle.regression.test.mjs`.
+  Result: 35/35 GREEN across five files. The complete affected R18 contract set is 113/113 GREEN
+  across 23 files, and the executable browser matrix is 6/6 GREEN at 1024×720 through 3440×1440,
+  Canvas/Phaser, hex/square and DPR 1/2. Typecheck, engine build, web build and plugin
+  build/validate/smoke are GREEN. A new exact commit and complete repository gates remain required
+  before the candidate can be frozen again.

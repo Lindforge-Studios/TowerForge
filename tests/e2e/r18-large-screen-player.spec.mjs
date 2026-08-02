@@ -168,7 +168,7 @@ for (const entry of cases) {
       }, beforeUpgrade)).toBe(true);
       await page.waitForTimeout(250);
 
-      if (entry.accessibility) await verifyAccessibleDesktopShell(page);
+      if (entry.accessibility) await verifyAccessibleDesktopShell(page, entry);
       if (entry.session) await verifyContinueRestore(page, entry);
         expect(browserErrors).toEqual([]);
       } finally {
@@ -244,7 +244,7 @@ async function verifySettingsAndInputGate(page) {
   await expect(settings).toBeFocused();
 }
 
-async function verifyAccessibleDesktopShell(page) {
+async function verifyAccessibleDesktopShell(page, entry) {
   for (const id of ["desktop-continue", "desktop-upgrade", "desktop-pause", "desktop-reset-view", "desktop-settings", "desktop-fullscreen"]) {
     const button = page.locator(`#${id}`);
     await expect(button).toHaveAttribute("aria-label", /\S/);
@@ -254,13 +254,22 @@ async function verifyAccessibleDesktopShell(page) {
   }
 
   await page.locator("#desktop-settings").click();
-  await page.locator("#desktop-quality").selectOption("high");
-  await expect(page.locator("body")).toHaveAttribute("data-quality", "high");
+  await page.locator("#desktop-quality").selectOption("low");
+  await expect(page.locator("body")).toHaveAttribute("data-quality", "low");
+  const appliedQuality = await page.evaluate(() => globalThis.__towerforgePresentationQuality?.());
+  expect(appliedQuality).toMatchObject({
+    schemaVersion: 1,
+    quality: "low",
+    maxDevicePixelRatio: 1,
+    targetFps: 24
+  });
+  if (entry.renderer === "canvas") expect(appliedQuality.effectiveMaxDevicePixelRatio).toBe(1);
+  else expect(appliedQuality.effectiveTargetFps).toBe(24);
   const stored = await page.evaluate(() => Object.keys(localStorage)
     .filter((key) => key.startsWith("towerforge:preferences:"))
     .map((key) => JSON.parse(localStorage.getItem(key))));
   expect(stored).toHaveLength(1);
-  expect(stored[0]).toMatchObject({ schemaVersion: 1, quality: "high" });
+  expect(stored[0]).toMatchObject({ schemaVersion: 1, quality: "low" });
   await page.locator("#desktop-settings-close").click();
   await expect(page.locator("#desktop-settings")).toBeFocused();
 }

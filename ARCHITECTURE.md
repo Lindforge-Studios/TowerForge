@@ -240,7 +240,10 @@ These domains MUST evolve independently. A project schema bump MUST NOT rewrite 
   shell owns UI and dispatches through the allowlisted action registry; it never reimplements
   gameplay. `PlayerSessionSaveV1` uses an injected IndexedDB two-slot adapter and validates digests
   before checkpoint construction, while `PlayerPreferencesV1` alone uses localStorage. The legacy
-  schema-v1 build remains module- and markup-isolated. See [ADR 0059](docs/adr/0059-r18-large-screen-web-player.md).
+  schema-v1 build remains module- and markup-isolated. Both large-screen renderers consume one fixed
+  60 Hz player-runtime clock, so quality-selected Canvas DPR and Phaser FPS/resolution cannot alter
+  simulation cadence; game replacement, restore and explicit reset clear its partial-frame phase.
+  See [ADR 0059](docs/adr/0059-r18-large-screen-web-player.md).
 - Game packaging: `packages/cli/package.mjs` emits a deterministic portable web ZIP with a loopback launcher, or wraps the web bundle into Capacitor mobile / Tauri desktop scaffolds. It does not sign, upload, or publish.
 - Studio desktop packaging: `packages/desktop` builds installable TowerForge Studio apps with Tauri v2 and bundled Node, Codex, and Claude Code runtimes. The packaged runtime mirrors CLI, prebuilt engine, renderer, and player runtime and MUST NOT require user-installed Node, npm, TypeScript, Codex, or Claude Code after installation. macOS builds without Developer ID credentials use an explicit complete ad-hoc bundle signature, ARM64 target, narrowly scoped Node JIT entitlements, and verify the signature, architecture, Node/V8 startup, and DMG before acceptance. Tauri `setup` returns after showing the loading window; Studio boot is deferred, reports recoverable errors in that window, and the sidecar watches the desktop parent PID so a shell crash cannot leave orphan servers.
 - Desktop commands: Rust owns native menu/window/project-switch lifecycle; Studio owns the shared command registry, unsaved-change UX, and editor actions. `build.rs` generates app-manifest permissions for the exact seven custom invoke commands, and the external loopback WebView receives only those permissions plus event listening; it never gets raw filesystem or shell access.

@@ -40,12 +40,13 @@ describe("R18 generated Phaser lifecycle contract (RED)", () => {
   });
 
   it("bounds desktop Phaser backbuffer and frame scheduling through the selected quality preset", () => {
-    expect(desktopPlayer).toMatch(/const\s+phaserPresentationQuality\s*=/);
+    expect(desktopPlayer).toMatch(/let\s+phaserPresentationQuality\s*=/);
     expect(desktopPlayer).toMatch(/resolution\s*:\s*phaserPresentationQuality\.resolution/);
     expect(desktopPlayer).toMatch(/target\s*:\s*phaserPresentationQuality\.targetFps/);
     expect(desktopPlayer).toMatch(/limit\s*:\s*phaserPresentationQuality\.targetFps/);
     expect(desktopPlayer).toMatch(/forceSetTimeOut\s*:\s*true/);
-    expect(desktopPlayer).toMatch(/Math\.sqrt\(\s*pixelBudget\s*\/\s*viewportPixels\s*\)/);
+    expect(desktopPlayer).toMatch(/resolvePlayerPresentationQualityV1/);
+    expect(desktopPlayer).toMatch(/__towerforgePresentationQuality/);
     expect(legacyPlayer).not.toMatch(/phaserPresentationQuality|forceSetTimeOut/);
   });
 
@@ -56,6 +57,10 @@ describe("R18 generated Phaser lifecycle contract (RED)", () => {
     expect(desktopPlayer).toMatch(/events\.push\(\.\.\.stepSnapshot\.lastEvents\)/);
     expect(desktopPlayer).not.toMatch(/game\.tick\(\(Math\.min\(50,\s*delta\)[\s\S]{0,120}\*\s*speed\)/);
     expect(legacyPlayer).not.toMatch(/createFixedSimulationClockV1|phaserSimulationClock|fixed-simulation-clock/);
+  });
+
+  it("resets the fixed clock when the current run is reset in place", () => {
+    expect(desktopPlayer).toMatch(/reset-run[\s\S]{0,500}game\.reset\(\)[\s\S]{0,240}resetPlayerSimulationClock\(\)/);
   });
 });
 
