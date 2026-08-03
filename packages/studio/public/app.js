@@ -12035,6 +12035,9 @@ const HUDStudioUI = {
   profiles: Object.create(null),
   bindings: Object.create(null),
   selectedProfileId: null,
+  selectedScreenId: null,
+  selectedNodeId: null,
+  selectedTransitionId: null,
   draft: null,
   preview: null,
   renderPreview: null,
@@ -12101,6 +12104,14 @@ function hydrateHudStudio() {
   const profileId = HUDStudioUI.selectedProfileId;
   HUDStudioUI.draft = deep(profileId ? ownDataValue(HUDStudioUI.profiles, profileId) : null) ?? hudDefaultDraft();
   HUDStudioUI.assetRoles = deep(HUDStudioUI.draft.assetRoles ?? {});
+  const screenIds = Object.keys(HUDStudioUI.draft.screens ?? {}).sort();
+  if (!screenIds.includes(HUDStudioUI.selectedScreenId)) {
+    HUDStudioUI.selectedScreenId = HUDStudioUI.draft.screenGraph?.initialScreenId ?? screenIds[0] ?? null;
+  }
+  const nodeIds = (HUDStudioUI.draft.commonNodes ?? []).map((node) => node.id);
+  if (!nodeIds.includes(HUDStudioUI.selectedNodeId)) HUDStudioUI.selectedNodeId = nodeIds[0] ?? null;
+  const transitionIds = (HUDStudioUI.draft.screenGraph?.transitions ?? []).map((transition) => transition.id);
+  if (!transitionIds.includes(HUDStudioUI.selectedTransitionId)) HUDStudioUI.selectedTransitionId = transitionIds[0] ?? null;
   $("hud-profile-id").value = profileId ?? "hud-main";
   const targets = hudStudioTargets();
   const boundTarget = targets.find(([targetId]) => ownDataValue(HUDStudioUI.bindings, targetId) === profileId)?.[0];
@@ -12113,12 +12124,327 @@ function renderHudStudioPickers() {
   const targetPicker = $("hud-target-picker");
   const screenPicker = $("hud-screen-picker");
   if (!profilePicker || !targetPicker || !screenPicker) return;
+  const previousTarget = targetPicker.value;
   const profileIds = Object.keys(HUDStudioUI.profiles ?? {}).sort();
   profilePicker.innerHTML = `<option value="">New profile…</option>${profileIds.map((id) => `<option value="${esc(id)}">${esc(id)}</option>`).join("")}`;
   profilePicker.value = HUDStudioUI.selectedProfileId ?? "";
   targetPicker.innerHTML = hudStudioTargets().map(([id]) => `<option value="${esc(id)}">${esc(id)}</option>`).join("");
+  if ([...targetPicker.options].some((option) => option.value === previousTarget)) targetPicker.value = previousTarget;
   const screenIds = Object.keys(HUDStudioUI.draft?.screens ?? {}).sort();
   screenPicker.innerHTML = screenIds.map((id) => `<option value="${esc(id)}">${esc(id)}</option>`).join("");
+  if (!screenIds.includes(HUDStudioUI.selectedScreenId)) HUDStudioUI.selectedScreenId = HUDStudioUI.draft?.screenGraph?.initialScreenId ?? screenIds[0] ?? null;
+  screenPicker.value = HUDStudioUI.selectedScreenId ?? "";
+  const recipePicker = $("hud-recipe-picker");
+  if (recipePicker) {
+    const selectedRecipe = recipePicker.value;
+    recipePicker.innerHTML = HUDStudioUI.recipes.map((recipe) => `<option value="${esc(recipe.recipeId)}">${esc(recipe.profile?.label ?? recipe.recipeId)}</option>`).join("");
+    if (HUDStudioUI.recipes.some((recipe) => recipe.recipeId === selectedRecipe)) recipePicker.value = selectedRecipe;
+  }
+  renderHudStudioComponentPickers();
+  renderHudStudioTransitionPickers();
+}
+
+function hudStudioDraftChanged() {
+  HUDStudioUI.preview = null;
+  HUDStudioUI.renderPreview = null;
+  $("btn-hud-apply").disabled = true;
+}
+
+function hudStudioId(value, label) {
+  const id = String(value ?? "").trim();
+  if (!/^[A-Za-z][A-Za-z0-9_-]{0,127}$/u.test(id)) throw new Error(`${label} must be a bounded identifier.`);
+  return id;
+}
+
+function hudStudioSelectedVariant() {
+  const variantId = $("hud-variant-picker")?.value ?? "desktop";
+  const variant = HUDStudioUI.draft?.variants?.[variantId];
+  if (!variant) throw new Error(`HUD variant "${variantId}" is unavailable.`);
+  return variant;
+}
+
+function hudStudioSelectedNode() {
+  return (HUDStudioUI.draft?.commonNodes ?? []).find((node) => node.id === HUDStudioUI.selectedNodeId) ?? null;
+}
+
+function hudStudioDefaultNode(id, type) {
+  const properties = type === "button"
+    ? { labelKey: `hud.${id}`, ariaLabelKey: `hud.${id}` }
+    : type === "text"
+      ? { text: "Text" }
+      : type === "build_menu"
+        ? { presentation: "horizontal_quickbar", selectorId: "buildOptions" }
+        : type === "radial_menu"
+          ? { selectorId: "buildOptions", maxVisibleItems: 8 }
+          : {};
+  return {
+    schemaVersion: 1,
+    id,
+    type,
+    childIds: [],
+    properties,
+    bindings: { data: [], actions: [] },
+    states: {
+      normal: { visible: true, enabled: true },
+      disabled: { visible: true, enabled: false },
+      focused: { visible: true, enabled: true }
+    }
+  };
+}
+
+function hudStudioDefaultLayout(index = 0) {
+  return {
+    schemaVersion: 1,
+    layer: "content",
+    safeArea: true,
+    placement: { kind: "anchor", horizontal: "left", vertical: "top", offsetX: 24 + (index * 12), offsetY: 24 + (index * 12) },
+    size: { width: 160, height: 52, minWidth: 44, minHeight: 44, maxWidth: 160, maxHeight: 52 }
+  };
+}
+
+function selectHudStudioComponent(nodeId) {
+  HUDStudioUI.selectedNodeId = nodeId;
+  renderHudStudioComponentPickers();
+  syncHudStudioPlacementEditor();
+}
+
+function renderHudStudioComponentPickers() {
+  const picker = $("hud-component-picker");
+  if (!picker) return;
+  const nodes = HUDStudioUI.draft?.commonNodes ?? [];
+  picker.innerHTML = nodes.map((node) => `<option value="${esc(node.id)}">${esc(node.id)} · ${esc(node.type)}</option>`).join("");
+  if (!nodes.some((node) => node.id === HUDStudioUI.selectedNodeId)) HUDStudioUI.selectedNodeId = nodes[0]?.id ?? null;
+  picker.value = HUDStudioUI.selectedNodeId ?? "";
+  syncHudStudioPlacementEditor();
+}
+
+function syncHudStudioPlacementEditor() {
+  if (!HUDStudioUI.draft || !$("hud-placement-kind")) return;
+  const node = hudStudioSelectedNode();
+  const variant = HUDStudioUI.draft.variants?.[$("hud-variant-picker")?.value ?? "desktop"];
+  const layout = node ? variant?.layouts?.[node.id] : null;
+  if (!layout) return;
+  $("hud-placement-kind").value = layout.placement.kind === "dock" ? "dock" : "anchor";
+  if (layout.placement.kind === "anchor") {
+    $("hud-placement-horizontal").value = layout.placement.horizontal;
+    $("hud-placement-vertical").value = layout.placement.vertical;
+    $("hud-placement-x").value = String(layout.placement.offsetX);
+    $("hud-placement-y").value = String(layout.placement.offsetY);
+  } else if (layout.placement.kind === "dock") {
+    $("hud-placement-horizontal").value = ["left", "right"].includes(layout.placement.edge) ? layout.placement.edge : "stretch";
+    $("hud-placement-vertical").value = layout.placement.edge === "bottom" ? "bottom" : "top";
+    $("hud-placement-x").value = String(layout.placement.offset);
+    $("hud-placement-y").value = "0";
+  }
+  $("hud-placement-width").value = String(layout.size.width);
+  $("hud-placement-height").value = String(layout.size.height);
+}
+
+function addHudStudioComponent() {
+  if (!HUDStudioUI.draft) return;
+  const id = hudStudioId($("hud-component-id")?.value, "Component ID");
+  const type = $("hud-component-type")?.value ?? "button";
+  if ((HUDStudioUI.draft.commonNodes ?? []).some((node) => node.id === id)) throw new Error(`HUD component "${id}" already exists.`);
+  HUDStudioUI.draft.commonNodes.push(hudStudioDefaultNode(id, type));
+  for (const variant of Object.values(HUDStudioUI.draft.variants ?? {})) {
+    variant.layouts ??= {};
+    variant.layouts[id] = hudStudioDefaultLayout(HUDStudioUI.draft.commonNodes.length - 1);
+    if (!variant.rootNodeIds.includes(id)) variant.rootNodeIds.push(id);
+  }
+  const screen = HUDStudioUI.draft.screens?.[HUDStudioUI.selectedScreenId];
+  if (screen && !screen.rootNodeIds.includes(id)) screen.rootNodeIds.push(id);
+  HUDStudioUI.selectedNodeId = id;
+  hudStudioDraftChanged();
+  renderHudStudio();
+}
+
+function removeHudStudioComponent() {
+  if (!HUDStudioUI.draft || !HUDStudioUI.selectedNodeId) return;
+  const removedId = HUDStudioUI.selectedNodeId;
+  HUDStudioUI.draft.commonNodes = HUDStudioUI.draft.commonNodes.filter((node) => node.id !== removedId);
+  for (const node of HUDStudioUI.draft.commonNodes) {
+    node.childIds = node.childIds.filter((id) => id !== removedId);
+    if (node.properties?.itemTemplateNodeId === removedId) delete node.properties.itemTemplateNodeId;
+  }
+  for (const variant of Object.values(HUDStudioUI.draft.variants ?? {})) {
+    variant.rootNodeIds = variant.rootNodeIds.filter((id) => id !== removedId);
+    if (variant.layouts) delete variant.layouts[removedId];
+  }
+  for (const screen of Object.values(HUDStudioUI.draft.screens ?? {})) {
+    screen.rootNodeIds = screen.rootNodeIds.filter((id) => id !== removedId);
+  }
+  HUDStudioUI.selectedNodeId = HUDStudioUI.draft.commonNodes[0]?.id ?? null;
+  hudStudioDraftChanged();
+  renderHudStudio();
+}
+
+function hudStudioSignedNumber(id) {
+  const value = Number($(id)?.value);
+  if (!Number.isFinite(value) || Math.abs(value) > 16384) throw new Error(`${id} must be between -16384 and 16384.`);
+  return value;
+}
+
+function hudStudioPositiveNumber(id) {
+  const value = Number($(id)?.value);
+  if (!Number.isFinite(value) || value <= 0 || value > 16384) throw new Error(`${id} must be between 1 and 16384.`);
+  return value;
+}
+
+function applyHudStudioPlacement() {
+  const node = hudStudioSelectedNode();
+  if (!node) throw new Error("Select a HUD component first.");
+  const variant = hudStudioSelectedVariant();
+  variant.layouts ??= {};
+  const width = hudStudioPositiveNumber("hud-placement-width");
+  const height = hudStudioPositiveNumber("hud-placement-height");
+  const x = hudStudioSignedNumber("hud-placement-x");
+  const y = hudStudioSignedNumber("hud-placement-y");
+  const kind = $("hud-placement-kind")?.value ?? "anchor";
+  let placement;
+  if (kind === "dock") {
+    const horizontal = $("hud-placement-horizontal")?.value;
+    const vertical = $("hud-placement-vertical")?.value;
+    const edge = ["left", "right"].includes(horizontal) ? horizontal : vertical === "bottom" ? "bottom" : "top";
+    placement = { kind: "dock", edge, offset: x, order: 0 };
+  } else {
+    placement = {
+      kind: "anchor",
+      horizontal: $("hud-placement-horizontal")?.value ?? "left",
+      vertical: $("hud-placement-vertical")?.value ?? "top",
+      offsetX: x,
+      offsetY: y
+    };
+  }
+  variant.layouts[node.id] = {
+    schemaVersion: 1,
+    layer: variant.layouts[node.id]?.layer ?? "content",
+    safeArea: variant.layouts[node.id]?.safeArea !== false,
+    placement,
+    size: {
+      width,
+      height,
+      minWidth: Math.min(width, 44),
+      minHeight: Math.min(height, 44),
+      maxWidth: width,
+      maxHeight: height
+    }
+  };
+  hudStudioDraftChanged();
+  renderHudStudio();
+}
+
+function renderHudStudioTransitionPickers() {
+  const picker = $("hud-transition-picker");
+  const from = $("hud-transition-from");
+  const target = $("hud-transition-target");
+  if (!picker || !from || !target || !HUDStudioUI.draft) return;
+  const transitions = HUDStudioUI.draft.screenGraph?.transitions ?? [];
+  if (!transitions.some((transition) => transition.id === HUDStudioUI.selectedTransitionId)) {
+    HUDStudioUI.selectedTransitionId = transitions[0]?.id ?? null;
+  }
+  picker.innerHTML = `<option value="">New transition…</option>${transitions.map((transition) => `<option value="${esc(transition.id)}">${esc(transition.id)}</option>`).join("")}`;
+  picker.value = HUDStudioUI.selectedTransitionId ?? "";
+  const screenIds = Object.keys(HUDStudioUI.draft.screens ?? {}).sort();
+  const options = screenIds.map((id) => `<option value="${esc(id)}">${esc(id)}</option>`).join("");
+  from.innerHTML = options;
+  target.innerHTML = options;
+  const selected = transitions.find((transition) => transition.id === HUDStudioUI.selectedTransitionId);
+  if (selected) {
+    $("hud-transition-id").value = selected.id;
+    $("hud-transition-event").value = selected.event;
+    from.value = selected.fromScreenId ?? HUDStudioUI.selectedScreenId ?? screenIds[0] ?? "";
+    target.value = selected.targetScreenId;
+  } else {
+    from.value = HUDStudioUI.selectedScreenId ?? screenIds[0] ?? "";
+    target.value = screenIds.find((id) => id !== from.value) ?? from.value;
+  }
+  const selectedScreen = HUDStudioUI.draft.screens?.[HUDStudioUI.selectedScreenId];
+  if (selectedScreen) {
+    $("hud-screen-id").value = HUDStudioUI.selectedScreenId;
+    $("hud-screen-surface").value = selectedScreen.surface;
+  }
+}
+
+function addHudStudioScreen() {
+  if (!HUDStudioUI.draft) return;
+  const id = hudStudioId($("hud-screen-id")?.value, "Screen ID");
+  if (Object.hasOwn(HUDStudioUI.draft.screens, id)) throw new Error(`HUD screen "${id}" already exists.`);
+  HUDStudioUI.draft.screens[id] = {
+    schemaVersion: 1,
+    surface: $("hud-screen-surface")?.value ?? "gameplay",
+    rootNodeIds: []
+  };
+  HUDStudioUI.selectedScreenId = id;
+  hudStudioDraftChanged();
+  renderHudStudio();
+}
+
+function removeHudStudioScreen() {
+  if (!HUDStudioUI.draft || !HUDStudioUI.selectedScreenId) return;
+  const screenId = HUDStudioUI.selectedScreenId;
+  const remaining = Object.keys(HUDStudioUI.draft.screens).filter((id) => id !== screenId).sort();
+  if (remaining.length === 0) throw new Error("A HUD profile must keep at least one screen.");
+  delete HUDStudioUI.draft.screens[screenId];
+  HUDStudioUI.draft.screenGraph.transitions = HUDStudioUI.draft.screenGraph.transitions.filter((transition) =>
+    transition.fromScreenId !== screenId && transition.targetScreenId !== screenId
+  );
+  if (HUDStudioUI.draft.screenGraph.initialScreenId === screenId) HUDStudioUI.draft.screenGraph.initialScreenId = remaining[0];
+  HUDStudioUI.selectedScreenId = remaining[0];
+  HUDStudioUI.selectedTransitionId = HUDStudioUI.draft.screenGraph.transitions[0]?.id ?? null;
+  hudStudioDraftChanged();
+  renderHudStudio();
+}
+
+function hudStudioTransitionCandidate() {
+  const id = hudStudioId($("hud-transition-id")?.value, "Transition ID");
+  const fromScreenId = $("hud-transition-from")?.value;
+  const targetScreenId = $("hud-transition-target")?.value;
+  if (!Object.hasOwn(HUDStudioUI.draft?.screens ?? {}, fromScreenId)) throw new Error("Choose a valid source screen.");
+  if (!Object.hasOwn(HUDStudioUI.draft?.screens ?? {}, targetScreenId)) throw new Error("Choose a valid target screen.");
+  return {
+    id,
+    event: $("hud-transition-event")?.value ?? "pauseRequested",
+    fromScreenId,
+    targetScreenId,
+    conditions: []
+  };
+}
+
+function addHudStudioTransition() {
+  const transition = hudStudioTransitionCandidate();
+  if (HUDStudioUI.draft.screenGraph.transitions.some((entry) => entry.id === transition.id)) {
+    throw new Error(`HUD transition "${transition.id}" already exists.`);
+  }
+  HUDStudioUI.draft.screenGraph.transitions.push(transition);
+  HUDStudioUI.selectedTransitionId = transition.id;
+  hudStudioDraftChanged();
+  renderHudStudio();
+}
+
+function upsertHudStudioTransition() {
+  if (!HUDStudioUI.selectedTransitionId) return addHudStudioTransition();
+  const transition = hudStudioTransitionCandidate();
+  const transitions = HUDStudioUI.draft.screenGraph.transitions;
+  const index = transitions.findIndex((entry) => entry.id === HUDStudioUI.selectedTransitionId);
+  if (index < 0) return addHudStudioTransition();
+  if (transition.id !== HUDStudioUI.selectedTransitionId && transitions.some((entry) => entry.id === transition.id)) {
+    throw new Error(`HUD transition "${transition.id}" already exists.`);
+  }
+  transition.conditions = deep(transitions[index].conditions ?? []);
+  transitions[index] = transition;
+  HUDStudioUI.selectedTransitionId = transition.id;
+  hudStudioDraftChanged();
+  renderHudStudio();
+}
+
+function removeHudStudioTransition() {
+  if (!HUDStudioUI.selectedTransitionId) return;
+  HUDStudioUI.draft.screenGraph.transitions = HUDStudioUI.draft.screenGraph.transitions.filter((transition) =>
+    transition.id !== HUDStudioUI.selectedTransitionId
+  );
+  HUDStudioUI.selectedTransitionId = HUDStudioUI.draft.screenGraph.transitions[0]?.id ?? null;
+  hudStudioDraftChanged();
+  renderHudStudio();
 }
 
 function hudStudioNumber(id) {
@@ -12204,9 +12530,14 @@ function drawHudStudioPlan(rendered) {
   design.classList.toggle("snap-grid", $("hud-snapping-toggle")?.checked === true);
   design.innerHTML = nodeMarkup || `<p class="hud-preview-empty">This surface has no authored nodes.</p>`;
   preview.innerHTML = nodeMarkup;
+  design.querySelectorAll("[data-node-id]").forEach((button) => {
+    button.classList.toggle("selected", button.dataset.nodeId === HUDStudioUI.selectedNodeId);
+    button.onclick = () => selectHudStudioComponent(button.dataset.nodeId);
+  });
   layers.innerHTML = plan.nodes.map((node) => `<button type="button" role="treeitem" data-hud-layer="${esc(node.id)}"><span>${esc(node.layer)}</span>${esc(node.id)}</button>`).join("");
   layers.querySelectorAll("[data-hud-layer]").forEach((button) => button.onclick = () => {
     const node = plan.nodes.find((entry) => entry.id === button.dataset.hudLayer);
+    selectHudStudioComponent(node.id);
     inspector.innerHTML = `<div class="pane-label">Constraints</div><pre>${esc(JSON.stringify({ id: node.id, rect: node.rect, parentId: node.parentId, layer: node.layer }, null, 2))}</pre>`;
   });
 }
@@ -12233,6 +12564,18 @@ function renderHudStudio() {
     HUDStudioUI.renderPreview = null;
     renderHudStudio();
   };
+  $("btn-hud-load-recipe").onclick = () => {
+    const recipe = HUDStudioUI.recipes.find((entry) => entry.recipeId === $("hud-recipe-picker").value);
+    if (!recipe?.profile) return toast("Select an available HUD recipe.", "warn");
+    HUDStudioUI.draft = deep(recipe.profile);
+    HUDStudioUI.assetRoles = deep(HUDStudioUI.draft.assetRoles ?? {});
+    HUDStudioUI.selectedProfileId = null;
+    HUDStudioUI.selectedScreenId = HUDStudioUI.draft.screenGraph.initialScreenId;
+    HUDStudioUI.selectedNodeId = HUDStudioUI.draft.commonNodes[0]?.id ?? null;
+    HUDStudioUI.selectedTransitionId = HUDStudioUI.draft.screenGraph.transitions[0]?.id ?? null;
+    hudStudioDraftChanged();
+    renderHudStudio();
+  };
   $("hud-device-preset").onchange = () => { HUDStudioUI.renderPreview = null; renderHudStudio(); };
   for (const id of ["hud-safe-area-top", "hud-safe-area-right", "hud-safe-area-bottom", "hud-safe-area-left"]) {
     $(id).oninput = () => { HUDStudioUI.renderPreview = null; $("btn-hud-apply").disabled = true; };
@@ -12243,7 +12586,29 @@ function renderHudStudio() {
     const sizes = { desktop: "1920x1080", tablet: "1024x768", mobile: "390x844" };
     $("hud-device-preset").value = sizes[$("hud-variant-picker").value] ?? "1920x1080";
     HUDStudioUI.renderPreview = null;
+    syncHudStudioPlacementEditor();
   };
+  $("hud-screen-picker").onchange = () => {
+    HUDStudioUI.selectedScreenId = $("hud-screen-picker").value || null;
+    renderHudStudioTransitionPickers();
+  };
+  $("hud-component-picker").onchange = () => selectHudStudioComponent($("hud-component-picker").value || null);
+  $("hud-transition-picker").onchange = () => {
+    HUDStudioUI.selectedTransitionId = $("hud-transition-picker").value || null;
+    renderHudStudioTransitionPickers();
+  };
+  const guardedHudEdit = (operation) => () => {
+    try { operation(); }
+    catch (error) { toast(error.message, "err"); }
+  };
+  $("btn-hud-component-add").onclick = guardedHudEdit(addHudStudioComponent);
+  $("btn-hud-component-remove").onclick = guardedHudEdit(removeHudStudioComponent);
+  $("btn-hud-placement-apply").onclick = guardedHudEdit(applyHudStudioPlacement);
+  $("btn-hud-screen-add").onclick = guardedHudEdit(addHudStudioScreen);
+  $("btn-hud-screen-remove").onclick = guardedHudEdit(removeHudStudioScreen);
+  $("btn-hud-transition-add").onclick = guardedHudEdit(addHudStudioTransition);
+  $("btn-hud-transition-update").onclick = guardedHudEdit(upsertHudStudioTransition);
+  $("btn-hud-transition-remove").onclick = guardedHudEdit(removeHudStudioTransition);
   $("hud-layers-tree").setAttribute("aria-label", "HUD layers tree");
   $("hud-component-state").onchange = () => void renderHudRuntimePreview();
   $("hud-mock-state").onchange = () => void renderHudRuntimePreview();

@@ -587,10 +587,14 @@
           <div class="hud-studio-fields">
             <label>Saved profile<select id="hud-profile-picker"><option value="">New profile…</option></select></label>
             <label>Profile ID<input id="hud-profile-id" class="mono" value="hud-main" maxlength="128"></label>
+            <label>Recipe<select id="hud-recipe-picker"></select></label>
             <label>Build target<select id="hud-target-picker"></select></label>
             <label>Screen<select id="hud-screen-picker"></select></label>
             <label>Variant<select id="hud-variant-picker"><option value="desktop">desktop</option><option value="tablet">tablet</option><option value="mobile">mobile</option></select></label>
             <label>Device preset<select id="hud-device-preset"><option value="1920x1080">1920×1080</option><option value="1024x768">1024×768</option><option value="390x844">390×844</option></select></label>
+          </div>
+          <div class="hud-studio-actions">
+            <button id="btn-hud-load-recipe" class="btn btn-outline" type="button">Load editable recipe</button>
           </div>
           <div class="hud-safe-area-fields" aria-label="Preview safe area">
             <label>Safe top<input id="hud-safe-area-top" type="number" min="0" max="1024" value="0"></label>
@@ -599,6 +603,47 @@
             <label>Safe left<input id="hud-safe-area-left" type="number" min="0" max="1024" value="0"></label>
             <label class="hud-check"><input id="hud-rulers-toggle" type="checkbox" checked> Rulers</label>
             <label class="hud-check"><input id="hud-snapping-toggle" type="checkbox" checked> Snapping</label>
+          </div>
+        </section>
+
+        <section class="hud-studio-card" aria-label="HUD component and placement editor">
+          <div class="form-section-title">Components and placement</div>
+          <div class="hud-studio-fields">
+            <label>Selected component<select id="hud-component-picker"></select></label>
+            <label>New component ID<input id="hud-component-id" class="mono" value="hud_button" maxlength="128"></label>
+            <label>Type<select id="hud-component-type"><option value="button">button</option><option value="text">text</option><option value="panel">panel</option><option value="build_menu">build menu</option><option value="radial_menu">radial menu</option></select></label>
+            <label>Placement<select id="hud-placement-kind"><option value="anchor">anchor</option><option value="dock">dock</option></select></label>
+            <label>Horizontal<select id="hud-placement-horizontal"><option value="left">left</option><option value="center">center</option><option value="right">right</option><option value="stretch">stretch</option></select></label>
+            <label>Vertical<select id="hud-placement-vertical"><option value="top">top</option><option value="center">center</option><option value="bottom">bottom</option><option value="stretch">stretch</option></select></label>
+            <label>X offset<input id="hud-placement-x" type="number" min="-16384" max="16384" value="0"></label>
+            <label>Y offset<input id="hud-placement-y" type="number" min="-16384" max="16384" value="0"></label>
+            <label>Width<input id="hud-placement-width" type="number" min="1" max="16384" value="160"></label>
+            <label>Height<input id="hud-placement-height" type="number" min="1" max="16384" value="52"></label>
+          </div>
+          <div class="hud-studio-actions">
+            <button id="btn-hud-component-add" class="btn btn-outline" type="button">Add component</button>
+            <button id="btn-hud-component-remove" class="btn btn-outline" type="button">Remove selected</button>
+            <button id="btn-hud-placement-apply" class="btn btn-primary" type="button">Apply placement</button>
+          </div>
+        </section>
+
+        <section class="hud-studio-card" aria-label="HUD screen graph editor">
+          <div class="form-section-title">Screens and transitions</div>
+          <div class="hud-studio-fields">
+            <label>Screen ID<input id="hud-screen-id" class="mono" value="pause" maxlength="128"></label>
+            <label>Surface<select id="hud-screen-surface"><option value="gameplay">gameplay</option><option value="setup">setup</option><option value="between_wave">between wave</option><option value="draft">draft</option><option value="pause">pause</option><option value="settings">settings</option><option value="victory">victory</option><option value="defeat">defeat</option><option value="result">result</option><option value="recoverable_error">recoverable error</option></select></label>
+            <label>Transition<select id="hud-transition-picker"></select></label>
+            <label>Transition ID<input id="hud-transition-id" class="mono" value="open_pause" maxlength="128"></label>
+            <label>Event<select id="hud-transition-event"><option value="pauseRequested">pause requested</option><option value="resumeRequested">resume requested</option><option value="settingsRequested">settings requested</option><option value="settingsClosed">settings closed</option><option value="waveStarted">wave started</option><option value="waveEnded">wave ended</option><option value="draftRequired">draft required</option><option value="draftCompleted">draft completed</option><option value="victory">victory</option><option value="defeat">defeat</option><option value="recoverableError">recoverable error</option></select></label>
+            <label>From screen<select id="hud-transition-from"></select></label>
+            <label>Target screen<select id="hud-transition-target"></select></label>
+          </div>
+          <div class="hud-studio-actions">
+            <button id="btn-hud-screen-add" class="btn btn-outline" type="button">Add screen</button>
+            <button id="btn-hud-screen-remove" class="btn btn-outline" type="button">Remove screen</button>
+            <button id="btn-hud-transition-add" class="btn btn-outline" type="button">Add transition</button>
+            <button id="btn-hud-transition-update" class="btn btn-outline" type="button">Update transition</button>
+            <button id="btn-hud-transition-remove" class="btn btn-outline" type="button">Remove transition</button>
           </div>
         </section>
 

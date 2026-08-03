@@ -4452,3 +4452,38 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   deliberately pruned. These RED results invalidate the earlier exact-commit gates and both prior
   sign-offs until production fixes, focused GREEN, re-freeze, full gates and fresh independent
   verification complete.
+
+## 2026-08-04 — R21 constructor usability P1 RED evidence
+
+- Constructor Integration verification found that all three CLI/Studio recipes returned valid but
+  empty catalogs and that HUD Studio was only a rendered preview: an author could not add/remove a
+  component, select it and edit bounded placement/size constraints, or create/remove screens and
+  ordered screen transitions without editing raw JSON outside the Hub.
+- Contract tests were added before production changes. Exact recipe RED command:
+  `npx vitest run packages/cli/lib/r21-hud-authoring.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`, `1/1` file RED, `3` expected failures and `9` unchanged passes. Each recipe
+  failed because `commonNodes` and all root/layout sets were empty.
+- Exact Studio RED command:
+  `npx vitest run packages/studio/r21-hud-studio.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`, `1/1` file RED, `2` expected failures and `6` unchanged passes. The practical
+  component/placement and screen/transition controls and draft-mutation functions were absent.
+- This integration slice is confined to CLI-owned recipes and Studio authoring UI. It does not
+  change the player runtime, DOM shell, renderer, build templates, engine or gameplay contracts.
+
+## 2026-08-04 — R21 constructor usability P1 focused GREEN
+
+- `desktop_quickbar`, `radial_wheel` and `mobile_bottom_sheet` now return detached frozen,
+  schema-valid profiles with real typed nodes, responsive layouts, non-empty roots and a minimal
+  gameplay/pause screen graph. Studio exposes all three through an explicit editable recipe picker.
+- HUD Studio can add/select/remove typed components, preserve graph references during deletion,
+  and edit bounded per-variant anchor/dock offsets and sizes. It can add/remove screens and add,
+  update or remove ordered transitions; transition update preserves authored conditions not exposed
+  by this focused form. Every change invalidates the previous preview and remains behind the
+  existing composite revision preview/apply transaction.
+- Exact focused integration command:
+  `npx vitest run packages/cli/lib/r21-hud-authoring.contract.test.mjs packages/studio/r21-hud-studio.contract.test.mjs packages/studio/server.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: `3/3` files and `39/39` tests GREEN, including a real loopback response proving all three
+  non-empty Studio recipes. `packages/studio/server.desktop.test.mjs` is separately `3/3` GREEN.
+  `node --check` passes for HUD authoring, Studio server and browser app; `git diff --check` is GREEN.
+- Full exact-commit gates and both independent sign-offs remain invalidated and must be repeated
+  after all verifier-reopened P1 repairs are integrated.

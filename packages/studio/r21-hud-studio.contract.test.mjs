@@ -73,4 +73,32 @@ describe("R21.5 HUD Studio and guarded asset workflow (RED)", () => {
     expect(app).toMatch(/btn-hud-disable[\s\S]*enabled\s*:\s*false[\s\S]*\/api\/hud\/preview[\s\S]*\/api\/hud\/apply/);
     expect(app).not.toMatch(/btn-hud-apply[\s\S]{0,500}\/api\/project\/save/);
   });
+
+  it("supports practical component CRUD and placement editing on the authored draft", () => {
+    expectIds(html, [
+      "hud-component-picker", "hud-component-id", "hud-component-type", "btn-hud-component-add",
+      "btn-hud-component-remove", "hud-placement-kind", "hud-placement-horizontal",
+      "hud-placement-vertical", "hud-placement-x", "hud-placement-y", "hud-placement-width",
+      "hud-placement-height", "btn-hud-placement-apply"
+    ]);
+    expect(app).toMatch(/function\s+addHudStudioComponent[\s\S]*commonNodes\.(?:push|splice)/);
+    expect(app).toMatch(/function\s+removeHudStudioComponent[\s\S]*commonNodes[\s\S]*rootNodeIds[\s\S]*layouts/);
+    expect(app).toMatch(/function\s+applyHudStudioPlacement[\s\S]*placement[\s\S]*size/);
+    expect(app).toMatch(/data-node-id[\s\S]*(?:selectHudStudioComponent|selectedNodeId)/);
+    expect(server).toMatch(/desktop_quickbar[\s\S]*radial_wheel[\s\S]*mobile_bottom_sheet/);
+    expect(app).toMatch(/btn-hud-load-recipe[\s\S]*HUDStudioUI\.draft\s*=\s*deep\(recipe\.profile\)/);
+  });
+
+  it("supports screen creation/removal and ordered transition CRUD without raw JSON editing", () => {
+    expectIds(html, [
+      "hud-screen-id", "hud-screen-surface", "btn-hud-screen-add", "btn-hud-screen-remove",
+      "hud-transition-picker", "hud-transition-id", "hud-transition-event",
+      "hud-transition-from", "hud-transition-target", "btn-hud-transition-add",
+      "btn-hud-transition-update", "btn-hud-transition-remove"
+    ]);
+    expect(app).toMatch(/function\s+addHudStudioScreen[\s\S]*draft\.screens/);
+    expect(app).toMatch(/function\s+removeHudStudioScreen[\s\S]*screenGraph\.transitions/);
+    expect(app).toMatch(/function\s+(?:add|upsert)HudStudioTransition[\s\S]*screenGraph\.transitions/);
+    expect(app).toMatch(/function\s+removeHudStudioTransition[\s\S]*screenGraph\.transitions/);
+  });
 });

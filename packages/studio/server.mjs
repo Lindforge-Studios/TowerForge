@@ -1725,8 +1725,9 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && pathname === "/api/hud/recipes") {
     try {
-      const recipe = getHudProfileRecipe("desktop_quickbar", "hud-main");
-      return jsonResp(res, 200, { recipes: sanitizeMechanicsResponse([recipe]) });
+      const recipes = ["desktop_quickbar", "radial_wheel", "mobile_bottom_sheet"]
+        .map((recipeId) => getHudProfileRecipe(recipeId, "hud-main"));
+      return jsonResp(res, 200, { recipes: sanitizeMechanicsResponse(recipes) });
     } catch (error) {
       const failure = mechanicsErrorResponse(error);
       return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);

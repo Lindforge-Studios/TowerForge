@@ -150,6 +150,32 @@ describe("R21.1b narrow guarded HUD authoring contract (RED)", () => {
     expect(Object.isFrozen(recipe.profile)).toBe(true);
   });
 
+  it.each([
+    ["desktop_quickbar", "build_menu", "horizontal_quickbar"],
+    ["radial_wheel", "radial_menu", undefined],
+    ["mobile_bottom_sheet", "build_menu", "mobile_bottom_sheet"]
+  ])("returns a meaningful editable %s recipe instead of an empty placeholder", (recipeId, componentType, presentation) => {
+    const recipe = getHudProfileRecipe(recipeId, `profile-${recipeId}`);
+    const profile = recipe.profile;
+
+    expect(profile.commonNodes.length).toBeGreaterThan(0);
+    expect(profile.commonNodes.some((node) => node.type === componentType)).toBe(true);
+    if (presentation !== undefined) {
+      expect(profile.commonNodes.some((node) => node.properties?.presentation === presentation)).toBe(true);
+    }
+    for (const variantId of ["desktop", "tablet", "mobile"]) {
+      expect(profile.variants[variantId].rootNodeIds.length).toBeGreaterThan(0);
+      expect(Object.keys(profile.variants[variantId].layouts ?? {})).toEqual(
+        expect.arrayContaining(profile.commonNodes.map((node) => node.id))
+      );
+    }
+    expect(profile.screens.gameplay.rootNodeIds.length).toBeGreaterThan(0);
+    expect(previewHudProfile(fixture({ withHud: false }), request(profile))).toMatchObject({
+      ok: true,
+      validation: { ok: true }
+    });
+  });
+
   it("keeps read, recipe and preview compute-only and returns a detached validated candidate", () => {
     const projectDir = fixture();
     const before = ownedBytes(projectDir);

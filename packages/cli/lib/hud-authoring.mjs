@@ -6,6 +6,7 @@ import { validateProjectSchemas } from "./project-schema.mjs";
 import { validateHudCatalogV1 } from "../../player-runtime/src/hud-catalog.mjs";
 import { compileHudLayoutV1 } from "../../player-runtime/src/hud-layout.mjs";
 import { createDefaultPlayerActionDescriptors } from "../../player-runtime/src/player-actions.mjs";
+import { HUD_SELECTOR_DESCRIPTORS_V1 } from "../../player-runtime/src/hud-selectors.mjs";
 
 const REVISION_SOURCES = Object.freeze([
   "project.json",
@@ -40,17 +41,7 @@ export const HUD_MOCK_STATE_IDS = Object.freeze([
   "default", "victory", "defeat", "low_hp", "draft", "inventory", "capabilities"
 ]);
 
-export const HUD_SELECTOR_DESCRIPTORS_V1 = deepFreeze([
-  { schemaVersion: 1, id: "buildOptions", valueType: "item", cardinality: "many" },
-  { schemaVersion: 1, id: "abilityOptions", valueType: "item", cardinality: "many" },
-  { schemaVersion: 1, id: "inventoryItems", valueType: "item", cardinality: "many" },
-  { schemaVersion: 1, id: "questItems", valueType: "item", cardinality: "many" },
-  { schemaVersion: 1, id: "capabilityItems", valueType: "item", cardinality: "many" },
-  { schemaVersion: 1, id: "statusText", valueType: "string", cardinality: "one" },
-  { schemaVersion: 1, id: "coreHp", valueType: "number", cardinality: "one" },
-  { schemaVersion: 1, id: "isVictory", valueType: "boolean", cardinality: "one" },
-  { schemaVersion: 1, id: "isDefeat", valueType: "boolean", cardinality: "one" }
-]);
+export { HUD_SELECTOR_DESCRIPTORS_V1 };
 
 export function getHudProfileRecipe(recipeId, profileId) {
   if (!HUD_PROFILE_RECIPE_IDS.includes(recipeId)) throw new Error(`Unknown HUD profile recipe "${String(recipeId)}".`);
@@ -65,7 +56,7 @@ export function getHudProfileRecipe(recipeId, profileId) {
     profileId,
     detached: true,
     written: false,
-    profile: emptyProfile(labels[recipeId])
+    profile: recipeProfile(recipeId, labels[recipeId])
   });
 }
 
@@ -312,6 +303,124 @@ function emptyProfile(label) {
     screenGraph: { schemaVersion: 1, initialScreenId: "gameplay", transitions: [] },
     assetRoles: {}
   };
+}
+
+function recipeProfile(recipeId, label) {
+  const state = () => ({
+    normal: { visible: true, enabled: true },
+    disabled: { visible: true, enabled: false },
+    focused: { visible: true, enabled: true }
+  });
+  const node = (id, type, properties, childIds = [], actions = []) => ({
+    schemaVersion: 1,
+    id,
+    type,
+    childIds,
+    properties,
+    bindings: { data: [], actions },
+    states: state()
+  });
+  const sized = (width, height) => ({
+    width,
+    height,
+    minWidth: Math.min(width, 44),
+    minHeight: Math.min(height, 44),
+    maxWidth: Math.max(width, 44),
+    maxHeight: Math.max(height, 44)
+  });
+  const anchor = (width, height, horizontal, vertical, offsetX = 0, offsetY = 0, layer = "content") => ({
+    schemaVersion: 1,
+    layer,
+    safeArea: true,
+    placement: { kind: "anchor", horizontal, vertical, offsetX, offsetY },
+    size: sized(width, height)
+  });
+  const flow = (width, height, order) => ({
+    schemaVersion: 1,
+    layer: "content",
+    safeArea: true,
+    placement: { kind: "flow", order, grow: 0 },
+    size: sized(width, height)
+  });
+  const variant = (width, height, layouts, rootNodeId) => ({
+    schemaVersion: 1,
+    designViewport: { width, height },
+    rootNodeIds: [rootNodeId],
+    layouts
+  });
+  const profileShell = (commonNodes, layouts) => ({
+    schemaVersion: 1,
+    label,
+    breakpoints: { mobileMax: 767, tabletMax: 1199 },
+    commonNodes,
+    variants: {
+      desktop: variant(1920, 1080, layouts.desktop, commonNodes[0].id),
+      tablet: variant(1024, 768, layouts.tablet, commonNodes[0].id),
+      mobile: variant(390, 844, layouts.mobile, commonNodes[0].id)
+    },
+    screens: {
+      gameplay: { schemaVersion: 1, surface: "gameplay", rootNodeIds: [commonNodes[0].id] },
+      pause: { schemaVersion: 1, surface: "pause", rootNodeIds: [] }
+    },
+    screenGraph: {
+      schemaVersion: 1,
+      initialScreenId: "gameplay",
+      transitions: [
+        { id: "open_pause", event: "pauseRequested", fromScreenId: "gameplay", targetScreenId: "pause", conditions: [] },
+        { id: "resume_gameplay", event: "resumeRequested", fromScreenId: "pause", targetScreenId: "gameplay", conditions: [] }
+      ]
+    },
+    assetRoles: {}
+  });
+
+  let profile;
+  if (recipeId === "desktop_quickbar") {
+    const nodes = [
+      node("quickbar", "stack", { axis: "horizontal", gap: 12, align: "center" }, ["build_options", "start_wave"]),
+      node("build_options", "build_menu", { presentation: "horizontal_quickbar", selectorId: "buildOptions" }),
+      node("start_wave", "button", { labelKey: "hud.start_wave", ariaLabelKey: "hud.start_wave" }, [], [
+        { event: "activate", actionId: "startWave", payload: {} }
+      ])
+    ];
+    const makeLayouts = (width, height, offset) => ({
+      quickbar: anchor(width, height, "center", "bottom", 0, offset, "overlay"),
+      build_options: flow(width - 132, 52, 0),
+      start_wave: flow(112, 52, 1)
+    });
+    profile = profileShell(nodes, {
+      desktop: makeLayouts(760, 76, 24),
+      tablet: makeLayouts(620, 76, 20),
+      mobile: makeLayouts(350, 76, 12)
+    });
+  } else if (recipeId === "radial_wheel") {
+    const nodes = [node("build_wheel", "radial_menu", { selectorId: "buildOptions", maxVisibleItems: 8 })];
+    const makeLayouts = (size, offset) => ({
+      build_wheel: anchor(size, size, "center", "bottom", 0, offset, "overlay")
+    });
+    profile = profileShell(nodes, {
+      desktop: makeLayouts(320, 32),
+      tablet: makeLayouts(280, 24),
+      mobile: makeLayouts(240, 16)
+    });
+  } else {
+    const nodes = [
+      node("bottom_sheet", "stack", { axis: "vertical", gap: 8, align: "stretch" }, ["sheet_title", "build_options"]),
+      node("sheet_title", "localized_text", { messageId: "hud.build" }),
+      node("build_options", "build_menu", { presentation: "mobile_bottom_sheet", selectorId: "buildOptions" })
+    ];
+    const makeLayouts = (width, height, offset) => ({
+      bottom_sheet: anchor(width, height, "center", "bottom", 0, offset, "overlay"),
+      sheet_title: flow(width - 24, 44, 0),
+      build_options: flow(width - 24, height - 60, 1)
+    });
+    profile = profileShell(nodes, {
+      desktop: makeLayouts(560, 220, 24),
+      tablet: makeLayouts(520, 220, 20),
+      mobile: makeLayouts(366, 240, 12)
+    });
+  }
+
+  return requireValidCatalog({ schemaVersion: 1, profiles: { recipe: profile } }).profiles.recipe;
 }
 
 function selectHudVariant(profile, viewportWidth) {
