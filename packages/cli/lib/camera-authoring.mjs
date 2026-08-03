@@ -3,7 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { normalizeProjectFiles, readRawProjectFiles } from "./project-loader.mjs";
 import { validateProjectSchemas } from "./project-schema.mjs";
-import { createCameraProjectorV1, resolveCameraProfileV1, validateCameraProfileCatalogV1 } from "../../renderer/src/camera-projector.mjs";
+import { resolveCameraProfileV1, validateCameraProfileCatalogV1 } from "../../renderer/src/camera-projector.mjs";
+import { createCameraRenderSpaceV1 } from "../../renderer/src/camera-renderer-integration.mjs";
 import { projectCameraViewAssetCoverageV1 } from "../../renderer/src/camera-view-assets.mjs";
 
 export const CAMERA_AUTHORING_SCHEMA_V1 = Object.freeze({
@@ -179,18 +180,33 @@ function previewContext(files, unsafe) {
   const viewport = context.viewport && Number.isFinite(context.viewport.width) && Number.isFinite(context.viewport.height)
     ? { width: context.viewport.width, height: context.viewport.height }
     : { width: 1440, height: 900 };
-  return { missionId, mapId, viewport, resolution: { missionId, mapId, buildTargetCameraProfileId: target?.cameraProfileId } };
+  const authoredViewport = target?.viewport ?? {};
+  const viewportProfile = {
+    padding: Number.isFinite(authoredViewport.padding) ? authoredViewport.padding : 0,
+    minZoom: Number.isFinite(authoredViewport.minZoom) ? authoredViewport.minZoom : 0.5,
+    maxZoom: Number.isFinite(authoredViewport.maxZoom) ? authoredViewport.maxZoom : 4,
+    initialZoom: Number.isFinite(authoredViewport.initialZoom) ? authoredViewport.initialZoom : 1
+  };
+  return { missionId, mapId, viewport, viewportProfile, resolution: { missionId, mapId, buildTargetCameraProfileId: target?.cameraProfileId } };
 }
 
 function cameraPresentationPreview(files, resolution, context) {
   const map = files.maps?.[context.mapId] ?? Object.values(files.maps ?? {})[0];
   const tiles = previewMapPoints(map);
-  const projector = createCameraProjectorV1(resolution.profile);
-  const points = tiles.map((tile) => projector.worldToScreen({ x: Number(tile.q) || 0, y: Number(tile.r) || 0, elevation: Number(tile.elevation) || 0 }));
-  const minX = Math.min(...points.map((point) => point.x));
-  const minY = Math.min(...points.map((point) => point.y));
-  const maxX = Math.max(...points.map((point) => point.x));
-  const maxY = Math.max(...points.map((point) => point.y));
+  const geometry = previewMapGeometry(tiles, map?.grid, context.viewport);
+  const worldPoints = tiles.map((tile) => ({
+    ...previewWorldCenter(tile, geometry),
+    elevation: Number(tile.elevation) || 0
+  }));
+  const renderSpace = createCameraRenderSpaceV1({
+    cameraProfile: resolution.profile,
+    worldPoints,
+    viewport: context.viewport,
+    viewportProfile: context.viewportProfile
+  });
+  const points = worldPoints.map((point) => renderSpace.projector.worldToScreen(point));
+  const screenPoints = worldPoints.map((point) => renderSpace.worldToScreen(point));
+  const { minX, minY, maxX, maxY } = renderSpace.projectedBounds;
   const spriteIds = [...new Set(Object.values(files.visuals?.bindings ?? {}).flatMap((group) => group && typeof group === "object" && !Array.isArray(group) ? Object.values(group).filter((value) => typeof value === "string") : []))];
   const tileSets = Object.entries(files.visuals?.tileSets ?? {}).map(([tileSetId, tileSet]) => ({ tileSetId, materialIds: Object.keys(tileSet?.materials ?? {}) }));
   const coverage = projectCameraViewAssetCoverageV1({
@@ -206,8 +222,15 @@ function cameraPresentationPreview(files, resolution, context) {
   return {
     projectedBounds,
     projectedPoints: points,
+    screenPoints,
     diagnostics: {
-      clipping: { viewport: context.viewport, clipped: paddedWidth > context.viewport.width || paddedHeight > context.viewport.height, paddedWidth, paddedHeight },
+      clipping: {
+        viewport: context.viewport,
+        clipped: paddedWidth > context.viewport.width || paddedHeight > context.viewport.height,
+        paddedWidth,
+        paddedHeight,
+        screenBounds: boundsOf(screenPoints)
+      },
       depth: { stable: true, comparator: "projected_y_elevation_entity_id" },
       assetCoverage: {
         exact: coverage.entries.filter((entry) => entry.status === "exact"),
@@ -270,11 +293,44 @@ function previewMapPoints(map) {
   const width = Number.isInteger(map.width) && map.width > 0 ? map.width : 1;
   const height = Number.isInteger(map.height) && map.height > 0 ? map.height : 1;
   for (const [q, r] of [[0, 0], [width - 1, 0], [0, height - 1], [width - 1, height - 1]]) points.push({ q, r, elevation: 0 });
-  for (const collection of [map.terrainOverrides, map.pathCenterline]) {
+  for (const collection of [map.terrainOverrides, map.pathCenterline, map.elevationOverrides]) {
     if (!Array.isArray(collection)) continue;
     for (const point of collection.slice(0, 4096)) if (Number.isFinite(point?.q) && Number.isFinite(point?.r)) points.push({ q: point.q, r: point.r, elevation: Number(point.elevation) || 0 });
   }
   return points;
+}
+function previewMapGeometry(points, grid, viewport) {
+  let maxQ = 1;
+  let maxR = 1;
+  for (const point of points) {
+    if (point.q > maxQ) maxQ = point.q;
+    if (point.r > maxR) maxR = point.r;
+  }
+  if (grid?.kind === "square") {
+    const cell = Math.min(viewport.width / (maxQ + 2), viewport.height / (maxR + 2));
+    return { grid, radius: cell / 2, ox: cell, oy: cell };
+  }
+  const radius = Math.min(viewport.width / ((maxQ + 2) * 1.65), viewport.height / ((maxR + 2) * 1.45));
+  return { grid: grid ?? { kind: "hex", layout: "odd-r" }, radius, ox: radius * 1.5, oy: radius * 1.5 };
+}
+function previewWorldCenter(coord, geometry) {
+  if (geometry.grid.kind === "square") {
+    return { x: geometry.ox + coord.q * geometry.radius * 2, y: geometry.oy + coord.r * geometry.radius * 2 };
+  }
+  return {
+    x: geometry.ox + coord.q * geometry.radius * 1.48 + (coord.r % 2) * geometry.radius * 0.74,
+    y: geometry.oy + coord.r * geometry.radius * 1.28
+  };
+}
+function boundsOf(points) {
+  let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
+  for (const point of points) {
+    minX = Math.min(minX, point.x);
+    minY = Math.min(minY, point.y);
+    maxX = Math.max(maxX, point.x);
+    maxY = Math.max(maxY, point.y);
+  }
+  return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
 }
 function assertCameraOwnedSources(projectDir) {
   const root = path.resolve(projectDir);

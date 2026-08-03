@@ -271,6 +271,26 @@ describe("R20.3 visuals v4 view-variant asset contract (RED)", () => {
     });
     expect(staged).toMatchObject({ mimeType: "image/webp", readyForPreview: true });
   });
+
+  it("enforces the global 4096 sprite and 256 tileset view-variant record budgets", () => {
+    const spriteOverflow = validVisuals();
+    spriteOverflow.viewVariants.sprites = Object.fromEntries(Array.from({ length: 4097 }, (_, index) => [
+      `sprite_${index}`,
+      { [VIEW_KEY]: { src: `assets/camera/sprite_${index}.png`, mimeType: "image/png", anchor: { x: 0.5, y: 1 } } }
+    ]));
+    expect(viewIssues(spriteOverflow)).toContainEqual(expect.objectContaining({
+      severity: "error", fieldPath: "viewVariants.sprites", message: expect.stringMatching(/4096|budget/i)
+    }));
+
+    const tileSetOverflow = validVisuals();
+    tileSetOverflow.viewVariants.tileSets = Object.fromEntries(Array.from({ length: 257 }, (_, index) => [
+      `tiles_${index}`,
+      { [VIEW_KEY]: { atlas: { src: `assets/camera/tiles_${index}.png`, mimeType: "image/png" }, materials: {} } }
+    ]));
+    expect(viewIssues(tileSetOverflow)).toContainEqual(expect.objectContaining({
+      severity: "error", fieldPath: "viewVariants.tileSets", message: expect.stringMatching(/256|budget/i)
+    }));
+  });
 });
 
 function temporaryProject(label) {

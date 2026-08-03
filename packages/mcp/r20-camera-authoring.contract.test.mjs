@@ -4,6 +4,8 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { TOWERFORGE_AGENT_GUIDE_VERSION, TOWERFORGE_AGENT_INSTRUCTIONS } from "./agent-instructions.mjs";
 import { callTool, TOOLS } from "./tools.mjs";
+import { loadProjectFiles } from "../cli/lib/project-loader.mjs";
+import { createCameraRenderSpaceV1 } from "../renderer/src/camera-renderer-integration.mjs";
 
 const projects = [];
 const PROJECTIONS = ["top_down", "isometric_2_1", "dimetric_oblique"];
@@ -152,6 +154,47 @@ describe("R20.4 Camera Studio MCP/AI contract (RED)", () => {
     expect(fallback.resolution).toMatchObject({ source: "top_down_fallback", profileId: null });
   }, 30_000);
 
+  it("previews starter hex geometry through topology centers and the shared viewport transform", async () => {
+    const projectDir = fixture();
+    const recipe = await callTool("get_camera_profile_recipe", {
+      recipeId: "isometric_2_1", orientation: "east", profileId: "iso-east-zoom3"
+    }, {});
+    const profile = { ...recipe.profile, initialZoom: 3, maxZoom: 3 };
+    const viewport = { width: 1024, height: 720 };
+    const preview = await callTool("preview_camera_profile", {
+      projectDir,
+      profileId: recipe.profileId,
+      profile,
+      binding: { scope: "mission", id: "tutorial_01" },
+      context: { missionId: "tutorial_01", mapId: "tutorial_map", buildTargetId: "web-pwa", viewport }
+    }, {});
+    const map = loadProjectFiles(projectDir).maps.tutorial_map;
+    const sampled = previewPoints(map);
+    const maxQ = Math.max(1, ...sampled.map((point) => point.q));
+    const maxR = Math.max(1, ...sampled.map((point) => point.r));
+    const radius = Math.min(viewport.width / ((maxQ + 2) * 1.65), viewport.height / ((maxR + 2) * 1.45));
+    const worldPoints = sampled.map((point) => ({
+      x: radius * 1.5 + point.q * radius * 1.48 + (point.r % 2) * radius * 0.74,
+      y: radius * 1.5 + point.r * radius * 1.28,
+      elevation: point.elevation
+    }));
+    const expected = createCameraRenderSpaceV1({
+      cameraProfile: profile,
+      worldPoints,
+      viewport,
+      viewportProfile: { padding: profile.fitPadding, minZoom: profile.minZoom, maxZoom: profile.maxZoom, initialZoom: profile.initialZoom }
+    });
+    const bounds = expected.projectedBounds;
+    expect(preview.preview.projectedBounds).toEqual({
+      ...bounds, width: bounds.maxX - bounds.minX, height: bounds.maxY - bounds.minY
+    });
+    expect(preview.preview.diagnostics.clipping).toMatchObject({
+      viewport,
+      clipped: (bounds.maxX - bounds.minX) * profile.initialZoom + profile.fitPadding * 2 > viewport.width
+        || (bounds.maxY - bounds.minY) * profile.initialZoom + profile.fitPadding * 2 > viewport.height
+    });
+  }, 30_000);
+
   it("guardedly upserts one profile, preserves adjacent visuals, and rejects stale reuse", async () => {
     const projectDir = fixture();
     const recipe = await callTool("get_camera_profile_recipe", {
@@ -238,3 +281,18 @@ describe("R20.4 Camera Studio MCP/AI contract (RED)", () => {
     );
   });
 });
+
+function previewPoints(map) {
+  const points = [
+    { q: 0, r: 0, elevation: 0 },
+    { q: map.width - 1, r: 0, elevation: 0 },
+    { q: 0, r: map.height - 1, elevation: 0 },
+    { q: map.width - 1, r: map.height - 1, elevation: 0 }
+  ];
+  for (const collection of [map.terrainOverrides, map.pathCenterline]) {
+    for (const point of Array.isArray(collection) ? collection.slice(0, 4096) : []) {
+      points.push({ q: point.q, r: point.r, elevation: Number(point.elevation) || 0 });
+    }
+  }
+  return points;
+}

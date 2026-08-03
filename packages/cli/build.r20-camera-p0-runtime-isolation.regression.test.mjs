@@ -55,6 +55,36 @@ describe("R20 P0 generated runtime isolation and Phaser integration (RED)", () =
     const player = cameraPlayer();
     expect(player).toMatch(/add\.image\([^\n]+texture\.(?:key|frame)[\s\S]{0,240}setOrigin\(\s*texture\.anchor\.x\s*,\s*texture\.anchor\.y\s*\)/);
   });
+
+  it("orders projectiles and destructibles together with real Phaser actor primitives", () => {
+    const player = cameraPlayer();
+    const actorDepth = player.slice(player.indexOf("  cameraActorDepth("), player.indexOf("  enemyPos(", player.indexOf("  cameraActorDepth(")));
+    expect(actorDepth).toMatch(/projectBallisticsPresentation\s*\([^)]*snap[^)]*\)[\s\S]*kind:\s*["']projectile["']/);
+    expect(actorDepth).toMatch(/projectDestructibleEnvironmentPresentation\s*\([^)]*snap[^)]*\)[\s\S]*kind:\s*["']destructible["']/);
+    expect(player).toMatch(/(?:draw|render)CameraOrdered(?:World)?Actors[\s\S]*projectCameraRenderItemsV1[\s\S]*kind\s*===\s*["']projectile["'][\s\S]*(?:fillCircle|add\.image)/);
+    expect(player).toMatch(/(?:draw|render)CameraOrdered(?:World)?Actors[\s\S]*kind\s*===\s*["']destructible["'][\s\S]*(?:fillRect|add\.image)/);
+  });
+
+  it("uses authoritative tile elevation for Phaser towers, destructibles and projectile endpoints", () => {
+    const player = cameraPlayer();
+    expect(player).toMatch(/(?:tileElevation|elevationAtCoord)\s*\([^)]*(?:coord|tower\.coord)[^)]*(?:snap\.tiles|tiles)[^)]*\)/);
+    expect(player).toMatch(/kind:\s*["']tower["'][\s\S]{0,260}elevation:\s*(?:tileElevation|elevationAtCoord)/);
+    expect(player).toMatch(/kind:\s*["']destructible["'][\s\S]{0,260}elevation:\s*(?:tileElevation|elevationAtCoord)/);
+    expect(player).toMatch(/kind:\s*["']projectile["'][\s\S]{0,420}(?:sourceCoord|targetCoord)[\s\S]{0,180}(?:tileElevation|elevationAtCoord)/);
+  });
+
+  it("activates camera runtime from mission/map bindings even when the target has no cameraProfileId", () => {
+    const { projectDir: boundProject } = createProject({ name: "bound_only", parentDir: root, templateName: "classic", gridKind: "hex" });
+    configureBoundOnlyTarget(boundProject);
+    const built = build(boundProject, "bound-only");
+    for (const relative of ["camera-projector.mjs", "camera-renderer-integration.mjs", "camera-view-assets.mjs"]) {
+      expect(fs.existsSync(path.join(built.outDir, "renderer", relative)), relative).toBe(true);
+    }
+    const player = fs.readFileSync(path.join(built.outDir, "player.mjs"), "utf8");
+    const canvasRuntime = fs.readFileSync(path.join(built.outDir, "renderer", "index.mjs"), "utf8");
+    expect(player).toMatch(/createCanvasRenderer\s*\(\s*\{[\s\S]{0,240}\bcontent\b/);
+    expect(canvasRuntime).toMatch(/resolveCameraProfileV1\s*\([^,]+,\s*\{[\s\S]{0,360}missionId:[\s\S]*mapId:[\s\S]*buildTargetCameraProfileId:/);
+  });
 });
 
 function cameraPlayer() {
@@ -102,6 +132,36 @@ function configureMixedTargets(dir) {
       "plain-desktop": target("plain-desktop", "canvas", "dist-plain"),
       "camera-phaser": { ...target("camera-phaser", "phaser", "dist-camera"), cameraProfileId: "iso" }
     }
+  });
+}
+
+function configureBoundOnlyTarget(dir) {
+  const manifestPath = path.join(dir, "project.json");
+  writeJson(manifestPath, { ...readJson(manifestPath), schemaVersion: 5 });
+  const balance = readJson(path.join(dir, "content", "balance.json"));
+  const missionId = Object.keys(balance.missions)[0];
+  const mapId = balance.missions[missionId].mapId;
+  const visualsPath = path.join(dir, "content", "visuals.json");
+  const visuals = readJson(visualsPath);
+  visuals.schemaVersion = 4;
+  const authored = (projection, orientation) => ({
+    schemaVersion: 1, projection, orientation, elevationScale: 1.5,
+    fitPadding: 32, minZoom: 0.5, maxZoom: 3, initialZoom: 1, panPadding: 0
+  });
+  visuals.cameraProfiles = {
+    schemaVersion: 1,
+    profiles: {
+      mission_camera: authored("isometric_2_1", "east"),
+      map_camera: authored("dimetric_oblique", "south"),
+      target_camera: authored("top_down", "north")
+    },
+    bindings: { maps: { [mapId]: "map_camera" }, missions: { [missionId]: "mission_camera" } }
+  };
+  writeJson(visualsPath, visuals);
+  writeJson(path.join(dir, "build-targets.json"), {
+    schemaVersion: 2,
+    defaults: { web: "bound-only" },
+    targets: { "bound-only": target("bound-only", "canvas", "dist-bound-only") }
   });
 }
 

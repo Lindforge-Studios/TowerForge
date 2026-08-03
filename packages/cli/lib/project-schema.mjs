@@ -818,25 +818,40 @@ const CAMERA_VIEW_MIME_EXTENSIONS = Object.freeze({
   "image/jpeg": [".jpg", ".jpeg"],
   "image/webp": [".webp"]
 });
+const CAMERA_VIEW_VARIANT_LIMITS = Object.freeze({ sprites: 4096, tileSets: 256 });
 
 function cameraViewRecord(value, fieldPath, allowedKeys, err) {
-  if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) {
+  if (!value || typeof value !== "object") {
     err("visuals", "content/visuals.json", fieldPath, `${fieldPath} must be a plain object.`);
     return null;
   }
   let descriptors;
-  try { descriptors = Object.getOwnPropertyDescriptors(value); } catch {
+  let prototype;
+  let symbols;
+  try {
+    if (Array.isArray(value)) throw new Error("array");
+    descriptors = Object.getOwnPropertyDescriptors(value);
+    prototype = Object.getPrototypeOf(value);
+    symbols = Object.getOwnPropertySymbols(value);
+  } catch {
     err("visuals", "content/visuals.json", fieldPath, `${fieldPath} could not be inspected safely.`);
     return null;
   }
+  if ((prototype !== Object.prototype && prototype !== null) || symbols.length !== 0) {
+    err("visuals", "content/visuals.json", fieldPath, `${fieldPath} must be a plain own-data object.`);
+    return null;
+  }
+  const output = {};
   for (const [key, descriptor] of Object.entries(descriptors)) {
     if (!("value" in descriptor) || !descriptor.enumerable) {
       err("visuals", "content/visuals.json", `${fieldPath}.${key}`, `${fieldPath}.${key} must be an enumerable data property.`);
     } else if (allowedKeys && !allowedKeys.has(key)) {
       err("visuals", "content/visuals.json", `${fieldPath}.${key}`, `${fieldPath}.${key} is not supported.`);
+    } else {
+      output[key] = descriptor.value;
     }
   }
-  return value;
+  return output;
 }
 
 function validateCameraImageAsset(asset, fieldPath, err, { anchor = false } = {}) {
@@ -861,28 +876,54 @@ function validateCameraImageAsset(asset, fieldPath, err, { anchor = false } = {}
 }
 
 function validateCameraViewVariants(visuals, visualsVersion, err, warn) {
-  if (visuals.viewVariants === undefined) return;
+  let rootDescriptor;
+  try { rootDescriptor = Object.getOwnPropertyDescriptor(visuals, "viewVariants"); } catch {
+    err("visuals", "content/visuals.json", "viewVariants", "viewVariants could not be inspected safely.");
+    return;
+  }
+  if (!rootDescriptor) return;
+  if (!rootDescriptor.enumerable || !("value" in rootDescriptor)) {
+    err("visuals", "content/visuals.json", "viewVariants", "viewVariants must be an enumerable own data property; accessors are not allowed.");
+    return;
+  }
   if (visualsVersion !== 4) err("visuals", "content/visuals.json", "viewVariants", "viewVariants requires visuals schemaVersion 4.");
-  const catalog = cameraViewRecord(visuals.viewVariants, "viewVariants", new Set(["schemaVersion", "sprites", "tileSets"]), err);
+  const catalog = cameraViewRecord(rootDescriptor.value, "viewVariants", new Set(["schemaVersion", "sprites", "tileSets"]), err);
   if (!catalog) return;
   if (catalog.schemaVersion !== 1) err("visuals", "content/visuals.json", "viewVariants.schemaVersion", "viewVariants.schemaVersion must be 1.");
   const sprites = cameraViewRecord(catalog.sprites, "viewVariants.sprites", null, err);
   const tileSets = cameraViewRecord(catalog.tileSets, "viewVariants.tileSets", null, err);
+  let spriteVariantRecords = 0;
+  let spriteBudgetExceeded = false;
   for (const [spriteId, variants] of Object.entries(sprites ?? {})) {
     const base = `viewVariants.sprites.${spriteId}`;
     const table = cameraViewRecord(variants, base, CAMERA_VIEW_KEYS, err);
     for (const [key, asset] of Object.entries(table ?? {})) {
       if (!CAMERA_VIEW_KEYS.has(key)) continue;
+      spriteVariantRecords += 1;
+      if (spriteVariantRecords > CAMERA_VIEW_VARIANT_LIMITS.sprites) {
+        err("visuals", "content/visuals.json", "viewVariants.sprites", `viewVariants.sprites exceeds the ${CAMERA_VIEW_VARIANT_LIMITS.sprites}-record budget.`);
+        spriteBudgetExceeded = true;
+        break;
+      }
       validateCameraImageAsset(asset, `${base}.${key}`, err, { anchor: true });
       if (!Object.hasOwn(visuals.sprites ?? {}, spriteId)) warn("visuals", "content/visuals.json", `${base}.${key}`, `Optional camera variant references unavailable base sprite "${spriteId}".`);
     }
+    if (spriteBudgetExceeded) break;
   }
+  let tileSetVariantRecords = 0;
+  let tileSetBudgetExceeded = false;
   for (const [tileSetId, variants] of Object.entries(tileSets ?? {})) {
     const base = `viewVariants.tileSets.${tileSetId}`;
     const table = cameraViewRecord(variants, base, CAMERA_VIEW_KEYS, err);
     const authoredTileSet = visuals.tileSets?.[tileSetId];
     for (const [key, variant] of Object.entries(table ?? {})) {
       if (!CAMERA_VIEW_KEYS.has(key)) continue;
+      tileSetVariantRecords += 1;
+      if (tileSetVariantRecords > CAMERA_VIEW_VARIANT_LIMITS.tileSets) {
+        err("visuals", "content/visuals.json", "viewVariants.tileSets", `viewVariants.tileSets exceeds the ${CAMERA_VIEW_VARIANT_LIMITS.tileSets}-record budget.`);
+        tileSetBudgetExceeded = true;
+        break;
+      }
       const field = `${base}.${key}`;
       const record = cameraViewRecord(variant, field, new Set(["atlas", "materials"]), err);
       if (!record) continue;
@@ -892,6 +933,7 @@ function validateCameraViewVariants(visuals, visualsVersion, err, warn) {
         if (!Object.hasOwn(materials ?? {}, materialId)) err("visuals", "content/visuals.json", `${field}.materials.${materialId}`, `Camera tileset variant is missing mandatory material "${materialId}".`);
       }
     }
+    if (tileSetBudgetExceeded) break;
   }
 }
 

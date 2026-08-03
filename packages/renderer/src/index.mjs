@@ -93,9 +93,13 @@ export class TowerForgeCanvasRenderer {
     this.viewportController = null;
     this.viewportSignature = "";
     const authoredVisuals = ownDataValue(this.content, "visuals");
-    this.cameraCatalog = typeof options.cameraProfileId === "string" && ownDataValue(authoredVisuals, "schemaVersion") === 4
+    const cameraCatalog = ownDataValue(authoredVisuals, "schemaVersion") === 4
       ? ownDataValue(authoredVisuals, "cameraProfiles")
       : null;
+    const cameraBindings = ownDataValue(cameraCatalog, "bindings");
+    const hasCameraBinding = Object.keys(ownDataValue(cameraBindings, "missions") ?? {}).length > 0
+      || Object.keys(ownDataValue(cameraBindings, "maps") ?? {}).length > 0;
+    this.cameraCatalog = typeof options.cameraProfileId === "string" || hasCameraBinding ? cameraCatalog : null;
     this.buildTargetCameraProfileId = typeof options.cameraProfileId === "string" ? options.cameraProfileId : undefined;
     this.cameraProfile = null;
     this.cameraProfileSignature = "legacy";
@@ -335,12 +339,15 @@ export class TowerForgeCanvasRenderer {
       actors.set(key, value);
     };
     for (const row of destructibleEnvironmentPresentation.active ? destructibleEnvironmentPresentation.rows : []) {
-      addWorld(row.id ?? row.objectId ?? `${row.coord.q},${row.coord.r}`, "destructible", row, { ...this.worldCenter(row.coord, geom), elevation: Number(row.coord?.elevation) || 0 });
+      addWorld(row.id ?? row.objectId ?? `${row.coord.q},${row.coord.r}`, "destructible", row, { ...this.worldCenter(row.coord, geom), elevation: this.elevationAtCoord(row.coord, geom) });
     }
-    for (const tower of snapshot.towers ?? []) addWorld(tower.id, "tower", tower, { ...this.worldCenter(tower.coord, geom), elevation: Number(tower.coord?.elevation) || 0 });
+    for (const tower of snapshot.towers ?? []) addWorld(tower.id, "tower", tower, { ...this.worldCenter(tower.coord, geom), elevation: this.elevationAtCoord(tower.coord, geom) });
     for (const hero of heroPresentation.units) {
       const screen = projectHeroPresentationPoint(hero, (coord) => this.center(coord, geom));
-      if (screen) addWorld(hero.id, "hero", hero, { ...geom.cameraRenderSpace.screenToWorld(screen, 0), elevation: 0 });
+      if (screen) {
+        const elevation = this.elevationAtCoord(hero.coord ?? hero.targetCoord, geom);
+        addWorld(hero.id, "hero", hero, { ...geom.cameraRenderSpace.screenToWorld(screen, elevation), elevation });
+      }
     }
     for (const enemy of snapshot.enemies ?? []) {
       const screen = positions.get(enemy.id);
@@ -348,7 +355,11 @@ export class TowerForgeCanvasRenderer {
     }
     for (const projectile of ballisticsPresentation.active ? ballisticsPresentation.projectiles : []) {
       const screen = projectBallisticsPresentationPoint(projectile, (coord) => this.center(coord, geom), Math.max(1, geom.r * 0.18));
-      if (screen) addWorld(projectile.id, "projectile", projectile, { ...geom.cameraRenderSpace.screenToWorld(screen, 0), elevation: 0 });
+      if (screen) {
+        const coord = projectile.elapsedUnits >= projectile.travelTimeUnits ? projectile.targetCoord : projectile.sourceCoord;
+        const elevation = this.elevationAtCoord(coord, geom);
+        addWorld(projectile.id, "projectile", projectile, { ...geom.cameraRenderSpace.screenToWorld(screen, elevation), elevation });
+      }
     }
     const ordered = projectCameraRenderItemsV1(geom.cameraRenderSpace, rows);
     this.ctx.save();
@@ -1034,9 +1045,15 @@ export class TowerForgeCanvasRenderer {
     // tile-count arrays 60x/second.
     let maxQ = 1;
     let maxR = 1;
+    let elevationSignature = 0;
+    const tileElevations = new Map();
     for (const tile of tiles) {
       if (tile.q > maxQ) maxQ = tile.q;
       if (tile.r > maxR) maxR = tile.r;
+      const elevation = Number(tile.elevation) || 0;
+      tileElevations.set(`${tile.q},${tile.r}`, elevation);
+      const coordHash = (Math.imul((tile.q + 1) | 0, 73_856_093) ^ Math.imul((tile.r + 1) | 0, 19_349_663)) >>> 0;
+      elevationSignature = (elevationSignature + (coordHash ^ Math.imul((elevation * 1_000) | 0, 83_492_791))) >>> 0;
     }
     let base;
     if (grid?.kind === "square") {
@@ -1047,17 +1064,25 @@ export class TowerForgeCanvasRenderer {
       base = { r, ox: r * 1.5, oy: r * 1.5, grid: grid ?? { kind: "hex", layout: "odd-r" } };
     }
     if (this.cameraProfile && this.viewportProfile && tiles.length > 0) {
-      const signature = `${this.canvas.width}x${this.canvas.height}|${base.grid.kind}|${maxQ},${maxR}|${this.cameraProfileSignature}`;
+      const rect = this.canvas.getBoundingClientRect();
+      const backingScale = rect.width > 0 && rect.height > 0
+        ? Math.min(this.canvas.width / rect.width, this.canvas.height / rect.height)
+        : 1;
+      const signature = `${this.canvas.width}x${this.canvas.height}|${base.grid.kind}|${maxQ},${maxR}|${elevationSignature}|${backingScale}|${this.cameraProfileSignature}`;
       if (!this.cameraRenderSpace || this.viewportSignature !== signature) {
         const worldPoints = tiles.map((tile) => {
           const center = this.worldCenter(tile, base);
           return { ...center, elevation: Number(tile.elevation) || 0 };
         });
         this.cameraRenderSpace = createCameraRenderSpaceV1({
-          cameraProfile: this.cameraProfile,
+          cameraProfile: {
+            ...this.cameraProfile,
+            fitPadding: this.cameraProfile.fitPadding * backingScale,
+            panPadding: this.cameraProfile.panPadding * backingScale
+          },
           worldPoints,
           viewport: { width: this.canvas.width, height: this.canvas.height },
-          viewportProfile: this.viewportProfile
+          viewportProfile: { ...this.viewportProfile, padding: (Number(this.viewportProfile.padding) || 0) * backingScale }
         });
         this.viewportController = this.cameraRenderSpace.viewportTransform;
         this.viewportSignature = signature;
@@ -1069,7 +1094,8 @@ export class TowerForgeCanvasRenderer {
         worldR: base.r,
         r: base.r * view.zoom,
         viewportTransform: this.viewportController,
-        cameraRenderSpace: this.cameraRenderSpace
+        cameraRenderSpace: this.cameraRenderSpace,
+        tileElevations
       };
     }
     if (!this.viewportFactory || !this.viewportProfile || tiles.length === 0) return base;
@@ -1115,9 +1141,14 @@ export class TowerForgeCanvasRenderer {
   center(coord, geom) {
     const point = this.worldCenter(coord, geom);
     if (geom.cameraRenderSpace) {
-      return geom.cameraRenderSpace.worldToScreen({ ...point, elevation: Number(coord.elevation) || 0 });
+      return geom.cameraRenderSpace.worldToScreen({ ...point, elevation: this.elevationAtCoord(coord, geom) });
     }
     return geom.viewportTransform ? geom.viewportTransform.worldToScreen(point) : point;
+  }
+
+  elevationAtCoord(coord, geom) {
+    if (Number.isFinite(coord?.elevation)) return Number(coord.elevation);
+    return geom?.tileElevations?.get(`${coord?.q},${coord?.r}`) ?? 0;
   }
 
   worldCenter(coord, geom) {
@@ -1154,7 +1185,7 @@ export class TowerForgeCanvasRenderer {
     const byId = new Map(towers.map((tower) => [tower.id, tower]));
     const items = towers.map((tower) => {
       const point = this.worldCenter(tower.coord, geom);
-      return { id: tower.id, kind: "tower", ...point, elevation: Number(tower.coord?.elevation) || 0 };
+      return { id: tower.id, kind: "tower", ...point, elevation: this.elevationAtCoord(tower.coord, geom) };
     });
     return projectCameraRenderItemsV1(geom.cameraRenderSpace, items).map((item) => byId.get(item.id));
   }

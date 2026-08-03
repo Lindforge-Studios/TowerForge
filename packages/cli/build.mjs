@@ -112,9 +112,15 @@ try {
   const renderer = target.renderer === "phaser" ? "phaser" : "canvas";
   const largeScreenPlayer = files.buildTargets.schemaVersion === 2
     && (target.formFactor === "desktop" || target.formFactor === "responsive");
-  const cameraProjectionActive = typeof target.cameraProfileId === "string"
-    && files.visuals?.schemaVersion === 4
-    && files.visuals?.cameraProfiles?.schemaVersion === 1;
+  const cameraProfiles = files.visuals?.schemaVersion === 4
+    && files.visuals?.cameraProfiles?.schemaVersion === 1
+    ? files.visuals.cameraProfiles
+    : null;
+  const cameraProjectionActive = cameraProfiles !== null && (
+    typeof target.cameraProfileId === "string"
+    || Object.keys(cameraProfiles.bindings?.missions ?? {}).length > 0
+    || Object.keys(cameraProfiles.bindings?.maps ?? {}).length > 0
+  );
   const nativeDesktopPlayer = args.nativeDesktopBundle && target.platform === "desktop";
   const nativeUpdaterActive = nativeDesktopPlayer && target.updater?.enabled === true;
   const multiplayerActive = hasActiveMultiplayer(files);
@@ -1132,8 +1138,15 @@ function phaserViewportMethodsTemplate(enabled, cameraProjectionActive = false) 
     return { x: g.ox + coord.q * g.r * 1.48 + (coord.r % 2) * g.r * 0.74, y: g.oy + coord.r * g.r * 1.28 };
   }`;
   return `  geometry(tiles, grid) {
-    let maxQ = 1, maxR = 1;
-    for (const t of tiles) { if (t.q > maxQ) maxQ = t.q; if (t.r > maxR) maxR = t.r; }
+    let maxQ = 1, maxR = 1, elevationSignature = 0;
+    const tileElevations = new Map();
+    for (const t of tiles) {
+      if (t.q > maxQ) maxQ = t.q; if (t.r > maxR) maxR = t.r;
+      const elevation = Number(t.elevation) || 0;
+      tileElevations.set(t.q + "," + t.r, elevation);
+      const coordHash = (Math.imul((t.q + 1) | 0, 73856093) ^ Math.imul((t.r + 1) | 0, 19349663)) >>> 0;
+      elevationSignature = (elevationSignature + (coordHash ^ Math.imul((elevation * 1000) | 0, 83492791))) >>> 0;
+    }
     const W = this.scale.width, H = this.scale.height;
     let base;
     if (grid?.kind === "square") {
@@ -1150,7 +1163,7 @@ function phaserViewportMethodsTemplate(enabled, cameraProjectionActive = false) 
       buildTargetCameraProfileId: project.buildTarget.cameraProfileId
     })` : "null"};
     const cameraProfile = cameraResolution?.profile ?? null;
-    const signature = W + "x" + H + "|" + base.grid.kind + "|" + maxQ + "," + maxR
+    const signature = W + "x" + H + "|" + base.grid.kind + "|" + maxQ + "," + maxR + "|" + elevationSignature
       + (cameraProfile ? "|" + cameraResolution.source + "|" + (cameraResolution.profileId || "fallback") + "|" + JSON.stringify(cameraProfile) : "|legacy");
     if (!this.viewportController || this.viewportSignature !== signature) {
       const baseCenter = (coord) => base.grid.kind === "square"
@@ -1182,13 +1195,18 @@ function phaserViewportMethodsTemplate(enabled, cameraProjectionActive = false) 
       this.viewportSignature = signature;
     }
     const view = this.viewportController.getSnapshot();
-    return { ...base, worldR: base.r, r: base.r * view.zoom, viewportTransform: this.viewportController, cameraRenderSpace: this.cameraRenderSpace ?? null };
+    return { ...base, worldR: base.r, r: base.r * view.zoom, viewportTransform: this.viewportController, cameraRenderSpace: this.cameraRenderSpace ?? null, tileElevations };
   }
   center(coord, g) {
     const point = this.worldCenter(coord, g);
     return g.cameraRenderSpace
-      ? g.cameraRenderSpace.worldToScreen({ ...point, elevation: Number(coord.elevation) || 0 })
+      ? g.cameraRenderSpace.worldToScreen({ ...point, elevation: this.elevationAtCoord(coord, g) })
       : g.viewportTransform ? g.viewportTransform.worldToScreen(point) : point;
+  }
+  elevationAtCoord(coord, tilesOrGeometry, geometry) {
+    if (Number.isFinite(coord?.elevation)) return Number(coord.elevation);
+    const g = geometry ?? tilesOrGeometry;
+    return g?.tileElevations?.get((coord?.q ?? "") + "," + (coord?.r ?? "")) ?? 0;
   }
   worldCenter(coord, g) {
     const radius = g.worldR ?? g.r;
@@ -3445,6 +3463,7 @@ class PlayScene extends Phaser.Scene {
     this.juiceAdditiveG = proceduralJuiceEnabled ? this.add.graphics().setBlendMode(Phaser.BlendModes.ADD) : null;
     this.juiceMultiplyG = proceduralJuiceEnabled ? this.add.graphics().setBlendMode(Phaser.BlendModes.MULTIPLY) : null;
     this.entG = this.add.graphics();
+    ${cameraProjectionActive ? "this.cameraActorGraphics = new Map();" : ""}
     this.towerLabels = new Map();
     this.heroImages = new Map();
     this.heroLabels = new Map();
@@ -3604,9 +3623,9 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer, cameraProjectionActive)}
   pickTile(x, y) {
     const snap = game.getRenderSnapshot();
     const g = this.geometry(snap.tiles, snap.grid);
-    ${cameraProjectionActive ? `const worldPoint = g.cameraRenderSpace?.screenToWorld({ x, y }, 0) ?? null;` : ""}
     let best = null, bestD = Infinity;
     for (const t of snap.tiles) {
+      ${cameraProjectionActive ? `const worldPoint = g.cameraRenderSpace?.screenToWorld({ x, y }, this.elevationAtCoord(t, g)) ?? null;` : ""}
       const p = ${cameraProjectionActive ? `worldPoint ? this.worldCenter(t, g) : this.center(t, g)` : `this.center(t, g)`};
       const d = Math.hypot(p.x - (${cameraProjectionActive ? "worldPoint?.x ?? x" : "x"}), p.y - (${cameraProjectionActive ? "worldPoint?.y ?? y" : "y"}));
       if (d < bestD) { bestD = d; best = t; }
@@ -3616,28 +3635,87 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer, cameraProjectionActive)}
   }
   ${cameraProjectionActive ? `cameraTileDepth(tiles, g) {
     if (!g.cameraRenderSpace || !tiles.length) return new Map();
-    const tileRenderRows = tiles.map((tile) => ({ id: tile.q + "," + tile.r, kind: "tile", ...this.worldCenter(tile, g), elevation: Number(tile.elevation) || 0 }));
+    const tileRenderRows = tiles.map((tile) => ({ id: tile.q + "," + tile.r, kind: "tile", ...this.worldCenter(tile, g), elevation: this.elevationAtCoord(tile, g) }));
     const ordered = projectCameraRenderItemsV1(g.cameraRenderSpace, tileRenderRows);
     return new Map(ordered.map((row, index) => [row.id, -1000 + index / Math.max(1, ordered.length)]));
   }
   cameraActorDepth(snap, g, enemyPositions, towerPositions) {
+    return this.renderCameraOrderedWorldActors(snap, g, enemyPositions, towerPositions);
+  }
+  renderCameraOrderedWorldActors(snap, g, enemyPositions, towerPositions) {
     if (!g.cameraRenderSpace) return new Map();
     const towerEnemyHeroProjectileRows = [];
-    for (const tower of snap.towers || []) towerEnemyHeroProjectileRows.push({ id: tower.id, kind: "tower", ...this.worldCenter(tower.coord, g), elevation: Number(tower.coord?.elevation) || 0 });
+    const values = new Map();
+    const elevationAtCoord = (coord, tiles) => this.elevationAtCoord(coord, tiles, g);
+    const add = (id, kind, value, point, elevation) => {
+      const key = kind + ":" + id;
+      towerEnemyHeroProjectileRows.push({ id: key, kind, ...point, elevation });
+      values.set(key, value);
+    };
+    for (const tower of snap.towers || []) {
+      const key = "tower:" + tower.id;
+      towerEnemyHeroProjectileRows.push({ id: key, kind: "tower", elevation: elevationAtCoord(tower.coord, snap.tiles), ...this.worldCenter(tower.coord, g) });
+      values.set(key, tower);
+    }
     for (const enemy of snap.enemies || []) {
       const screen = enemyPositions.get(enemy.id); if (!screen) continue;
-      towerEnemyHeroProjectileRows.push({ id: enemy.id, kind: "enemy", ...g.cameraRenderSpace.screenToWorld(screen, 0), elevation: 0 });
+      add(enemy.id, "enemy", enemy, g.cameraRenderSpace.screenToWorld(screen, 0), 0);
     }
     for (const hero of projectHeroesPresentation(snap).units) {
       const screen = projectHeroPresentationPoint(hero, (coord) => this.center(coord, g)); if (!screen) continue;
-      towerEnemyHeroProjectileRows.push({ id: hero.id, kind: "hero", ...g.cameraRenderSpace.screenToWorld(screen, 0), elevation: 0 });
+      const coord = hero.coord || hero.targetCoord;
+      const elevation = this.elevationAtCoord(coord, g);
+      add(hero.id, "hero", hero, g.cameraRenderSpace.screenToWorld(screen, elevation), elevation);
+    }
+    for (const row of projectDestructibleEnvironmentPresentation(snap).rows) {
+      const key = "destructible:" + (row.id || row.objectId || row.coord.q + "," + row.coord.r);
+      towerEnemyHeroProjectileRows.push({ id: key, kind: "destructible", elevation: elevationAtCoord(row.coord, snap.tiles), ...this.worldCenter(row.coord, g) });
+      values.set(key, row);
+    }
+    for (const projectile of projectBallisticsPresentation(snap).projectiles) {
+      const screen = projectBallisticsPresentationPoint(projectile, (coord) => this.center(coord, g), Math.max(1, g.r * 0.18));
+      if (!screen) continue;
+      const projectileRow = { kind: "projectile" };
+      const endpoint = projectile.elapsedUnits >= projectile.travelTimeUnits ? projectile.targetCoord : projectile.sourceCoord;
+      const elevation = elevationAtCoord(endpoint, snap.tiles);
+      const key = "projectile:" + projectile.id;
+      towerEnemyHeroProjectileRows.push({ id: key, kind: projectileRow.kind, elevation, ...g.cameraRenderSpace.screenToWorld(screen, elevation) });
+      values.set(key, projectile);
     }
     const ordered = projectCameraRenderItemsV1(g.cameraRenderSpace, towerEnemyHeroProjectileRows);
-    const depths = new Map(ordered.map((row, index) => [row.id, 1 + index / Math.max(1, ordered.length)]));
-    for (const [id, label] of this.towerLabels) label.setDepth(depths.get(id) ?? 10);
-    for (const [id, image] of this.heroImages) image.setDepth(depths.get(id) ?? 9);
-    for (const [id, label] of this.heroLabels) label.setDepth(depths.get(id) ?? 10);
+    const depths = new Map();
+    const seen = new Set();
+    for (let index = 0; index < ordered.length; index += 1) {
+      const row = ordered[index];
+      const value = values.get(row.id);
+      const depth = 1 + index / Math.max(1, ordered.length);
+      depths.set(row.id, depth);
+      seen.add(row.id);
+      let graphics = this.cameraActorGraphics.get(row.id);
+      if (!graphics) { graphics = this.add.graphics(); this.cameraActorGraphics.set(row.id, graphics); }
+      graphics.clear().setDepth(depth);
+      if (row.kind === "projectile") {
+        const point = projectBallisticsPresentationPoint(value, (coord) => this.center(coord, g), Math.max(1, g.r * 0.18));
+        if (point) {
+          graphics.fillStyle(0xffd27a, 1); graphics.fillCircle(point.x, point.y, Math.max(2, g.r * 0.13));
+          graphics.lineStyle(Math.max(1, g.r * 0.08), 0xfff4c4, 0.72); graphics.strokeCircle(point.x, point.y, Math.max(2, g.r * 0.13));
+        }
+      } else if (row.kind === "destructible") {
+        const point = this.center(value.coord, g), radius = Math.max(3, g.r * 0.38), alpha = value.destroyed ? 0.42 : 0.95;
+        graphics.fillStyle(value.destroyed ? 0x605d55 : 0x9b7653, alpha); graphics.fillRect(point.x - radius, point.y - radius, radius * 2, radius * 2);
+        graphics.lineStyle(Math.max(1, g.r * 0.08), value.destroyed ? 0xa5a095 : 0xf0d3a8, alpha); graphics.strokeRect(point.x - radius, point.y - radius, radius * 2, radius * 2);
+      }
+    }
+    for (const [key, graphics] of this.cameraActorGraphics) {
+      if (!seen.has(key)) { graphics.destroy(); this.cameraActorGraphics.delete(key); }
+    }
+    for (const [id, label] of this.towerLabels) label.setDepth(depths.get("tower:" + id) ?? 10);
+    for (const [id, image] of this.heroImages) image.setDepth(depths.get("hero:" + id) ?? 9);
+    for (const [id, label] of this.heroLabels) label.setDepth(depths.get("hero:" + id) ?? 10);
     return depths;
+  }
+  cameraActorGraphicsFor(kind, id) {
+    return this.cameraActorGraphics.get(kind + ":" + id) || this.entG;
   }` : ""}
   enemyPos(enemy, snap, g) {
     const route = enemy.routeId ? snap.pathRoutes?.find((rt) => rt.id === enemy.routeId)?.pathCenterline : snap.pathCenterline;
@@ -3896,7 +3974,7 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer, cameraProjectionActive)}
 
     this.fxG.clear();
     const ballisticsPresentation = projectBallisticsPresentation(presentationSnapshot);
-    if (ballisticsPresentation.active) {
+    if (ballisticsPresentation.active && !g.cameraRenderSpace) {
       this.fxG.fillStyle(0xffd27a, 1);
       this.fxG.lineStyle(Math.max(1, g.r * 0.08), 0xfff4c4, 0.72);
       for (const projectile of ballisticsPresentation.projectiles) {
@@ -4042,7 +4120,7 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer, cameraProjectionActive)}
       }
     }
     const destructibleEnvironmentPresentation = projectDestructibleEnvironmentPresentation(snap);
-    if (destructibleEnvironmentPresentation.active) {
+    if (destructibleEnvironmentPresentation.active && !g.cameraRenderSpace) {
       for (const row of destructibleEnvironmentPresentation.rows) {
         const p = this.center(row.coord, g);
         const radius = Math.max(3, g.r * 0.38);
@@ -4067,22 +4145,23 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer, cameraProjectionActive)}
     const seen = new Set();
     for (const tw of snap.towers) {
       const p = this.center(tw.coord, g); seen.add(tw.id);
+      const actorG = ${cameraProjectionActive ? `g.cameraRenderSpace ? this.cameraActorGraphicsFor("tower", tw.id) : this.entG` : "this.entG"};
       const disabled = (tw.disabledFor ?? 0) > 0; // silenced by an enemy tower-disrupt pulse
       const alpha = disabled ? 0.4 : 1;
-      this.entG.fillStyle(0x8ac783, alpha); this.entG.fillCircle(p.x, p.y, g.r * 0.5);
-      this.entG.lineStyle(2, disabled ? 0xdf6a59 : 0xe8f4db, alpha); this.entG.strokeCircle(p.x, p.y, g.r * 0.5);
+      actorG.fillStyle(0x8ac783, alpha); actorG.fillCircle(p.x, p.y, g.r * 0.5);
+      actorG.lineStyle(2, disabled ? 0xdf6a59 : 0xe8f4db, alpha); actorG.strokeCircle(p.x, p.y, g.r * 0.5);
       // Health bar for damaged destructible towers (hp defined and below the type's maxHp).
       const tMax = content.towers[tw.typeId]?.maxHp;
       if (typeof tw.hp === "number" && typeof tMax === "number" && tMax > 0 && tw.hp < tMax) {
         const frac = Math.max(0, Math.min(1, tw.hp / tMax));
-        this.entG.fillStyle(0x1b1d18, 1); this.entG.fillRect(p.x - g.r * 0.45, p.y + g.r * 0.5, g.r * 0.9, 4);
-        this.entG.fillStyle(frac > 0.35 ? 0x8ac783 : 0xdf6a59, 1); this.entG.fillRect(p.x - g.r * 0.45, p.y + g.r * 0.5, g.r * 0.9 * frac, 4);
+        actorG.fillStyle(0x1b1d18, 1); actorG.fillRect(p.x - g.r * 0.45, p.y + g.r * 0.5, g.r * 0.9, 4);
+        actorG.fillStyle(frac > 0.35 ? 0x8ac783 : 0xdf6a59, 1); actorG.fillRect(p.x - g.r * 0.45, p.y + g.r * 0.5, g.r * 0.9 * frac, 4);
       }
-      this.shieldRing(this.entG, p.x, p.y, g.r * 0.66, resolveShieldPresentation(snap, "tower", tw.id));
+      this.shieldRing(actorG, p.x, p.y, g.r * 0.66, resolveShieldPresentation(snap, "tower", tw.id));
       let label = this.towerLabels.get(tw.id);
       const text = (content.towers[tw.typeId]?.label || tw.typeId).slice(0, 2);
-      if (!label) { label = this.add.text(0, 0, text, { fontFamily: "sans-serif", color: "#101410" }).setOrigin(0.5).setDepth(${cameraProjectionActive ? "cameraActorDepth.get(tw.id) ?? 10" : "10"}); this.towerLabels.set(tw.id, label); }
-      label.setText(text).setFontSize(Math.max(10, Math.round(g.r * 0.42))).setPosition(p.x, p.y).setAlpha(alpha)${cameraProjectionActive ? ".setDepth(cameraActorDepth.get(tw.id) ?? 10)" : ""};
+      if (!label) { label = this.add.text(0, 0, text, { fontFamily: "sans-serif", color: "#101410" }).setOrigin(0.5).setDepth(${cameraProjectionActive ? "cameraActorDepth.get(\"tower:\" + tw.id) ?? 10" : "10"}); this.towerLabels.set(tw.id, label); }
+      label.setText(text).setFontSize(Math.max(10, Math.round(g.r * 0.42))).setPosition(p.x, p.y).setAlpha(alpha)${cameraProjectionActive ? ".setDepth(cameraActorDepth.get(\"tower:\" + tw.id) ?? 10)" : ""};
     }
     for (const [id, lbl] of this.towerLabels) { if (!seen.has(id)) { lbl.destroy(); this.towerLabels.delete(id); } }
 
@@ -4094,13 +4173,14 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer, cameraProjectionActive)}
       seenHeroes.add(hero.id);
       const point = projectHeroPresentationPoint(hero, (coord) => this.center(coord, g));
       if (!point) continue;
+      const actorG = ${cameraProjectionActive ? `g.cameraRenderSpace ? this.cameraActorGraphicsFor("hero", hero.id) : this.entG` : "this.entG"};
       const passiveAura = hero.passiveAura;
       if (passiveAura?.active) {
-        this.entG.lineStyle(Math.max(2, g.r * 0.08), 0x7ae8d6, 0.55);
-        this.entG.strokeCircle(point.x, point.y, Math.max(g.r * 0.72, passiveAura.radius * g.r));
+        actorG.lineStyle(Math.max(2, g.r * 0.08), 0x7ae8d6, 0.55);
+        actorG.strokeCircle(point.x, point.y, Math.max(g.r * 0.72, passiveAura.radius * g.r));
         for (const towerId of passiveAura.affectedTowerIds) {
           const towerPoint = towerPositions.get(towerId);
-          if (towerPoint) this.entG.strokeCircle(towerPoint.x, towerPoint.y, g.r * 0.62);
+          if (towerPoint) actorG.strokeCircle(towerPoint.x, towerPoint.y, g.r * 0.62);
         }
       }
       const heroBindings = ownDataValue(ownDataValue(content.visuals, "bindings"), "heroes");
@@ -4111,22 +4191,22 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer, cameraProjectionActive)}
       const heroAlpha = hero.durability?.defeated ? 0.38 : 1;
       if (texture) {
         if (!image) {
-          image = this.add.image(point.x, point.y, texture.key, texture.frame)${cameraProjectionActive ? ".setOrigin(texture.anchor.x, texture.anchor.y)" : ""}.setDepth(${cameraProjectionActive ? "cameraActorDepth.get(hero.id) ?? 9" : "9"});
+          image = this.add.image(point.x, point.y, texture.key, texture.frame)${cameraProjectionActive ? ".setOrigin(texture.anchor.x, texture.anchor.y)" : ""}.setDepth(${cameraProjectionActive ? "cameraActorDepth.get(\"hero:\" + hero.id) ?? 9" : "9"});
           this.heroImages.set(hero.id, image);
         }
-        image.setTexture(texture.key, texture.frame).setPosition(point.x, point.y)${cameraProjectionActive ? ".setOrigin(texture.anchor.x, texture.anchor.y).setDepth(cameraActorDepth.get(hero.id) ?? 9)" : ""}
+        image.setTexture(texture.key, texture.frame).setPosition(point.x, point.y)${cameraProjectionActive ? ".setOrigin(texture.anchor.x, texture.anchor.y).setDepth(cameraActorDepth.get(\"hero:\" + hero.id) ?? 9)" : ""}
           .setDisplaySize(g.r * 1.35, g.r * 1.35).setAlpha(heroAlpha).setVisible(true);
         if (label) { label.destroy(); this.heroLabels.delete(hero.id); label = null; }
       } else {
         if (image) { image.destroy(); this.heroImages.delete(hero.id); image = null; }
-        this.entG.fillStyle(0xe6b85c, heroAlpha); this.entG.fillCircle(point.x, point.y, g.r * 0.5);
-        this.entG.lineStyle(2, 0xfff0bd, heroAlpha); this.entG.strokeCircle(point.x, point.y, g.r * 0.5);
+        actorG.fillStyle(0xe6b85c, heroAlpha); actorG.fillCircle(point.x, point.y, g.r * 0.5);
+        actorG.lineStyle(2, 0xfff0bd, heroAlpha); actorG.strokeCircle(point.x, point.y, g.r * 0.5);
         if (!label) {
-          label = this.add.text(0, 0, "", { fontFamily: "sans-serif", fontStyle: "bold", color: "#101410" }).setOrigin(0.5).setDepth(${cameraProjectionActive ? "cameraActorDepth.get(hero.id) ?? 10" : "10"});
+          label = this.add.text(0, 0, "", { fontFamily: "sans-serif", fontStyle: "bold", color: "#101410" }).setOrigin(0.5).setDepth(${cameraProjectionActive ? "cameraActorDepth.get(\"hero:\" + hero.id) ?? 10" : "10"});
           this.heroLabels.set(hero.id, label);
         }
         label.setText(hero.label.slice(0, 2)).setFontSize(Math.max(10, Math.round(g.r * 0.38)))
-          .setPosition(point.x, point.y).setAlpha(heroAlpha).setVisible(true)${cameraProjectionActive ? ".setDepth(cameraActorDepth.get(hero.id) ?? 10)" : ""};
+          .setPosition(point.x, point.y).setAlpha(heroAlpha).setVisible(true)${cameraProjectionActive ? ".setDepth(cameraActorDepth.get(\"hero:\" + hero.id) ?? 10)" : ""};
       }
       if (hero.durability) {
         const width = g.r * 1.05;
@@ -4134,20 +4214,20 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer, cameraProjectionActive)}
         const x = point.x - width / 2;
         const y = point.y - g.r * 0.82;
         const hpRatio = hero.durability.hp / hero.durability.maxHp;
-        this.entG.fillStyle(0x000000, 0.65);
-        this.entG.fillRect(x - 1, y - 1, width + 2, height + 2);
-        this.entG.fillStyle(hpRatio > 0.35 ? 0x73cf82 : 0xdf6a59, 1);
-        this.entG.fillRect(x, y, width * hpRatio, height);
+        actorG.fillStyle(0x000000, 0.65);
+        actorG.fillRect(x - 1, y - 1, width + 2, height + 2);
+        actorG.fillStyle(hpRatio > 0.35 ? 0x73cf82 : 0xdf6a59, 1);
+        actorG.fillRect(x, y, width * hpRatio, height);
         if (hero.durability.shield) {
-          this.shieldRing(this.entG, point.x, point.y, g.r * 0.62, {
+          this.shieldRing(actorG, point.x, point.y, g.r * 0.62, {
             ratio: hero.durability.shield.current / hero.durability.shield.capacity
           });
         }
         if (hero.durability.defeated) {
           const radius = g.r * 0.38;
-          this.entG.lineStyle(Math.max(2, g.r * 0.1), 0xdf6a59, 1);
-          this.entG.lineBetween(point.x - radius, point.y - radius, point.x + radius, point.y + radius);
-          this.entG.lineBetween(point.x + radius, point.y - radius, point.x - radius, point.y + radius);
+          actorG.lineStyle(Math.max(2, g.r * 0.1), 0xdf6a59, 1);
+          actorG.lineBetween(point.x - radius, point.y - radius, point.x + radius, point.y + radius);
+          actorG.lineBetween(point.x + radius, point.y - radius, point.x - radius, point.y + radius);
         }
       }
     }
@@ -4177,32 +4257,33 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer, cameraProjectionActive)}
     for (const en of snap.enemies) {
       const p = this.enemyPos(en, snap, g);
       if (!p) continue;
+      const actorG = ${cameraProjectionActive ? `g.cameraRenderSpace ? this.cameraActorGraphicsFor("enemy", en.id) : this.entG` : "this.entG"};
       const color = Number(content.enemies[en.typeId]?.color ?? 0xaaaaaa);
-      this.entG.fillStyle(color, 1); this.entG.fillCircle(p.x, p.y, g.r * 0.38);
-      this.entG.lineStyle(2, 0x111111, 1); this.entG.strokeCircle(p.x, p.y, g.r * 0.38);
+      actorG.fillStyle(color, 1); actorG.fillCircle(p.x, p.y, g.r * 0.38);
+      actorG.lineStyle(2, 0x111111, 1); actorG.strokeCircle(p.x, p.y, g.r * 0.38);
       const ratio = Math.max(0, en.hp / en.maxHp);
-      this.entG.fillStyle(0x1b1d18, 1); this.entG.fillRect(p.x - g.r * 0.45, p.y - g.r * 0.62, g.r * 0.9, 4);
-      this.entG.fillStyle(ratio > 0.35 ? 0x8ac783 : 0xdf6a59, 1); this.entG.fillRect(p.x - g.r * 0.45, p.y - g.r * 0.62, g.r * 0.9 * ratio, 4);
-      this.shieldRing(this.entG, p.x, p.y, g.r * 0.52, resolveShieldPresentation(snap, "enemy", en.id));
+      actorG.fillStyle(0x1b1d18, 1); actorG.fillRect(p.x - g.r * 0.45, p.y - g.r * 0.62, g.r * 0.9, 4);
+      actorG.fillStyle(ratio > 0.35 ? 0x8ac783 : 0xdf6a59, 1); actorG.fillRect(p.x - g.r * 0.45, p.y - g.r * 0.62, g.r * 0.9 * ratio, 4);
+      this.shieldRing(actorG, p.x, p.y, g.r * 0.52, resolveShieldPresentation(snap, "enemy", en.id));
       const formation = enemyFormationsByEnemyId.get(en.id);
       if (formation) {
         const formationColor = formation.role === "vanguard" ? 0xf0b45b
           : formation.role === "support" ? 0x73bfe8 : 0xa79bdc;
-        this.entG.lineStyle(Math.max(1, g.r * 0.07), formationColor, 1);
-        this.entG.strokeCircle(p.x, p.y, g.r * 0.46);
+        actorG.lineStyle(Math.max(1, g.r * 0.07), formationColor, 1);
+        actorG.strokeCircle(p.x, p.y, g.r * 0.46);
       }
       if (vanguardProtectionCueEnemyIds.has(en.id)) {
-        this.entG.lineStyle(Math.max(1, g.r * 0.09), 0xf7d774, 1);
-        this.entG.strokeCircle(p.x, p.y, g.r * 0.58);
+        actorG.lineStyle(Math.max(1, g.r * 0.09), 0xf7d774, 1);
+        actorG.strokeCircle(p.x, p.y, g.r * 0.58);
       }
       const components = componentRowsByEnemyId.get(en.id) ?? [];
       if (components.length > 0) {
         const width = g.r * 0.9, cellWidth = width / components.length;
         for (let index = 0; index < components.length; index += 1) {
           const row = components[index], x = p.x - width / 2 + index * cellWidth, y = p.y + g.r * 0.48;
-          this.entG.fillStyle(0x1b1d18, 1); this.entG.fillRect(x, y, Math.max(1, cellWidth - 1), 3);
-          this.entG.fillStyle(row.destroyed ? 0xdf6a59 : 0x8ac783, 1);
-          this.entG.fillRect(x, y, Math.max(0, cellWidth - 1) * row.hpRatio, 3);
+          actorG.fillStyle(0x1b1d18, 1); actorG.fillRect(x, y, Math.max(1, cellWidth - 1), 3);
+          actorG.fillStyle(row.destroyed ? 0xdf6a59 : 0x8ac783, 1);
+          actorG.fillRect(x, y, Math.max(0, cellWidth - 1) * row.hpRatio, 3);
         }
       }
       const exposurePresentation = resolveExposurePresentation(snap, en.id);
@@ -4213,8 +4294,8 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer, cameraProjectionActive)}
         const row = Math.floor(index / 4), rowCount = Math.min(4, exposureBadges.length - row * 4), column = index % 4;
         const x = p.x + (column - (rowCount - 1) / 2) * exposureStep;
         const y = p.y - g.r * 0.86 - row * exposureStep;
-        this.entG.fillStyle(0x1c6982, 0.94); this.entG.fillCircle(x, y, exposureRadius);
-        this.entG.lineStyle(Math.max(1, exposureRadius * 0.18), 0x9de9ff, 0.95); this.entG.strokeCircle(x, y, exposureRadius);
+        actorG.fillStyle(0x1c6982, 0.94); actorG.fillCircle(x, y, exposureRadius);
+        actorG.lineStyle(Math.max(1, exposureRadius * 0.18), 0x9de9ff, 0.95); actorG.strokeCircle(x, y, exposureRadius);
         const labelKey = en.id + "|" + exposureBadges[index].key;
         seenExposureLabels.add(labelKey);
         let label = this.exposureLabels.get(labelKey);
@@ -4232,8 +4313,8 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer, cameraProjectionActive)}
         const row = Math.floor(index / 4), rowCount = Math.min(4, badges.length - row * 4), column = index % 4;
         const x = p.x + (column - (rowCount - 1) / 2) * step;
         const y = p.y + g.r * 0.64 + row * step;
-        this.entG.fillStyle(0x5b3580, 0.92); this.entG.fillCircle(x, y, radius);
-        this.entG.lineStyle(Math.max(1, radius * 0.18), 0xe0c4ff, 0.92); this.entG.strokeCircle(x, y, radius);
+        actorG.fillStyle(0x5b3580, 0.92); actorG.fillCircle(x, y, radius);
+        actorG.lineStyle(Math.max(1, radius * 0.18), 0xe0c4ff, 0.92); actorG.strokeCircle(x, y, radius);
         const labelKey = en.id + "|" + badges[index].key;
         seenMarkLabels.add(labelKey);
         let label = this.markLabels.get(labelKey);

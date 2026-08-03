@@ -3848,3 +3848,43 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   set covering all 16 prior failures is GREEN at `14/14` files and `73/73` tests.
 - Because this repair changes tracked test/mirror files, the first freeze and its partial gate
   evidence are invalid. A new exact candidate commit receives the complete gate set from the start.
+
+## 2026-08-03 — R20 independent-verifier regression RED
+
+- The first independent Code and Constructor Integration reviews rejected candidate `a5a0c20`.
+  Contract/Test Designer changes were limited to five regression files and captured four distinct
+  release blockers before production repair: generated Phaser did not place projectiles and
+  destructibles into its real mixed-actor depth order; Canvas/Phaser actor projection ignored
+  authoritative tile elevation; a catalog selected only through mission/map bindings was omitted
+  from a target bundle; and CSS-authored fit/pan padding was not scaled for a DPR-2 Canvas.
+- Exact renderer/package RED command:
+  `npx vitest run packages/renderer/src/r20-camera-elevation-dpr.regression.test.mjs packages/cli/build.r20-camera-p0-runtime-isolation.regression.test.mjs --reporter=verbose --maxWorkers=1`.
+  Initial result: exit `1`, five expected RED assertions covering the real Phaser layers,
+  elevation, binding-only activation and DPR padding.
+- A separate fail-closed command
+  `npx vitest run packages/renderer/src/r20-camera-view-assets-hardening.regression.test.mjs packages/cli/lib/r20-camera-view-assets.contract.test.mjs --reporter=verbose --maxWorkers=1`
+  produced five expected RED assertions: accessor fallback, cyclic stack overflow, absent schema
+  budgets and runtime acceptance above 4096 sprite/256 tileset variant records.
+- The topology-aware preview regression in
+  `packages/mcp/r20-camera-authoring.contract.test.mjs` also failed because preview used raw q/r
+  bounds rather than the shared square/hex world centers and viewport render space. No production
+  code was changed by the Contract/Test Designer.
+
+## 2026-08-03 — R20 independent-verifier regression focused GREEN
+
+- View-variant schema, resolver and coverage now validate closed own-data without invoking
+  accessors, contain proxy/cycle failures and enforce the shared 4096/256 budgets. Camera preview
+  now uses the same square/hex centers, projector, target viewport and clipping calculation as the
+  player runtime.
+- Canvas resolves entity elevation from authoritative snapshot tiles, invalidates cached camera
+  bounds when elevation changes and scales authored fit/pan padding into backing pixels. Generated
+  Phaser uses the same elevation lookup for tiles, towers, destructibles and projectile endpoints;
+  inverse hit testing is performed at each candidate tile elevation.
+- Phaser camera builds now allocate one real Graphics layer per stable actor key and assign all
+  towers, enemies, heroes, projectiles and destructibles from one
+  `projectCameraRenderItemsV1` order. Mission/map bindings activate the camera runtime even without
+  a target default, while a genuinely unbound target still excludes all camera modules.
+- Exact combined focused command covering the five independent regression files plus shared
+  projector integration is GREEN: `5/5` executed files and `38/38` tests. Syntax checks and
+  `git diff --check` are GREEN. This repair invalidates the previous freeze and both prior review
+  outcomes; the next commit must run the full gates and receive fresh independent sign-offs.
