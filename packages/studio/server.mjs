@@ -48,9 +48,16 @@ import {
   applyHudProfile,
   getHudProfileRecipe,
   getHudProfiles,
+  HUD_SELECTOR_DESCRIPTORS_V1,
   previewHudProfile
 } from "../cli/lib/hud-authoring.mjs";
 import { compileHudLayoutV1 } from "../player-runtime/src/hud-layout.mjs";
+import {
+  HUD_COMPONENT_STATES,
+  HUD_COMPONENT_TYPES,
+  HUD_LAYOUT_LAYERS,
+  HUD_SCREEN_CONDITION_OPERATORS
+} from "../player-runtime/src/hud-catalog.mjs";
 import { createDefaultPlayerActionDescriptors } from "../player-runtime/src/player-actions.mjs";
 import { agentClientConfigs, writeProjectClientConfig } from "../cli/lib/agent-connect.mjs";
 import { writeRunTrace } from "../cli/lib/trace.mjs";
@@ -1727,7 +1734,27 @@ const server = http.createServer(async (req, res) => {
     try {
       const recipes = ["desktop_quickbar", "radial_wheel", "mobile_bottom_sheet"]
         .map((recipeId) => getHudProfileRecipe(recipeId, "hud-main"));
-      return jsonResp(res, 200, { recipes: sanitizeMechanicsResponse(recipes) });
+      const actions = Object.fromEntries(createDefaultPlayerActionDescriptors().map((descriptor) => [descriptor.id, {
+        schemaVersion: descriptor.schemaVersion,
+        kind: descriptor.kind,
+        labelKey: descriptor.labelKey
+      }]));
+      return jsonResp(res, 200, {
+        recipes: sanitizeMechanicsResponse(recipes),
+        descriptor: {
+          schemaVersion: 1,
+          components: [...HUD_COMPONENT_TYPES],
+          states: [...HUD_COMPONENT_STATES],
+          layers: [...HUD_LAYOUT_LAYERS],
+          conditionOperators: [...HUD_SCREEN_CONDITION_OPERATORS],
+          selectors: Object.fromEntries(HUD_SELECTOR_DESCRIPTORS_V1.map((descriptor) => [descriptor.id, {
+            schemaVersion: descriptor.schemaVersion,
+            valueType: descriptor.valueType,
+            cardinality: descriptor.cardinality
+          }])),
+          actions
+        }
+      });
     } catch (error) {
       const failure = mechanicsErrorResponse(error);
       return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);

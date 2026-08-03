@@ -619,11 +619,36 @@
             <label>Y offset<input id="hud-placement-y" type="number" min="-16384" max="16384" value="0"></label>
             <label>Width<input id="hud-placement-width" type="number" min="1" max="16384" value="160"></label>
             <label>Height<input id="hud-placement-height" type="number" min="1" max="16384" value="52"></label>
+            <label>Layer<select id="hud-layout-layer"><option value="background">background</option><option value="content">content</option><option value="overlay">overlay</option><option value="modal">modal</option><option value="system">system</option></select></label>
+            <label class="hud-check"><input id="hud-layout-safe-area" type="checkbox" checked> Respect safe area</label>
+          </div>
+          <div class="hud-studio-fields hud-semantic-fields" aria-label="Selected component semantics">
+            <label>Properties (bounded JSON)<textarea id="hud-component-properties" class="mono" rows="5" spellcheck="false">{}</textarea></label>
+            <label>Child component IDs<input id="hud-component-children" class="mono" placeholder="child_a, child_b"></label>
+            <label>Data bindings (bounded JSON)<textarea id="hud-component-data-bindings" class="mono" rows="4" spellcheck="false">[]</textarea></label>
+            <label>Action bindings (bounded JSON)<textarea id="hud-component-action-bindings" class="mono" rows="4" spellcheck="false">[]</textarea></label>
+            <label>Property key<input id="hud-component-property-key" class="mono" placeholder="labelKey"></label>
+            <label>Property value<input id="hud-component-property-value" class="mono" value="&quot;hud.action&quot;"></label>
+            <label>Data slot<input id="hud-component-data-slot" class="mono" value="value"></label>
+            <label>Data selector<select id="hud-component-data-selector"></select></label>
+            <label>Action event<select id="hud-component-action-event"><option value="activate">activate</option><option value="change">change</option><option value="toggle">toggle</option><option value="select">select</option><option value="open">open</option><option value="close">close</option></select></label>
+            <label>Action<select id="hud-component-action-id"></select></label>
+            <label>Static action payload<input id="hud-component-action-payload" class="mono" value="{}"></label>
+            <label>Collection selector<input id="hud-collection-selector" class="mono" placeholder="buildOptions"></label>
+            <label>Collection item template<input id="hud-collection-item-template" class="mono" placeholder="item_template"></label>
+            <label>Maximum visible items<input id="hud-collection-max-items" type="number" min="1" max="128" value="12"></label>
+            <label>Edited state<select id="hud-component-semantic-state"><option value="normal">normal</option><option value="hover">hover</option><option value="pressed">pressed</option><option value="disabled">disabled</option><option value="selected">selected</option><option value="focused">focused</option></select></label>
+            <label class="hud-check"><input id="hud-component-state-visible" type="checkbox" checked> State visible</label>
+            <label class="hud-check"><input id="hud-component-state-enabled" type="checkbox" checked> State enabled</label>
           </div>
           <div class="hud-studio-actions">
+            <button id="btn-hud-component-property-add" class="btn btn-outline" type="button">Set property</button>
+            <button id="btn-hud-component-data-add" class="btn btn-outline" type="button">Add data binding</button>
+            <button id="btn-hud-component-action-add" class="btn btn-outline" type="button">Add action binding</button>
             <button id="btn-hud-component-add" class="btn btn-outline" type="button">Add component</button>
             <button id="btn-hud-component-remove" class="btn btn-outline" type="button">Remove selected</button>
             <button id="btn-hud-placement-apply" class="btn btn-primary" type="button">Apply placement</button>
+            <button id="btn-hud-component-semantics-apply" class="btn btn-primary" type="button">Apply component data</button>
           </div>
         </section>
 
@@ -637,6 +662,10 @@
             <label>Event<select id="hud-transition-event"><option value="pauseRequested">pause requested</option><option value="resumeRequested">resume requested</option><option value="settingsRequested">settings requested</option><option value="settingsClosed">settings closed</option><option value="waveStarted">wave started</option><option value="waveEnded">wave ended</option><option value="draftRequired">draft required</option><option value="draftCompleted">draft completed</option><option value="victory">victory</option><option value="defeat">defeat</option><option value="recoverableError">recoverable error</option></select></label>
             <label>From screen<select id="hud-transition-from"></select></label>
             <label>Target screen<select id="hud-transition-target"></select></label>
+            <label>Condition<select id="hud-transition-condition-picker"><option value="">New condition…</option></select></label>
+            <label>Condition selector<select id="hud-transition-condition-selector"></select></label>
+            <label>Operator<select id="hud-transition-condition-operator"><option value="equals">equals</option><option value="not_equals">not equals</option><option value="less_than">less than</option><option value="less_than_or_equal">less than or equal</option><option value="greater_than">greater than</option><option value="greater_than_or_equal">greater than or equal</option><option value="truthy">truthy</option><option value="falsy">falsy</option></select></label>
+            <label>Condition value<input id="hud-transition-condition-value" class="mono" value="true"></label>
           </div>
           <div class="hud-studio-actions">
             <button id="btn-hud-screen-add" class="btn btn-outline" type="button">Add screen</button>
@@ -644,6 +673,9 @@
             <button id="btn-hud-transition-add" class="btn btn-outline" type="button">Add transition</button>
             <button id="btn-hud-transition-update" class="btn btn-outline" type="button">Update transition</button>
             <button id="btn-hud-transition-remove" class="btn btn-outline" type="button">Remove transition</button>
+            <button id="btn-hud-transition-condition-add" class="btn btn-outline" type="button">Add condition</button>
+            <button id="btn-hud-transition-condition-update" class="btn btn-outline" type="button">Update condition</button>
+            <button id="btn-hud-transition-condition-remove" class="btn btn-outline" type="button">Remove condition</button>
           </div>
         </section>
 

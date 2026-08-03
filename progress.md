@@ -4545,3 +4545,28 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - These RED results invalidate the prior full-gate evidence and all earlier sign-offs. Production
   repair, focused GREEN, a new exact-commit freeze, full gates and two fresh independent sign-offs
   are required before R21 acceptance.
+
+## 2026-08-04 — R21 second integration-verifier repair focused GREEN
+
+- Added the browser-safe immutable HUD Studio model and connected the Hub to the same complete
+  component/state/layer/selector/action descriptors exposed to agents. All 24 schema-v1 component
+  types are available. The selected component editor now persists bounded properties, ordered
+  children, data/action bindings, state visibility/enabled flags, collection selector/template/item
+  ceilings and per-variant layer/safe-area constraints through the existing guarded preview/apply
+  transaction. Typed selector/action helpers make functional buttons and counters authorable without
+  leaving the Hub; bounded JSON remains only the escape hatch for static payload/property values.
+- Screen transitions now expose ordered selector/operator/value condition add, update and remove.
+  The pure model returns detached frozen candidates while the UI keeps an explicit mutable draft;
+  authored conditions survive transition updates. Optional `assetMetadata` remains separate from
+  string visuals `assetRoles` and validates `image`, bounded `atlas_frame` identifiers and four-sided
+  non-negative `nine_slice` insets. Generated players carry that metadata into atlas diagnostics and
+  DOM nine-slice border rendering.
+- The DOM shell exposes one bounded static-node activation method. Generated gamepad polling now
+  cycles through visible enabled semantic buttons, toggles, sliders and selects as well as dynamic
+  collection items; South/A invokes the selected node through the existing action registry.
+- Exact focused contract command:
+  `npx vitest run packages/studio/r21-hud-studio.contract.test.mjs packages/studio/r21-hud-studio-model.contract.test.mjs packages/player-runtime/src/r21-hud-catalog.contract.test.mjs packages/player-shell/src/r21-hud-dom-runtime.regression.test.mjs packages/cli/lib/r21-hud-authoring.contract.test.mjs packages/cli/lib/r21-hud-project-schema.contract.test.mjs packages/cli/build.r21-hud-package-parity.contract.test.mjs --maxWorkers=1`.
+  Result: `7/7` files and `83/83` tests GREEN. Loopback Studio tests are `2/2` files and `22/22`
+  GREEN. The actual generated Canvas/hex and Phaser/square browser acceptance is `2/2` GREEN with
+  gamepad activation of the static resume control. `node --check` and `git diff --check` are GREEN.
+- Full exact-commit gates, plugin refresh and both new independent sign-offs remain pending.

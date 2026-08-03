@@ -26,6 +26,23 @@ export function createHudDomRuntimeV1(options) {
   let currentState = options.state ?? { selectors: {}, nodeStates: {} };
   let currentPlan = null;
 
+  function activateNode(request) {
+    if (disposed) return Object.freeze({ ok: false, code: "hud_disposed" });
+    if (!request || typeof request !== "object" || !INPUT_FAMILIES.has(request.inputFamily)) {
+      return Object.freeze({ ok: false, code: "hud_input_family_not_allowed" });
+    }
+    const node = currentPlan?.nodes.find((entry) => entry.id === request.nodeId);
+    if (!node) return Object.freeze({ ok: false, code: "hud_node_not_found" });
+    if (node.stateConfig.enabled === false || node.stateConfig.visible === false
+      || node.data.enabled === false || node.data.visible === false) {
+      return Object.freeze({ ok: false, code: "hud_node_unavailable" });
+    }
+    const binding = node.actions.find((entry) => request.event === undefined || entry.event === request.event);
+    if (!binding) return Object.freeze({ ok: false, code: "hud_node_action_unavailable" });
+    options.actionRegistry?.invoke(binding.actionId, binding.payload);
+    return Object.freeze({ ok: true, actionId: binding.actionId, payload: binding.payload });
+  }
+
   function activateCollectionItem(request) {
     if (disposed) return Object.freeze({ ok: false, code: "hud_disposed" });
     if (!request || typeof request !== "object" || !INPUT_FAMILIES.has(request.inputFamily)) {
@@ -77,7 +94,7 @@ export function createHudDomRuntimeV1(options) {
     const byId = new Map();
     const planById = new Map(compiled.plan.nodes.map((node) => [node.id, node]));
     for (const node of compiled.plan.nodes) {
-      const element = createNode(document, node, options, activateCollectionItem);
+      const element = createNode(document, node, options, activateNode, activateCollectionItem);
       byId.set(node.id, element);
       if (!node.parentId && !visible.has(node.id)) element.hidden = true;
       if (node.parentId && byId.has(node.parentId)) {
@@ -103,13 +120,14 @@ export function createHudDomRuntimeV1(options) {
       render();
       return result;
     },
+    activateNode,
     activateCollectionItem,
     snapshot: graph.snapshot,
     dispose() { disposed = true; root.replaceChildren(); }
   });
 }
 
-function createNode(document, node, options, activateCollectionItem) {
+function createNode(document, node, options, activateNode, activateCollectionItem) {
   const tag = TAG_BY_TYPE[node.type] ?? (node.type === "text" || node.type === "localized_text" ? "span" : "div");
   const element = document.createElement(tag);
   element.dataset.hudNodeId = node.id;
@@ -124,18 +142,9 @@ function createNode(document, node, options, activateCollectionItem) {
   const label = node.properties.labelKey ?? node.properties.messageId ?? node.properties.text ?? node.id;
   if (tag === "img") {
     element.alt = String(node.properties.altKey ?? label);
-    const assetId = node.properties.assetId;
-    if (typeof assetId === "string") {
-      const asset = options.resolveAsset?.(assetId);
-      if (typeof asset === "string") element.src = asset;
-      else if (asset && typeof asset === "object" && typeof asset.src === "string") {
-        element.src = asset.src;
-        if (asset.frame) {
-          element.style.objectFit = "none";
-          element.style.objectPosition = `${-asset.frame.x}px ${-asset.frame.y}px`;
-        }
-      } else element.src = "";
-    }
+    applyResolvedAsset(element, node, options);
+  } else if (node.type === "nine_slice") {
+    applyResolvedAsset(element, node, options);
   } else if (tag === "input" && node.type === "slider") {
     element.type = "range";
   } else {
@@ -146,10 +155,48 @@ function createNode(document, node, options, activateCollectionItem) {
   if ("disabled" in element) element.disabled = node.stateConfig.enabled === false || node.data.enabled === false;
   for (const binding of node.actions) {
     const eventName = binding.event === "activate" ? "click" : "change";
-    element.addEventListener(eventName, () => options.actionRegistry?.invoke(binding.actionId, binding.payload));
+    element.dataset.hudInteractive = "true";
+    if (!element.dataset.hudActionEvent) element.dataset.hudActionEvent = binding.event;
+    element.addEventListener(eventName, (event) => activateNode({
+      nodeId: node.id,
+      event: binding.event,
+      inputFamily: event?.pointerType === "touch" ? "touch" : "pointer"
+    }));
   }
   materializeCollection(document, element, node, options, activateCollectionItem);
   return element;
+}
+
+function applyResolvedAsset(element, node, options) {
+  const assetId = node.properties.assetId;
+  if (typeof assetId !== "string") return;
+  const asset = options.resolveAsset?.(assetId);
+  if (typeof asset === "string") {
+    if (element.tagName === "IMG") element.src = asset;
+    else element.style.backgroundImage = `url("${asset.replaceAll('"', "%22")}")`;
+    return;
+  }
+  if (!asset || typeof asset !== "object" || typeof asset.src !== "string") {
+    if (element.tagName === "IMG") element.src = "";
+    return;
+  }
+  const metadata = asset.metadata;
+  if (element.tagName === "IMG") {
+    element.src = asset.src;
+    if (asset.frame) {
+      element.style.objectFit = "none";
+      element.style.objectPosition = `${-asset.frame.x}px ${-asset.frame.y}px`;
+    }
+  } else if (metadata?.kind === "nine_slice") {
+    const border = metadata.nineSlice;
+    element.style.borderStyle = "solid";
+    element.style.borderWidth = `${border.top}px ${border.right}px ${border.bottom}px ${border.left}px`;
+    element.style.borderImageSource = `url("${asset.src.replaceAll('"', "%22")}")`;
+    element.style.borderImageSlice = `${border.top} ${border.right} ${border.bottom} ${border.left} fill`;
+  } else {
+    element.style.backgroundImage = `url("${asset.src.replaceAll('"', "%22")}")`;
+  }
+  if (metadata?.atlasFrame) element.dataset.hudAtlasFrame = metadata.atlasFrame;
 }
 
 function applyBoundData(element, node, options) {

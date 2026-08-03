@@ -3,6 +3,13 @@ import { AUDIO_EVENTS } from "/renderer/audio.mjs";
 import { LANGUAGES, getLanguage, initI18n, setLanguage } from "/i18n.js";
 import { allocatePlayerTargetId } from "/player-target-id.mjs";
 import { layoutTowerScriptGraph } from "/towerscript-layout.mjs";
+import {
+  applyHudStudioComponentDraft,
+  createHudStudioDescriptorModel,
+  removeHudStudioTransitionCondition,
+  upsertHudStudioAssetRole,
+  upsertHudStudioTransitionCondition
+} from "/hud-studio-model.mjs";
 
 initI18n();
 
@@ -12042,6 +12049,9 @@ const HUDStudioUI = {
   preview: null,
   renderPreview: null,
   assetRoles: Object.create(null),
+  assetMetadata: Object.create(null),
+  descriptorModel: null,
+  selectedConditionIndex: null,
   error: null,
   needsHydrate: true
 };
@@ -12066,6 +12076,7 @@ async function loadHUDStudio() {
     HUDStudioUI.profiles = current.profiles ?? Object.create(null);
     HUDStudioUI.bindings = current.bindings ?? Object.create(null);
     HUDStudioUI.recipes = recipeCatalog.recipes ?? [];
+    HUDStudioUI.descriptorModel = createHudStudioDescriptorModel(recipeCatalog.descriptor ?? {});
     const profileIds = Object.keys(HUDStudioUI.profiles).sort();
     if (!profileIds.includes(HUDStudioUI.selectedProfileId)) HUDStudioUI.selectedProfileId = profileIds[0] ?? null;
     HUDStudioUI.needsHydrate = true;
@@ -12104,6 +12115,7 @@ function hydrateHudStudio() {
   const profileId = HUDStudioUI.selectedProfileId;
   HUDStudioUI.draft = deep(profileId ? ownDataValue(HUDStudioUI.profiles, profileId) : null) ?? hudDefaultDraft();
   HUDStudioUI.assetRoles = deep(HUDStudioUI.draft.assetRoles ?? {});
+  HUDStudioUI.assetMetadata = deep(HUDStudioUI.draft.assetMetadata ?? {});
   const screenIds = Object.keys(HUDStudioUI.draft.screens ?? {}).sort();
   if (!screenIds.includes(HUDStudioUI.selectedScreenId)) {
     HUDStudioUI.selectedScreenId = HUDStudioUI.draft.screenGraph?.initialScreenId ?? screenIds[0] ?? null;
@@ -12211,11 +12223,151 @@ function selectHudStudioComponent(nodeId) {
 function renderHudStudioComponentPickers() {
   const picker = $("hud-component-picker");
   if (!picker) return;
+  const typePicker = $("hud-component-type");
+  if (typePicker && HUDStudioUI.descriptorModel?.components) {
+    const selectedType = typePicker.value;
+    typePicker.innerHTML = HUDStudioUI.descriptorModel.components
+      .map((type) => `<option value="${esc(type)}">${esc(type)}</option>`).join("");
+    if (HUDStudioUI.descriptorModel.components.includes(selectedType)) typePicker.value = selectedType;
+  }
   const nodes = HUDStudioUI.draft?.commonNodes ?? [];
   picker.innerHTML = nodes.map((node) => `<option value="${esc(node.id)}">${esc(node.id)} · ${esc(node.type)}</option>`).join("");
   if (!nodes.some((node) => node.id === HUDStudioUI.selectedNodeId)) HUDStudioUI.selectedNodeId = nodes[0]?.id ?? null;
   picker.value = HUDStudioUI.selectedNodeId ?? "";
   syncHudStudioPlacementEditor();
+  syncHudStudioComponentSemanticsEditor();
+}
+
+function hudStudioFormatJson(value) {
+  return JSON.stringify(value, null, 2);
+}
+
+function hudStudioParseJson(id, label, fallback) {
+  const source = $(id)?.value?.trim();
+  if (!source) return deep(fallback);
+  try { return JSON.parse(source); }
+  catch { throw new Error(`${label} must be valid bounded JSON.`); }
+}
+
+function syncHudStudioComponentSemanticsEditor() {
+  const node = hudStudioSelectedNode();
+  if (!node || !$("hud-component-properties")) return;
+  $("hud-component-type").value = node.type;
+  $("hud-component-properties").value = hudStudioFormatJson(node.properties ?? {});
+  $("hud-component-children").value = (node.childIds ?? []).join(", ");
+  $("hud-component-data-bindings").value = hudStudioFormatJson(node.bindings?.data ?? []);
+  $("hud-component-action-bindings").value = hudStudioFormatJson(node.bindings?.actions ?? []);
+  const selectorPicker = $("hud-component-data-selector");
+  if (selectorPicker) {
+    const previous = selectorPicker.value;
+    const ids = Object.keys(HUDStudioUI.descriptorModel?.selectors ?? {}).sort();
+    selectorPicker.innerHTML = ids.map((id) => `<option value="${esc(id)}">${esc(id)}</option>`).join("");
+    if (ids.includes(previous)) selectorPicker.value = previous;
+  }
+  const actionPicker = $("hud-component-action-id");
+  if (actionPicker) {
+    const previous = actionPicker.value;
+    const ids = Object.keys(HUDStudioUI.descriptorModel?.actions ?? {}).sort();
+    actionPicker.innerHTML = ids.map((id) => `<option value="${esc(id)}">${esc(id)}</option>`).join("");
+    if (ids.includes(previous)) actionPicker.value = previous;
+  }
+  $("hud-collection-selector").value = node.properties?.selectorId ?? "";
+  $("hud-collection-item-template").value = node.properties?.itemTemplateNodeId ?? "";
+  $("hud-collection-max-items").value = String(node.properties?.maxVisibleItems ?? 12);
+  const stateId = $("hud-component-semantic-state")?.value ?? "normal";
+  const state = node.states?.[stateId] ?? node.states?.normal ?? { visible: true, enabled: true };
+  $("hud-component-state-visible").checked = state.visible !== false;
+  $("hud-component-state-enabled").checked = state.enabled !== false;
+  const layout = HUDStudioUI.draft?.variants?.[$("hud-variant-picker")?.value ?? "desktop"]?.layouts?.[node.id];
+  if (layout) {
+    $("hud-layout-layer").value = layout.layer;
+    $("hud-layout-safe-area").checked = layout.safeArea !== false;
+  }
+}
+
+function setHudStudioComponentProperty() {
+  const properties = hudStudioParseJson("hud-component-properties", "Component properties", {});
+  const key = hudStudioId($("hud-component-property-key")?.value, "Property key");
+  properties[key] = hudStudioParseJson("hud-component-property-value", "Property value", null);
+  $("hud-component-properties").value = hudStudioFormatJson(properties);
+  hudStudioDraftChanged();
+}
+
+function appendHudStudioDataBinding() {
+  const bindings = hudStudioParseJson("hud-component-data-bindings", "Data bindings", []);
+  if (!Array.isArray(bindings)) throw new Error("Data bindings must be an array.");
+  bindings.push({
+    slot: hudStudioId($("hud-component-data-slot")?.value, "Data slot"),
+    selectorId: hudStudioId($("hud-component-data-selector")?.value, "Data selector")
+  });
+  $("hud-component-data-bindings").value = hudStudioFormatJson(bindings);
+  hudStudioDraftChanged();
+}
+
+function appendHudStudioActionBinding() {
+  const bindings = hudStudioParseJson("hud-component-action-bindings", "Action bindings", []);
+  if (!Array.isArray(bindings)) throw new Error("Action bindings must be an array.");
+  bindings.push({
+    event: $("hud-component-action-event")?.value ?? "activate",
+    actionId: hudStudioId($("hud-component-action-id")?.value, "Action"),
+    payload: hudStudioParseJson("hud-component-action-payload", "Action payload", {})
+  });
+  $("hud-component-action-bindings").value = hudStudioFormatJson(bindings);
+  hudStudioDraftChanged();
+}
+
+function applyHudStudioComponentSemantics() {
+  const node = hudStudioSelectedNode();
+  if (!node) throw new Error("Select a HUD component first.");
+  const properties = hudStudioParseJson("hud-component-properties", "Component properties", {});
+  const selectorId = $("hud-collection-selector")?.value.trim();
+  const itemTemplateNodeId = $("hud-collection-item-template")?.value.trim();
+  const collectionTypes = new Set(["repeater", "build_menu", "ability_bar", "radial_menu"]);
+  if (collectionTypes.has($("hud-component-type").value)) {
+    if (selectorId) properties.selectorId = hudStudioId(selectorId, "Collection selector");
+    else delete properties.selectorId;
+    if (itemTemplateNodeId) properties.itemTemplateNodeId = hudStudioId(itemTemplateNodeId, "Collection item template");
+    else delete properties.itemTemplateNodeId;
+    const maxVisibleItems = Number($("hud-collection-max-items")?.value);
+    if (!Number.isSafeInteger(maxVisibleItems) || maxVisibleItems < 1 || maxVisibleItems > 128) {
+      throw new Error("Collection maximum must be an integer from 1 through 128.");
+    }
+    properties.maxVisibleItems = maxVisibleItems;
+  }
+  const childIds = $("hud-component-children").value.split(",").map((value) => value.trim()).filter(Boolean)
+    .map((id) => hudStudioId(id, "Child component ID"));
+  const stateId = $("hud-component-semantic-state")?.value ?? "normal";
+  const states = deep(node.states ?? { normal: { visible: true, enabled: true } });
+  states[stateId] = {
+    visible: $("hud-component-state-visible").checked,
+    enabled: $("hud-component-state-enabled").checked
+  };
+  const variantId = $("hud-variant-picker")?.value ?? "desktop";
+  const currentLayout = HUDStudioUI.draft.variants?.[variantId]?.layouts?.[node.id];
+  if (!currentLayout) throw new Error(`Component has no ${variantId} layout.`);
+  HUDStudioUI.draft = deep(applyHudStudioComponentDraft(HUDStudioUI.draft, {
+    nodeId: node.id,
+    component: {
+      schemaVersion: 1,
+      id: node.id,
+      type: $("hud-component-type").value,
+      childIds,
+      properties,
+      bindings: {
+        data: hudStudioParseJson("hud-component-data-bindings", "Data bindings", []),
+        actions: hudStudioParseJson("hud-component-action-bindings", "Action bindings", [])
+      },
+      states
+    },
+    variantId,
+    layout: {
+      ...deep(currentLayout),
+      layer: $("hud-layout-layer").value,
+      safeArea: $("hud-layout-safe-area").checked
+    }
+  }));
+  hudStudioDraftChanged();
+  renderHudStudio();
 }
 
 function syncHudStudioPlacementEditor() {
@@ -12238,6 +12390,8 @@ function syncHudStudioPlacementEditor() {
   }
   $("hud-placement-width").value = String(layout.size.width);
   $("hud-placement-height").value = String(layout.size.height);
+  $("hud-layout-layer").value = layout.layer;
+  $("hud-layout-safe-area").checked = layout.safeArea !== false;
 }
 
 function addHudStudioComponent() {
@@ -12317,8 +12471,8 @@ function applyHudStudioPlacement() {
   }
   variant.layouts[node.id] = {
     schemaVersion: 1,
-    layer: variant.layouts[node.id]?.layer ?? "content",
-    safeArea: variant.layouts[node.id]?.safeArea !== false,
+    layer: $("hud-layout-layer")?.value ?? variant.layouts[node.id]?.layer ?? "content",
+    safeArea: $("hud-layout-safe-area")?.checked !== false,
     placement,
     size: {
       width,
@@ -12363,6 +12517,67 @@ function renderHudStudioTransitionPickers() {
     $("hud-screen-id").value = HUDStudioUI.selectedScreenId;
     $("hud-screen-surface").value = selectedScreen.surface;
   }
+  renderHudStudioTransitionConditions(selected);
+}
+
+function renderHudStudioTransitionConditions(transition) {
+  const picker = $("hud-transition-condition-picker");
+  const selector = $("hud-transition-condition-selector");
+  if (!picker || !selector) return;
+  const conditions = transition?.conditions ?? [];
+  if (!Number.isSafeInteger(HUDStudioUI.selectedConditionIndex)
+    || HUDStudioUI.selectedConditionIndex < 0
+    || HUDStudioUI.selectedConditionIndex >= conditions.length) {
+    HUDStudioUI.selectedConditionIndex = null;
+  }
+  picker.innerHTML = `<option value="">New condition…</option>${conditions.map((condition, index) =>
+    `<option value="${index}">${index + 1}. ${esc(condition.selectorId)} ${esc(condition.operator)}</option>`).join("")}`;
+  picker.value = HUDStudioUI.selectedConditionIndex === null ? "" : String(HUDStudioUI.selectedConditionIndex);
+  const selectorIds = Object.keys(HUDStudioUI.descriptorModel?.selectors ?? {}).sort();
+  selector.innerHTML = selectorIds.map((id) => `<option value="${esc(id)}">${esc(id)}</option>`).join("");
+  const condition = HUDStudioUI.selectedConditionIndex === null ? null : conditions[HUDStudioUI.selectedConditionIndex];
+  if (condition) {
+    selector.value = condition.selectorId;
+    $("hud-transition-condition-operator").value = condition.operator;
+    $("hud-transition-condition-value").value = hudStudioFormatJson(condition.value);
+  }
+}
+
+function hudStudioTransitionConditionCandidate() {
+  const selectorId = $("hud-transition-condition-selector")?.value;
+  if (!selectorId) throw new Error("Choose a condition selector.");
+  return {
+    selectorId,
+    operator: $("hud-transition-condition-operator")?.value ?? "equals",
+    value: hudStudioParseJson("hud-transition-condition-value", "Condition value", true)
+  };
+}
+
+function upsertSelectedHudStudioTransitionCondition({ append = false } = {}) {
+  if (!HUDStudioUI.selectedTransitionId) throw new Error("Select or save a transition first.");
+  const transition = HUDStudioUI.draft.screenGraph.transitions.find((entry) => entry.id === HUDStudioUI.selectedTransitionId);
+  const index = append || HUDStudioUI.selectedConditionIndex === null
+    ? transition.conditions.length
+    : HUDStudioUI.selectedConditionIndex;
+  HUDStudioUI.draft = deep(upsertHudStudioTransitionCondition(HUDStudioUI.draft, {
+    transitionId: HUDStudioUI.selectedTransitionId,
+    index,
+    condition: hudStudioTransitionConditionCandidate()
+  }));
+  HUDStudioUI.selectedConditionIndex = index;
+  hudStudioDraftChanged();
+  renderHudStudio();
+}
+
+function removeSelectedHudStudioTransitionCondition() {
+  if (!HUDStudioUI.selectedTransitionId || HUDStudioUI.selectedConditionIndex === null) return;
+  HUDStudioUI.draft = deep(removeHudStudioTransitionCondition(HUDStudioUI.draft, {
+    transitionId: HUDStudioUI.selectedTransitionId,
+    index: HUDStudioUI.selectedConditionIndex
+  }));
+  HUDStudioUI.selectedConditionIndex = null;
+  hudStudioDraftChanged();
+  renderHudStudio();
 }
 
 function addHudStudioScreen() {
@@ -12401,12 +12616,13 @@ function hudStudioTransitionCandidate() {
   const targetScreenId = $("hud-transition-target")?.value;
   if (!Object.hasOwn(HUDStudioUI.draft?.screens ?? {}, fromScreenId)) throw new Error("Choose a valid source screen.");
   if (!Object.hasOwn(HUDStudioUI.draft?.screens ?? {}, targetScreenId)) throw new Error("Choose a valid target screen.");
+  const existing = HUDStudioUI.draft?.screenGraph?.transitions?.find((entry) => entry.id === HUDStudioUI.selectedTransitionId);
   return {
     id,
     event: $("hud-transition-event")?.value ?? "pauseRequested",
     fromScreenId,
     targetScreenId,
-    conditions: []
+    conditions: deep(existing?.conditions ?? [])
   };
 }
 
@@ -12430,7 +12646,6 @@ function upsertHudStudioTransition() {
   if (transition.id !== HUDStudioUI.selectedTransitionId && transitions.some((entry) => entry.id === transition.id)) {
     throw new Error(`HUD transition "${transition.id}" already exists.`);
   }
-  transition.conditions = deep(transitions[index].conditions ?? []);
   transitions[index] = transition;
   HUDStudioUI.selectedTransitionId = transition.id;
   hudStudioDraftChanged();
@@ -12443,6 +12658,7 @@ function removeHudStudioTransition() {
     transition.id !== HUDStudioUI.selectedTransitionId
   );
   HUDStudioUI.selectedTransitionId = HUDStudioUI.draft.screenGraph.transitions[0]?.id ?? null;
+  HUDStudioUI.selectedConditionIndex = null;
   hudStudioDraftChanged();
   renderHudStudio();
 }
@@ -12459,6 +12675,11 @@ function hudStudioCandidate(enabled = true) {
   if (!profileId || !targetId || !HUDStudioUI.draft) throw new Error("Choose a HUD profile ID and desktop/responsive build target.");
   const profile = deep(HUDStudioUI.draft);
   profile.assetRoles = deep(HUDStudioUI.assetRoles ?? {});
+  if (Object.keys(HUDStudioUI.assetMetadata ?? {}).length > 0) {
+    profile.assetMetadata = deep(HUDStudioUI.assetMetadata);
+  } else {
+    delete profile.assetMetadata;
+  }
   return { profileId, profile, binding: { targetId, enabled } };
 }
 
@@ -12569,6 +12790,7 @@ function renderHudStudio() {
     if (!recipe?.profile) return toast("Select an available HUD recipe.", "warn");
     HUDStudioUI.draft = deep(recipe.profile);
     HUDStudioUI.assetRoles = deep(HUDStudioUI.draft.assetRoles ?? {});
+    HUDStudioUI.assetMetadata = deep(HUDStudioUI.draft.assetMetadata ?? {});
     HUDStudioUI.selectedProfileId = null;
     HUDStudioUI.selectedScreenId = HUDStudioUI.draft.screenGraph.initialScreenId;
     HUDStudioUI.selectedNodeId = HUDStudioUI.draft.commonNodes[0]?.id ?? null;
@@ -12595,22 +12817,37 @@ function renderHudStudio() {
   $("hud-component-picker").onchange = () => selectHudStudioComponent($("hud-component-picker").value || null);
   $("hud-transition-picker").onchange = () => {
     HUDStudioUI.selectedTransitionId = $("hud-transition-picker").value || null;
+    HUDStudioUI.selectedConditionIndex = null;
     renderHudStudioTransitionPickers();
+  };
+  $("hud-transition-condition-picker").onchange = () => {
+    const value = $("hud-transition-condition-picker").value;
+    HUDStudioUI.selectedConditionIndex = value === "" ? null : Number(value);
+    const selected = HUDStudioUI.draft.screenGraph.transitions.find((entry) => entry.id === HUDStudioUI.selectedTransitionId);
+    renderHudStudioTransitionConditions(selected);
   };
   const guardedHudEdit = (operation) => () => {
     try { operation(); }
     catch (error) { toast(error.message, "err"); }
   };
   $("btn-hud-component-add").onclick = guardedHudEdit(addHudStudioComponent);
+  $("btn-hud-component-property-add").onclick = guardedHudEdit(setHudStudioComponentProperty);
+  $("btn-hud-component-data-add").onclick = guardedHudEdit(appendHudStudioDataBinding);
+  $("btn-hud-component-action-add").onclick = guardedHudEdit(appendHudStudioActionBinding);
   $("btn-hud-component-remove").onclick = guardedHudEdit(removeHudStudioComponent);
   $("btn-hud-placement-apply").onclick = guardedHudEdit(applyHudStudioPlacement);
+  $("btn-hud-component-semantics-apply").onclick = guardedHudEdit(applyHudStudioComponentSemantics);
   $("btn-hud-screen-add").onclick = guardedHudEdit(addHudStudioScreen);
   $("btn-hud-screen-remove").onclick = guardedHudEdit(removeHudStudioScreen);
   $("btn-hud-transition-add").onclick = guardedHudEdit(addHudStudioTransition);
   $("btn-hud-transition-update").onclick = guardedHudEdit(upsertHudStudioTransition);
   $("btn-hud-transition-remove").onclick = guardedHudEdit(removeHudStudioTransition);
+  $("btn-hud-transition-condition-add").onclick = guardedHudEdit(() => upsertSelectedHudStudioTransitionCondition({ append: true }));
+  $("btn-hud-transition-condition-update").onclick = guardedHudEdit(() => upsertSelectedHudStudioTransitionCondition());
+  $("btn-hud-transition-condition-remove").onclick = guardedHudEdit(removeSelectedHudStudioTransitionCondition);
   $("hud-layers-tree").setAttribute("aria-label", "HUD layers tree");
   $("hud-component-state").onchange = () => void renderHudRuntimePreview();
+  $("hud-component-semantic-state").onchange = syncHudStudioComponentSemanticsEditor;
   $("hud-mock-state").onchange = () => void renderHudRuntimePreview();
   $("hud-preview-diagnostics").dataset.mockState = $("hud-mock-state").value;
   renderHudStudioDiagnostics();
@@ -12693,7 +12930,19 @@ function renderHudAssetRoleEditor() {
   const role = $("hud-asset-role");
   const assetId = $("hud-asset-id");
   if (!role || !assetId) return;
-  assetId.value = ownDataValue(HUDStudioUI.assetRoles, role.value.trim()) ?? assetId.value;
+  const syncAssetRoleFields = () => {
+    const roleId = role.value.trim();
+    assetId.value = ownDataValue(HUDStudioUI.assetRoles, roleId) ?? assetId.value;
+    const metadata = ownDataValue(HUDStudioUI.assetMetadata, roleId);
+    const kind = metadata?.kind ?? "image";
+    $("hud-asset-kind").value = kind === "image" ? "image" : kind;
+    $("hud-asset-atlas-frame").value = metadata?.atlasFrame ?? "";
+    $("hud-nine-slice-border").value = metadata?.nineSlice
+      ? [metadata.nineSlice.top, metadata.nineSlice.right, metadata.nineSlice.bottom, metadata.nineSlice.left].join(",")
+      : "";
+  };
+  role.onchange = syncAssetRoleFields;
+  syncAssetRoleFields();
   $("btn-hud-import-asset").onclick = async () => {
     try {
       const kind = $("hud-asset-kind").value === "atlas_frame" ? "atlas" : "sprite";
@@ -12716,14 +12965,39 @@ function renderHudAssetRoleEditor() {
     const roleId = role.value.trim();
     const visualId = assetId.value.trim();
     if (!roleId || !visualId) throw new Error("Role and visuals asset ID are required.");
-    defineOwnDataValue(HUDStudioUI.assetRoles, roleId, visualId);
-    HUDStudioUI.draft.assetRoles = deep(HUDStudioUI.assetRoles);
+    const selectedKind = $("hud-asset-kind").value;
+    let metadata;
+    if (selectedKind === "atlas_frame") {
+      metadata = {
+        schemaVersion: 1,
+        kind: "atlas_frame",
+        atlasFrame: hudStudioId($("hud-asset-atlas-frame").value.trim(), "Atlas frame")
+      };
+    } else if (selectedKind === "nine_slice") {
+      const values = $("hud-nine-slice-border").value.split(",").map((value) => Number(value.trim()));
+      if (values.length !== 4 || values.some((value) => !Number.isFinite(value) || value < 0 || value > 16384)) {
+        throw new Error("Nine-slice border must contain four bounded non-negative values: top,right,bottom,left.");
+      }
+      metadata = {
+        schemaVersion: 1,
+        kind: "nine_slice",
+        nineSlice: { top: values[0], right: values[1], bottom: values[2], left: values[3] }
+      };
+    } else {
+      metadata = { schemaVersion: 1, kind: "image" };
+    }
+    HUDStudioUI.draft = deep(upsertHudStudioAssetRole(HUDStudioUI.draft, {
+      roleId,
+      spriteId: visualId,
+      metadata
+    }));
+    HUDStudioUI.assetRoles = deep(HUDStudioUI.draft.assetRoles ?? {});
+    HUDStudioUI.assetMetadata = deep(HUDStudioUI.draft.assetMetadata ?? {});
     $("hud-asset-result").textContent = JSON.stringify({
       assetRoles: HUDStudioUI.assetRoles,
+      assetMetadata: HUDStudioUI.assetMetadata,
       assetId: visualId,
-      kind: $("hud-asset-kind").value,
-      atlasFrame: $("hud-asset-atlas-frame").value.trim() || null,
-      nineSliceBorder: $("hud-nine-slice-border").value.trim() || null
+      metadata
     }, null, 2);
   };
   $("btn-hud-asset-preview").onclick = async () => {

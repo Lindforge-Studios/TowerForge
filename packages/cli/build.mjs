@@ -1746,10 +1746,14 @@ let hudRuntimeState = createTowerforgeHudState(game.getRenderSnapshot());
 function resolveTowerforgeHudAsset(assetId) {
   const profile = project.hud.profiles[project.buildTarget.hudProfileId];
   const spriteId = profile?.assetRoles?.[assetId] || assetId;
+  const metadata = profile?.assetMetadata?.[assetId];
   const sprite = content.visuals?.sprites?.[spriteId];
-  if (typeof sprite?.src === "string" && sprite.src) return visualAssetUrl(sprite.src);
+  if (typeof sprite?.src === "string" && sprite.src) {
+    const src = visualAssetUrl(sprite.src);
+    return metadata ? Object.freeze({ src, metadata }) : src;
+  }
   const atlas = sprite?.atlas && content.visuals?.atlases?.[sprite.atlas];
-  if (atlas?.src && sprite?.frame) return Object.freeze({ src: visualAssetUrl(atlas.src), frame: sprite.frame });
+  if (atlas?.src && sprite?.frame) return Object.freeze({ src: visualAssetUrl(atlas.src), frame: sprite.frame, metadata });
   return "";
 }
 const towerforgeHudRuntime = createHudDomRuntimeV1({
@@ -1772,7 +1776,7 @@ let towerforgeHudGamepadPrevious = Object.freeze([]);
 function pollTowerforgeHudGamepad() {
   const pad = [...(globalThis.navigator?.getGamepads?.() ?? [])].find((candidate) => candidate?.connected);
   const pressed = pad ? pad.buttons.map((button) => Boolean(button?.pressed)) : [];
-  const controls = [...document.querySelectorAll("#towerforge-hud-root [data-hud-collection-item-id]:not([hidden]):not(:disabled)")];
+  const controls = [...document.querySelectorAll("#towerforge-hud-root button:not([hidden]):not(:disabled), #towerforge-hud-root input:not([hidden]):not(:disabled), #towerforge-hud-root select:not([hidden]):not(:disabled)")];
   const focusedIndex = controls.indexOf(document.activeElement);
   const moved = (buttonIndex, delta) => {
     if (!pressed[buttonIndex] || towerforgeHudGamepadPrevious[buttonIndex] || controls.length === 0) return;
@@ -1781,11 +1785,19 @@ function pollTowerforgeHudGamepad() {
   moved(14, -1); moved(15, 1); moved(12, -1); moved(13, 1);
   if (pressed[0] && !towerforgeHudGamepadPrevious[0] && controls.length > 0) {
     const control = focusedIndex >= 0 ? controls[focusedIndex] : controls[0];
-    towerforgeHudRuntime.activateCollectionItem({
-      nodeId: control.dataset.hudCollectionNodeId,
-      itemId: control.dataset.hudCollectionItemId,
-      inputFamily: "gamepad"
-    });
+    if (control.dataset.hudCollectionItemId) {
+      towerforgeHudRuntime.activateCollectionItem({
+        nodeId: control.dataset.hudCollectionNodeId,
+        itemId: control.dataset.hudCollectionItemId,
+        inputFamily: "gamepad"
+      });
+    } else {
+      towerforgeHudRuntime.activateNode({
+        nodeId: control.dataset.hudNodeId,
+        event: control.dataset.hudActionEvent,
+        inputFamily: "gamepad"
+      });
+    }
   }
   towerforgeHudGamepadPrevious = Object.freeze(pressed);
   requestAnimationFrame(pollTowerforgeHudGamepad);

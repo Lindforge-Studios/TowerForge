@@ -87,6 +87,12 @@ the existing provider-neutral staged asset path. No HUD file contains a host pat
 font, SVG, provider credential or generation prompt. Upload/generation remains
 `stage -> preview -> MIME/license/provenance validation -> guarded commit`.
 
+`assetRoles` remains the stable role-to-visuals-sprite map. A profile may additionally attach
+closed `assetMetadata` to an existing role: `image`, `atlas_frame` with a bounded logical frame ID,
+or `nine_slice` with four bounded non-negative insets. Metadata without a matching role is invalid.
+The browser shell receives the already resolved project-local asset and uses the metadata only for
+presentation; it cannot introduce a URL or bypass visuals validation.
+
 ### Actions and screen graph
 
 R21 reuses `PlayerActionDescriptorV1`; no parallel command vocabulary is created. A binding may

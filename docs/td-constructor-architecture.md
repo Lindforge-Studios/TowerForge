@@ -320,7 +320,11 @@ detached snapshot/player state into that shell and never fork HUD rules into a r
 
 Studio exposes a dedicated HUD Hub for profile/target/screen/variant/device selection, constraints,
 safe areas, rulers, snapping, layers, component states, mock states, diagnostics and guarded asset
-role binding. MCP exposes `describe_schema(hud)`, `get_hud_profiles`,
+role binding. The Hub consumes the shared descriptors and edits every schema-v1 component type,
+bounded properties/children/data/actions/states, collection fields, ordered transition conditions
+and per-variant layer/safe-area records. Optional `assetMetadata` adds closed atlas-frame identity
+or bounded nine-slice insets to an existing string visuals role. Static and collection controls
+route pointer, keyboard, touch and gamepad through one action registry. MCP exposes `describe_schema(hud)`, `get_hud_profiles`,
 `get_hud_profile_recipe`, `preview_hud_profile`, `apply_hud_profile` and
 `render_hud_preview`. The authoring flow is
 `describe/read -> recipe -> preview -> guarded apply -> validate -> render preview`; render preview

@@ -1648,6 +1648,7 @@ html[data-ai-dock="closed"] .ai-dock { display: none; }
 }
 .hud-studio-fields input,
 .hud-studio-fields select,
+.hud-studio-fields textarea,
 .hud-safe-area-fields input {
   width: 100%;
   min-height: 34px;
@@ -1659,6 +1660,20 @@ html[data-ai-dock="closed"] .ai-dock { display: none; }
   font: 11px/1.4 var(--mono);
   text-transform: none;
 }
+.hud-semantic-fields { margin-top: 12px; }
+.hud-semantic-fields textarea { min-height: 86px; resize: vertical; }
+.hud-studio-fields .hud-check {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  align-content: center;
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-2);
+  text-transform: none;
+}
+.hud-studio-fields .hud-check input { width: 16px; min-height: 16px; accent-color: var(--accent); }
 .hud-safe-area-fields .hud-check {
   grid-template-columns: auto 1fr;
   align-items: center;

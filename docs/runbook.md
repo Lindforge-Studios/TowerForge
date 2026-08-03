@@ -1048,7 +1048,12 @@ AI Chat accepts up to eight JPEG/PNG/GIF/WebP images per turn, at most 4 MB each
 - HUD authoring (R21 implemented candidate): open **HUD Studio**, select a project-v5
   BuildTargets-v2 `desktop | responsive` target, then choose or create its `hudProfileId`. Use the
   device/variant/screen selectors, safe areas, rulers, snapping, layers, constraints, component
-  states and mock snapshots before Preview and guarded Apply. The bundled menus are desktop
+  states and mock snapshots before Preview and guarded Apply. The component inspector uses the
+  shared descriptor catalogs: set properties/children, add selector and action bindings, edit
+  visible/enabled states and collection fields, then use **Apply component data**. Transition
+  conditions are ordered selector/operator/value records with explicit add/update/remove controls.
+  Asset roles remain visuals sprite IDs; optional atlas-frame identity and nine-slice insets are
+  saved as validated `assetMetadata`. The bundled menus are desktop
   horizontal quickbar, vertical edge dock, category catalog drawer, radial wheel, contextual tile
   popover, mobile bottom sheet and keyboard command palette. HUD art must be bound by a visuals
   sprite ID and imported through the normal guarded asset route. Disable removes only the target
@@ -1075,8 +1080,10 @@ npx vitest run packages/player-runtime/src/r21-hud-catalog.contract.test.mjs pac
 npx vitest run packages/player-runtime/src/r21-hud-catalog.contract.test.mjs packages/player-runtime/src/r21-hud-screen-graph.contract.test.mjs --reporter=verbose --maxWorkers=1
 npx vitest run packages/player-runtime/src/r21-hud-build-menu-presets.contract.test.mjs --reporter=verbose --maxWorkers=1
 npx vitest run packages/studio/r21-hud-studio.contract.test.mjs --reporter=verbose --maxWorkers=1
+npx vitest run packages/studio/r21-hud-studio-model.contract.test.mjs packages/player-shell/src/r21-hud-dom-runtime.regression.test.mjs --reporter=verbose --maxWorkers=1
 npx vitest run packages/mcp/r21-hud-ai-authoring.contract.test.mjs --reporter=verbose --maxWorkers=1
 npx vitest run packages/cli/build.r21-hud-package-parity.contract.test.mjs --reporter=verbose --maxWorkers=1
+npx playwright test tests/e2e/r21-hud-generated.spec.mjs --workers=1
 ```
 
 These focused commands diagnose the candidate; they do not accept R21. Acceptance still requires

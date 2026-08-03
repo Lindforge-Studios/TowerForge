@@ -162,6 +162,11 @@ detached; preview and render-preview are compute-only; apply requires the compos
 validates before write, backs up all owned files and rolls back atomically. HUD media is referenced
 only by existing visuals asset IDs and reaches the project through the guarded asset pipeline.
 Authored HTML, CSS, JavaScript, arbitrary paths/URLs and host APIs remain invalid.
+The Hub consumes the same component/state/layer/selector/action descriptor catalogs as MCP and
+edits complete component semantics, ordered transition conditions and responsive layout records.
+Optional closed `assetMetadata` augments (but never replaces) string visuals `assetRoles` for
+atlas-frame identity and bounded nine-slice insets. Static and collection controls share the same
+action registry across pointer, keyboard, touch and gamepad.
 
 For an active binding, the same selected catalog and pure/browser runtime bytes are packaged for
 Canvas and Phaser across PWA, single-file, portable web, native desktop and source `.tdpack`.
