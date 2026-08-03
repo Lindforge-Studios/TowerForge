@@ -29,7 +29,6 @@ function catalog(overrides = {}) {
       dimetric: profile({ projection: "dimetric_oblique" })
     },
     bindings: {
-      defaultProfileId: "top",
       maps: { map_a: "dimetric" },
       missions: { mission_a: "iso" }
     },
@@ -102,7 +101,7 @@ describe("R20.1 CameraProfileV1 pure renderer contract (RED)", () => {
     expect(ordered).toEqual(["front", "high", "entity-10", "entity-2"]);
   });
 
-  it("resolves mission, map, build-target, visuals default, then bundled top-down precedence", () => {
+  it("resolves mission, map, build-target, then bundled top-down precedence", () => {
     const value = catalog();
     expect(resolveCameraProfileV1(value, {
       missionId: "mission_a", mapId: "map_a", buildTargetCameraProfileId: "top"
@@ -114,7 +113,7 @@ describe("R20.1 CameraProfileV1 pure renderer contract (RED)", () => {
       missionId: "other", mapId: "other", buildTargetCameraProfileId: "iso"
     })).toMatchObject({ profileId: "iso", source: "build_target" });
     expect(resolveCameraProfileV1(value, { missionId: "other", mapId: "other" }))
-      .toMatchObject({ profileId: "top", source: "default" });
+      .toMatchObject({ profileId: null, source: "top_down_fallback", profile: { projection: "top_down" } });
     expect(resolveCameraProfileV1({ schemaVersion: 1, profiles: {}, bindings: { maps: {}, missions: {} } }, {}))
       .toMatchObject({ profileId: null, source: "top_down_fallback", profile: { projection: "top_down" } });
   });
@@ -124,7 +123,6 @@ describe("R20.1 CameraProfileV1 pure renderer contract (RED)", () => {
     const reversed = catalog({
       profiles: Object.fromEntries(Object.entries(catalog().profiles).reverse()),
       bindings: {
-        defaultProfileId: "top",
         maps: Object.fromEntries(Object.entries(catalog().bindings.maps).reverse()),
         missions: Object.fromEntries(Object.entries(catalog().bindings.missions).reverse())
       }
@@ -170,6 +168,11 @@ describe("R20.1 CameraProfileV1 pure renderer contract (RED)", () => {
     ["unknown binding reference", () => {
       const value = catalog();
       value.bindings.missions.mission_a = "missing";
+      return value;
+    }],
+    ["unsupported implicit default binding", () => {
+      const value = catalog();
+      value.bindings.defaultProfileId = "top";
       return value;
     }],
     ["over-budget profiles", () => catalog({

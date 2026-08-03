@@ -43,10 +43,18 @@ export function resolveCameraViewVariantV1(input) {
   const group = own(catalog, kind === "sprite" ? "sprites" : "tileSets");
   const variants = own(group, id);
   const exact = own(variants, key);
-  if (exact !== undefined) return frozen({ status: "exact", key, kind, id, asset: detached(exact) });
+  if (exact !== undefined) {
+    const asset = detached(exact);
+    if (kind === "sprite" && asset.anchor === undefined) asset.anchor = { x: 0.5, y: 1 };
+    return frozen({ status: "exact", key, kind, id, asset });
+  }
   if (kind === "sprite") {
     const fallback = own(own(visuals, "sprites"), id);
-    if (fallback !== undefined) return frozen({ status: "fallback", key, kind, id, asset: detached(fallback) });
+    if (fallback !== undefined) {
+      const asset = detached(fallback);
+      if (asset.anchor === undefined) asset.anchor = { x: 0.5, y: 1 };
+      return frozen({ status: "fallback", key, kind, id, asset });
+    }
   }
   return frozen({ status: "missing", key, kind, id, asset: null });
 }

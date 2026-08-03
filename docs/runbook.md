@@ -1032,6 +1032,19 @@ AI Chat accepts up to eight JPEG/PNG/GIF/WebP images per turn, at most 4 MB each
   dialog/menu/editable control owns focus. A disabled Continue button or recoverable message means
   the two-slot IndexedDB save was missing, corrupt, future, or did not match the current
   engine/content/capability digest; do not copy it into localStorage or bypass digest checks.
+- Camera projection authoring: open **Camera Studio**, choose or create a profile, select one of
+  the three fixed projections and four orientations, bind it to a mission or map, then run Preview
+  before guarded Apply. A reusable profile may also be selected by a BuildTargets-v2 desktop or
+  responsive target. Resolution is strictly mission -> map -> build target -> built-in top-down.
+  Disable removes only the selected binding and preserves the profile for re-enable. Agents use
+  `describe_schema(camera) -> read_camera_profiles -> get_camera_recipe -> preview_camera_profile ->
+  apply_camera_profile(ifRevision) -> validate_project`; there is no broad camera replace tool.
+- Camera projection issues: first inspect Preview clipping/depth/coverage diagnostics. Missing
+  optional sprite variants use their base billboard and warn; a missing mandatory tileset material
+  blocks apply/build. Only project-relative PNG/JPEG/WebP assets are accepted through the existing
+  staged asset workflow. A target without `cameraProfileId` and without matching mission/map
+  binding intentionally excludes the camera runtime and stays on the literal legacy top-down path.
+  Canvas and Phaser must not add their own projection, depth or inverse-picking math.
 
 ## Deploy
 

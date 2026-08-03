@@ -28,7 +28,6 @@ function cameraProfiles() {
       }
     },
     bindings: {
-      defaultProfileId: "top",
       maps: { map_a: "iso" },
       missions: { mission_a: "iso" }
     }
@@ -105,7 +104,7 @@ describe("R20.1 visuals v4 and BuildTargets v2 camera selection contract (RED)",
         profiles: {
           iso: { projection: "isometric_2_1", orientation: "east", elevationScale: 1.5 }
         },
-        bindings: { defaultProfileId: "top", maps: { map_a: "iso" }, missions: { mission_a: "iso" } }
+        bindings: { maps: { map_a: "iso" }, missions: { mission_a: "iso" } }
       }
     });
   });
@@ -184,6 +183,7 @@ describe("R20.1 visuals v4 and BuildTargets v2 camera selection contract (RED)",
     ["non-finite elevation", (value) => { value.profiles.iso.elevationScale = Number.POSITIVE_INFINITY; }, "cameraProfiles.profiles.iso.elevationScale"],
     ["invalid zoom range", (value) => { value.profiles.iso.minZoom = 3; value.profiles.iso.maxZoom = 1; }, "cameraProfiles.profiles.iso"],
     ["missing profile reference", (value) => { value.bindings.maps.map_a = "missing"; }, "cameraProfiles.bindings.maps.map_a"],
+    ["unsupported implicit default binding", (value) => { value.bindings.defaultProfileId = "top"; }, "cameraProfiles.bindings.defaultProfileId"],
     ["over-budget profiles", (value) => {
       value.profiles = Object.fromEntries(Array.from({ length: 33 }, (_, index) => [
         `profile_${String(index).padStart(2, "0")}`,

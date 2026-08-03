@@ -151,6 +151,12 @@ describe("R20.3 visuals v4 view-variant asset contract (RED)", () => {
     }));
   });
 
+  it("accepts an omitted sprite-variant anchor and applies the shared default", () => {
+    const visuals = validVisuals();
+    delete visuals.viewVariants.sprites.tower_base[VIEW_KEY].anchor;
+    expect(viewIssues(visuals)).toEqual([]);
+  });
+
   it("copies active PNG/JPEG/WebP variants and rejects signature or size mismatches", () => {
     const projectDir = temporaryProject("copy");
     writeViewAssetBytes(projectDir);

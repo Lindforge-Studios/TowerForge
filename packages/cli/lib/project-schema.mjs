@@ -850,6 +850,7 @@ function validateCameraImageAsset(asset, fieldPath, err, { anchor = false } = {}
     err("visuals", "content/visuals.json", extensions ? `${fieldPath}.mimeType` : fieldPath, `${fieldPath} must use matching PNG, JPEG, or WebP src and mimeType.`);
   }
   if (anchor) {
+    if (record.anchor === undefined) return;
     const point = cameraViewRecord(record.anchor, `${fieldPath}.anchor`, new Set(["x", "y"]), err);
     if (point) for (const axis of ["x", "y"]) {
       if (!Number.isFinite(point[axis]) || point[axis] < 0 || point[axis] > 1) {

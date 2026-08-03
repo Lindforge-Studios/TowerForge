@@ -1,5 +1,9 @@
 export const AI_TOOL_NAMES = Object.freeze([
   "describe_schema",
+  "get_camera_profiles",
+  "get_camera_profile_recipe",
+  "preview_camera_profile",
+  "apply_camera_profile",
   "list_recipes",
   "get_recipe",
   "explain_validation",

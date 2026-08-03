@@ -85,13 +85,17 @@ export function createCameraRenderSpaceV1(options) {
   const projectedBounds = Object.freeze({ minX, minY, maxX, maxY });
   const viewport = ownRecord(input.viewport, ["width", "height"], "cameraRenderSpace.viewport");
   const viewportProfile = ownRecord(input.viewportProfile, ["padding", "minZoom", "maxZoom", "initialZoom"], "cameraRenderSpace.viewportProfile");
+  const viewportSize = {
+    width: finite(viewport.width, "cameraRenderSpace.viewport.width"),
+    height: finite(viewport.height, "cameraRenderSpace.viewport.height")
+  };
+  const authoredPadding = finite(projector.profile.fitPadding ?? viewportProfile.padding ?? 0, "cameraRenderSpace.padding");
+  const effectivePadding = Math.min(authoredPadding, Math.max(0, (Math.min(viewportSize.width, viewportSize.height) - 1) / 2));
   const viewportTransform = createViewportTransformV1({
-    viewport: {
-      width: finite(viewport.width, "cameraRenderSpace.viewport.width"),
-      height: finite(viewport.height, "cameraRenderSpace.viewport.height")
-    },
+    viewport: viewportSize,
     worldBounds: projectedBounds,
-    padding: finite(projector.profile.fitPadding ?? viewportProfile.padding ?? 0, "cameraRenderSpace.padding"),
+    padding: effectivePadding,
+    panPadding: finite(projector.profile.panPadding ?? 0, "cameraRenderSpace.panPadding"),
     minZoom: finite(projector.profile.minZoom ?? viewportProfile.minZoom, "cameraRenderSpace.minZoom"),
     maxZoom: finite(projector.profile.maxZoom ?? viewportProfile.maxZoom, "cameraRenderSpace.maxZoom"),
     initialZoom: finite(projector.profile.initialZoom ?? viewportProfile.initialZoom, "cameraRenderSpace.initialZoom")
@@ -101,7 +105,7 @@ export function createCameraRenderSpaceV1(options) {
   const profile = projector.profile;
   const signature = [
     "camera-v1", profile.projection, profile.orientation, stableNumber(profile.elevationScale),
-    stableNumber(profile.fitPadding), stableNumber(profile.minZoom), stableNumber(profile.initialZoom),
+    stableNumber(profile.fitPadding), stableNumber(profile.panPadding), stableNumber(profile.minZoom), stableNumber(profile.initialZoom),
     stableNumber(profile.maxZoom), stableNumber(minX), stableNumber(minY), stableNumber(maxX), stableNumber(maxY)
   ].join("|");
   return Object.freeze({

@@ -197,7 +197,7 @@ function catalogEntries(value, field, limit) {
 }
 
 function compileBindings(value, profileIds) {
-  const descriptors = ownDescriptors(value, ["defaultProfileId", "maps", "missions"], "cameraProfiles.bindings");
+  const descriptors = ownDescriptors(value, ["maps", "missions"], "cameraProfiles.bindings");
   const compileMap = (key) => {
     const result = {};
     const raw = ownValue(descriptors, key) ?? {};
@@ -208,12 +208,7 @@ function compileBindings(value, profileIds) {
     }
     return Object.freeze(result);
   };
-  const defaultProfileId = identifier(ownValue(descriptors, "defaultProfileId"), "cameraProfiles.bindings.defaultProfileId", { optional: true });
-  if (defaultProfileId !== undefined && !profileIds.has(defaultProfileId)) {
-    throw new TypeError(`cameraProfiles.bindings.defaultProfileId references unknown profile "${defaultProfileId}".`);
-  }
   return Object.freeze({
-    ...(defaultProfileId === undefined ? {} : { defaultProfileId }),
     maps: compileMap("maps"),
     missions: compileMap("missions")
   });
@@ -271,9 +266,7 @@ export function resolveCameraProfileV1(unsafeCatalog, context = {}) {
       ? { profileId: catalog.bindings.maps[mapId], source: "map" }
       : buildTargetProfileId
         ? { profileId: buildTargetProfileId, source: "build_target" }
-        : catalog.bindings.defaultProfileId
-          ? { profileId: catalog.bindings.defaultProfileId, source: "default" }
-          : null;
+        : null;
   if (!selected) return Object.freeze({ profileId: null, source: "top_down_fallback", profile: FALLBACK_PROFILE });
   const profile = catalog.profiles[selected.profileId];
   if (!profile) throw new TypeError(`Camera ${selected.source} references unknown profile "${selected.profileId}".`);

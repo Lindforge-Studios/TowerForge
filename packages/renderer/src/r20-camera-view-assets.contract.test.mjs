@@ -111,4 +111,21 @@ describe("R20.3 view-specific camera asset resolution (RED)", () => {
     expect(result).toMatchObject({ status: "fallback", key: "isometric_2_1:east" });
     expect(result.asset.src).toBe("assets/base/tower.png");
   });
+
+  it("normalizes an omitted exact-variant anchor to the ADR default", async () => {
+    const { resolveCameraViewVariantV1 } = await api();
+    const catalog = visuals();
+    delete catalog.viewVariants.sprites.tower_base[VIEW_KEY].anchor;
+    const result = resolveCameraViewVariantV1({
+      visuals: catalog,
+      kind: "sprite",
+      id: "tower_base",
+      projection: "isometric_2_1",
+      orientation: "north"
+    });
+    expect(result).toMatchObject({
+      status: "exact",
+      asset: { anchor: { x: 0.5, y: 1 } }
+    });
+  });
 });

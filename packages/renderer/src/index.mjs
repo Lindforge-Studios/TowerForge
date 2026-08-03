@@ -1,4 +1,4 @@
-import { expandAutotileInvalidations, resolveAutotile } from "./autotile.mjs";
+import { expandAutotileInvalidations, resolveAutotile, resolveTileSetBinding } from "./autotile.mjs";
 import { projectTerraformingPresentation } from "./terraforming-presentation.mjs";
 import {
   projectLegacyPresentationEvents,
@@ -93,7 +93,7 @@ export class TowerForgeCanvasRenderer {
     this.viewportController = null;
     this.viewportSignature = "";
     const authoredVisuals = ownDataValue(this.content, "visuals");
-    this.cameraCatalog = ownDataValue(authoredVisuals, "schemaVersion") === 4
+    this.cameraCatalog = typeof options.cameraProfileId === "string" && ownDataValue(authoredVisuals, "schemaVersion") === 4
       ? ownDataValue(authoredVisuals, "cameraProfiles")
       : null;
     this.buildTargetCameraProfileId = typeof options.cameraProfileId === "string" ? options.cameraProfileId : undefined;
@@ -280,17 +280,19 @@ export class TowerForgeCanvasRenderer {
     this.drawElevationPresentation(terraformingPresentation?.elevationPresentation ?? projectElevationCues(snapshot.elevation), geom);
     this.drawNavigationOverlay(geom);
     if (this.focusCoord) this.drawFocusCell(this.focusCoord, geom);
-    if (destructibleEnvironmentPresentation.active) {
-      this.drawDestructibleEnvironmentPresentation(destructibleEnvironmentPresentation, geom);
-    }
-    for (const tower of this.cameraOrderedTowers(snapshot.towers ?? [], geom)) this.drawTower(tower, snapshot, geom);
     const heroPresentation = projectHeroesPresentation(snapshot);
     for (const hero of heroPresentation.units) {
       this.drawPassiveHeroAura(hero, towerPositions, geom);
-      this.drawHero(hero, geom);
     }
-    for (const enemy of snapshot.enemies ?? []) this.drawEnemy(enemy, snapshot, geom);
-    if (ballisticsPresentation.active) this.drawBallisticsPresentation(ballisticsPresentation, geom);
+    if (geom.cameraRenderSpace) {
+      this.drawCameraOrderedWorldActors({ snapshot, geom, destructibleEnvironmentPresentation, heroPresentation, ballisticsPresentation, positions });
+    } else {
+      if (destructibleEnvironmentPresentation.active) this.drawDestructibleEnvironmentPresentation(destructibleEnvironmentPresentation, geom);
+      for (const tower of snapshot.towers ?? []) this.drawTower(tower, snapshot, geom);
+      for (const hero of heroPresentation.units) this.drawHero(hero, geom);
+      for (const enemy of snapshot.enemies ?? []) this.drawEnemy(enemy, snapshot, geom);
+      if (ballisticsPresentation.active) this.drawBallisticsPresentation(ballisticsPresentation, geom);
+    }
     this.drawBallisticsEvents(ballisticsEvents, geom);
     this.drawBallisticsRicochetEvents(ballisticsRicochetEvents, geom);
     for (const hero of heroPresentation.units) this.drawHeroBlocking(hero, positions, geom);
@@ -311,24 +313,66 @@ export class TowerForgeCanvasRenderer {
     this.ctx.fillStyle = "#ffd27a";
     this.ctx.strokeStyle = "rgba(255, 244, 196, .72)";
     this.ctx.lineWidth = Math.max(1, geom.r * 0.08);
-    for (const projectile of ballisticsPresentation.projectiles) {
-      const point = projectBallisticsPresentationPoint(
-        projectile,
-        (coord) => this.center(coord, geom),
-        Math.max(1, geom.r * 0.18)
-      );
-      if (!point) continue;
-      this.ctx.beginPath();
-      this.ctx.arc(point.x, point.y, Math.max(2, geom.r * 0.13), 0, Math.PI * 2);
-      this.ctx.fill();
-      this.ctx.stroke();
+    for (const projectile of ballisticsPresentation.projectiles) this.drawBallisticsProjectile(projectile, geom);
+    this.ctx.restore();
+  }
+
+  drawBallisticsProjectile(projectile, geom) {
+    const point = projectBallisticsPresentationPoint(projectile, (coord) => this.center(coord, geom), Math.max(1, geom.r * 0.18));
+    if (!point) return;
+    this.ctx.beginPath();
+    this.ctx.arc(point.x, point.y, Math.max(2, geom.r * 0.13), 0, Math.PI * 2);
+    this.ctx.fill();
+    this.ctx.stroke();
+  }
+
+  drawCameraOrderedWorldActors({ snapshot, geom, destructibleEnvironmentPresentation, heroPresentation, ballisticsPresentation, positions }) {
+    const rows = [];
+    const actors = new Map();
+    const addWorld = (id, kind, value, world) => {
+      const key = `${kind}:${id}`;
+      rows.push({ id: key, kind, ...world });
+      actors.set(key, value);
+    };
+    for (const row of destructibleEnvironmentPresentation.active ? destructibleEnvironmentPresentation.rows : []) {
+      addWorld(row.id ?? row.objectId ?? `${row.coord.q},${row.coord.r}`, "destructible", row, { ...this.worldCenter(row.coord, geom), elevation: Number(row.coord?.elevation) || 0 });
+    }
+    for (const tower of snapshot.towers ?? []) addWorld(tower.id, "tower", tower, { ...this.worldCenter(tower.coord, geom), elevation: Number(tower.coord?.elevation) || 0 });
+    for (const hero of heroPresentation.units) {
+      const screen = projectHeroPresentationPoint(hero, (coord) => this.center(coord, geom));
+      if (screen) addWorld(hero.id, "hero", hero, { ...geom.cameraRenderSpace.screenToWorld(screen, 0), elevation: 0 });
+    }
+    for (const enemy of snapshot.enemies ?? []) {
+      const screen = positions.get(enemy.id);
+      if (screen) addWorld(enemy.id, "enemy", enemy, { ...geom.cameraRenderSpace.screenToWorld(screen, 0), elevation: 0 });
+    }
+    for (const projectile of ballisticsPresentation.active ? ballisticsPresentation.projectiles : []) {
+      const screen = projectBallisticsPresentationPoint(projectile, (coord) => this.center(coord, geom), Math.max(1, geom.r * 0.18));
+      if (screen) addWorld(projectile.id, "projectile", projectile, { ...geom.cameraRenderSpace.screenToWorld(screen, 0), elevation: 0 });
+    }
+    const ordered = projectCameraRenderItemsV1(geom.cameraRenderSpace, rows);
+    this.ctx.save();
+    this.ctx.fillStyle = "#ffd27a";
+    this.ctx.strokeStyle = "rgba(255, 244, 196, .72)";
+    this.ctx.lineWidth = Math.max(1, geom.r * 0.08);
+    for (const row of ordered) {
+      const value = actors.get(row.id);
+      if (row.kind === "destructible") this.drawDestructibleEnvironmentRow(value, geom);
+      else if (row.kind === "tower") this.drawTower(value, snapshot, geom);
+      else if (row.kind === "hero") this.drawHero(value, geom);
+      else if (row.kind === "enemy") this.drawEnemy(value, snapshot, geom);
+      else if (row.kind === "projectile") this.drawBallisticsProjectile(value, geom);
     }
     this.ctx.restore();
   }
 
   drawDestructibleEnvironmentPresentation(presentation, geom) {
     this.ctx.save();
-    for (const row of presentation.rows) {
+    for (const row of presentation.rows) this.drawDestructibleEnvironmentRow(row, geom);
+    this.ctx.restore();
+  }
+
+  drawDestructibleEnvironmentRow(row, geom) {
       const point = this.center(row.coord, geom);
       const radius = Math.max(3, geom.r * 0.38);
       this.ctx.globalAlpha = row.destroyed ? 0.42 : 0.95;
@@ -353,8 +397,6 @@ export class TowerForgeCanvasRenderer {
         this.ctx.fillStyle = row.hpRatio > 0.35 ? "#d7b06f" : "#df6a59";
         this.ctx.fillRect(point.x - radius, top, width * row.hpRatio, Math.max(2, geom.r * 0.08));
       }
-    }
-    this.ctx.restore();
   }
 
   drawWeatherPresentation(presentation, mapTiles, geom) {
@@ -875,6 +917,39 @@ export class TowerForgeCanvasRenderer {
     }
     const img = this.loadImage(sprite.src);
     return img ? { img, sx: 0, sy: 0, sw: img.naturalWidth, sh: img.naturalHeight, anchor: sprite.anchor ?? { x: 0.5, y: 0.5 } } : null;
+  }
+
+  cameraTileSetVariant(map) {
+    if (!this.cameraProfile || !map) return null;
+    const tileSetId = resolveTileSetBinding(this.content.visuals, map);
+    if (!tileSetId) return null;
+    const resolved = resolveCameraViewVariantV1({
+      visuals: this.content.visuals,
+      kind: "tileSet",
+      id: tileSetId,
+      projection: this.cameraProfile.projection,
+      orientation: this.cameraProfile.orientation
+    });
+    return resolved.status === "exact" ? { tileSetId, ...resolved } : null;
+  }
+
+  cameraAutotileVisuals(map, variant = this.cameraTileSetVariant(map)) {
+    if (!variant) return this.content.visuals;
+    const visuals = this.content.visuals;
+    const base = visuals.tileSets?.[variant.tileSetId];
+    return {
+      ...visuals,
+      tileSets: { ...visuals.tileSets, [variant.tileSetId]: { ...base, materials: variant.asset.materials } }
+    };
+  }
+
+  cameraTileSpriteById(spriteId, variant) {
+    if (!variant) return this.spriteById(spriteId);
+    const sprite = this.content.visuals?.sprites?.[spriteId];
+    const image = this.loadImage(variant.asset?.atlas?.src);
+    if (!sprite?.frame || !image) return null;
+    const frame = sprite.frame;
+    return { img: image, sx: frame.x, sy: frame.y, sw: frame.w, sh: frame.h, anchor: { x: 0.5, y: 0.5 } };
   }
 
   drawAnchoredSprite(sprite, point, width, height = width) {
@@ -1504,17 +1579,18 @@ export class TowerForgeCanvasRenderer {
 
   drawTile(tile, geom, map) {
     const p = this.center(tile, geom);
-    const resolved = resolveAutotile({ map, visuals: this.content.visuals, coord: tile, terrain: tile.terrain, seed: this.content.visuals?.tileSeed ?? 0 });
+    const cameraVariant = this.cameraTileSetVariant(map);
+    const resolved = resolveAutotile({ map, visuals: this.cameraAutotileVisuals(map, cameraVariant), coord: tile, terrain: tile.terrain, seed: this.content.visuals?.tileSeed ?? 0 });
     if (resolved.sectors?.length) {
-      const complete = resolved.sectors.every((sector) => this.spriteById(sector.selected?.spriteId));
+      const complete = resolved.sectors.every((sector) => this.cameraTileSpriteById(sector.selected?.spriteId, cameraVariant));
       if (!complete) {
         this.drawCell(p.x, p.y, geom.r * 0.86, this.tileColor(tile.terrain), geom);
         return;
       }
-      for (const sector of resolved.sectors) this.drawTileSector(p, geom, sector);
+      for (const sector of resolved.sectors) this.drawTileSector(p, geom, sector, cameraVariant);
       return;
     }
-    const sprite = this.spriteById(resolved.selected?.spriteId);
+    const sprite = this.cameraTileSpriteById(resolved.selected?.spriteId, cameraVariant);
     if (!sprite) {
       this.drawCell(p.x, p.y, geom.r * 0.86, this.tileColor(tile.terrain), geom);
       return;
@@ -1529,8 +1605,8 @@ export class TowerForgeCanvasRenderer {
     this.ctx.restore();
   }
 
-  drawTileSector(center, geom, sector) {
-    const sprite = this.spriteById(sector.selected?.spriteId);
+  drawTileSector(center, geom, sector, cameraVariant = null) {
+    const sprite = this.cameraTileSpriteById(sector.selected?.spriteId, cameraVariant);
     if (!sprite) return;
     const size = geom.r * 1.72;
     this.ctx.save();

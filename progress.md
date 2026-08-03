@@ -3707,3 +3707,132 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - The exact RED command is now GREEN at `2/2` files and `17/17` tests. Focused schema, assets,
   generated-asset, renderer and generative-MCP regressions pass `6/6` files and `78/78` tests;
   MCP asset/tileset selection passes `5/5`. Syntax checks and `git diff --check` are GREEN.
+
+## 2026-08-03 — R20.4 Camera Studio/MCP authoring RED
+
+- Contract review corrected an R20.1 drift: the approved selection order is exactly mission -> map
+  -> build-target -> built-in top-down. `cameraProfiles.bindings.defaultProfileId` is not part of
+  the public plan or ADR 0061 and must be rejected rather than creating a fifth implicit default.
+- A focused MCP/AI contract was added before production changes. It requires the `camera` schema
+  domain, narrow read/recipe/compute-preview/guarded-upsert tools, detached recipes for all three
+  projections and four orientations, resolution/bounds/clipping/depth/asset-coverage diagnostics,
+  adjacent Procedural Juice/view-variant preservation, stale-revision rejection, backup/rollback
+  metadata, updated agent instructions and no broad camera-section replacement tool.
+- Exact RED command:
+  `npx vitest run packages/mcp/r20-camera-authoring.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`, one file and all `5/5` tests failed: unknown `camera` domain/tools and guide v52.
+  No production file was changed by the Contract/Test Designer.
+
+## 2026-08-03 — R20.4 Procedural Juice/camera coexistence RED
+
+- Before changing the existing visuals authoring transaction, a regression promoted a fixture to
+  project v5/visuals v4 with empty `cameraProfiles` and `viewVariants`, then previewed a normal
+  Procedural Juice edit. Exact command:
+  `npx vitest run packages/cli/lib/procedural-juice-authoring.contract.test.mjs --reporter=verbose --maxWorkers=1 -t "preserves visuals v4 camera"`.
+- Result: exit `1`; the focused test failed because the R11 authoring guard supported visuals only
+  through v3 and would have downgraded a valid camera catalog. The expected repair accepts v4 and
+  preserves both adjacent R20 catalogs byte-for-data through preview/apply.
+
+## 2026-08-03 — R20.4 Camera Studio surface RED
+
+- Before Studio production changes, a focused source contract required projection/orientation,
+  profile and map/mission binding controls, preview/apply actions, diagnostics output and the exact
+  narrow MCP-backed read/recipe/preview/apply server routes.
+- Exact RED command:
+  `npx vitest run packages/studio/r20-camera-studio.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`; both `2/2` tests failed because Camera Studio controls, client workflow and
+  server routes did not exist.
+
+## 2026-08-03 — R20.4 pre-freeze hardening RED
+
+- After the first Camera Studio lifecycle E2E reached GREEN, two missing acceptance boundaries were
+  captured before hardening production code: owned camera sources must reject symlink traversal,
+  and Camera Studio must expose the full bounded profile/viewport surface plus an actual preview
+  canvas rather than only projection/orientation and textual JSON.
+- Exact command:
+  `npx vitest run packages/mcp/r20-camera-authoring.contract.test.mjs packages/studio/r20-camera-studio.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+- Result: exit `1`; `2/2` focused tests failed for the expected reasons. The authoring transaction
+  followed a symlinked `content` directory and wrote an outside temporary fixture, while the Studio
+  lacked viewport preset, fit/pan/elevation/zoom controls and `camera-preview-canvas`. The remaining
+  six tests stayed GREEN. All writes were confined to temporary test directories.
+
+## 2026-08-03 — R20.4 binding disable/re-enable RED
+
+- A final opt-in lifecycle contract was added before production changes: disabling one authored
+  mission/map binding must restore the built-in top-down fallback without deleting the reusable
+  profile, and applying the same binding again must re-enable it. Studio must expose the guarded
+  disable action beside preview/apply.
+- Exact command:
+  `npx vitest run packages/mcp/r20-camera-authoring.contract.test.mjs packages/studio/r20-camera-studio.contract.test.mjs --reporter=dot --maxWorkers=1`.
+- Result: exit `1`; the focused binding test still resolved the mission profile because
+  `binding.enabled=false` was ignored, and the Studio contract lacked `btn-camera-disable`.
+
+## 2026-08-03 — R20.4 Camera Studio lifecycle/security focused GREEN
+
+- The narrow camera authoring transaction now rejects symlink traversal through the project root,
+  owned JSON parents and backup directories before it reads or writes. It rechecks the composite
+  revision immediately before commit, preserves adjacent visuals-v4 catalogs and keeps backups
+  project-confined. Camera preview derives bounded map geometry, reports actual padded clipping and
+  returns detached projected points for the Studio canvas.
+- Camera Studio now exposes all CameraProfileV1 bounds, six desktop viewport presets, a live
+  projection canvas, map/mission binding, guarded preview/apply and guarded binding disable. A
+  disabled binding leaves the reusable profile intact and restores the lower-precedence selection;
+  the same profile can be re-enabled without reauthoring it.
+- Focused MCP/Studio/Juice coexistence tests pass `4/4` files and `24/24` tests. The real browser
+  lifecycle `tests/e2e/r20-camera-studio.spec.mjs` passes enable -> save -> disable -> top-down
+  restoration -> re-enable -> reload plus stale-revision rejection. This is not the R20 freeze:
+  renderer/package and saved-profile/AI authoring gaps identified by pre-freeze audit remain open.
+
+## 2026-08-03 — R20 pre-freeze authoring/AI/default-anchor RED
+
+- Independent pre-freeze review added behavioral regressions for mandatory tileset coverage,
+  accessor/proxy/cycle/profile-budget inputs, injected two-file commit failure, the shared optional
+  sprite-anchor default and embedded Studio AI access to all four narrow camera tools.
+- Exact command:
+  `npx vitest run packages/mcp/r20-camera-authoring-hardening.contract.test.mjs packages/studio/lib/ai-tool-policy.test.mjs packages/cli/lib/r20-camera-view-assets.contract.test.mjs packages/renderer/src/r20-camera-view-assets.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+- Result: exit `1`, `4/4` files with six expected failures: missing required view coverage did not
+  make preview/apply fail; an accessor executed twice; the second-rename fault left a staged file;
+  omitted anchors were rejected/not normalized; and embedded AI filtered out the camera tools.
+  Revoked proxies, cycles and the 33rd profile already failed closed and remained GREEN.
+
+## 2026-08-03 — R20 pre-freeze renderer/package P0 RED
+
+- An independent Contract/Test Designer added two behavioral regression files after the audit;
+  production and `progress.md` were untouched by that role.
+- Renderer command:
+  `npx vitest run packages/renderer/src/r20-camera-p0-runtime.regression.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`, `3/3` RED: Canvas mixed-kind actors were category ordered, the active tileset
+  variant still loaded the base atlas, and schema-valid `fitPadding=512` crashed 1024×720.
+- Package command:
+  `npx vitest run packages/cli/build.r20-camera-p0-runtime-isolation.regression.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`, `5/5` RED: a plain target in a mixed project still bundled camera runtime;
+  Phaser only imported but did not invoke shared depth projection; picking skipped shared inverse
+  conversion; tileset variants had no runtime texture path; and authored anchors never reached
+  `setOrigin`.
+
+## 2026-08-03 — R20 saved-profile/build-target Studio RED
+
+- Camera Studio source and browser contracts now require a saved-profile picker that restores all
+  editable values and its mission/map binding after reload, plus a Build Targets
+  `cameraProfileId` selector populated from the same catalog.
+- Before production changes the combined authoring command reported `8/39` RED across the complete
+  hardening set, and `tests/e2e/r20-camera-studio.spec.mjs` failed `1/1` because
+  `#camera-profile-picker` did not exist. After the independent hardening fixes, the same source
+  set narrowed to exactly the picker/reload and build-target UI failures; their GREEN evidence is
+  recorded only after the browser lifecycle passes.
+
+## 2026-08-03 — R20 pre-freeze authoring and runtime GREEN
+
+- Camera Studio now reloads saved profiles and bindings, exposes the same catalog to the
+  BuildTargets-v2 `cameraProfileId` selector, and keeps guarded disable/re-enable semantics. The
+  complete focused authoring/hardening matrix is GREEN at `6/6` files and `39/39` tests; the real
+  browser lifecycle is GREEN at `2/2` tests, including persisted build-target selection.
+- Canvas now depth-orders mixed camera actors through the shared projector, consumes exact
+  camera tileset variants and accepts the schema-valid maximum fit padding without crashing. The
+  exact renderer RED command is GREEN at `3/3` tests.
+- Generated Phaser players now invoke the shared depth projector for tiles and actors, route
+  pointer selection through the inverse camera transform, preload and consume exact tileset
+  atlases, and apply authored sprite anchors. A non-camera target in the same project excludes all
+  camera modules and profile reads. The exact package RED command is GREEN at `5/5` tests.
+- This remains pre-freeze evidence. The exact candidate commit, full gates and two independent
+  sign-offs are recorded separately after the focused matrix and generated package smoke pass.

@@ -481,6 +481,36 @@
             <p class="text-muted" style="font-size:11.5px;margin:0 0 10px">Import a music file, then assign one looping track per mission. Players control music and SFX separately.</p>
             <div id="music-bindings"></div>
           </section>
+          <section id="camera-studio" class="tool-card">
+            <div class="form-section-title">Camera Studio <span id="camera-studio-state" class="text-muted">Opt-in</span></div>
+            <p class="text-muted" style="font-size:11.5px;margin:0 0 10px">Preview deterministic top-down, isometric and dimetric presentation without changing gameplay coordinates.</p>
+            <div class="form-row">
+              <div class="field"><label>Saved profile</label><select id="camera-profile-picker"><option value="">New profile…</option></select></div>
+              <div class="field"><label>Profile ID</label><input id="camera-profile-id" class="mono" value="camera-profile"></div>
+              <div class="field"><label>Projection</label><select id="camera-projection"><option value="top_down">top_down</option><option value="isometric_2_1">isometric_2_1</option><option value="dimetric_oblique">dimetric_oblique</option></select></div>
+              <div class="field"><label>Orientation</label><select id="camera-orientation"><option value="north">north</option><option value="east">east</option><option value="south">south</option><option value="west">west</option></select></div>
+            </div>
+            <div class="form-row">
+              <div class="field"><label>Binding</label><select id="camera-binding-scope"><option value="">No binding</option><option value="mission">Mission</option><option value="map">Map</option></select></div>
+              <div class="field"><label>Binding ID</label><input id="camera-binding-id" class="mono" placeholder="tutorial_01"></div>
+              <div class="field"><label>Desktop viewport</label><select id="camera-viewport-preset"><option value="1024x720">1024×720</option><option value="1280x720">1280×720</option><option value="1440x900" selected>1440×900</option><option value="1920x1080">1920×1080</option><option value="2560x1440">2560×1440</option><option value="3440x1440">3440×1440</option></select></div>
+            </div>
+            <div class="form-row">
+              <div class="field"><label>Fit padding</label><input id="camera-fit-padding" type="number" min="0" max="512" step="1" value="32"></div>
+              <div class="field"><label>Elevation scale</label><input id="camera-elevation-scale" type="number" min="0" max="4" step="0.1" value="0"></div>
+              <div class="field"><label>Min zoom</label><input id="camera-min-zoom" type="number" min="0.1" max="8" step="0.1" value="0.5"></div>
+              <div class="field"><label>Initial zoom</label><input id="camera-initial-zoom" type="number" min="0.1" max="8" step="0.1" value="1"></div>
+              <div class="field"><label>Max zoom</label><input id="camera-max-zoom" type="number" min="0.1" max="8" step="0.1" value="3"></div>
+              <div class="field"><label>Pan padding</label><input id="camera-pan-padding" type="number" min="0" max="2048" step="1" value="64"></div>
+            </div>
+            <div class="form-row">
+              <button id="btn-camera-preview" class="btn btn-outline" type="button" style="align-self:flex-end">Preview</button>
+              <button id="btn-camera-apply" class="btn btn-primary" type="button" style="align-self:flex-end" disabled>Apply guarded</button>
+              <button id="btn-camera-disable" class="btn btn-outline" type="button" style="align-self:flex-end">Disable binding</button>
+            </div>
+            <canvas id="camera-preview-canvas" width="960" height="480" tabindex="0" aria-label="Camera projection preview" style="display:block;width:100%;max-height:480px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px"></canvas>
+            <pre id="camera-preview-result" class="mono text-muted" aria-live="polite"></pre>
+          </section>
           <section id="procedural-juice-lab" class="tool-card">
             <div class="form-section-title">Procedural Juice Lab <span id="procedural-juice-state" class="text-muted">Opt-in</span></div>
             <p class="text-muted" style="font-size:11.5px;margin:0 0 10px">Author deterministic particles, procedural impact audio and presentation-only camera feedback. Removing the block restores the unchanged legacy renderer.</p>
