@@ -3888,3 +3888,15 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   projector integration is GREEN: `5/5` executed files and `38/38` tests. Syntax checks and
   `git diff --check` are GREEN. This repair invalidates the previous freeze and both prior review
   outcomes; the next commit must run the full gates and receive fresh independent sign-offs.
+
+## 2026-08-03 — R20 second full-gate legacy-contract repair
+
+- Candidate `0359fd9` passed typecheck, validation and the tutorial simulation. The complete
+  one-worker unit gate then ran `441` files and found one test-contract conflict after `4211`
+  passing tests: an R13 source-regex prohibited every renderer identifier containing
+  `elevationAt`, although R20 legitimately resolves authoritative tile elevation solely for
+  presentation projection.
+- The R13 boundary still forbids topology, LoS, blocker-height and arc-clearance recomputation; its
+  assertion was narrowed to those gameplay concepts. Focused R13 plus R20 elevation verification
+  is GREEN at `2/2` files and `5/5` tests. Because a tracked test changed, `0359fd9` is no longer
+  the frozen candidate and the complete gate sequence restarts on the next commit.
