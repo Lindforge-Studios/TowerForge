@@ -381,10 +381,12 @@ function resolveIntent(plan, activation) {
   if (selectedMenu.actionId !== "selectBuildSlot") fail("plan.menus.actionId", "is unsupported.");
   const items = inspectArray(selectedMenu.items, "plan.menus.items", HUD_BUILD_MENU_LIMITS.itemsPerMenu);
   let selectedItem = null;
+  let selectedIndex = -1;
   for (let index = 0; index < items.length; index += 1) {
     const item = inspectRecord(items[index], `plan.menus.items[${index}]`);
     if (item.id === itemId) {
       selectedItem = item;
+      selectedIndex = index;
       break;
     }
   }
@@ -393,7 +395,7 @@ function resolveIntent(plan, activation) {
   return Object.freeze({
     schemaVersion: HUD_BUILD_MENU_SCHEMA_VERSION,
     actionId: selectedMenu.actionId,
-    payload: Object.freeze({ slotId: itemId })
+    payload: Object.freeze({ slotId: itemId, index: selectedIndex })
   });
 }
 
