@@ -1,6 +1,6 @@
 # ADR 0059: R18 Large-Screen Web Player
 
-- Status: In Review
+- Status: Accepted
 - Date: 2026-08-02
 
 ## Context

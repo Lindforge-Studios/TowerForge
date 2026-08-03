@@ -1,0 +1,88 @@
+# ADR 0060: R19 Native Desktop Distribution
+
+- Status: In Progress
+- Date: 2026-08-03
+
+## Context
+
+R18 added an opt-in large-screen browser player, but the existing `package --kind desktop` path is
+only a compatibility wrapper around a web target. It silently chooses the first web target, emits a
+minimal Tauri scaffold with a fixed window and `csp: null`, requires manual icon generation, and has
+no native session storage, lifecycle contract, release workflow, or updater boundary.
+
+The Tauri application in `packages/desktop` is the TowerForge constructor itself. Generated games
+must not inherit its Node sidecar, project commands, ACL, filesystem access, entitlements, or release
+configuration.
+
+## Decision
+
+R19 remains opt-in within project schema v5 and BuildTargets v2. A generated native game is authored
+as `platform: "desktop"` and owns its renderer, form factor, viewport, window and bundle settings.
+`defaults.desktop` selects a native target independently from `defaults.web`. The R18
+`desktop_large_screen` recipe remains a web target; R19 adds the distinct
+`native_desktop_game` recipe. An explicit legacy web target may still be passed to
+`package --kind desktop`, but only through the documented compatibility adapter.
+
+The first-class target never searches for a sibling web target. The CLI compiles the selected
+desktop target through the common generated-player builder, then emits a separate Tauri v2 carrier.
+Window and bundle records are closed own-data contracts. Output paths and the project-bound
+1024×1024 PNG icon remain confined to the project. Generated configuration uses a restrictive CSP,
+does not enable global Tauri APIs, and grants only the narrow commands required by the game.
+
+R19.2 reuses `PlayerSessionSaveV1` and `createRotatingPlayerSessionStore` behind
+`NativeStorageBridgeV1`. Rust owns the app-data paths and exposes no arbitrary path argument or
+general filesystem/shell command. Slot and head updates use cross-platform replace-on-persist
+without deleting the committed destination first. Ordinary close is prevented until the WebView
+flushes and explicitly completes the close handshake. On desktop, WebView focus loss is the
+supported suspend/save boundary, while focus gain and Tauri's event-loop resume signal restoration;
+fullscreen and single-instance behavior use separate bounded events/commands. Browser and native
+restore must produce the same simulation digest.
+
+R19.3 emits a project-owned release workflow for `.dmg`, `.exe`, `.msi`, `.AppImage`, `.deb` and
+`.rpm`, plus `SHA256SUMS` and release notes tied to the exact source commit. Signing configuration
+contains intent only; secret values stay in OS/CI storage. If signing is not configured, the release
+is labelled `Unsigned build` and published only as a pre-release. Generated Actions are pinned by
+immutable commit, Node/Rust toolchains and direct native dependencies are fixed, artifact assembly
+is recursive and requires exactly six installers before checksums/publication.
+
+R19.4 is wholly absent unless the target enables it. Enabled updater configuration accepts HTTPS
+endpoints and a public verification key only. Private keys remain CI secrets. Signature, downgrade,
+platform/architecture and manifest validation are owned by the native Tauri updater and must
+complete before installation begins. The WebView cannot supply a `signatureStatus`, updater
+resource ID or arbitrary candidate and receives no direct updater plugin permission.
+
+The engine, GameCommand v8, checkpoint, journal, profile, campaign, multiplayer,
+`PlayerSessionSaveV1` and `PlayerPreferencesV1` version domains do not change.
+
+## TDD delivery slices
+
+1. R19.1a: BuildTargets validation, desktop selection and guarded authoring recipe.
+2. R19.1b: standalone secure carrier, project icon and compatibility wrapper.
+3. R19.1c: Studio and MCP/AI parity.
+4. R19.2a: native session storage and browser/native digest parity.
+5. R19.2b: close, sleep/resume, fullscreen and single-instance lifecycle.
+6. R19.3a: local installer commands and artifact verification.
+7. R19.3b: generated cross-platform GitHub workflow and unsigned policy.
+8. R19.4: disabled absence, guarded configuration and updater rejection paths.
+
+Each slice records focused RED before production work, then runs affected-layer regressions. The
+complete unit, browser, plugin, package and Cargo gates run only on the frozen R19 candidate, before
+two independent sign-offs. Any source change invalidates both sign-offs.
+
+## Consequences
+
+- A project can contain R18 web-desktop and R19 native-desktop targets without either target
+  borrowing the other's settings.
+- Generated games do not import the TowerForge constructor shell or its privileges.
+- Native persistence changes only the storage port, not the gameplay save format.
+- Cross-platform installers are produced in CI; a local build creates only formats supported by the
+  current operating system that are also authored by the selected target.
+- Updater code and permissions are absent from ordinary desktop games.
+
+## Rejected alternatives
+
+- Continuing to wrap the first web target: mixes unrelated target contracts and makes native builds
+  non-reproducible.
+- Reusing `packages/desktop`: would expose constructor-specific sidecars and privileges to games.
+- Storing signing or updater private keys in `.tdproj`: violates local-first secret ownership.
+- Enabling a broad filesystem or shell plugin for saves: expands the WebView attack surface.

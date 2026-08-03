@@ -1098,8 +1098,30 @@ function validateBuildTargets(buildTargets, err) {
     const targetKeys = new Set([
       "id", "type", "platform", "renderer", "webDir", "outputDir", "market", "storeChannel",
       "appId", "appName", "label", "title", "appTitle", "backgroundColor", "appVersion", "manifest",
-      "formFactor", "viewport", "quality", "locale", "inputProfile"
+      "formFactor", "viewport", "quality", "locale", "inputProfile", "window", "bundle", "updater"
     ]);
+    const targets = isRecord(buildTargets.targets) ? buildTargets.targets : {};
+    if (!isRecord(buildTargets.defaults)) {
+      err("buildTargets", "build-targets.json", "defaults", "defaults must be an object keyed by platform.");
+    } else {
+      const defaultPlatforms = new Set(["web", "android", "ios", "desktop"]);
+      for (const [platform, targetId] of Object.entries(buildTargets.defaults)) {
+        const fieldPath = `defaults.${platform}`;
+        if (!defaultPlatforms.has(platform)) {
+          err("buildTargets", "build-targets.json", fieldPath, `Unknown default build platform "${platform}".`);
+          continue;
+        }
+        if (typeof targetId !== "string" || !targetId.trim()) {
+          err("buildTargets", "build-targets.json", fieldPath, `defaults.${platform} must reference a target ID.`);
+          continue;
+        }
+        const target = targets[targetId];
+        const targetPlatform = target?.platform ?? target?.type ?? "web";
+        if (!isRecord(target) || targetPlatform !== platform) {
+          err("buildTargets", "build-targets.json", fieldPath, `defaults.${platform} must reference a ${platform} build target.`);
+        }
+      }
+    }
     for (const [targetId, target] of Object.entries(buildTargets.targets ?? {})) {
       if (!isRecord(target)) {
         err("buildTargets", targetId, `targets.${targetId}`, "Build target must be an object.");
@@ -1108,8 +1130,22 @@ function validateBuildTargets(buildTargets, err) {
       for (const key of Object.keys(target)) if (!targetKeys.has(key)) {
         err("buildTargets", targetId, `targets.${targetId}.${key}`, `Unknown build target field "${key}".`);
       }
+      const platform = target.platform ?? target.type ?? "web";
+      if (!["web", "android", "ios", "desktop"].includes(platform)) {
+        err("buildTargets", targetId, `targets.${targetId}.platform`, "platform must be web, android, ios, or desktop.");
+      }
       if (!["legacy", "desktop", "responsive"].includes(target.formFactor)) {
         err("buildTargets", targetId, `targets.${targetId}.formFactor`, "formFactor must be legacy, desktop, or responsive.");
+      }
+      if (target.appVersion !== undefined && (
+        typeof target.appVersion !== "string"
+        || target.appVersion.length > 64
+        || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(target.appVersion)
+      )) {
+        err("buildTargets", targetId, `targets.${targetId}.appVersion`, "appVersion must be a bounded semantic version without whitespace or control characters.");
+      }
+      if (platform === "desktop" && target.formFactor === "legacy") {
+        err("buildTargets", targetId, `targets.${targetId}.formFactor`, "Desktop targets must use desktop or responsive formFactor.");
       }
       if (!["auto", "low", "balanced", "high"].includes(target.quality)) {
         err("buildTargets", targetId, `targets.${targetId}.quality`, "quality must be auto, low, balanced, or high.");
@@ -1139,6 +1175,21 @@ function validateBuildTargets(buildTargets, err) {
         }
         if (!Number.isFinite(target.viewport.initialZoom) || target.viewport.initialZoom < minZoom || target.viewport.initialZoom > maxZoom) {
           err("buildTargets", targetId, `${viewportPath}.initialZoom`, "viewport.initialZoom must be inside minZoom/maxZoom.");
+        }
+      }
+      if (platform === "desktop") {
+        validateDesktopWindow(target.window, targetId, err);
+        validateDesktopBundle(target.bundle, targetId, err);
+        if (target.updater !== undefined) validateDesktopUpdater(target.updater, targetId, err);
+      } else {
+        if (target.window !== undefined) {
+          err("buildTargets", targetId, `targets.${targetId}.window`, "window is available only for desktop targets.");
+        }
+        if (target.bundle !== undefined) {
+          err("buildTargets", targetId, `targets.${targetId}.bundle`, "bundle is available only for desktop targets.");
+        }
+        if (target.updater !== undefined) {
+          err("buildTargets", targetId, `targets.${targetId}.updater`, "updater is available only for desktop targets.");
         }
       }
     }
@@ -1175,6 +1226,106 @@ function validateBuildTargets(buildTargets, err) {
         outputOwners.set(canonicalDir, targetId);
       }
     }
+  }
+}
+
+function validateDesktopWindow(window, targetId, err) {
+  const base = `targets.${targetId}.window`;
+  if (!isRecord(window)) {
+    err("buildTargets", targetId, base, "Desktop target window must be an object.");
+    return;
+  }
+  const keys = new Set(["width", "height", "minWidth", "minHeight", "fullscreen", "resizable"]);
+  for (const key of Object.keys(window)) if (!keys.has(key)) {
+    err("buildTargets", targetId, `${base}.${key}`, `Unknown desktop window field "${key}".`);
+  }
+  for (const field of ["width", "height", "minWidth", "minHeight"]) {
+    if (!Number.isSafeInteger(window[field]) || window[field] <= 0 || window[field] > 16384) {
+      err("buildTargets", targetId, `${base}.${field}`, `${field} must be a positive safe integer no greater than 16384.`);
+    }
+  }
+  if (Number.isSafeInteger(window.width) && Number.isSafeInteger(window.minWidth) && window.minWidth > window.width) {
+    err("buildTargets", targetId, `${base}.minWidth`, "minWidth must not exceed width.");
+  }
+  if (Number.isSafeInteger(window.height) && Number.isSafeInteger(window.minHeight) && window.minHeight > window.height) {
+    err("buildTargets", targetId, `${base}.minHeight`, "minHeight must not exceed height.");
+  }
+  if (typeof window.fullscreen !== "boolean") {
+    err("buildTargets", targetId, `${base}.fullscreen`, "fullscreen must be a boolean.");
+  }
+  if (typeof window.resizable !== "boolean") {
+    err("buildTargets", targetId, `${base}.resizable`, "resizable must be a boolean.");
+  }
+}
+
+function validateDesktopBundle(bundle, targetId, err) {
+  const base = `targets.${targetId}.bundle`;
+  if (!isRecord(bundle)) {
+    err("buildTargets", targetId, base, "Desktop target bundle must be an object.");
+    return;
+  }
+  const keys = new Set(["iconSource", "targets"]);
+  for (const key of Object.keys(bundle)) if (!keys.has(key)) {
+    err("buildTargets", targetId, `${base}.${key}`, `Unknown desktop bundle field "${key}".`);
+  }
+  const iconIssue = validateSafeAssetPath(bundle.iconSource, `${base}.iconSource`);
+  if (iconIssue || bundle.iconSource === ".") {
+    err("buildTargets", targetId, `${base}.iconSource`, iconIssue ?? "bundle.iconSource must name a project-relative file.");
+  }
+  if (!Array.isArray(bundle.targets) || bundle.targets.length === 0 || bundle.targets.length > 64) {
+    err("buildTargets", targetId, `${base}.targets`, "bundle.targets must contain a bounded non-empty list of installer target IDs.");
+    return;
+  }
+  const allowed = new Set(["dmg", "nsis", "msi", "appimage", "deb", "rpm"]);
+  const seen = new Set();
+  for (let index = 0; index < bundle.targets.length; index += 1) {
+    const installer = bundle.targets[index];
+    if (!allowed.has(installer)) {
+      err("buildTargets", targetId, `${base}.targets.${index}`, `Unsupported desktop bundle target "${String(installer)}".`);
+    } else if (seen.has(installer)) {
+      err("buildTargets", targetId, `${base}.targets.${index}`, `Duplicate desktop bundle target "${installer}".`);
+    }
+    seen.add(installer);
+  }
+}
+
+function validateDesktopUpdater(updater, targetId, err) {
+  const base = `targets.${targetId}.updater`;
+  if (!isRecord(updater)) {
+    err("buildTargets", targetId, base, "Desktop updater must be an object.");
+    return;
+  }
+  const keys = new Set(["enabled", "endpoints", "publicKey"]);
+  for (const key of Object.keys(updater)) if (!keys.has(key)) {
+    err("buildTargets", targetId, `${base}.${key}`, `Unknown desktop updater field "${key}".`);
+  }
+  if (typeof updater.enabled !== "boolean") {
+    err("buildTargets", targetId, `${base}.enabled`, "updater.enabled must be boolean.");
+    return;
+  }
+  if (!updater.enabled) {
+    if (updater.endpoints !== undefined) err("buildTargets", targetId, `${base}.endpoints`, "Disabled updater must not retain endpoints.");
+    if (updater.publicKey !== undefined) err("buildTargets", targetId, `${base}.publicKey`, "Disabled updater must not retain a public key.");
+    return;
+  }
+  if (!Array.isArray(updater.endpoints) || updater.endpoints.length === 0 || updater.endpoints.length > 16) {
+    err("buildTargets", targetId, `${base}.endpoints`, "Enabled updater requires 1 to 16 HTTPS endpoints.");
+  } else {
+    const seen = new Set();
+    for (let index = 0; index < updater.endpoints.length; index += 1) {
+      const endpoint = updater.endpoints[index];
+      let parsed;
+      try { parsed = typeof endpoint === "string" && endpoint.length <= 2048 ? new URL(endpoint) : null; } catch { parsed = null; }
+      if (!parsed || parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.hash) {
+        err("buildTargets", targetId, `${base}.endpoints.${index}`, "Updater endpoint must be a bounded HTTPS URL without credentials or fragments.");
+      } else if (seen.has(endpoint)) {
+        err("buildTargets", targetId, `${base}.endpoints.${index}`, "Updater endpoints must be unique.");
+      }
+      seen.add(endpoint);
+    }
+  }
+  if (typeof updater.publicKey !== "string" || !updater.publicKey.trim() || updater.publicKey.length > 32_768) {
+    err("buildTargets", targetId, `${base}.publicKey`, "Enabled updater requires a bounded public verification key.");
   }
 }
 

@@ -12951,6 +12951,7 @@ function renderBuildTargetsTab() {
   for (const [tid, target] of Object.entries(bt.targets ?? {})) {
     const card = document.createElement("div");
     card.className = "target-card";
+    const nativeDesktop = target.platform === "desktop";
     const desktopFields = bt.schemaVersion === 2 ? `
       <div class="form-row">
         <div class="field"><label>formFactor</label><select class="bt-field" data-tid="${esc(tid)}" data-f="formFactor">
@@ -12967,13 +12968,35 @@ function renderBuildTargetsTab() {
       <div class="form-row">
         ${["padding", "minZoom", "maxZoom", "initialZoom"].map(field => `<div class="field"><label>viewport.${field}</label><input class="bt-field" type="number" step="0.1" data-tid="${esc(tid)}" data-f="viewport.${field}" value="${esc(target.viewport?.[field]??"")}"></div>`).join("")}
       </div>` : "";
+    const nativeDesktopFields = bt.schemaVersion === 2 && nativeDesktop ? `
+      <div class="form-section-label">Native window</div>
+      <div class="form-row">
+        ${["width", "height", "minWidth", "minHeight"].map(field => `<div class="field"><label>window.${field}</label><input class="bt-field" type="number" step="1" data-tid="${esc(tid)}" data-f="window.${field}" value="${esc(target.window?.[field]??"")}"></div>`).join("")}
+        ${["fullscreen", "resizable"].map(field => `<label class="field checkbox-field"><input class="bt-field" type="checkbox" data-tid="${esc(tid)}" data-f="window.${field}"${target.window?.[field] ? " checked" : ""}><span>window.${field}</span></label>`).join("")}
+      </div>
+      <div class="form-section-label">Native bundle</div>
+      <div class="form-row">
+        <div class="field"><label>bundle.iconSource${helpIcon("Project-relative 1024×1024 PNG. TowerForge generates the platform icon set during packaging.")}</label><input class="bt-field" data-tid="${esc(tid)}" data-f="bundle.iconSource" value="${esc(target.bundle?.iconSource??"")}"></div>
+        <div class="field"><label>bundle.targets</label><input class="bt-field" data-tid="${esc(tid)}" data-f="bundle.targets" value="${esc((target.bundle?.targets??[]).join(", "))}"></div>
+      </div>
+      <div class="form-section-label">Signed updater (optional)</div>
+      <div class="form-row">
+        <label class="field checkbox-field"><input class="bt-field" type="checkbox" data-tid="${esc(tid)}" data-f="updater.enabled"${target.updater?.enabled ? " checked" : ""}><span>updater.enabled</span></label>
+        <div class="field"><label>updater.endpoints</label><input class="bt-field" data-tid="${esc(tid)}" data-f="updater.endpoints" value="${esc((target.updater?.endpoints??[]).join(", "))}"${target.updater?.enabled ? "" : " disabled"}></div>
+        <div class="field"><label>updater.publicKey</label><input class="bt-field" data-tid="${esc(tid)}" data-f="updater.publicKey" value="${esc(target.updater?.publicKey??"")}"${target.updater?.enabled ? "" : " disabled"}></div>
+      </div>` : "";
+    const buildAction = nativeDesktop ? "" : `<button class="btn btn-outline btn-target-build" data-tid="${esc(tid)}">Build</button>`;
+    const mobileAction = target.platform === "web" ? `<button class="btn btn-outline btn-target-package" data-tid="${esc(tid)}" data-kind="mobile" title="Wrap the web build into a Capacitor mobile app (Android/iOS)">Package mobile</button>` : "";
+    const desktopAction = (target.platform === "web" || nativeDesktop)
+      ? `<button class="btn btn-outline btn-target-package" data-tid="${esc(tid)}" data-kind="desktop" title="${nativeDesktop ? "Package this first-class desktop target" : "Legacy compatibility wrapper for this web target"}">${nativeDesktop ? "Package native desktop" : "Package desktop"}</button>`
+      : "";
     card.innerHTML = `
       <div class="target-card-head">
         <div class="target-card-title">${esc(tid)}</div>
-        <span class="badge ${target.platform === "web" ? "badge-ok" : "badge-dim"}">${esc(target.platform ?? "?")}</span>
-        <button class="btn btn-outline btn-target-build" data-tid="${esc(tid)}">Build</button>
-        <button class="btn btn-outline btn-target-package" data-tid="${esc(tid)}" data-kind="mobile" title="Wrap the web build into a Capacitor mobile app (Android/iOS)">Package mobile</button>
-        <button class="btn btn-outline btn-target-package" data-tid="${esc(tid)}" data-kind="desktop" title="Wrap the web build into a Tauri desktop app (Windows/macOS/Linux)">Package desktop</button>
+        <span class="badge ${target.platform === "web" || nativeDesktop ? "badge-ok" : "badge-dim"}">${esc(target.platform ?? "?")}</span>
+        ${buildAction}
+        ${mobileAction}
+        ${desktopAction}
         <button class="btn btn-danger btn-target-del" data-tid="${esc(tid)}">Remove</button>
       </div>
       <div class="form-row">
@@ -12983,6 +13006,7 @@ function renderBuildTargetsTab() {
             <option value="web"${target.platform==="web"?" selected":""}>web</option>
             <option value="android"${target.platform==="android"?" selected":""}>android</option>
             <option value="ios"${target.platform==="ios"?" selected":""}>ios</option>
+            <option value="desktop"${target.platform==="desktop"?" selected":""}>desktop</option>
           </select>
         </div>
         <div class="field"><label>Renderer${helpIcon("canvas = lightweight zero-dependency player. phaser = vendored Phaser 3 engine (~1.1MB, still offline-capable).")}</label>
@@ -13002,7 +13026,7 @@ function renderBuildTargetsTab() {
       <div class="form-row">
         ${["webDir","backgroundColor","appVersion"].map(f => `
           <div class="field"><label>${f}</label><input class="bt-field" data-tid="${esc(tid)}" data-f="${f}" value="${esc(target[f]??"")}"></div>`).join("")}
-      </div>${desktopFields}`;
+      </div>${desktopFields}${nativeDesktopFields}`;
     body.appendChild(card);
   }
 
@@ -13022,6 +13046,25 @@ function renderBuildTargetsTab() {
       } else if (f.startsWith("viewport.")) {
         t.viewport ??= { fit: "contain" };
         t.viewport[f.slice("viewport.".length)] = Number(inp.value);
+      } else if (f.startsWith("window.")) {
+        t.window ??= {};
+        const field = f.slice("window.".length);
+        t.window[field] = inp.type === "checkbox" ? inp.checked : Number(inp.value);
+      } else if (f === "bundle.targets") {
+        t.bundle ??= {};
+        t.bundle.targets = inp.value.split(",").map(value => value.trim()).filter(Boolean);
+      } else if (f === "bundle.iconSource") {
+        t.bundle ??= {};
+        t.bundle.iconSource = inp.value.trim();
+      } else if (f === "updater.enabled") {
+        t.updater = inp.checked ? { enabled: true, endpoints: [], publicKey: "" } : { enabled: false };
+        renderBuildTargetsTab();
+      } else if (f === "updater.endpoints") {
+        t.updater ??= { enabled: true, endpoints: [], publicKey: "" };
+        t.updater.endpoints = inp.value.split(",").map(value => value.trim()).filter(Boolean);
+      } else if (f === "updater.publicKey") {
+        t.updater ??= { enabled: true, endpoints: [], publicKey: "" };
+        t.updater.publicKey = inp.value;
       } else { t[f] = inp.value; }
       markDirty(true);
     });
@@ -13069,7 +13112,8 @@ function renderBuildTargetsTab() {
           const result = await apiPost(`/api/package/${encodeURIComponent(tid)}`, { kind });
           toast(`${kind === "desktop" ? "Desktop" : "Mobile"} project ready → ${result.outDir?.split("/").pop() || kind}/`, "ok");
           setStatus(`${kind} package ready`);
-          showBuildResult(tid, `${tool} project → ${result.outDir}\nApp id: ${result.app?.appId}  version ${result.app?.version}\n\nNext:\n  ${(result.nextSteps || []).join("\n  ")}\n\nSee ${kind}/README.md for the full checklist.`);
+          const outputName = result.outDir?.split("/").pop() || kind;
+          showBuildResult(tid, `${tool} project → ${result.outDir}\nApp id: ${result.app?.appId}  version ${result.app?.version}\n\nNext:\n  ${(result.nextSteps || []).join("\n  ")}\n\nSee ${outputName}/README.md for the full checklist.`);
         } catch (e) {
           toast("Packaging failed: " + e.message, "err");
           setStatus("Packaging failed");
@@ -13105,6 +13149,41 @@ function renderBuildTargetsTab() {
         toast("Large-screen desktop target added.", "ok");
       } catch (error) {
         toast("Could not add desktop target: " + error.message, "err");
+      }
+    };
+  }
+
+  const addNativeDesktopBtn = $("btn-add-native-desktop-target");
+  if (addNativeDesktopBtn) {
+    addNativeDesktopBtn.onclick = async () => {
+      try {
+        const read = await apiGet("/api/player-targets");
+        const targetId = allocatePlayerTargetId(read.targets, "native-desktop");
+        const recipe = await apiPost("/api/player-targets/recipe", {
+          recipeId: "native_desktop_game",
+          targetId
+        });
+        const target = recipe.target;
+        const preview = await apiPost("/api/player-targets/preview", { targetId, target });
+        if (!preview.ok) throw new Error("Native desktop target does not pass validation.");
+        const applied = await apiPost("/api/player-targets/apply", { targetId, target, ifRevision: read.revision });
+        if (!applied.ok) throw new Error("Native desktop target could not be saved.");
+        bt.schemaVersion = 2;
+        bt.defaults = { ...(bt.defaults ?? {}), desktop: targetId };
+        S.project.manifest.schemaVersion = 5;
+        S.project.buildTargets = {
+          ...bt,
+          schemaVersion: 2,
+          defaults: { ...(bt.defaults ?? {}), desktop: targetId },
+          targets: { ...bt.targets, [targetId]: target }
+        };
+        S.contentHash = applied.newHash;
+        S.serverSnapshot = deep(S.project);
+        markDirty(false);
+        renderBuildTargetsTab();
+        toast("Native desktop target added.", "ok");
+      } catch (error) {
+        toast("Could not add native desktop target: " + error.message, "err");
       }
     };
   }

@@ -16,6 +16,7 @@ import { copyVisualAssets } from "./lib/assets.mjs";
 import { parseJsonFlag, printJson } from "./lib/trace.mjs";
 import { projectTileCoverage } from "./lib/tile-coverage.mjs";
 import { pruneSingleModuleExport, pruneSingleModuleImport } from "./lib/optional-export-pruning.mjs";
+import { assertConfinedProjectOutput } from "./lib/path-confinement.mjs";
 import { buildPublishManifestV1 } from "../distribution/src/index.mjs";
 import {
   computePublishTreeDigestV1,
@@ -25,7 +26,14 @@ import {
 
 function parseArgs() {
   const raw = process.argv.slice(2);
-  const result = { projectDir: null, targetId: null, outDir: null, json: parseJsonFlag(raw), singleFile: false };
+  const result = {
+    projectDir: null,
+    targetId: null,
+    outDir: null,
+    json: parseJsonFlag(raw),
+    singleFile: false,
+    nativeDesktopBundle: false
+  };
   let i = 0;
   while (i < raw.length) {
     if (raw[i] === "--project" && raw[i + 1]) {
@@ -41,6 +49,12 @@ function parseArgs() {
       i += 1;
     } else if (raw[i] === "--single-file") {
       result.singleFile = true;
+      i += 1;
+    } else if (raw[i] === "--native-desktop-bundle") {
+      // Internal packaging boundary: direct CLI builds remain web-only. The native packager uses
+      // this explicit flag so a first-class desktop target can reuse the exact same deterministic
+      // player compiler without being rewritten into, or silently paired with, a web target.
+      result.nativeDesktopBundle = true;
       i += 1;
     } else {
       // A bare positional (not a flag or a flag's value) is the project path, matching
@@ -84,7 +98,10 @@ try {
     throw error;
   }
   const [targetId, target] = selectBuildTarget(files.buildTargets, args.targetId);
-  if (target.platform !== "web") {
+  if (args.nativeDesktopBundle && target.platform !== "desktop") {
+    throw new Error(`Build target "${targetId}" uses platform "${target.platform}". Native desktop bundle compilation requires a desktop target.`);
+  }
+  if (!args.nativeDesktopBundle && target.platform !== "web") {
     throw new Error(`Build target "${targetId}" uses platform "${target.platform}". This build command currently supports web targets only.`);
   }
 
@@ -95,6 +112,8 @@ try {
   const renderer = target.renderer === "phaser" ? "phaser" : "canvas";
   const largeScreenPlayer = files.buildTargets.schemaVersion === 2
     && (target.formFactor === "desktop" || target.formFactor === "responsive");
+  const nativeDesktopPlayer = args.nativeDesktopBundle && target.platform === "desktop";
+  const nativeUpdaterActive = nativeDesktopPlayer && target.updater?.enabled === true;
   const multiplayerActive = hasActiveMultiplayer(files);
   const macroEconomyActive = hasActiveMacroEconomy(files);
   const hostMonetization = files.distributionAuthored && Array.isArray(files.distribution?.monetization?.placements)
@@ -114,7 +133,7 @@ try {
   const largeScreenRuntimeFiles = largeScreenPlayer
     ? ["player-actions.mjs", "player-preferences.mjs", "player-session-store.mjs", "indexeddb-session-storage.mjs", "localized-strings.mjs", "fixed-simulation-clock.mjs", "presentation-quality.mjs"]
     : [];
-  for (const fileName of ["index.mjs", "player-profile-store.mjs", ...largeScreenRuntimeFiles, ...(hostMonetizationActive ? ["host-monetization.mjs"] : [])]) {
+  for (const fileName of ["index.mjs", "player-profile-store.mjs", ...largeScreenRuntimeFiles, ...(nativeDesktopPlayer ? ["native-storage-bridge.mjs"] : []), ...(hostMonetizationActive ? ["host-monetization.mjs"] : [])]) {
     fs.copyFileSync(path.join(playerRuntimeSource, fileName), path.join(playerRuntimeOutput, fileName));
   }
   if (!largeScreenPlayer) {
@@ -123,6 +142,12 @@ try {
     for (const specifier of ["./player-actions.mjs", "./player-preferences.mjs", "./player-session-store.mjs", "./indexeddb-session-storage.mjs", "./localized-strings.mjs", "./fixed-simulation-clock.mjs", "./presentation-quality.mjs"]) {
       runtimeSource = pruneSingleModuleExport(runtimeSource, specifier);
     }
+    fs.writeFileSync(runtimeIndex, runtimeSource, "utf8");
+  }
+  if (!nativeDesktopPlayer) {
+    const runtimeIndex = path.join(playerRuntimeOutput, "index.mjs");
+    let runtimeSource = fs.readFileSync(runtimeIndex, "utf8");
+    runtimeSource = pruneSingleModuleExport(runtimeSource, "./native-storage-bridge.mjs");
     fs.writeFileSync(runtimeIndex, runtimeSource, "utf8");
   }
   // Renderer dir ships for both players — the canvas player needs index.mjs, both need audio.mjs.
@@ -171,8 +196,8 @@ try {
   fs.writeFileSync(
     path.join(outDir, "player.mjs"),
     renderer === "phaser"
-      ? phaserPlayerTemplate(multiplayerActive, macroEconomyActive, hostMonetizationActive, largeScreenPlayer)
-      : playerTemplate(multiplayerActive, macroEconomyActive, hostMonetizationActive, largeScreenPlayer),
+      ? phaserPlayerTemplate(multiplayerActive, macroEconomyActive, hostMonetizationActive, largeScreenPlayer, nativeDesktopPlayer, nativeUpdaterActive)
+      : playerTemplate(multiplayerActive, macroEconomyActive, hostMonetizationActive, largeScreenPlayer, nativeDesktopPlayer, nativeUpdaterActive),
     "utf8"
   );
   fs.writeFileSync(path.join(outDir, "manifest.webmanifest"), JSON.stringify(webManifest(files.manifest, target), null, 2) + "\n", "utf8");
@@ -264,10 +289,7 @@ try {
 }
 
 function assertSafeOutputDir(projectDir, outDir) {
-  const rel = path.relative(projectDir, outDir);
-  if (!rel || rel === "." || rel.startsWith("..") || path.isAbsolute(rel)) {
-    throw new Error(`Refusing to build outside the project directory: ${outDir}`);
-  }
+  assertConfinedProjectOutput(projectDir, outDir, "build");
 }
 
 function emptyDir(dir) {
@@ -1147,7 +1169,7 @@ function phaserViewportMethodsTemplate(enabled) {
   }`;
 }
 
-function desktopPlayerRuntimeTemplate(rendererKind) {
+function desktopPlayerRuntimeTemplate(rendererKind, nativeDesktopPlayer = false) {
   const cameraBridge = rendererKind === "phaser" ? `const desktopScene = () => phaserGame?.scene?.getScene?.("PlayScene") ?? phaserGame?.scene?.getScenes?.(true)?.[0] ?? null;
 let disposePromise = null;
 function disposeDesktopPhaserPlayer() {
@@ -1311,11 +1333,14 @@ function persistPlayerPreferences(next) {
 persistPlayerPreferences(playerPreferences);
 
 let playerSessionStore = null;
+const playerSessionBaseKey = "towerforge:session:" + playerProfileScope;
+${nativeDesktopPlayer ? `const nativePlayerInvoke = resolveNativePlayerInvokeV1();
+if (!nativePlayerInvoke) throw new Error("Native desktop bridge is unavailable.");` : ""}
 try {
   const currentContentDigest = game.createCheckpoint().contentDigest;
   playerSessionStore = createRotatingPlayerSessionStore({
-    storage: createIndexedDbSessionStorage({ dbName: "towerforge-player-" + playerProfileScope, storeName: "player-data" }),
-    baseKey: "towerforge:session:" + playerProfileScope,
+    storage: ${nativeDesktopPlayer ? "createNativeStorageBridgeV1({ invoke: nativePlayerInvoke, baseKey: playerSessionBaseKey })" : 'createIndexedDbSessionStorage({ dbName: "towerforge-player-" + playerProfileScope, storeName: "player-data" })'},
+    baseKey: playerSessionBaseKey,
     expectedContentDigest: currentContentDigest,
     expectedCapabilityDigest: (save) => computeMissionCapabilityDigestV1({ content, missionId: save.activeMissionId }),
     codec: { parse: parsePlayerSessionSaveV1, serialize: serializePlayerSessionSaveV1 },
@@ -1334,7 +1359,7 @@ try {
 } catch {}
 
 let desktopAutosaveTimer = 0;
-async function saveDesktopSession() {
+async function writeDesktopSession() {
   if (!playerSessionStore) return { code: "session_unavailable" };
   const checkpoint = game.createCheckpoint();
   return playerSessionStore.save({
@@ -1347,6 +1372,10 @@ async function saveDesktopSession() {
     savedAt: new Date().toISOString()
   });
 }
+${nativeDesktopPlayer ? `let nativePlayerLifecycle = null;
+async function saveDesktopSession() {
+  return nativePlayerLifecycle ? nativePlayerLifecycle.flush() : writeDesktopSession();
+}` : `const saveDesktopSession = writeDesktopSession;`}
 function scheduleDesktopAutosave() {
   clearTimeout(desktopAutosaveTimer);
   desktopAutosaveTimer = setTimeout(() => { void saveDesktopSession(); }, 100);
@@ -1356,8 +1385,14 @@ function scheduleDesktopAutosaveForEvents(events) {
     scheduleDesktopAutosave();
   }
 }
-document.addEventListener("visibilitychange", () => { if (document.hidden) void saveDesktopSession(); });
-window.addEventListener("pagehide", () => { void saveDesktopSession(); });
+${nativeDesktopPlayer ? `nativePlayerLifecycle = installNativePlayerLifecycleV1({
+  invoke: nativePlayerInvoke,
+  save: writeDesktopSession,
+  onResume: resetPlayerSimulationClock,
+  document,
+  window
+});` : `document.addEventListener("visibilitychange", () => { if (document.hidden) void saveDesktopSession(); });
+window.addEventListener("pagehide", () => { void saveDesktopSession(); });`}
 
 const desktopSettingsDialog = $("desktop-settings-dialog");
 const desktopSettingsPreviousFocus = { current: null };
@@ -1463,8 +1498,9 @@ const playerActionRegistry = createPlayerActionRegistry({
     "speedUp": () => changeDesktopSpeed(0.25),
     "fullscreen": async () => {
       try {
-        if (document.fullscreenElement) await document.exitFullscreen();
-        else await document.documentElement.requestFullscreen();
+        ${nativeDesktopPlayer
+          ? "await nativePlayerLifecycle.setFullscreen(!playerPreferences.fullscreen); storePlayerPreferences({ ...playerPreferences, fullscreen: !playerPreferences.fullscreen });"
+          : "if (document.fullscreenElement) await document.exitFullscreen();\n        else await document.documentElement.requestFullscreen();"}
         return Object.freeze({ ok: true });
       } catch { return Object.freeze({ ok: false, code: "fullscreen_failed" }); }
     },
@@ -1563,7 +1599,7 @@ globalThis.__towerforgePlayerActions = playerActionRegistry;
 `;
 }
 
-function playerTemplate(includeMultiplayer = false, includeMacroEconomy = false, includeHostMonetization = false, largeScreenPlayer = false) {
+function playerTemplate(includeMultiplayer = false, includeMacroEconomy = false, includeHostMonetization = false, largeScreenPlayer = false, nativeDesktopPlayer = false, nativeUpdaterActive = false) {
   return `import {
   createCampaignRun,
   ${largeScreenPlayer ? "computeMissionCapabilityDigestV1,\n  " : ""}createEmptyPlayerProfile,
@@ -1590,6 +1626,7 @@ function playerTemplate(includeMultiplayer = false, includeMacroEconomy = false,
 ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multiplayer/index.js";' : ""}
 import { createPlayerProfileStore, derivePlayerProfileStorageKey${largeScreenPlayer ? ", createDefaultPlayerActionDescriptors, createPlayerActionRegistry, createDefaultPlayerPreferences, createFixedSimulationClockV1, createRotatingPlayerSessionStore, parsePlayerPreferencesV1, parsePlayerSessionSaveV1, resolvePlayerPresentationQualityV1, serializePlayerPreferencesV1, serializePlayerSessionSaveV1" : ""} } from "./player-runtime/index.mjs";
 ${largeScreenPlayer ? 'import { createIndexedDbSessionStorage } from "./player-runtime/indexeddb-session-storage.mjs";\nimport { createPlayerStrings } from "./player-runtime/localized-strings.mjs";\nimport { createViewportTransformV1 } from "./renderer/viewport-transform.mjs";' : ""}
+${nativeDesktopPlayer ? 'import { createNativeStorageBridgeV1, installNativePlayerLifecycleV1, resolveNativePlayerInvokeV1 } from "./player-runtime/native-storage-bridge.mjs";' : ""}
 ${includeHostMonetization ? 'import { createHostMonetizationRuntimeV1 } from "./player-runtime/host-monetization.mjs";' : ""}
 import { createCanvasRenderer, hitTestHeroesPresentation, projectArsenalPresentation${includeMacroEconomy ? ", projectMacroEconomyPresentation" : ""}, projectCampaignPresentation, projectDirectorDecisionCues, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectProceduralJuicePresentation, projectQuestPresentation, projectRoguelitePresentation, projectVanguardProtectionPresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
 import { createAudioPlayer } from "./renderer/audio.mjs";
@@ -1607,6 +1644,11 @@ const content = createGameContentRegistry({
 });
 ${includeMultiplayer ? "globalThis.__towerforgeMultiplayer = TowerForgeMultiplayer;" : ""}
 ${includeHostMonetization ? "const hostMonetization = createHostMonetizationRuntimeV1({ hook: project.hostMonetization });\nhostMonetization.mount();\nglobalThis.__towerforgeHostMonetization = hostMonetization;" : ""}
+${nativeUpdaterActive ? `globalThis.__towerforgeNativeUpdater = Object.freeze({
+  async checkAndInstall() {
+    return nativePlayerInvoke("player_check_and_install_update");
+  }
+});` : ""}
 
 ${playerProfileRuntimeTemplate(largeScreenPlayer)}
 ${arsenalPlayerRuntimeTemplate(largeScreenPlayer)}
@@ -1684,7 +1726,7 @@ $("target-mode").addEventListener("change", () => {
 });
 $("story-next").addEventListener("click", advanceStory);
 $("story-skip").addEventListener("click", finishStory);
-${largeScreenPlayer ? desktopPlayerRuntimeTemplate("canvas") : ""}
+${largeScreenPlayer ? desktopPlayerRuntimeTemplate("canvas", nativeDesktopPlayer) : ""}
 document.addEventListener("keydown", (event) => {
   const tag = event.target?.tagName;
   if (tag === "BUTTON" || tag === "A" || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;
@@ -2851,7 +2893,7 @@ function applyProjectTheme() {
 `;
 }
 
-function phaserPlayerTemplate(includeMultiplayer = false, includeMacroEconomy = false, includeHostMonetization = false, largeScreenPlayer = false) {
+function phaserPlayerTemplate(includeMultiplayer = false, includeMacroEconomy = false, includeHostMonetization = false, largeScreenPlayer = false, nativeDesktopPlayer = false, nativeUpdaterActive = false) {
   return `import {
   createCampaignRun,
   ${largeScreenPlayer ? "computeMissionCapabilityDigestV1,\n  " : ""}createEmptyPlayerProfile,
@@ -2878,6 +2920,7 @@ function phaserPlayerTemplate(includeMultiplayer = false, includeMacroEconomy = 
 ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multiplayer/index.js";' : ""}
 import { createPlayerProfileStore, derivePlayerProfileStorageKey${largeScreenPlayer ? ", createDefaultPlayerActionDescriptors, createPlayerActionRegistry, createDefaultPlayerPreferences, createFixedSimulationClockV1, createRotatingPlayerSessionStore, parsePlayerPreferencesV1, parsePlayerSessionSaveV1, resolvePlayerPresentationQualityV1, serializePlayerPreferencesV1, serializePlayerSessionSaveV1" : ""} } from "./player-runtime/index.mjs";
 ${largeScreenPlayer ? 'import { createIndexedDbSessionStorage } from "./player-runtime/indexeddb-session-storage.mjs";\nimport { createPlayerStrings } from "./player-runtime/localized-strings.mjs";\nimport { createViewportTransformV1 } from "./renderer/viewport-transform.mjs";' : ""}
+${nativeDesktopPlayer ? 'import { createNativeStorageBridgeV1, installNativePlayerLifecycleV1, resolveNativePlayerInvokeV1 } from "./player-runtime/native-storage-bridge.mjs";' : ""}
 ${includeHostMonetization ? 'import { createHostMonetizationRuntimeV1 } from "./player-runtime/host-monetization.mjs";' : ""}
 import { createAudioPlayer } from "./renderer/audio.mjs";
 import {
@@ -2934,6 +2977,11 @@ const content = createGameContentRegistry({
 });
 ${includeMultiplayer ? "globalThis.__towerforgeMultiplayer = TowerForgeMultiplayer;" : ""}
 ${includeHostMonetization ? "const hostMonetization = createHostMonetizationRuntimeV1({ hook: project.hostMonetization });\nhostMonetization.mount();\nglobalThis.__towerforgeHostMonetization = hostMonetization;" : ""}
+${nativeUpdaterActive ? `globalThis.__towerforgeNativeUpdater = Object.freeze({
+  async checkAndInstall() {
+    return nativePlayerInvoke("player_check_and_install_update");
+  }
+});` : ""}
 
 function ownDataValue(record, key) {
   if (record === null || typeof record !== "object") return undefined;
@@ -3080,7 +3128,7 @@ $("target-mode").addEventListener("change", () => {
 });
 $("story-next").addEventListener("click", advanceStory);
 $("story-skip").addEventListener("click", finishStory);
-${largeScreenPlayer ? desktopPlayerRuntimeTemplate("phaser") : ""}
+${largeScreenPlayer ? desktopPlayerRuntimeTemplate("phaser", nativeDesktopPlayer) : ""}
 document.addEventListener("keydown", (event) => {
   const tag = event.target?.tagName;
   if (tag === "BUTTON" || tag === "A" || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;

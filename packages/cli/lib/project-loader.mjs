@@ -349,17 +349,17 @@ export async function runBalanceSweepForProject(projectDir, options = {}) {
   return engine.runBalanceSweep(content, options);
 }
 
-export function selectBuildTarget(buildTargets, explicitTargetId) {
+export function selectBuildTarget(buildTargets, explicitTargetId, preferredPlatform = "web") {
   const targets = buildTargets.targets ?? {};
   if (explicitTargetId) {
     const target = targets[explicitTargetId];
     if (!target) throw new Error(`Build target "${explicitTargetId}" not found.`);
     return [explicitTargetId, target];
   }
-  const defaultId = buildTargets.defaults?.web;
+  const defaultId = buildTargets.defaults?.[preferredPlatform];
   if (defaultId && targets[defaultId]) return [defaultId, targets[defaultId]];
-  const firstWeb = Object.entries(targets).find(([, target]) => target.platform === "web");
-  if (firstWeb) return firstWeb;
+  const firstPreferred = Object.entries(targets).find(([, target]) => target.platform === preferredPlatform);
+  if (firstPreferred) return firstPreferred;
   const first = Object.entries(targets)[0];
   if (first) return first;
   throw new Error("No build targets configured.");
@@ -628,7 +628,7 @@ function normalizeBuildTargets(input) {
     target.id ??= targetId;
     target.platform ??= target.type ?? "web";
     target.renderer = target.renderer === "phaser" ? "phaser" : "canvas";
-    target.webDir ??= target.outputDir ?? "dist";
+    if (target.platform === "web") target.webDir ??= target.outputDir ?? "dist";
     target.market ??= target.platform === "web" ? "pwa" : "";
     target.storeChannel ??= target.market;
     target.appName ??= target.label ?? targetId;
@@ -651,6 +651,10 @@ function normalizeBuildTargets(input) {
   if (!buildTargets.defaults.web) {
     const firstWeb = Object.entries(buildTargets.targets).find(([, target]) => target.platform === "web");
     if (firstWeb) buildTargets.defaults.web = firstWeb[0];
+  }
+  if (buildTargets.schemaVersion === 2 && !buildTargets.defaults.desktop) {
+    const firstDesktop = Object.entries(buildTargets.targets).find(([, target]) => target.platform === "desktop");
+    if (firstDesktop) buildTargets.defaults.desktop = firstDesktop[0];
   }
   return buildTargets;
 }

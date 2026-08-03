@@ -3079,3 +3079,240 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   duplicate runtime directories keep a Vitest worker open after the tracked source tests finish.
   They are not part of the commit or clean CI checkout. A new frozen commit, clean CI and two fresh
   independent verifier sign-offs are still required before R18 acceptance.
+
+## 2026-08-03 — R19.1 first-class native desktop target contract RED
+
+- Contract freeze for R19.1 adds a first-class BuildTargets-v2 `platform: "desktop"` selected by
+  `defaults.desktop`. The target owns closed `window` and `bundle` records; a project-relative
+  1024×1024 PNG is the only icon source and the bundle targets are the six Tauri formats used by
+  the later release workflow. The existing schema-v5, viewport and player-runtime version domains
+  remain unchanged.
+- `native_desktop_game` must be an inert project-bound recipe that reuses the existing
+  `read -> recipe -> preview -> guarded apply` transaction. Preview must validate the complete
+  desktop target without writing either project file.
+- `packageDesktop` must build the selected desktop target itself instead of silently wrapping the
+  first web target. Its generated Tauri v2 scaffold must apply authored initial/minimum window
+  dimensions, restrictive non-null CSP, no global Tauri injection, a local capability allowlist
+  without broad shell/filesystem/network permissions, and automatically generated PNG/ICNS/ICO
+  icons. Packaging an explicit legacy web target remains the scaffold-only compatibility adapter.
+- Expected focused RED command before production changes:
+  `npx vitest run packages/cli/lib/r19-native-desktop-target.contract.test.mjs packages/cli/lib/r19-generated-desktop-scaffold.contract.test.mjs --reporter=verbose`.
+  Expected failures are unknown `window`/`bundle` fields and missing `defaults.desktop` validation,
+  unknown recipe `native_desktop_game`, rejection of `platform: "desktop"` by the web-only builder,
+  plus the current generated `csp: null`, missing capability file and manual-only icon instructions.
+
+## 2026-08-03 — R19.1 first-class native desktop target focused GREEN
+
+- BuildTargets v2 now accepts an explicit `platform: "desktop"`, validates `defaults.desktop` and
+  closed window/bundle records, and keeps the R18 large-screen web recipe unchanged. The new
+  `native_desktop_game` candidate uses the existing detached preview and revision-guarded apply
+  transaction.
+- First-class packaging compiles the selected desktop target through an explicit internal carrier
+  build mode; it no longer searches for a sibling web target. The legacy explicit web-target wrapper
+  remains available. The generated carrier applies authored window values, a restrictive CSP, a
+  bounded capability allowlist and deterministic PNG/ICNS/ICO icons derived from the project-bound
+  1024×1024 PNG.
+- The exact RED command now passes 10/10. This is focused GREEN for R19.1 only; R19.2 native
+  persistence/lifecycle, R19.3 installers/workflow and R19.4 updater still require their own
+  RED/GREEN slices before the frozen R19 gate.
+- Focused RED evidence: exit `1`; two files failed with `9` expected failures and the legacy adapter
+  passed `1/1`. Validation rejected the new `window` and `bundle` roots instead of validating their
+  closed children, `native_desktop_game` returned `unknown_player_target_recipe`, and direct native
+  packaging stopped with `No web build target found`. Because the native package cannot yet reach
+  scaffold generation, its downstream window/CSP/capability/icon assertions remain intentionally
+  behind that first RED boundary and will execute after direct target selection turns GREEN.
+
+## 2026-08-03 — R19.2 native persistence and lifecycle contract RED
+
+- Contract freeze keeps `PlayerSessionSaveV1` and the existing two-slot rotating store unchanged.
+  The renderer-neutral `NativeStorageBridgeV1` maps only the configured `head`, `slot-0` and
+  `slot-1` keys onto typed native commands. No project path, filesystem path or arbitrary storage
+  key crosses the WebView boundary.
+- The native carrier must expose only bounded read/write/remove commands for the two session slots
+  and head, plus pending-write, fullscreen and finish-close lifecycle commands. The WebView receives
+  no general filesystem, shell, opener, process, HTTP or wildcard capability. Close is prevented
+  while a save commit is pending; suspend/resume request a flush; a second launch focuses the
+  existing main window.
+- The behavioral RED verifies browser/native restore parity and both interrupted-write boundaries:
+  failure before a slot write and failure after the alternate slot write but before the head
+  commit must both recover the prior committed simulation digest after restart.
+- Exact focused RED command:
+  `npx vitest run packages/player-runtime/src/r19-native-storage-bridge.contract.test.mjs packages/cli/lib/r19-native-persistence-lifecycle.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`; two test files failed. The runtime suite cannot import the intentionally absent
+  `native-storage-bridge.mjs`; the generated carrier has none of the nine bounded commands and does
+  not copy the native bridge into `dist/player-runtime`. These are the expected pre-production
+  failures; the already-green R19.1 carrier generation completed in both packaging tests.
+
+## 2026-08-03 — R19.3 installers and generated release workflow contract RED
+
+- The first-class native target must export a project-owned
+  `.github/workflows/towerforge-desktop-release.yml` inside its standalone carrier. The workflow
+  checks out `github.sha`, never a moving branch, and owns an explicit six-format matrix:
+  macOS DMG, Windows NSIS `.exe` and MSI, Linux AppImage, DEB and RPM.
+- Candidate assembly must create `SHA256SUMS`, repeat those hashes in `RELEASE_NOTES.md`, and attach
+  both beside every installer. With no signing configuration the generated publication is always a
+  pre-release whose title includes `Unsigned build`.
+- Local `npm run build` is intentionally different from the CI matrix: a generated bounded helper
+  selects only DMG on macOS, NSIS+MSI on Windows or AppImage+DEB+RPM on Linux. Signing credentials
+  remain environment/CI-owned; `SIGNING.md` documents fixed secret names, while `.env`, private
+  `.towerforge` state, secret values and absolute user-local paths are absent from exported text.
+- Exact focused RED command:
+  `npx vitest run packages/cli/lib/r19-desktop-release-workflow.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`, one file failed with `4/4` expected failures. R19.1/R19.2 carrier generation
+  completed, but no project-owned workflow or signing guide exists, `build` still invokes the broad
+  `tauri build`, and no current-platform helper is generated. No R19.3 production file was changed
+  before capturing this evidence.
+
+## 2026-08-03 — R19.2 native persistence and lifecycle focused GREEN
+
+- `NativeStorageBridgeV1` maps the existing rotating store's exact head and two slot keys onto six
+  native commands. Neither a project path, filesystem path nor arbitrary logical key crosses the
+  WebView boundary. Interrupted slot and head writes retain the previously committed session, and
+  browser/native ports restore the same detached digest.
+- First-class desktop builds alone copy the bridge and select it instead of IndexedDB. Legacy and
+  R18 browser targets prune the native export and module. The generated Rust carrier owns fixed
+  app-data filenames, size bounds and atomic temporary writes; it exposes only session,
+  pending-close and fullscreen commands, prevents close during an active write, emits resume,
+  and focuses the existing window through the single-instance plugin.
+- The R19.2 RED command now passes 7/7, with syntax checks green for the shared build template,
+  packager and native bridge. R19.3 and R19.4 remain separate RED/GREEN slices.
+
+## 2026-08-03 — R19.3 installers and generated release workflow focused GREEN
+
+- A first-class carrier now owns a six-format GitHub Actions matrix tied to `github.sha`, assembles
+  all installers with `SHA256SUMS`, repeats every hash in release notes and publishes only an
+  `Unsigned build` pre-release in the reference configuration.
+- Local `npm run build` calls a bounded current-platform helper: DMG on macOS, NSIS/MSI on Windows,
+  or AppImage/DEB/RPM on Linux. It never attempts local cross-compilation. `SIGNING.md` documents
+  fixed environment/CI secret names without copying values, `.env`, `.towerforge` state or absolute
+  user paths into the carrier.
+- The R19.3 RED command now passes 4/4; the combined carrier/package regression passes 14/14.
+  Updater support remains the independent R19.4 slice.
+
+## 2026-08-03 — R19.4 optional signed updater focused GREEN
+
+- BuildTargets v2 accepts a desktop-only closed updater record. Absent and explicitly disabled
+  configurations emit no updater dependency, plugin, permission, runtime import or preflight file.
+  Enabled configuration accepts only bounded HTTPS endpoints without credentials/fragments and a
+  public verification key; private material and web-target use fail validation.
+- The pure browser-safe preflight rejects malformed/oversized manifests, missing or invalid
+  signature status, downgrade, platform mismatch and architecture mismatch before a candidate can
+  reach `download_and_install`. Enabled carriers alone configure Tauri updater permissions and call
+  that preflight first.
+- The focused R19.4 command now passes 12/12. Studio and MCP use the same guarded target transaction;
+  AI instructions explicitly prohibit private updater keys.
+
+## 2026-08-03 — R19.4 optional updater contract RED
+
+- BuildTargets v2 gains only the optional closed desktop record
+  `{ enabled, endpoints, publicKey }`. Enabled configuration requires a bounded non-empty list of
+  HTTPS endpoints without userinfo or fragments and a bounded non-empty public verification key.
+  Web targets, unknown fields, `privateKey` and nested private material are rejected. Disabled form
+  is exactly `{ enabled: false }` and retains no dormant endpoint/key configuration.
+- Absent or disabled updater configuration must produce no updater dependency, plugin, config,
+  capability, runtime import or copied preflight module. The enabled carrier may add the Tauri
+  updater plugin only with the authored public endpoints/key and narrow check/download-install
+  permissions.
+- A pure bounded `native-updater-preflight.mjs` contract parses at most 1 MiB, requires a valid
+  signature result, a strictly newer version and an exact platform/architecture artifact before the
+  generated player can invoke installation. Malformed/oversized input, invalid or missing signature,
+  downgrade and platform/architecture mismatch all fail closed.
+- Exact focused RED command:
+  `npx vitest run packages/player-runtime/src/r19-native-updater-preflight.contract.test.mjs packages/cli/lib/r19-optional-updater.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`; two files failed with `3` expected failures and `1` compatibility control passed.
+  The absent carrier is already byte-clean. BuildTargets still rejects disabled/enabled `updater`,
+  enabled packaging cannot begin, and the pure preflight module is intentionally absent. No R19.4
+  production source was changed before recording RED.
+
+## 2026-08-03 — R19.4 generated updater Cargo regression RED
+
+- An actual `cargo check` of an updater-enabled generated carrier failed in
+  `tauri::generate_context!`: Tauri's generated updater configuration references `serde_json`, but
+  the carrier did not declare it as a direct dependency. The updater-disabled carrier had already
+  compiled successfully, so the defect was isolated to the opt-in branch.
+- Before changing the packager, the enabled-carrier contract was extended to require the explicit
+  bounded dependency. Exact RED command:
+  `npx vitest run packages/cli/lib/r19-optional-updater.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`; the new dependency assertion failed while the other `3/4` cases passed.
+
+## 2026-08-03 — R19.4 generated updater Cargo regression GREEN
+
+- The packager now emits `serde_json = "1"` only for updater-enabled native carriers. Disabled and
+  absent updater carriers remain byte-clean and keep the smaller dependency graph.
+- The regression contract passes `4/4`. The regenerated updater-enabled Tauri project then passed
+  a real `cargo check` in `7.12s`; the separately generated updater-disabled project passed in
+  `4m 57s` on the initial cold dependency build.
+
+## 2026-08-03 — R19 generated macOS game build and launch smoke GREEN
+
+- A temporary schema-v5 project with a first-class Canvas desktop target was packaged through the
+  public CLI, installed only its pinned generated carrier dependencies, and ran `npm run build`.
+  Tauri completed the optimized native build and produced
+  `Cargo Check_0.1.0_aarch64.dmg` in `6m 41s`.
+- `hdiutil verify` accepted the DMG (CRC32 `33FB8F8F`); SHA-256 was
+  `d21a8758445986cad3dd13903fefe599338a894a5a1a9f2eed78dcd13643d269`.
+  The mounted app launched the generated `cargo_check` executable from the DMG and remained alive
+  for the smoke observation. It was then terminated and the image was cleanly detached. This is
+  local candidate evidence, not a published or signed artifact.
+
+## 2026-08-03 — R19 independent verifier findings regression RED
+
+- Contract/Test Designer added test-only regressions for eight independent verifier boundaries:
+  explicit non-web target rejection by mobile/portable-web packaging while preserving only the
+  explicit web-to-desktop compatibility adapter; strict SemVer `appVersion` validation including
+  non-string/newline/TOML injection candidates; realpath confinement before build/package output
+  mutation through an intermediate symlink; native atomic replacement without deleting the last
+  committed destination first; ordinary close and suspend save handshakes ending in finish-close;
+  native Tauri-owned signed updater check/install without caller `signatureStatus` or a synthetic
+  direct `download_and_install` candidate; recursive/non-empty workflow artifact assembly, lock-aware
+  npm caching, immutable action/toolchain pins and tag/source links; and current-OS helper
+  intersection with the authored bundle targets.
+- Exact focused command:
+  `npx vitest run packages/cli/lib/r19-verifier-packaging-boundaries.regression.test.mjs packages/cli/lib/r19-verifier-native-contracts.regression.test.mjs packages/cli/lib/r19-verifier-release-workflow.regression.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`; `1` of `3` files failed, `1` of `29` tests failed and `28` passed. The remaining
+  RED is deterministic workflow pinning: the generated workflow still emits moving references such
+  as `actions/checkout@v4` (and a moving `rust-toolchain@stable`) instead of immutable action SHAs
+  and fixed language toolchains. Concurrent production repair in the shared R19 worktree had already
+  turned the other seven verifier contracts GREEN before this final evidence run; this test-design
+  slice changed no production source.
+
+## 2026-08-03 — R19 desktop suspend lifecycle regression RED
+
+- A real `cargo check` of the repaired updater-enabled carrier exposed that desktop Tauri 2.11.5
+  has no `tauri::RunEvent::Suspended` variant. The generated carrier therefore failed compilation
+  even though the string-level lifecycle contract had accepted the invalid API.
+- The regression now requires the supported desktop boundary: `WindowEvent::Focused(false)` emits
+  the WebView suspend/save signal, while focus gain and `RunEvent::Resumed` emit resume. Exact RED
+  command: `npx vitest run packages/cli/lib/r19-verifier-native-contracts.regression.test.mjs`.
+  Result: exit `1`; `1/5` tests failed because the carrier still emitted the nonexistent
+  `RunEvent::Suspended` branch. No production source changed before this RED was recorded.
+
+## 2026-08-03 — R19 independent verifier repairs and native lifecycle GREEN
+
+- The complete verifier regression set now passes `29/29`. Repairs include strict explicit-target
+  isolation, realpath output confinement, strict SemVer/TOML boundaries, durable atomic native
+  replacement, save-before-close, focus-loss suspend flushing, native-owned updater verification,
+  immutable workflow/toolchain references, recursive exact artifact assembly, tag/source links and
+  authored-format-aware local packaging.
+- The R19.4 browser-side updater preflight described by the earlier provisional GREEN was removed:
+  the generated WebView no longer supplies candidates or signature claims and has no direct updater
+  permission. Tauri's signed updater owns manifest, platform, architecture, downgrade and signature
+  rejection before install.
+- A freshly generated updater-enabled carrier passed a real `cargo check` in `3m 20s`; a freshly
+  generated updater-disabled carrier passed in `36.62s` while reusing the compiled target cache.
+  Both use the supported desktop focus lifecycle and contain no `RunEvent::Suspended` branch.
+
+## 2026-08-03 — R19 frozen-candidate full gates and macOS launch GREEN
+
+- Focused R19 contracts pass `62/62`; the full unit suite passes `426` files and `4085` tests.
+  `typecheck`, `build:engine`, `validate`, `sim tutorial_01 60`, starter balance, map compilation,
+  web build, plugin build/validate/smoke, explicit mobile packaging, explicit legacy desktop-wrapper
+  packaging and constructor `cargo test` (`9/9`) all pass.
+- The first full Playwright attempt had one pre-existing R5 Studio timing miss while the other
+  `156/157` scenarios passed. The exact failed scenario passed alone, and the required complete
+  rerun then passed `157/157` in `2.9m`; no source change occurred between those runs.
+- A freshly generated updater-disabled first-class carrier compiled and produced
+  `Cargo Check_0.1.0_aarch64.dmg`. `hdiutil verify` accepted CRC32 `4E8F34CD`; SHA-256 is
+  `6dd6141f4fdb54bcc483488a0a14846f658fb658f0ba760b8398a6dd9c8bf83d`. The app executable was
+  launched directly from the read-only mounted DMG, observed alive as PID `52669`, then terminated
+  and the image detached cleanly. This is local acceptance evidence, not a signed/published release.

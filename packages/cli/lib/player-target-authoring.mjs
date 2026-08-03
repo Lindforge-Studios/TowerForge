@@ -6,6 +6,7 @@ import { normalizeProjectFiles, readRawProjectFiles } from "./project-loader.mjs
 import { validateProjectSchemas } from "./project-schema.mjs";
 
 export const DESKTOP_LARGE_SCREEN_RECIPE_ID = "desktop_large_screen";
+export const NATIVE_DESKTOP_GAME_RECIPE_ID = "native_desktop_game";
 
 export function readPlayerTargets(projectDir) {
   const raw = readRawProjectFiles(projectDir);
@@ -18,13 +19,42 @@ export function readPlayerTargets(projectDir) {
 }
 
 export function getPlayerTargetRecipe(projectDir, recipeId, targetId) {
-  if (recipeId !== DESKTOP_LARGE_SCREEN_RECIPE_ID) {
+  if (![DESKTOP_LARGE_SCREEN_RECIPE_ID, NATIVE_DESKTOP_GAME_RECIPE_ID].includes(recipeId)) {
     const error = new Error(`Unknown player target recipe "${recipeId}".`);
     error.code = "unknown_player_target_recipe";
     throw error;
   }
   assertTargetId(targetId);
   const read = readPlayerTargets(projectDir);
+  if (recipeId === NATIVE_DESKTOP_GAME_RECIPE_ID) {
+    return Object.freeze({
+      recipeId,
+      targetId,
+      detached: true,
+      written: false,
+      revision: read.revision,
+      target: Object.freeze({
+        id: targetId,
+        platform: "desktop",
+        renderer: "canvas",
+        appId: "com.example.nativegame",
+        appName: "Native Game",
+        appTitle: "Native Game",
+        backgroundColor: "#111111",
+        appVersion: "0.1.0",
+        formFactor: "desktop",
+        viewport: Object.freeze({ fit: "contain", padding: 32, minZoom: 0.5, maxZoom: 3, initialZoom: 1 }),
+        quality: "balanced",
+        locale: "auto",
+        inputProfile: "keyboard_mouse",
+        window: Object.freeze({ width: 1440, height: 900, minWidth: 1024, minHeight: 720, fullscreen: false, resizable: true }),
+        bundle: Object.freeze({
+          iconSource: "assets/app-icon.png",
+          targets: Object.freeze(["dmg", "nsis", "msi", "appimage", "deb", "rpm"])
+        })
+      })
+    });
+  }
   const webDir = allocateDesktopWebDir(read.targets, targetId);
   return Object.freeze({
     recipeId,
@@ -144,13 +174,16 @@ function candidateProject(raw, targetId, target) {
   assertTargetId(targetId);
   const nextTarget = cloneClosedPlayerTarget(target);
   nextTarget.id = targetId;
+  const defaults = { ...(raw.buildTargets?.defaults ?? {}) };
+  if (nextTarget.platform === "desktop" && !defaults.desktop) defaults.desktop = targetId;
+  if (nextTarget.platform === "web" && !defaults.web) defaults.web = targetId;
   return {
     ...raw,
     manifest: { ...raw.manifest, schemaVersion: 5 },
     buildTargets: {
       ...raw.buildTargets,
       schemaVersion: 2,
-      defaults: { ...(raw.buildTargets?.defaults ?? {}) },
+      defaults,
       targets: { ...(raw.buildTargets?.targets ?? {}), [targetId]: nextTarget }
     }
   };

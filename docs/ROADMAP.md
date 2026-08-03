@@ -64,8 +64,8 @@ service. Нет соответствующего выбора или локал�
 | R15 — Deterministic Macro-Economy | Завершён; code + constructor sign-off; ADR Accepted | Independent `macroEconomy` v1, seeded local market, explicit deposits, atomic rituals, GameCommand/Journal v8 и constructor surfaces |
 | R16 — Ghost Replay Lab | Завершён; full gates green; code + constructor sign-off; ADR Accepted | Checksummed ReplayArchiveV1, detached bounded ghost с реальным Studio overlay, immutable What-If branches, read-only Studio/MCP surfaces и отдельный gameplay-free reference relay |
 | R17 — Web Publish, Remix & Monetization | Завершён; full gates; code + constructor sign-off; ADR Accepted | Opt-in Distribution v1/project v4, reproducible publish manifest, explicit-confirm provider adapters, licensed Remix provenance и host-only monetization hooks |
-| R18 — Large-Screen Web Player | Реализация завершена; ожидает exact-commit gates и два sign-off; ADR In Review | Explicit project-v5/BuildTargets-v2 desktop target, shared viewport, desktop shell, IndexedDB recovery, localized accessible PWA и unchanged legacy targets |
-| R19 — Native Desktop Distribution | Запланирован после R18 | First-class desktop target, native storage/lifecycle, cross-platform installers и optional signed updater |
+| R18 — Large-Screen Web Player | Завершён и слит; exact-commit CI green; code + constructor sign-off; ADR Accepted | PR #34: project-v5/BuildTargets-v2 large-screen web target, shared viewport, desktop shell, IndexedDB recovery, localized accessible PWA и unchanged legacy targets |
+| R19 — Native Desktop Distribution | В разработке; ветка `codex/r19-native-desktop-distribution`; ADR In Progress | First-class desktop target, native storage/lifecycle, cross-platform installers и optional signed updater |
 | R20 — Camera Projection Studio | Запланирован после R19 | Renderer-owned top-down/isometric/dimetric projection, shared hit testing/depth и guarded view assets |
 | R21 — Player Shell & HUD Constructor | Запланирован после R20 | Data-only responsive HUD/screen graph, action registry, presets, guarded Studio/MCP и package parity |
 
@@ -90,6 +90,12 @@ R18 вводит отдельный presentation/build opt-in: project schema v5
 используют один pure `ViewportTransformV1`; desktop shell вызывает gameplay только через общий
 `PlayerActionDescriptorV1` registry. Session save и preferences версионируются независимо от
 profile/checkpoint/journal. Решение описано в [ADR 0059](adr/0059-r18-large-screen-web-player.md).
+
+R18 принят и слит PR #34 (`5c02560`); exact PR CI и повторный post-merge `main` CI завершились
+успешно. R19 сохраняет project v5/BuildTargets v2, но добавляет отдельный first-class
+`platform: desktop`, который не оборачивает и не заимствует первый web-target. Generated game
+получает собственный узкий Tauri carrier; конструкторский `packages/desktop` не переиспользуется.
+Границы зафиксированы в [ADR 0060](adr/0060-r19-native-desktop-distribution.md).
 
 Для R18–R21 действует поуровневый TDD gate. Каждый небольшой срез фиксирует focused RED, затем
 проходит focused GREEN и регрессии только затронутых слоёв. Полный unit/E2E/plugin/package набор
