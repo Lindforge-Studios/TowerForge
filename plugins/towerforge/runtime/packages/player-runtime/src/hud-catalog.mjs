@@ -22,6 +22,18 @@ export const HUD_COMPONENT_STATES = Object.freeze([
   "normal", "hover", "pressed", "disabled", "selected", "focused"
 ]);
 export const HUD_LAYOUT_LAYERS = Object.freeze(["background", "content", "overlay", "modal", "system"]);
+export const HUD_SCREEN_GRAPH_SCHEMA_VERSION = 1;
+export const HUD_SYSTEM_RECOVERY_SCREEN_ID = "__towerforge_system_recovery__";
+export const HUD_SCREEN_EVENTS = Object.freeze([
+  "profileSelected", "contentLoaded", "missionSelected", "campaignSelected", "storyStarted",
+  "storyCompleted", "waveStarted", "waveEnded", "draftRequired", "draftCompleted",
+  "pauseRequested", "settingsRequested", "settingsClosed", "resumeRequested", "victory",
+  "defeat", "resultRequested", "recoverableError"
+]);
+export const HUD_SCREEN_CONDITION_OPERATORS = Object.freeze([
+  "equals", "not_equals", "less_than", "less_than_or_equal", "greater_than",
+  "greater_than_or_equal", "truthy", "falsy"
+]);
 
 const COMPONENT_TYPE_SET = new Set(HUD_COMPONENT_TYPES);
 const COMPONENT_STATE_SET = new Set(HUD_COMPONENT_STATES);
@@ -37,6 +49,8 @@ const SURFACES = new Set([
   "recoverable_error"
 ]);
 const ACTION_EVENTS = new Set(["activate", "change", "toggle", "select", "open", "close"]);
+const SCREEN_EVENT_SET = new Set(HUD_SCREEN_EVENTS);
+const SCREEN_CONDITION_OPERATOR_SET = new Set(HUD_SCREEN_CONDITION_OPERATORS);
 const FORBIDDEN_DATA_KEYS = /^(?:javascript|html|css|style|stylesheet|class|className|url|uri|href|src|path|host|eval|code)$/iu;
 const UNSAFE_STRING = /^(?:javascript:|data:|https?:|file:|\/|\\|\.\.[/\\])/iu;
 
@@ -355,12 +369,59 @@ function normalizeScreenGraph(value, path, screens) {
   const record = inspectRecord(value, path, ["schemaVersion", "initialScreenId", "transitions"]);
   const initialScreenId = boundedId(record.initialScreenId, `${path}.initialScreenId`);
   if (!Object.hasOwn(screens, initialScreenId)) fail(`${path}.initialScreenId`, `references missing screen "${initialScreenId}".`);
-  const transitions = inspectArray(record.transitions, `${path}.transitions`, HUD_CATALOG_LIMITS.transitionsPerProfile);
-  if (transitions.length > 0) fail(`${path}.transitions`, "transition records are introduced by the R21.3 contract.");
+  const transitionInputs = inspectArray(record.transitions, `${path}.transitions`, HUD_CATALOG_LIMITS.transitionsPerProfile);
+  const transitionIds = new Set();
+  const transitions = transitionInputs.map((transition, index) => {
+    const transitionPath = `${path}.transitions[${index}]`;
+    const probe = inspectRecord(transition, transitionPath);
+    const allowedKeys = new Set(["id", "event", "fromScreenId", "targetScreenId", "conditions"]);
+    for (const key of Object.keys(probe)) {
+      if (!allowedKeys.has(key)) fail(`${transitionPath}.${key}`, `unknown field "${key}".`);
+    }
+    for (const key of ["id", "event", "targetScreenId", "conditions"]) {
+      if (!Object.hasOwn(probe, key)) fail(`${transitionPath}.${key}`, "missing required field.");
+    }
+    const id = boundedId(probe.id, `${transitionPath}.id`);
+    if (transitionIds.has(id)) fail(`${transitionPath}.id`, `duplicate transition id "${id}".`);
+    transitionIds.add(id);
+    if (!SCREEN_EVENT_SET.has(probe.event)) fail(`${transitionPath}.event`, `unsupported player event "${String(probe.event)}".`);
+    const targetScreenId = boundedId(probe.targetScreenId, `${transitionPath}.targetScreenId`);
+    if (!Object.hasOwn(screens, targetScreenId)) fail(`${transitionPath}.targetScreenId`, `references missing screen "${targetScreenId}".`);
+    const entries = [["id", id], ["event", probe.event]];
+    if (Object.hasOwn(probe, "fromScreenId")) {
+      const fromScreenId = boundedId(probe.fromScreenId, `${transitionPath}.fromScreenId`);
+      if (!Object.hasOwn(screens, fromScreenId)) fail(`${transitionPath}.fromScreenId`, `references missing screen "${fromScreenId}".`);
+      entries.push(["fromScreenId", fromScreenId]);
+    }
+    entries.push(["targetScreenId", targetScreenId]);
+    const conditionInputs = inspectArray(
+      probe.conditions,
+      `${transitionPath}.conditions`,
+      HUD_CATALOG_LIMITS.conditionTermsPerTransition
+    );
+    const conditions = conditionInputs.map((condition, conditionIndex) => {
+      const conditionPath = `${transitionPath}.conditions[${conditionIndex}]`;
+      const item = inspectRecord(condition, conditionPath, ["selectorId", "operator", "value"]);
+      const selectorId = descriptorId(item.selectorId, `${conditionPath}.selectorId`);
+      if (!SCREEN_CONDITION_OPERATOR_SET.has(item.operator)) {
+        fail(`${conditionPath}.operator`, `unsupported condition operator "${String(item.operator)}".`);
+      }
+      if (item.value !== null && typeof item.value !== "boolean" && typeof item.value !== "string"
+        && (typeof item.value !== "number" || !Number.isFinite(item.value))) {
+        fail(`${conditionPath}.value`, "must be a finite scalar JSON value.");
+      }
+      if (typeof item.value === "string" && item.value.length > 2048) fail(`${conditionPath}.value`, "must be a bounded string.");
+      return freezeRecord([
+        ["selectorId", selectorId], ["operator", item.operator], ["value", item.value]
+      ]);
+    });
+    entries.push(["conditions", Object.freeze(conditions)]);
+    return freezeRecord(entries);
+  });
   return freezeRecord([
     ["schemaVersion", schemaV1(record.schemaVersion, `${path}.schemaVersion`)],
     ["initialScreenId", initialScreenId],
-    ["transitions", Object.freeze([])]
+    ["transitions", Object.freeze(transitions)]
   ]);
 }
 
@@ -433,6 +494,7 @@ function normalizeProfile(value, path) {
   if (screenIds.length > HUD_CATALOG_LIMITS.screensPerProfile) fail(`${path}.screens`, `exceeds the limit of ${HUD_CATALOG_LIMITS.screensPerProfile}.`);
   const screens = freezeRecord(screenIds.map((id) => {
     boundedId(id, `${path}.screens.${id}`);
+    if (id === HUD_SYSTEM_RECOVERY_SCREEN_ID) fail(`${path}.screens.${id}`, "is reserved for the built-in recovery overlay.");
     return [id, normalizeScreen(screensInput[id], `${path}.screens.${id}`)];
   }));
   const graph = normalizeScreenGraph(record.screenGraph, `${path}.screenGraph`, screens);

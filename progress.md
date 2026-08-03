@@ -4212,3 +4212,45 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   `npm run plugin:validate`, `npm run plugin:smoke` and `git diff --check` are GREEN, and the
   generated plugin runtime contains the same new catalog/layout exports. R21.3 screen navigation
   and the browser-owned DOM shell remain intentionally outside this slice.
+
+## 2026-08-03 — R21.3 pure screen graph/recovery RED evidence
+
+- The independent Contract/Test Designer added only the pure player-runtime screen-graph contract,
+  minimal `HudCatalogV1` transition assertions and this chronological evidence; no production
+  source, browser DOM shell, generated runtime or plugin mirror was changed. The slice freezes
+  ordered typed navigation transitions with optional source screens, allowlisted player events,
+  bounded descriptor conditions and at most one transition per dispatch. Screen navigation cannot
+  execute gameplay actions.
+- The DOM-free session contract covers every R21 shell surface, authored first-match ordering,
+  insertion-order invariance for record maps, AND conditions, detached runtime selector state and
+  structurally cyclic graphs that advance only one edge per dispatch. Malformed/future/unknown/
+  accessor/symbol/sparse/proxy/over-budget inputs fail into a reserved built-in recovery overlay;
+  authors cannot replace or remove that system fallback.
+- Exact focused command:
+  `npx vitest run packages/player-runtime/src/r21-hud-catalog.contract.test.mjs packages/player-runtime/src/r21-hud-screen-graph.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`; `2/2` files RED, `26` existing assertions GREEN and two expected catalog
+  assertions RED because non-empty transitions are not yet normalized and the recovery screen ID
+  is not reserved. The new runtime suite fails before collection because
+  `packages/player-runtime/src/hud-screen-graph.mjs` does not yet exist. These are the expected
+  production boundaries; no alternate navigation implementation was used.
+
+## 2026-08-04 — R21.3 pure screen graph/recovery focused GREEN
+
+- Added the DOM-free `hud-screen-graph.mjs` runtime and public player-runtime export. It validates
+  the same closed selector descriptors as the layout compiler, detaches bounded selector state,
+  evaluates authored transitions in stable order and performs at most one navigation hop per
+  dispatch. Navigation has no command, signal, renderer or gameplay mutation surface.
+- `HudCatalogV1` now normalizes frozen schema-v1 transitions with optional source screens,
+  allowlisted player events, scalar typed conditions and the frozen 256/16 budgets. Transition and
+  screen lookup remains prototype-safe; authored profiles cannot claim the reserved
+  `__towerforge_system_recovery__` identity.
+- Invalid/future/malformed catalog, descriptor or runtime state creates a non-throwing failed
+  session whose frozen snapshot activates the mandatory built-in recovery overlay. Unknown
+  dispatch events also fail closed into that overlay; a valid dispatch uses detached state and
+  never follows a second edge recursively.
+- Exact focused command:
+  `npx vitest run packages/player-runtime/src/r21-hud-catalog.contract.test.mjs packages/player-runtime/src/r21-hud-screen-graph.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: `2/2` files and `42/42` tests GREEN. The complete `packages/player-runtime/src` matrix is
+  GREEN at `13/13` files and `146/146` tests. `node --check` passes for the catalog and screen graph;
+  `npm run plugin:build`, `npm run plugin:validate`, `npm run plugin:smoke`, source-to-plugin byte
+  parity and `git diff --check` are GREEN.

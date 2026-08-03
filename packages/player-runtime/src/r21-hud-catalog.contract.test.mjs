@@ -74,6 +74,17 @@ function richButtonNode(id = "start_wave") {
   };
 }
 
+function screenTransition(overrides = {}) {
+  return {
+    id: "show_pause",
+    event: "pauseRequested",
+    fromScreenId: "gameplay",
+    targetScreenId: "pause",
+    conditions: [{ selectorId: "canPause", operator: "equals", value: true }],
+    ...overrides
+  };
+}
+
 describe("R21.1 HudCatalogV1 closed pure contract (RED)", () => {
   it("normalizes a valid catalog into frozen prototype-neutral detached own data", () => {
     const source = catalog();
@@ -134,6 +145,79 @@ describe("R21.1 HudCatalogV1 closed pure contract (RED)", () => {
     });
     expect(Object.isFrozen(result.catalog.profiles.main.commonNodes[0].bindings.actions)).toBe(true);
     expect(Object.getPrototypeOf(result.catalog.profiles.main.commonNodes[0].states)).toBe(null);
+  });
+
+  it("normalizes R21.3 ordered typed screen transitions without treating them as gameplay actions", () => {
+    const value = catalog();
+    value.profiles.main.screens.pause = {
+      schemaVersion: 1,
+      surface: "pause",
+      rootNodeIds: []
+    };
+    value.profiles.main.screenGraph.transitions = [
+      screenTransition(),
+      screenTransition({
+        id: "show_pause_fallback",
+        fromScreenId: undefined,
+        conditions: []
+      })
+    ];
+    delete value.profiles.main.screenGraph.transitions[1].fromScreenId;
+
+    const result = validateHudCatalogV1(value);
+
+    expect(result.ok).toBe(true);
+    expect(result.catalog.profiles.main.screenGraph.transitions).toEqual([
+      {
+        id: "show_pause",
+        event: "pauseRequested",
+        fromScreenId: "gameplay",
+        targetScreenId: "pause",
+        conditions: [{ selectorId: "canPause", operator: "equals", value: true }]
+      },
+      {
+        id: "show_pause_fallback",
+        event: "pauseRequested",
+        targetScreenId: "pause",
+        conditions: []
+      }
+    ]);
+    expect(Object.isFrozen(result.catalog.profiles.main.screenGraph.transitions)).toBe(true);
+    expect(Object.isFrozen(result.catalog.profiles.main.screenGraph.transitions[0].conditions)).toBe(true);
+  });
+
+  it.each([
+    ["unknown screen event", () => screenTransition({ event: "runArbitraryCode" })],
+    ["missing transition target", () => screenTransition({ targetScreenId: "missing" })],
+    ["arbitrary selector path", () => screenTransition({
+      conditions: [{ selectorId: "snapshot.player.hp", operator: "equals", value: 1 }]
+    })],
+    ["unknown condition operator", () => screenTransition({
+      conditions: [{ selectorId: "canPause", operator: "execute", value: true }]
+    })],
+    ["sparse conditions", () => screenTransition({ conditions: new Array(1) })],
+    ["over-budget conditions", () => screenTransition({
+      conditions: Array.from({ length: 17 }, (_, index) => ({
+        selectorId: `flag_${index}`,
+        operator: "truthy",
+        value: true
+      }))
+    })]
+  ])("fails closed for an R21.3 transition with %s", (_label, makeTransition) => {
+    const value = catalog();
+    value.profiles.main.screens.pause = { schemaVersion: 1, surface: "pause", rootNodeIds: [] };
+    value.profiles.main.screenGraph.transitions = [makeTransition()];
+    expect(validateHudCatalogV1(value).ok).toBe(false);
+  });
+
+  it("reserves the built-in recovery overlay identity from authored screen graphs", () => {
+    const value = catalog();
+    value.profiles.main.screens.__towerforge_system_recovery__ = {
+      schemaVersion: 1,
+      surface: "recoverable_error",
+      rootNodeIds: []
+    };
+    expect(validateHudCatalogV1(value).ok).toBe(false);
   });
 
   it.each([
