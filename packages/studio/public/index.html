@@ -106,6 +106,10 @@
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/><circle cx="12" cy="12" r="3"/></svg>
         <span>Mechanics</span>
       </button>
+      <button class="nav-tab" data-tab="hud" role="tab" type="button" title="Compose the opt-in player shell and HUD.">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 16h4M15 16h2"/></svg>
+        <span>HUD Studio</span>
+      </button>
       <button class="nav-tab" data-tab="replaylab" role="tab" type="button" title="Inspect deterministic replay archives and What-If branches.">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/><path d="M12 7v5l3 2"/></svg>
         <span>Replay Lab</span>
@@ -568,6 +572,88 @@
             <textarea id="battle-backgrounds-json" class="mono json-editor" spellcheck="false"></textarea>
           </section>
         </div>
+      </div>
+    </section>
+
+    <!-- ── HUD STUDIO TAB ───────────────────────────────────────────────────── -->
+    <section id="tab-hud" class="tab-panel" role="tabpanel" aria-label="HUD Studio" data-project-write="guarded-hud-only">
+      <div class="panel-header">
+        <h2>Player Shell &amp; HUD Studio</h2>
+        <span id="hud-studio-state" class="hud-studio-state text-muted">Opt-in · built-in R18 shell remains the fallback</span>
+      </div>
+      <div id="hud-studio" class="hud-studio-body">
+        <section class="hud-studio-card">
+          <div class="form-section-title">Profile and surface</div>
+          <div class="hud-studio-fields">
+            <label>Saved profile<select id="hud-profile-picker"><option value="">New profile…</option></select></label>
+            <label>Profile ID<input id="hud-profile-id" class="mono" value="hud-main" maxlength="128"></label>
+            <label>Build target<select id="hud-target-picker"></select></label>
+            <label>Screen<select id="hud-screen-picker"></select></label>
+            <label>Variant<select id="hud-variant-picker"><option value="desktop">desktop</option><option value="tablet">tablet</option><option value="mobile">mobile</option></select></label>
+            <label>Device preset<select id="hud-device-preset"><option value="1920x1080">1920×1080</option><option value="1024x768">1024×768</option><option value="390x844">390×844</option></select></label>
+          </div>
+          <div class="hud-safe-area-fields" aria-label="Preview safe area">
+            <label>Safe top<input id="hud-safe-area-top" type="number" min="0" max="1024" value="0"></label>
+            <label>Safe right<input id="hud-safe-area-right" type="number" min="0" max="1024" value="0"></label>
+            <label>Safe bottom<input id="hud-safe-area-bottom" type="number" min="0" max="1024" value="0"></label>
+            <label>Safe left<input id="hud-safe-area-left" type="number" min="0" max="1024" value="0"></label>
+            <label class="hud-check"><input id="hud-rulers-toggle" type="checkbox" checked> Rulers</label>
+            <label class="hud-check"><input id="hud-snapping-toggle" type="checkbox" checked> Snapping</label>
+          </div>
+        </section>
+
+        <section class="hud-studio-workspace" aria-label="HUD WYSIWYG workspace">
+          <aside class="hud-studio-sidebar">
+            <div class="pane-label">Layers</div>
+            <div id="hud-layers-tree" class="hud-layers-tree" role="tree"></div>
+          </aside>
+          <div class="hud-design-stage">
+            <div id="hud-design-canvas" class="hud-design-canvas" role="application" aria-label="HUD design canvas"></div>
+          </div>
+          <aside id="hud-constraint-inspector" class="hud-constraint-inspector">
+            <div class="pane-label">Constraints</div>
+            <p class="text-muted">Select a layer to inspect anchors, docks, stacks, grids, bounds and safe-area constraints.</p>
+          </aside>
+        </section>
+
+        <section class="hud-studio-card">
+          <div class="form-section-title">State and snapshot preview</div>
+          <div class="hud-studio-fields">
+            <label>Component state<select id="hud-component-state"><option value="normal">normal</option><option value="hover">hover</option><option value="pressed">pressed</option><option value="disabled">disabled</option><option value="selected">selected</option><option value="focused">focused</option></select></label>
+            <label>Mock state<select id="hud-mock-state"><option value="victory">victory</option><option value="defeat">defeat</option><option value="low_hp">low HP</option><option value="draft">draft</option><option value="inventory">inventory</option><option value="capabilities">capabilities</option></select></label>
+          </div>
+          <div id="hud-preview-canvas" class="hud-preview-canvas" aria-label="Rendered HUD preview"></div>
+          <div id="hud-preview-diagnostics" class="hud-preview-diagnostics" aria-live="polite"></div>
+        </section>
+
+        <section class="hud-studio-card">
+          <div class="form-section-title">UI asset role</div>
+          <p class="text-muted">HUD data stores only an existing visuals asset ID. Imports reuse the confined project asset pipeline.</p>
+          <div class="hud-studio-fields">
+            <label>Role<input id="hud-asset-role" class="mono" value="build_button"></label>
+            <label>Visual asset ID<input id="hud-asset-id" class="mono" placeholder="ui_build_button"></label>
+            <label>Kind<select id="hud-asset-kind"><option value="icon">icon</option><option value="image">image</option><option value="atlas_frame">atlas frame</option><option value="nine_slice">nine-slice</option></select></label>
+            <label>Atlas frame<input id="hud-asset-atlas-frame" class="mono" placeholder="frame_name"></label>
+            <label>Nine-slice border<input id="hud-nine-slice-border" class="mono" placeholder="8,8,8,8"></label>
+            <label>Import source<input id="hud-import-source" class="mono" placeholder="imports/ui-button.png"></label>
+            <label>Import target under assets/<input id="hud-import-target" class="mono" placeholder="ui/button.png"></label>
+          </div>
+          <div class="hud-studio-actions">
+            <button id="btn-hud-import-asset" class="btn btn-outline" type="button">Import through asset pipeline</button>
+            <button id="btn-hud-asset-preview" class="btn btn-outline" type="button">Preview role</button>
+            <button id="btn-hud-asset-apply" class="btn btn-primary" type="button" disabled>Apply role</button>
+          </div>
+          <pre id="hud-asset-result" class="hud-studio-result mono" aria-live="polite"></pre>
+        </section>
+
+        <section class="hud-studio-card">
+          <div class="hud-studio-actions">
+            <button id="btn-hud-preview" class="btn btn-outline" type="button">Preview candidate</button>
+            <button id="btn-hud-apply" class="btn btn-primary" type="button" disabled>Apply guarded</button>
+            <button id="btn-hud-disable" class="btn btn-outline" type="button">Disable target binding</button>
+          </div>
+          <pre id="hud-preview-result" class="hud-studio-result mono" aria-live="polite"></pre>
+        </section>
       </div>
     </section>
 

@@ -44,6 +44,14 @@ import {
   previewPlayerTarget,
   readPlayerTargets
 } from "../cli/lib/player-target-authoring.mjs";
+import {
+  applyHudProfile,
+  getHudProfileRecipe,
+  getHudProfiles,
+  previewHudProfile
+} from "../cli/lib/hud-authoring.mjs";
+import { compileHudLayoutV1 } from "../player-runtime/src/hud-layout.mjs";
+import { createDefaultPlayerActionDescriptors } from "../player-runtime/src/player-actions.mjs";
 import { agentClientConfigs, writeProjectClientConfig } from "../cli/lib/agent-connect.mjs";
 import { writeRunTrace } from "../cli/lib/trace.mjs";
 import { contentRecipeContext, listContentRecipes, materializeContentRecipe } from "../cli/lib/content-recipes.mjs";
@@ -459,6 +467,89 @@ function mechanicsErrorResponse(error) {
     response.guidance = "Migrate the project to schema v2 before enabling opt-in mechanics.";
   }
   return { status, response };
+}
+
+function renderHudProfilePreview(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw Object.assign(new Error("HUD render preview requires a JSON object."), { code: "invalid_request" });
+  }
+  const allowed = new Set([
+    "profile", "viewportWidth", "viewportHeight", "safeArea", "selectorDescriptors", "state",
+    "componentState", "mockStateId"
+  ]);
+  if (Object.keys(body).some((key) => !allowed.has(key))) {
+    throw Object.assign(new Error("HUD render preview contains unsupported fields."), { code: "invalid_request" });
+  }
+  const viewportWidth = body.viewportWidth;
+  const viewportHeight = body.viewportHeight;
+  const safeArea = body.safeArea;
+  const result = compileHudLayoutV1(body.profile, {
+    viewportWidth,
+    viewportHeight,
+    safeArea,
+    availableActions: createDefaultPlayerActionDescriptors(),
+    selectorDescriptors: body.selectorDescriptors,
+    state: body.state
+  });
+  // An empty recipe is a valid starting point. The layout compiler intentionally requires
+  // complete per-node constraints, so give Studio a detached empty canvas until the first
+  // authored node exists without weakening compilation for non-empty profiles.
+  if (!result.ok && Array.isArray(body.profile?.commonNodes) && body.profile.commonNodes.length === 0) {
+    const breakpoints = body.profile?.breakpoints;
+    const variantId = viewportWidth <= breakpoints?.mobileMax
+      ? "mobile"
+      : viewportWidth <= breakpoints?.tabletMax ? "tablet" : "desktop";
+    const variant = body.profile?.variants?.[variantId];
+    if (variant && Array.isArray(variant.rootNodeIds) && variant.rootNodeIds.length === 0
+      && Number.isFinite(viewportWidth) && viewportWidth > 0
+      && Number.isFinite(viewportHeight) && viewportHeight > 0
+      && safeArea && ["top", "right", "bottom", "left"].every((key) => Number.isFinite(safeArea[key]) && safeArea[key] >= 0)
+      && safeArea.left + safeArea.right < viewportWidth && safeArea.top + safeArea.bottom < viewportHeight) {
+      return Object.freeze({
+        ok: true,
+        schemaVersion: 1,
+        written: false,
+        mockStateId: typeof body.mockStateId === "string" ? body.mockStateId : "gameplay",
+        componentState: typeof body.componentState === "string" ? body.componentState : "normal",
+        plan: Object.freeze({
+          schemaVersion: 1,
+          variantId,
+          viewport: Object.freeze({ width: viewportWidth, height: viewportHeight }),
+          safeRect: Object.freeze({
+            x: safeArea.left,
+            y: safeArea.top,
+            width: viewportWidth - safeArea.left - safeArea.right,
+            height: viewportHeight - safeArea.top - safeArea.bottom
+          }),
+          rootNodeIds: Object.freeze([]),
+          nodes: Object.freeze([]),
+          diagnostics: Object.freeze([])
+        }),
+        diagnostics: Object.freeze([])
+      });
+    }
+  }
+  if (!result.ok) return result;
+  const nodes = result.plan.nodes;
+  const diagnostics = [...result.plan.diagnostics];
+  const safeRect = result.plan.safeRect;
+  for (const node of nodes) {
+    const rect = node.rect;
+    if (rect.x < safeRect.x || rect.y < safeRect.y
+      || rect.x + rect.width > safeRect.x + safeRect.width
+      || rect.y + rect.height > safeRect.y + safeRect.height) {
+      diagnostics.push(Object.freeze({ severity: "error", code: "clipped", nodeId: node.id }));
+    }
+  }
+  return Object.freeze({
+    ok: true,
+    schemaVersion: 1,
+    written: false,
+    mockStateId: typeof body.mockStateId === "string" ? body.mockStateId : "gameplay",
+    componentState: typeof body.componentState === "string" ? body.componentState : "normal",
+    plan: result.plan,
+    diagnostics: Object.freeze(diagnostics)
+  });
 }
 
 // ── Origin/Host guard ─────────────────────────────────────────────────────────
@@ -1614,6 +1705,74 @@ const server = http.createServer(async (req, res) => {
         ...sanitizeMechanicsResponse(result),
         ...(isApply && result?.ok !== false ? { newHash: projectHash() } : {})
       });
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
+    }
+  }
+
+  // HUD Studio keeps the same narrow transaction vocabulary exposed to agents:
+  // get_hud_profiles -> get_hud_profile_recipe -> preview_hud_profile -> apply_hud_profile.
+  // The server delegates writes to CLI authoring and strips backup paths from browser responses.
+  if (req.method === "GET" && pathname === "/api/hud/read") {
+    try {
+      return jsonResp(res, 200, sanitizeMechanicsResponse(getHudProfiles(PROJECT_DIR)));
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status, failure.response);
+    }
+  }
+
+  if (req.method === "GET" && pathname === "/api/hud/recipes") {
+    try {
+      const recipe = getHudProfileRecipe("desktop_quickbar", "hud-main");
+      return jsonResp(res, 200, { recipes: sanitizeMechanicsResponse([recipe]) });
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
+    }
+  }
+
+  if (req.method === "POST" && ["/api/hud/preview", "/api/hud/apply"].includes(pathname)) {
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { code: "malformed_request", error: "Invalid JSON body" }); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return jsonResp(res, 400, { code: "invalid_request", error: "HUD authoring request must be a JSON object." });
+    }
+    const applying = pathname.endsWith("/apply");
+    if (applying && (typeof body.ifRevision !== "string" || !body.ifRevision)) {
+      return jsonResp(res, 428, { code: "revision_required", error: "HUD apply requires ifRevision returned by preview." });
+    }
+    try {
+      const request = {
+        profileId: body.profileId,
+        profile: body.profile,
+        binding: body.binding,
+        ...(applying ? { ifRevision: body.ifRevision } : {})
+      };
+      const result = applying
+        ? applyHudProfile(PROJECT_DIR, request)
+        : previewHudProfile(PROJECT_DIR, request);
+      if (applying && result?.written) writeRunTrace(PROJECT_DIR, { source: "studio", action: "hud:apply", status: "ok" });
+      const status = result?.conflict ? 409 : result?.ok === false ? 422 : 200;
+      return jsonResp(res, status, {
+        ...sanitizeMechanicsResponse(result),
+        ...(applying && result?.written ? { newHash: projectHash() } : {})
+      });
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
+    }
+  }
+
+  if (req.method === "POST" && pathname === "/api/hud/render-preview") {
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { code: "malformed_request", error: "Invalid JSON body" }); }
+    try {
+      const result = renderHudProfilePreview(body);
+      return jsonResp(res, result.ok ? 200 : 422, sanitizeMechanicsResponse(result));
     } catch (error) {
       const failure = mechanicsErrorResponse(error);
       return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
