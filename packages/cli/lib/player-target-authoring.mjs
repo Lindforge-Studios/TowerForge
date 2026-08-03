@@ -89,7 +89,7 @@ function allocateDesktopWebDir(targets, targetId) {
   const occupied = collectOccupiedOutputDirectories(targets, targetId);
   for (let suffix = 1; suffix <= 256; suffix += 1) {
     const candidate = suffix === 1 ? "dist-desktop" : `dist-desktop-${suffix}`;
-    if (!occupied.has(canonicalOutputDirectory(candidate))) return candidate;
+    if (isOutputDirectoryIsolated(candidate, occupied)) return candidate;
   }
   const error = new Error("No free desktop output directory remains in the bounded allocation range.");
   error.code = "desktop_output_budget_exceeded";
@@ -101,7 +101,7 @@ function allocateNativeDesktopOutputDir(targets, targetId) {
   const base = `desktop-${targetId}`;
   for (let suffix = 1; suffix <= 256; suffix += 1) {
     const candidate = suffix === 1 ? base : `${base}-${suffix}`;
-    if (!occupied.has(canonicalOutputDirectory(candidate))) return candidate;
+    if (isOutputDirectoryIsolated(candidate, occupied)) return candidate;
   }
   const error = new Error("No free native desktop output directory remains in the bounded allocation range.");
   error.code = "native_desktop_output_budget_exceeded";
@@ -129,6 +129,16 @@ function canonicalOutputDirectory(value) {
     .join("/")
     .normalize("NFC")
     .toLowerCase();
+}
+
+function isOutputDirectoryIsolated(candidate, occupied) {
+  const canonicalCandidate = canonicalOutputDirectory(candidate);
+  for (const existing of occupied) {
+    if (canonicalCandidate === existing
+      || canonicalCandidate.startsWith(`${existing}/`)
+      || existing.startsWith(`${canonicalCandidate}/`)) return false;
+  }
+  return true;
 }
 
 export function previewPlayerTarget(projectDir, targetId, target) {

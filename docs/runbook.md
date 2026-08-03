@@ -994,18 +994,24 @@ AI Chat accepts up to eight JPEG/PNG/GIF/WebP images per turn, at most 4 MB each
   Packaging without `--target` requires an authored `defaults.desktop`; an absent default is a
   configuration error, not permission to use the first target or `defaults.web`.
   Each native target defaults to its own `desktop-<target-id>` output. If `outputDir` is authored,
-  it must remain project-relative and unique across all web/native targets. Native fullscreen UI
+  it must remain project-relative and isolated across all web/native targets: equal paths and
+  ancestor/descendant overlaps are rejected. Renaming or deleting a target in Studio also rewrites
+  or clears the matching platform default. Native fullscreen UI
   is synchronized from the Tauri window state; browser `document.fullscreenElement` is not the
   source of truth.
   If updater is enabled, only HTTPS endpoints and the public verification key belong in the target;
   signing/private updater keys stay in environment or CI secrets. Inspect the generated
   `SIGNING.md` and workflow. An enabled tagged build publishes the Tauri updater payloads, adjacent
-  detached signatures and `latest.json`; a disabled carrier contains none of those paths. The
+  detached signatures and `latest.json`; a disabled carrier contains none of those paths or updater
+  secret names in its generated guide. Repackaging enabled -> disabled removes updater-only source
+  files. The
   repository workflow `.github/workflows/r19-generated-game-acceptance.yml` is the constructor gate
   that generates a current carrier and builds DMG, NSIS, MSI, AppImage, DEB and RPM on native
   runners. Generated release jobs call `npx tauri build --bundles "<formats>"` directly. A configured
   signed candidate is accepted only after post-build macOS signature/stapler or Windows
-  Authenticode verification; importing a certificate alone is not sufficient. Updater platform
+  Authenticode verification; the Windows check is confined to the selected bundle directory so the
+  application executable is not mistaken for an installer. Importing a certificate alone is not
+  sufficient. Updater platform
   metadata uses the actual runner architecture. TowerForge does not submit generated games to stores.
 - Desktop Studio packaging issues: run `npm run desktop:dev` first to verify the sidecar starts, then inspect `packages/desktop/src-tauri/runtime` for Studio files and production agent-runtime dependencies, and `packages/desktop/src-tauri/binaries` for the Node sidecar binary. If `/api/health` works but the app UI does not load, check the desktop session token/cookie handshake in the Tauri console.
 - Linux AppImage agent runtime issues: the bundled Claude executable is stored with a masked ELF header plus a SHA-256 manifest so `linuxdeploy` does not rewrite or inspect the standalone runtime. On first use Studio verifies it, restores a `0700` copy under the private desktop app-data `agent-runtimes/bin` directory, verifies it again, and only then executes it. Do not unpack or patch this file manually.

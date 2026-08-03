@@ -407,9 +407,11 @@ fn main() {
   writeText(path.join(outDir, "scripts", "build-current-platform.mjs"), currentPlatformBuildTemplate(target.bundle.targets));
   writeText(path.join(outDir, "scripts", "assemble-release.mjs"), generatedReleaseAssemblerScript(updaterActive));
   writeText(path.join(outDir, "scripts", "write-signing-status.mjs"), generatedSigningStatusScript());
-  if (updaterActive) writeText(path.join(outDir, "scripts", "collect-updater-entry.mjs"), generatedUpdaterEntryScript());
+  const updaterEntryPath = path.join(outDir, "scripts", "collect-updater-entry.mjs");
+  if (updaterActive) writeText(updaterEntryPath, generatedUpdaterEntryScript());
+  else if (fs.existsSync(updaterEntryPath)) fs.unlinkSync(updaterEntryPath);
   writeText(path.join(outDir, ".github", "workflows", "towerforge-desktop-release.yml"), generatedDesktopReleaseWorkflow(updaterActive));
-  writeText(path.join(outDir, "SIGNING.md"), desktopSigningGuide());
+  writeText(path.join(outDir, "SIGNING.md"), desktopSigningGuide(updaterActive));
   fs.writeFileSync(path.join(outDir, ".gitignore"), "node_modules/\nsrc-tauri/target/\n", "utf8");
   fs.writeFileSync(path.join(outDir, "README.md"), nativeTauriReadme(app), "utf8");
   return [
@@ -448,7 +450,7 @@ process.exit(result.status ?? 1);
 `;
 }
 
-function desktopSigningGuide() {
+function desktopSigningGuide(updaterActive = false) {
   return `# Signing and notarization
 
 Generated games are unsigned unless the author explicitly configures signing in CI. Credentials
@@ -471,16 +473,17 @@ Documented Windows secret names:
 
 - WINDOWS_CERTIFICATE
 - WINDOWS_CERTIFICATE_PASSWORD
-
+${updaterActive ? `
 Documented updater signing secret names (required only when updater is enabled):
 
 - TAURI_SIGNING_PRIVATE_KEY
 - TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+` : ""}
 
 Use environment variables or GitHub Actions secrets for values. Do not commit certificates,
-passwords, private keys, provisioning profiles, or a local .env file. With updater support enabled,
+passwords, private keys, provisioning profiles, or a local .env file.${updaterActive ? ` With updater support enabled,
 the workflow also publishes the Tauri update payloads, their adjacent detached .sig files, and the
-static latest.json platform manifest; these paths are not generated when updater support is off.
+static latest.json platform manifest.` : ""}
 `;
 }
 

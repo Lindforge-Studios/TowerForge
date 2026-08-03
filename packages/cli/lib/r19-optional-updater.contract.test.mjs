@@ -89,16 +89,17 @@ function fixture(updater) {
 }
 
 function carrierUpdaterText(nativeDir) {
-  const files = [
-    "package.json",
-    "src-tauri/Cargo.toml",
-    "src-tauri/tauri.conf.json",
-    "src-tauri/capabilities/main.json",
-    "src-tauri/src/lib.rs",
-    "dist/player.mjs",
-    "dist/player-runtime/index.mjs"
-  ];
-  return files.map((relative) => fs.readFileSync(path.join(nativeDir, relative), "utf8")).join("\n");
+  const textExtensions = new Set([".css", ".html", ".js", ".json", ".md", ".mjs", ".rs", ".toml", ".txt", ".yaml", ".yml"]);
+  const files = [];
+  const visit = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(absolute);
+      else if (textExtensions.has(path.extname(entry.name))) files.push(absolute);
+    }
+  };
+  visit(nativeDir);
+  return files.sort().map((file) => fs.readFileSync(file, "utf8")).join("\n");
 }
 
 const ENABLED = Object.freeze({
@@ -136,9 +137,25 @@ describe("R19.4 optional updater target and carrier (RED)", () => {
     expect(result.ok, result.error).toBe(true);
     const nativeDir = path.join(projectDir, "native");
     expect(carrierUpdaterText(nativeDir)).not.toMatch(
-      /tauri-plugin-updater|@tauri-apps\/plugin-updater|plugins["'.:\s]+updater|updater:allow-|native-updater-preflight|plugin:updater|downloadAndInstall/i
+      /tauri-plugin-updater|@tauri-apps\/plugin-updater|plugins["'.:\s]+updater|updater:allow-|native-updater-preflight|plugin:updater|downloadAndInstall|TAURI_SIGNING_PRIVATE_KEY|latest\.json|updater payload/i
     );
     expect(fs.readdirSync(path.join(nativeDir, "dist", "player-runtime"))).not.toContain("native-updater-preflight.mjs");
+  }, 60_000);
+
+  it("removes updater-only generated sources when an existing carrier is repackaged as disabled", async () => {
+    const projectDir = fixture(ENABLED);
+    const first = await packageDesktop(projectDir, { targetId: "native-desktop", outDir: "native" });
+    expect(first.ok, first.error).toBe(true);
+    const nativeDir = path.join(projectDir, "native");
+    expect(fs.existsSync(path.join(nativeDir, "scripts", "collect-updater-entry.mjs"))).toBe(true);
+
+    fs.writeFileSync(path.join(projectDir, "build-targets.json"), `${JSON.stringify(buildTargets({ enabled: false }), null, 2)}\n`);
+    const second = await packageDesktop(projectDir, { targetId: "native-desktop", outDir: "native" });
+    expect(second.ok, second.error).toBe(true);
+    expect(fs.existsSync(path.join(nativeDir, "scripts", "collect-updater-entry.mjs"))).toBe(false);
+    expect(carrierUpdaterText(nativeDir)).not.toMatch(
+      /tauri-plugin-updater|TAURI_SIGNING_PRIVATE_KEY|latest\.json|updater payload/i
+    );
   }, 60_000);
 
   it("emits only the signed updater plugin/config/capability and preflight-first runtime when enabled", async () => {

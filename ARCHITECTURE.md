@@ -256,9 +256,11 @@ These domains MUST evolve independently. A project schema bump MUST NOT rewrite 
   pre-release. The updater plugin/config/runtime and release payload/`.sig`/`latest.json` assembly
   are emitted only for an explicitly enabled HTTPS/public-key target and fail closed before
   installation. Updater target architecture is derived from the native runner rather than a moving
-  runner label. `defaults.desktop` is authoritative, native outputs default to isolated
-  `desktop-<target-id>` directories, and implicit packaging never guesses from file order or a web
-  default. See
+  runner label. `defaults.desktop` is authoritative and follows target rename/removal in Studio;
+  native outputs default to isolated `desktop-<target-id>` directories, equal or nested web/native
+  outputs are rejected, and implicit packaging never guesses from file order or a web default. A
+  disabled carrier is updater-byte-free across runtime, workflow, generated sources and signing
+  guide, including after enabled -> disabled repack. See
   [ADR 0060](docs/adr/0060-r19-native-desktop-distribution.md).
 - Studio desktop packaging: `packages/desktop` builds installable TowerForge Studio apps with Tauri v2 and bundled Node, Codex, and Claude Code runtimes. The packaged runtime mirrors CLI, prebuilt engine, renderer, and player runtime and MUST NOT require user-installed Node, npm, TypeScript, Codex, or Claude Code after installation. macOS builds without Developer ID credentials use an explicit complete ad-hoc bundle signature, ARM64 target, narrowly scoped Node JIT entitlements, and verify the signature, architecture, Node/V8 startup, and DMG before acceptance. Tauri `setup` returns after showing the loading window; Studio boot is deferred, reports recoverable errors in that window, and the sidecar watches the desktop parent PID so a shell crash cannot leave orphan servers.
 - Desktop commands: Rust owns native menu/window/project-switch lifecycle; Studio owns the shared command registry, unsaved-change UX, and editor actions. `build.rs` generates app-manifest permissions for the exact seven custom invoke commands, and the external loopback WebView receives only those permissions plus event listening; it never gets raw filesystem or shell access.

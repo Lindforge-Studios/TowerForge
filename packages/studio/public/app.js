@@ -12942,6 +12942,16 @@ function wireLegacyBuildTargetAdd(bt) {
   }
 }
 
+function rewriteBuildTargetDefaults(buildTargets, oldId, newId) {
+  buildTargets.defaults ??= {};
+  for (const [platform, selectedId] of Object.entries(buildTargets.defaults)) {
+    if (selectedId === oldId) {
+      if (newId) buildTargets.defaults[platform] = newId;
+      else delete buildTargets.defaults[platform];
+    }
+  }
+}
+
 function renderBuildTargetsTab() {
   const bt   = S.project.buildTargets ?? { schemaVersion: 1, targets: {} };
   const body = $("buildtargets-body");
@@ -13041,6 +13051,7 @@ function renderBuildTargetsTab() {
         const newId = inp.value.trim();
         if (newId && newId !== tid) {
           bt.targets[newId] = { ...t, id: newId };
+          rewriteBuildTargetDefaults(bt, tid, newId);
           delete bt.targets[tid];
         }
       } else if (f.startsWith("viewport.")) {
@@ -13073,6 +13084,7 @@ function renderBuildTargetsTab() {
   body.querySelectorAll(".btn-target-del").forEach(btn => {
     btn.addEventListener("click", async () => {
       if (!(await confirmDialog({ title: `Remove build target "${btn.dataset.tid}"?`, message: "This build target configuration will be removed." }))) return;
+      rewriteBuildTargetDefaults(bt, btn.dataset.tid);
       delete bt.targets[btn.dataset.tid];
       markDirty(true); renderBuildTargetsTab();
     });

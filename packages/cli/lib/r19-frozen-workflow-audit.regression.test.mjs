@@ -303,6 +303,8 @@ describe("R19 frozen audit: signing-configured generated workflow", () => {
     expect(windowsVerify).toBeGreaterThan(build);
     expect(status).toBeGreaterThan(Math.max(notarizationVerify, windowsVerify));
     expect(workflow).not.toContain("-maxdepth");
+    expect(workflow).toContain('src-tauri/target/release/bundle/${{ matrix.bundles }}');
+    expect(workflow).not.toMatch(/Get-ChildItem src-tauri\/target -Recurse -File/);
   });
 });
 

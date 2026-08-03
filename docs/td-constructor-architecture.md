@@ -478,8 +478,11 @@ Tauri game. A selected first-class desktop target is compiled directly and owns 
 project-derived icons, restrictive capabilities, native two-slot session storage and lifecycle.
 The carrier includes a current-OS build command and a project-local six-format GitHub workflow.
 Without author-provided signing configuration that workflow publishes only an `Unsigned build`
-pre-release. Optional updater bytes and permissions are absent unless the desktop target enables an
-HTTPS/public-key updater. The legacy web-target wrapper remains available as a compatibility path.
+pre-release. Optional updater bytes, generated sources, signing-guide metadata and permissions are
+absent unless the desktop target enables an HTTPS/public-key updater, including after repackaging an
+existing carrier. Native/web output directories must be mutually non-overlapping, including
+ancestor and descendant paths. The legacy web-target wrapper remains available as a compatibility
+path.
 See [ADR 0060](adr/0060-r19-native-desktop-distribution.md).
 
 `npm run desktop:build` builds installable TowerForge Studio desktop bundles through `packages/desktop`. This is separate from game export packaging: it prepares a bundled runtime with the Studio server, CLI/MCP libraries, renderer files, and precompiled engine dist, then launches it through a Tauri v2 shell with a Node sidecar.

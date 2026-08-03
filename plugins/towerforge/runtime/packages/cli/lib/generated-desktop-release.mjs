@@ -245,7 +245,8 @@ jobs:
         if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE != '' && env.WINDOWS_CERTIFICATE_PASSWORD != ''
         shell: pwsh
         run: |
-          $installers = @(Get-ChildItem src-tauri/target -Recurse -File | Where-Object { $_.Extension -eq '\${{ matrix.extension }}' })
+          $bundleDir = Join-Path $PWD 'src-tauri/target/release/bundle/\${{ matrix.bundles }}'
+          $installers = @(Get-ChildItem $bundleDir -Recurse -File | Where-Object { $_.Extension -eq '\${{ matrix.extension }}' })
           if ($installers.Count -ne 1) { throw "Expected exactly one Windows installer for signature verification." }
           $signature = Get-AuthenticodeSignature -FilePath $installers[0].FullName
           if ($signature.Status -ne 'Valid') { throw "Windows installer Authenticode signature is not valid." }

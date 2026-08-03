@@ -120,6 +120,15 @@ describe("R19.1 first-class native desktop target (RED)", () => {
         appId: "com.example.nativesecond"
       };
     }, "targets.native-second.outputDir"],
+    ["nested cross-platform output directory", (value) => {
+      value.targets["native-desktop"].outputDir = "desktop-game";
+      value.targets.web = {
+        id: "web",
+        platform: "web",
+        renderer: "canvas",
+        webDir: "desktop-game/dist"
+      };
+    }, "targets.web.webDir"],
     ["desktop default pointing at web", (value) => {
       value.targets.web = { ...nativeDesktopTarget(), id: "web", platform: "web" };
       value.defaults.desktop = "web";
@@ -177,12 +186,12 @@ describe("R19.1 first-class native desktop target (RED)", () => {
           id: "web-pwa",
           platform: "web",
           renderer: "canvas",
-          webDir: "desktop-native-new"
+          webDir: "desktop-native-new/assets"
         },
         "native-existing": {
           ...nativeDesktopTarget(),
           id: "native-existing",
-          outputDir: "dist-desktop"
+          outputDir: "dist-desktop/cache"
         }
       }
     }, null, 2)}\n`);

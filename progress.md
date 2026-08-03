@@ -3449,3 +3449,36 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   the next complete R19 regression pass.
 - Pre-freeze R19 regression rerun: `14/14` files and `82/82` tests passed. This is focused evidence;
   acceptance still requires the full gate set on the committed SHA.
+
+## 2026-08-03 — R19 final integration verifier disabled-guide RED
+
+- Final Constructor Integration Verifier rejected frozen commit `2c7f436` because an absent or
+  disabled updater still left updater secret names, payload language and `latest.json` in generated
+  `SIGNING.md`. Runtime/plugin bytes were absent, but the public contract requires the entire
+  carrier to remain updater-byte-free when the option is off.
+- Before production repair, the disabled-carrier contract was expanded from a hand-picked runtime
+  list to every generated text file and now rejects updater secret names and release metadata too.
+  Exact RED command:
+  `npx vitest run packages/cli/lib/r19-optional-updater.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`; `2/4` failed and `2/4` passed. Both absent and explicit `{ enabled: false }`
+  cases found the unconditional signing-guide text.
+
+## 2026-08-03 — R19 final verifier follow-up RED contracts
+
+- Code verification found that enabled -> disabled repack preserves
+  `scripts/collect-updater-entry.mjs`, and that signed Windows verification recursively counts both
+  the application `.exe` and NSIS setup `.exe`. Constructor verification also found dangling
+  `defaults.desktop` after Studio rename/delete and ancestor/descendant output overlaps accepted by
+  schema/recipe allocation.
+- Before production repair, regressions were added for updater-source cleanup, bundle-directory-only
+  Authenticode lookup, default rewriting/removal, nested web/native output rejection, and recipe
+  allocation against nested paths. Exact RED command:
+  `npx vitest run packages/cli/lib/r19-optional-updater.contract.test.mjs packages/cli/lib/r19-frozen-workflow-audit.regression.test.mjs packages/cli/lib/r19-native-desktop-target.contract.test.mjs packages/studio/r19-native-desktop-target-surface.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+- Result: exit `1`; `7/33` tests failed and `26/33` passed. Each failure matched the frozen
+  verifier finding: two disabled-carrier leaks, one stale generated updater source, one broad
+  Windows executable scan, one nested-path schema acceptance, one nested-path recipe collision,
+  and one missing Studio default rewrite.
+- Minimal production repairs then made the same combined command GREEN: `4/4` files and `33/33`
+  tests passed. The complete focused R19 regression set also passed sequentially: `14/14` files and
+  `85/85` tests. This remains pre-commit evidence; all repository gates and both independent
+  sign-offs must be repeated on the next exact frozen source commit.

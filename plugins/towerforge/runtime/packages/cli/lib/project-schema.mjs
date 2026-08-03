@@ -1218,13 +1218,18 @@ function validateBuildTargets(buildTargets, err) {
         .join("/")
         .normalize("NFC")
         .toLowerCase();
-      const existingOwner = outputOwners.get(canonicalDir);
-      if (existingOwner) {
+      const overlappingOutput = [...outputOwners.entries()].find(([existingDir]) => (
+        canonicalDir === existingDir
+        || canonicalDir.startsWith(`${existingDir}/`)
+        || existingDir.startsWith(`${canonicalDir}/`)
+      ));
+      if (overlappingOutput) {
+        const [, existingOwner] = overlappingOutput;
         err(
           "buildTargets",
           targetId,
           `targets.${targetId}.${field}`,
-          `${field} is already used by build target "${existingOwner}"; output directories must be unique.`
+          `${field} overlaps build target "${existingOwner}"; output directories must be isolated.`
         );
       } else {
         outputOwners.set(canonicalDir, targetId);

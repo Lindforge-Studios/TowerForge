@@ -31,8 +31,10 @@ The first-class target never searches for a sibling web target. The CLI compiles
 desktop target through the common generated-player builder, then emits a separate Tauri v2 carrier.
 Window and bundle records are closed own-data contracts. Output paths and the project-bound
 1024×1024 PNG icon remain confined to the project. Every native target owns an isolated
-`desktop-<target-id>` output by default; authored outputs are unique across web and native targets,
-so packaging one target cannot mix or overwrite another carrier. Generated configuration uses a restrictive CSP,
+`desktop-<target-id>` output by default; authored outputs cannot be equal, ancestors or descendants
+of another web/native output, so packaging one target cannot mix or overwrite another carrier.
+Studio rewrites a platform default when its selected target is renamed and removes that default
+when the target is deleted. Generated configuration uses a restrictive CSP,
 does not enable global Tauri APIs, and grants only the narrow commands required by the game.
 
 R19.2 reuses `PlayerSessionSaveV1` and `createRotatingPlayerSessionStore` behind
@@ -56,7 +58,9 @@ macOS job imports the author certificate, then verifies the built app signature 
 notarization ticket from the DMG; the Windows job imports the authored PFX and accepts `signed`
 status only after Authenticode validation against the imported thumbprint. The repository-owned R19
 acceptance workflow generates a carrier from current source and builds all six formats on native
-macOS, Windows and Linux runners before accepting the delivery contract.
+macOS, Windows and Linux runners before accepting the delivery contract. Windows post-build
+verification scans only the selected NSIS/MSI bundle directory, never application executables from
+the broader Cargo target tree.
 
 R19.4 is wholly absent unless the target enables it. Enabled updater configuration accepts HTTPS
 endpoints and a public verification key only. Private keys remain CI secrets. Signature, downgrade,
@@ -66,8 +70,9 @@ resource ID or arbitrary candidate and receives no direct updater plugin permiss
 release workflow stages the Tauri-produced update payload and adjacent detached `.sig`, then emits
 the signed static `latest.json` platform map beside installers and checksums. Platform keys derive
 from the actual bounded runner OS/architecture, including Intel and Apple Silicon macOS runners.
-Disabled carriers omit
-the updater scripts, secrets, payload paths and metadata bytes entirely.
+Disabled carriers omit the updater scripts, signing-guide secret names, payload paths and metadata
+bytes entirely. Repackaging an existing enabled carrier as disabled removes generated updater-only
+sources before returning the output.
 
 The engine, GameCommand v8, checkpoint, journal, profile, campaign, multiplayer,
 `PlayerSessionSaveV1` and `PlayerPreferencesV1` version domains do not change.

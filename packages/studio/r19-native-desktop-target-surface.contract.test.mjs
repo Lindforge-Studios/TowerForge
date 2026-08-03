@@ -42,4 +42,10 @@ describe("R19.1 Studio first-class native desktop target surface", () => {
     expect(app).toMatch(/\/api\/package\/\$\{encodeURIComponent\(tid\)\}[\s\S]{0,80}\{ kind \}/);
     expect(app).toMatch(/target\.platform === "web"[\s\S]{0,180}data-kind="mobile"/);
   });
+
+  it("keeps every platform default valid when a target is renamed or removed", () => {
+    expect(app).toMatch(/function rewriteBuildTargetDefaults\([\s\S]*Object\.entries\(buildTargets\.defaults[\s\S]*selectedId === oldId[\s\S]*newId[\s\S]*delete buildTargets\.defaults/);
+    expect(app).toMatch(/bt\.targets\[newId\][\s\S]{0,220}rewriteBuildTargetDefaults\(bt, tid, newId\)[\s\S]{0,120}delete bt\.targets\[tid\]/);
+    expect(app).toMatch(/rewriteBuildTargetDefaults\(bt, btn\.dataset\.tid\)[\s\S]{0,120}delete bt\.targets\[btn\.dataset\.tid\]/);
+  });
 });
