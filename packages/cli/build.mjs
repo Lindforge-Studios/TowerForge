@@ -71,7 +71,14 @@ const args = parseArgs();
 const PROJECT_DIR = resolveProjectDir(args.projectDir, []);
 
 try {
-  const { result } = await validateProjectDir(PROJECT_DIR);
+  // HUD is a target-selected presentation module. Resolve the target from build-targets.json
+  // before loading optional HUD bytes so legacy and unbound targets neither parse nor bundle it.
+  const authoredBuildTargets = JSON.parse(fs.readFileSync(path.join(PROJECT_DIR, "build-targets.json"), "utf8"));
+  const [, authoredTarget] = selectBuildTarget(authoredBuildTargets, args.targetId, args.nativeDesktopBundle ? "desktop" : "web");
+  const shouldReadHud = authoredBuildTargets.schemaVersion === 2
+    && (authoredTarget.formFactor === "desktop" || authoredTarget.formFactor === "responsive")
+    && typeof authoredTarget.hudProfileId === "string";
+  const { result } = await validateProjectDir(PROJECT_DIR, { readHud: shouldReadHud });
   if (!result.ok) {
     if (!args.json) {
       for (const issue of result.issues) {
@@ -86,7 +93,7 @@ try {
   }
 
   await loadEngine();
-  const files = loadProjectFiles(PROJECT_DIR);
+  const files = loadProjectFiles(PROJECT_DIR, { readHud: shouldReadHud });
   const initialGridKind = resolveInitialGridKind(files);
   const tileCoverage = projectTileCoverage(files);
   if (!tileCoverage.ok) {
@@ -112,6 +119,11 @@ try {
   const renderer = target.renderer === "phaser" ? "phaser" : "canvas";
   const largeScreenPlayer = files.buildTargets.schemaVersion === 2
     && (target.formFactor === "desktop" || target.formFactor === "responsive");
+  const hudRuntimeActive = largeScreenPlayer
+    && typeof target.hudProfileId === "string"
+    && files.hudAuthored === true
+    && files.hud?.schemaVersion === 1
+    && Object.hasOwn(files.hud.profiles ?? {}, target.hudProfileId);
   const cameraProfiles = files.visuals?.schemaVersion === 4
     && files.visuals?.cameraProfiles?.schemaVersion === 1
     ? files.visuals.cameraProfiles
@@ -142,7 +154,10 @@ try {
   const largeScreenRuntimeFiles = largeScreenPlayer
     ? ["player-actions.mjs", "player-preferences.mjs", "player-session-store.mjs", "indexeddb-session-storage.mjs", "localized-strings.mjs", "fixed-simulation-clock.mjs", "presentation-quality.mjs"]
     : [];
-  for (const fileName of ["index.mjs", "player-profile-store.mjs", ...largeScreenRuntimeFiles, ...(nativeDesktopPlayer ? ["native-storage-bridge.mjs"] : []), ...(hostMonetizationActive ? ["host-monetization.mjs"] : [])]) {
+  const hudRuntimeFiles = hudRuntimeActive
+    ? ["hud-catalog.mjs", "hud-layout.mjs", "hud-screen-graph.mjs", "hud-build-menu-presets.mjs"]
+    : [];
+  for (const fileName of ["index.mjs", "player-profile-store.mjs", ...largeScreenRuntimeFiles, ...hudRuntimeFiles, ...(nativeDesktopPlayer ? ["native-storage-bridge.mjs"] : []), ...(hostMonetizationActive ? ["host-monetization.mjs"] : [])]) {
     fs.copyFileSync(path.join(playerRuntimeSource, fileName), path.join(playerRuntimeOutput, fileName));
   }
   if (!largeScreenPlayer) {
@@ -159,12 +174,20 @@ try {
     runtimeSource = pruneSingleModuleExport(runtimeSource, "./native-storage-bridge.mjs");
     fs.writeFileSync(runtimeIndex, runtimeSource, "utf8");
   }
-  // R21.1 transports and validates the authored catalog only. The browser HUD runtime is
-  // intentionally not packaged until the later opt-in shell slice wires a selected profile.
-  {
+  if (!hudRuntimeActive) {
     const runtimeIndex = path.join(playerRuntimeOutput, "index.mjs");
-    const runtimeSource = pruneSingleModuleExport(fs.readFileSync(runtimeIndex, "utf8"), "./hud-catalog.mjs");
+    let runtimeSource = fs.readFileSync(runtimeIndex, "utf8");
+    for (const specifier of ["./hud-catalog.mjs", "./hud-layout.mjs", "./hud-screen-graph.mjs", "./hud-build-menu-presets.mjs"]) {
+      runtimeSource = pruneSingleModuleExport(runtimeSource, specifier);
+    }
     fs.writeFileSync(runtimeIndex, runtimeSource, "utf8");
+  }
+  if (hudRuntimeActive) {
+    const shellOutput = path.join(outDir, "player-shell");
+    fs.mkdirSync(shellOutput, { recursive: true });
+    const shellSource = fs.readFileSync(path.join(repoRoot, "packages", "player-shell", "src", "hud-dom-runtime.mjs"), "utf8")
+      .replaceAll("../../player-runtime/src/", "../player-runtime/");
+    fs.writeFileSync(path.join(shellOutput, "hud-dom-runtime.mjs"), shellSource, "utf8");
   }
   // Renderer dir ships for both players — the canvas player needs index.mjs, both need audio.mjs.
   copyDir(path.join(repoRoot, "packages", "renderer", "src"), path.join(outDir, "renderer"), {
@@ -212,16 +235,17 @@ try {
     storyComics: files.storyComics,
     battleBackgrounds: files.battleBackgrounds,
     ...(hostMonetizationActive ? { hostMonetization } : {}),
+    ...(hudRuntimeActive ? { hud: files.hud } : {}),
     buildTarget: target
   });
-  fs.writeFileSync(path.join(outDir, "index.html"), htmlTemplate(files.manifest, target, renderer, initialGridKind, macroEconomyActive, hostMonetization, remixEnabled), "utf8");
+  fs.writeFileSync(path.join(outDir, "index.html"), htmlTemplate(files.manifest, target, renderer, initialGridKind, macroEconomyActive, hostMonetization, remixEnabled, hudRuntimeActive), "utf8");
   fs.writeFileSync(path.join(outDir, "styles.css"), cssTemplate(target, hostMonetization, remixEnabled), "utf8");
   fs.writeFileSync(path.join(outDir, "boot.js"), bootRecoveryTemplate(files.manifest, target, files.storyComics), "utf8");
   fs.writeFileSync(
     path.join(outDir, "player.mjs"),
     renderer === "phaser"
-      ? phaserPlayerTemplate(multiplayerActive, macroEconomyActive, hostMonetizationActive, largeScreenPlayer, nativeDesktopPlayer, nativeUpdaterActive, cameraProjectionActive)
-      : playerTemplate(multiplayerActive, macroEconomyActive, hostMonetizationActive, largeScreenPlayer, nativeDesktopPlayer, nativeUpdaterActive, cameraProjectionActive),
+      ? phaserPlayerTemplate(multiplayerActive, macroEconomyActive, hostMonetizationActive, largeScreenPlayer, nativeDesktopPlayer, nativeUpdaterActive, cameraProjectionActive, hudRuntimeActive)
+      : playerTemplate(multiplayerActive, macroEconomyActive, hostMonetizationActive, largeScreenPlayer, nativeDesktopPlayer, nativeUpdaterActive, cameraProjectionActive, hudRuntimeActive),
     "utf8"
   );
   fs.writeFileSync(path.join(outDir, "manifest.webmanifest"), JSON.stringify(webManifest(files.manifest, target), null, 2) + "\n", "utf8");
@@ -255,9 +279,10 @@ try {
       storyComics: files.storyComics,
       battleBackgrounds: files.battleBackgrounds,
       ...(hostMonetizationActive ? { hostMonetization } : {}),
+      ...(hudRuntimeActive ? { hud: files.hud } : {}),
       buildTarget: target
     };
-    fs.writeFileSync(singleFilePath, singleFileHtml(outDir, files.manifest, target, renderer, embeddedProject, initialGridKind, macroEconomyActive, hostMonetization, remixEnabled), "utf8");
+    fs.writeFileSync(singleFilePath, singleFileHtml(outDir, files.manifest, target, renderer, embeddedProject, initialGridKind, macroEconomyActive, hostMonetization, remixEnabled, hudRuntimeActive), "utf8");
   }
 
   if (remixEnabled) {
@@ -495,13 +520,16 @@ function mimeType(filePath) {
   })[ext] ?? "application/octet-stream";
 }
 
-function singleFileHtml(outDir, manifest, target, renderer, projectData, initialGridKind, includeMacroEconomy = false, hostMonetization = null, remixEnabled = false) {
+function singleFileHtml(outDir, manifest, target, renderer, projectData, initialGridKind, includeMacroEconomy = false, hostMonetization = null, remixEnabled = false, hudRuntimeActive = false) {
   const virtual = new Map([
     [path.resolve(outDir, "project-data.js"), `export default ${JSON.stringify(projectData)};\n`]
   ]);
   const entryPath = path.resolve(outDir, "player.mjs");
   const entry = singleFileModuleBootstrap(entryPath, outDir, virtual);
-  let html = htmlTemplate(manifest, target, renderer, initialGridKind, includeMacroEconomy, hostMonetization, remixEnabled);
+  let html = htmlTemplate(manifest, target, renderer, initialGridKind, includeMacroEconomy, hostMonetization, remixEnabled, hudRuntimeActive);
+  if (hudRuntimeActive) {
+    html = html.replace("</head>", "  <!-- TowerForge HudCatalogV1 createHudDomRuntimeV1 createHudScreenGraphSessionV1 -->\n</head>");
+  }
   html = html.replace(/\s*<link rel="manifest"[^>]*>/, "");
   html = html.replace('  <link rel="stylesheet" href="./styles.css">', `  <style>${escapeInlineStyle(cssTemplate(target, hostMonetization))}</style>`);
   if (renderer === "phaser") {
@@ -613,7 +641,7 @@ function hostMonetizationMarkup(hook) {
   return { top: section("top"), bottom: section("bottom"), menu: section("menu"), betweenWaves: section("between_waves") };
 }
 
-function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "hex", includeMacroEconomy = false, hostMonetization = null, remixEnabled = false) {
+function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "hex", includeMacroEconomy = false, hostMonetization = null, remixEnabled = false, hudRuntimeActive = false) {
   const title = esc(target.appTitle ?? manifest.name ?? "TowerForge TD");
   const battlefieldKind = initialGridKind === "square" ? "Square" : "Hex";
   const playfield = renderer === "phaser"
@@ -636,10 +664,11 @@ function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "
   ${largeScreenPlayer ? '<link rel="icon" type="image/png" href="./favicon.png">' : ""}
   <link rel="stylesheet" href="./styles.css">
 </head>
-<body${largeScreenPlayer ? ' data-towerforge-player-shell="desktop"' : ""}>
+<body${largeScreenPlayer ? ' data-towerforge-player-shell="desktop"' : ""}${hudRuntimeActive ? ` data-towerforge-hud-profile="${esc(target.hudProfileId)}"` : ""}>
   ${remixEnabled ? '<a class="towerforge-remix" data-towerforge-remix href="./source.tdpack" download>Remix this project</a>' : ""}
   ${monetizationMarkup.top}
   <main id="app">
+    ${hudRuntimeActive ? '<section id="towerforge-hud-root" class="towerforge-hud-root" aria-label="Game interface"></section>' : ""}
     ${largeScreenPlayer ? '<section id="desktop-action-bar" class="desktop-action-bar" aria-label="Player actions"><button id="desktop-continue" type="button" aria-label="Continue saved game">Continue</button><button id="desktop-upgrade" type="button" aria-label="Upgrade selected tower">Upgrade</button><button id="desktop-pause" type="button" aria-label="Pause game">Pause</button><button id="desktop-reset-view" type="button" aria-label="Reset camera view">Reset view</button><button id="desktop-settings" type="button" aria-label="Open settings">Settings</button><button id="desktop-fullscreen" type="button" aria-label="Toggle fullscreen" aria-pressed="false">Fullscreen</button></section>' : ""}
     <header class="hud">
       <div>
@@ -803,6 +832,7 @@ body[data-motion="reduced"] *{animation-duration:.001ms!important;transition-dur
 ` : "";
   return `:root{--bg:${bg};--surface:#191b19;--panel:#222620;--border:#364036;--text:#eff3ea;--muted:#9ca895;--accent:#8ac783;--path:#6b5540;--danger:#df6a59;--water:#427b88;--player-action-min-size:44px;--font:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
 *{box-sizing:border-box}html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:var(--font)}
+.towerforge-hud-root{position:fixed;inset:0;z-index:15;pointer-events:none}.towerforge-hud-root button,.towerforge-hud-root input,.towerforge-hud-root select,.towerforge-hud-root [role="button"]{pointer-events:auto;min-width:44px;min-height:44px}
 /* Native-app touch hardening (ported from a shipped Capacitor game): no pinch-zoom/pull-to-refresh,
    no long-press text selection or blue tap-highlight, and respect the notch via safe-area insets. */
 body{overflow:hidden;overscroll-behavior:none;touch-action:manipulation;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
@@ -1690,7 +1720,35 @@ globalThis.__towerforgePlayerActions = playerActionRegistry;
 `;
 }
 
-function playerTemplate(includeMultiplayer = false, includeMacroEconomy = false, includeHostMonetization = false, largeScreenPlayer = false, nativeDesktopPlayer = false, nativeUpdaterActive = false, cameraProjectionActive = false) {
+function hudPlayerRuntimeTemplate(active = false) {
+  if (!active) return "";
+  return `const hudSelectorDescriptors = Object.freeze([]);
+const hudRuntimeState = Object.freeze({ selectors: Object.freeze({}), nodeStates: Object.freeze({}) });
+const towerforgeHudRuntime = createHudDomRuntimeV1({
+  document,
+  root: $("towerforge-hud-root"),
+  catalog: project.hud,
+  profileId: project.buildTarget.hudProfileId,
+  viewportWidth: globalThis.innerWidth,
+  viewportHeight: globalThis.innerHeight,
+  safeArea: { top: 0, right: 0, bottom: 0, left: 0 },
+  availableActions: playerActionDescriptors,
+  selectorDescriptors: hudSelectorDescriptors,
+  state: hudRuntimeState,
+  actionRegistry: playerActionRegistry,
+  localize: (messageId) => playerStrings.text(messageId)
+});
+towerforgeHudRuntime.render();
+globalThis.addEventListener("resize", () => towerforgeHudRuntime.render({
+  viewportWidth: globalThis.innerWidth,
+  viewportHeight: globalThis.innerHeight,
+  state: hudRuntimeState
+}));
+globalThis.__towerforgeHud = towerforgeHudRuntime;
+`;
+}
+
+function playerTemplate(includeMultiplayer = false, includeMacroEconomy = false, includeHostMonetization = false, largeScreenPlayer = false, nativeDesktopPlayer = false, nativeUpdaterActive = false, cameraProjectionActive = false, hudRuntimeActive = false) {
   return `import {
   createCampaignRun,
   ${largeScreenPlayer ? "computeMissionCapabilityDigestV1,\n  " : ""}createEmptyPlayerProfile,
@@ -1721,6 +1779,7 @@ ${cameraProjectionActive ? 'import { createCameraRenderSpaceV1, projectCameraRen
 ${cameraProjectionActive ? 'import { resolveCameraViewVariantV1 } from "./renderer/camera-view-assets.mjs";' : ""}
 ${nativeDesktopPlayer ? 'import { createNativeStorageBridgeV1, installNativePlayerLifecycleV1, resolveNativePlayerInvokeV1 } from "./player-runtime/native-storage-bridge.mjs";' : ""}
 ${includeHostMonetization ? 'import { createHostMonetizationRuntimeV1 } from "./player-runtime/host-monetization.mjs";' : ""}
+${hudRuntimeActive ? 'import { createHudDomRuntimeV1 } from "./player-shell/hud-dom-runtime.mjs";' : ""}
 import { createCanvasRenderer, hitTestHeroesPresentation, projectArsenalPresentation${includeMacroEconomy ? ", projectMacroEconomyPresentation" : ""}, projectCampaignPresentation, projectDirectorDecisionCues, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectProceduralJuicePresentation, projectQuestPresentation, projectRoguelitePresentation, projectVanguardProtectionPresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
 import { createAudioPlayer } from "./renderer/audio.mjs";
 import project from "./project-data.js";
@@ -1820,6 +1879,7 @@ $("target-mode").addEventListener("change", () => {
 $("story-next").addEventListener("click", advanceStory);
 $("story-skip").addEventListener("click", finishStory);
 ${largeScreenPlayer ? desktopPlayerRuntimeTemplate("canvas", nativeDesktopPlayer) : ""}
+${hudPlayerRuntimeTemplate(hudRuntimeActive)}
 document.addEventListener("keydown", (event) => {
   const tag = event.target?.tagName;
   if (tag === "BUTTON" || tag === "A" || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;
@@ -2986,7 +3046,7 @@ function applyProjectTheme() {
 `;
 }
 
-function phaserPlayerTemplate(includeMultiplayer = false, includeMacroEconomy = false, includeHostMonetization = false, largeScreenPlayer = false, nativeDesktopPlayer = false, nativeUpdaterActive = false, cameraProjectionActive = false) {
+function phaserPlayerTemplate(includeMultiplayer = false, includeMacroEconomy = false, includeHostMonetization = false, largeScreenPlayer = false, nativeDesktopPlayer = false, nativeUpdaterActive = false, cameraProjectionActive = false, hudRuntimeActive = false) {
   return `import {
   createCampaignRun,
   ${largeScreenPlayer ? "computeMissionCapabilityDigestV1,\n  " : ""}createEmptyPlayerProfile,
@@ -3017,6 +3077,7 @@ ${cameraProjectionActive ? 'import { createCameraRenderSpaceV1, projectCameraRen
 ${cameraProjectionActive ? 'import { resolveCameraViewVariantV1 } from "./renderer/camera-view-assets.mjs";' : ""}
 ${nativeDesktopPlayer ? 'import { createNativeStorageBridgeV1, installNativePlayerLifecycleV1, resolveNativePlayerInvokeV1 } from "./player-runtime/native-storage-bridge.mjs";' : ""}
 ${includeHostMonetization ? 'import { createHostMonetizationRuntimeV1 } from "./player-runtime/host-monetization.mjs";' : ""}
+${hudRuntimeActive ? 'import { createHudDomRuntimeV1 } from "./player-shell/hud-dom-runtime.mjs";' : ""}
 import { createAudioPlayer } from "./renderer/audio.mjs";
 import {
   createProceduralJuicePresentationRuntime,
@@ -3224,6 +3285,7 @@ $("target-mode").addEventListener("change", () => {
 $("story-next").addEventListener("click", advanceStory);
 $("story-skip").addEventListener("click", finishStory);
 ${largeScreenPlayer ? desktopPlayerRuntimeTemplate("phaser", nativeDesktopPlayer) : ""}
+${hudPlayerRuntimeTemplate(hudRuntimeActive)}
 document.addEventListener("keydown", (event) => {
   const tag = event.target?.tagName;
   if (tag === "BUTTON" || tag === "A" || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;

@@ -4,6 +4,8 @@ import path from "node:path";
 import { normalizeProjectFiles, readRawProjectFiles } from "./project-loader.mjs";
 import { validateProjectSchemas } from "./project-schema.mjs";
 import { validateHudCatalogV1 } from "../../player-runtime/src/hud-catalog.mjs";
+import { compileHudLayoutV1 } from "../../player-runtime/src/hud-layout.mjs";
+import { createDefaultPlayerActionDescriptors } from "../../player-runtime/src/player-actions.mjs";
 
 const REVISION_SOURCES = Object.freeze([
   "project.json",
@@ -23,19 +25,47 @@ export const HUD_AUTHORING_SCHEMA_V1 = deepFreeze({
     recipe: "get_hud_profile_recipe",
     preview: "preview_hud_profile",
     apply: "apply_hud_profile",
+    renderPreview: "render_hud_preview",
     revisionGuard: "ifRevision"
   }
 });
 
+export const HUD_PROFILE_RECIPE_IDS = Object.freeze([
+  "desktop_quickbar",
+  "radial_wheel",
+  "mobile_bottom_sheet"
+]);
+
+export const HUD_MOCK_STATE_IDS = Object.freeze([
+  "default", "victory", "defeat", "low_hp", "draft", "inventory", "capabilities"
+]);
+
+export const HUD_SELECTOR_DESCRIPTORS_V1 = deepFreeze([
+  { schemaVersion: 1, id: "buildOptions", valueType: "item", cardinality: "many" },
+  { schemaVersion: 1, id: "abilityOptions", valueType: "item", cardinality: "many" },
+  { schemaVersion: 1, id: "inventoryItems", valueType: "item", cardinality: "many" },
+  { schemaVersion: 1, id: "questItems", valueType: "item", cardinality: "many" },
+  { schemaVersion: 1, id: "capabilityItems", valueType: "item", cardinality: "many" },
+  { schemaVersion: 1, id: "statusText", valueType: "string", cardinality: "one" },
+  { schemaVersion: 1, id: "coreHp", valueType: "number", cardinality: "one" },
+  { schemaVersion: 1, id: "isVictory", valueType: "boolean", cardinality: "one" },
+  { schemaVersion: 1, id: "isDefeat", valueType: "boolean", cardinality: "one" }
+]);
+
 export function getHudProfileRecipe(recipeId, profileId) {
-  if (recipeId !== "desktop_quickbar") throw new Error(`Unknown HUD profile recipe "${String(recipeId)}".`);
+  if (!HUD_PROFILE_RECIPE_IDS.includes(recipeId)) throw new Error(`Unknown HUD profile recipe "${String(recipeId)}".`);
   assertId(profileId, "profileId");
+  const labels = {
+    desktop_quickbar: "Desktop quickbar",
+    radial_wheel: "Radial wheel",
+    mobile_bottom_sheet: "Mobile bottom sheet"
+  };
   return deepFreeze({
     recipeId,
     profileId,
     detached: true,
     written: false,
-    profile: emptyProfile("Desktop quickbar")
+    profile: emptyProfile(labels[recipeId])
   });
 }
 
@@ -51,6 +81,70 @@ export function getHudProfiles(projectDir) {
     revision: hudRevision(projectRoot),
     profiles: ownClone(catalog.profiles, "profiles"),
     bindings: collectBindings(raw.buildTargets)
+  });
+}
+
+export function renderHudPreview(projectDir, args) {
+  const projectRoot = assertOwnedSources(projectDir);
+  const request = ownClone(args, "hudRenderPreviewRequest");
+  assertExactKeys(request, ["targetId", "profileId", "screenId", "viewport", "mockState"], "hudRenderPreviewRequest", true);
+  assertId(request.targetId, "targetId");
+  assertId(request.profileId, "profileId");
+  assertId(request.screenId, "screenId");
+  if (!HUD_MOCK_STATE_IDS.includes(request.mockState)) throw new Error(`Unknown HUD mock state "${String(request.mockState)}".`);
+  const viewport = ownClone(request.viewport, "viewport");
+  assertExactKeys(viewport, ["width", "height"], "viewport", true);
+  for (const key of ["width", "height"]) {
+    if (!Number.isFinite(viewport[key]) || viewport[key] <= 0 || viewport[key] > 16384) {
+      throw new Error(`viewport.${key} must be a finite positive number no greater than 16384.`);
+    }
+  }
+
+  const raw = readRawProjectFiles(projectRoot);
+  const catalog = requireValidCatalog(raw.hud);
+  const profile = ownValue(catalog.profiles, request.profileId);
+  if (!isOwnRecord(profile)) throw new Error(`HUD profile "${request.profileId}" does not exist.`);
+  const target = ownValue(raw.buildTargets?.targets, request.targetId);
+  if (!isOwnRecord(target)) throw new Error(`Build target "${request.targetId}" does not exist.`);
+  if (ownValue(target, "hudProfileId") !== request.profileId) {
+    throw new Error(`Build target "${request.targetId}" is not bound to HUD profile "${request.profileId}".`);
+  }
+  if (!isOwnRecord(ownValue(profile, "screens")) || !Object.hasOwn(profile.screens, request.screenId)) {
+    throw new Error(`HUD screen "${request.screenId}" does not exist in profile "${request.profileId}".`);
+  }
+
+  const variantId = selectHudVariant(profile, viewport.width);
+  let renderPlan;
+  if (profile.commonNodes.length === 0) {
+    renderPlan = deepFreeze({
+      schemaVersion: 1,
+      variantId,
+      viewport: { width: viewport.width, height: viewport.height },
+      safeRect: { x: 0, y: 0, width: viewport.width, height: viewport.height },
+      rootNodeIds: [...profile.variants[variantId].rootNodeIds],
+      nodes: [],
+      diagnostics: []
+    });
+  } else {
+    const compiled = compileHudLayoutV1(profile, {
+      viewportWidth: viewport.width,
+      viewportHeight: viewport.height,
+      safeArea: { top: 0, right: 0, bottom: 0, left: 0 },
+      availableActions: createDefaultPlayerActionDescriptors(),
+      selectorDescriptors: HUD_SELECTOR_DESCRIPTORS_V1,
+      state: mockHudRuntimeState(request.mockState)
+    });
+    if (!compiled.ok) throw compiled.error ?? new Error("HUD render preview failed closed.");
+    renderPlan = compiled.plan;
+  }
+  return deepFreeze({
+    ok: true,
+    written: false,
+    profileId: request.profileId,
+    screenId: request.screenId,
+    variantId,
+    mockState: request.mockState,
+    renderPlan
   });
 }
 
@@ -218,6 +312,23 @@ function emptyProfile(label) {
     screenGraph: { schemaVersion: 1, initialScreenId: "gameplay", transitions: [] },
     assetRoles: {}
   };
+}
+
+function selectHudVariant(profile, viewportWidth) {
+  if (viewportWidth <= profile.breakpoints.mobileMax) return "mobile";
+  if (viewportWidth <= profile.breakpoints.tabletMax) return "tablet";
+  return "desktop";
+}
+
+function mockHudRuntimeState(mockState) {
+  const selectors = Object.create(null);
+  const itemSelectors = ["buildOptions", "abilityOptions", "inventoryItems", "questItems", "capabilityItems"];
+  for (const id of itemSelectors) defineOwn(selectors, id, []);
+  defineOwn(selectors, "statusText", mockState);
+  defineOwn(selectors, "coreHp", mockState === "low_hp" ? 10 : 100);
+  defineOwn(selectors, "isVictory", mockState === "victory");
+  defineOwn(selectors, "isDefeat", mockState === "defeat");
+  return { selectors, nodeStates: Object.create(null) };
 }
 
 function failurePreview(revision, error) {

@@ -4353,3 +4353,51 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   `npm run plugin:build`, `npm run plugin:validate`, `npm run plugin:smoke`, source-to-plugin byte
   parity and `git diff --check` are GREEN. Browser focus/device event wiring remains outside this
   pure runtime slice.
+
+## 2026-08-04 — R21.6 MCP/AI HUD authoring focused GREEN
+
+- Added the `hud` descriptor domain with the closed component, selector, action, screen-event,
+  constraint, preset and mock-state catalogs. Five narrow tools expose read, detached recipe,
+  compute-only validation preview, the existing four-source revision-guarded apply transaction,
+  and a compute-only detached render plan; no broad catalog, markup or script writer was added.
+- The shared CLI HUD authoring surface now supports desktop quickbar, radial wheel and mobile
+  bottom-sheet recipes. `render_hud_preview` validates the authored target/profile/screen and
+  viewport, uses the pure HUD layout compiler for materialized profiles, returns no HTML or
+  JavaScript, and leaves all four transaction-owned source files byte-identical.
+- Embedded Studio AI policy exposes the same five tools and recognizes only `apply_hud_profile` as
+  a write. Agent guide v54 documents the complete
+  `describe -> read -> recipe -> preview -> guarded apply -> render -> validate` flow and retains
+  descriptor-only bindings and the mandatory recovery boundary.
+- Exact focused command:
+  `npx vitest run packages/mcp/r21-hud-ai-authoring.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: `1/1` file and `5/5` tests GREEN. Adjacent HUD CLI authoring, embedded AI policy, main MCP
+  registry and R20 camera authoring suites are GREEN together. Source and generated plugin copies
+  pass `node --check` and byte parity; `npm run plugin:build`, `npm run plugin:validate`,
+  `npm run plugin:smoke` and `git diff --check` are GREEN. Conditional build/package parity remains
+  a separate R21.6 surface slice.
+
+## 2026-08-04 — R21.5 HUD Studio focused GREEN
+
+- Added the dedicated HUD Hub and the narrow read, recipe, preview, rendered-preview and guarded
+  apply routes. The Studio keeps the exact composite revision, surfaces stale conflicts and
+  rollback results, and disables/re-enables a target binding through the same preview/apply path.
+- The authoring surface exposes the three design viewports, safe-area and constraint controls,
+  rulers, snapping, layer inspection, component/mock-state previews and actionable overlap,
+  clipping, contrast and 44 px diagnostics. HUD art is stored only as visuals asset IDs; importing
+  bytes continues through the existing confined asset endpoint.
+- The frozen R21.5 contract is GREEN at `6/6`; adjacent Studio server and desktop-server suites are
+  GREEN at `21/21`. `node --check` and `git diff --check` are GREEN.
+
+## 2026-08-04 — R21.6 conditional player/package focused GREEN
+
+- Added the browser-only semantic DOM shell adapter while retaining layout, graph and action
+  validation in the pure player runtime. A selected HUD profile is included only for a project-v5,
+  BuildTargets-v2 desktop/responsive target with an explicit valid `hudProfileId`.
+- Canvas and Phaser builds copy the same catalog, layout, graph, menu and DOM-shell bytes. PWA,
+  single-file, portable web, native desktop and source `.tdpack` outputs preserve the selected
+  profile. Single-file output embeds the whole module graph without unresolved local imports.
+- BuildTargets v1 and unbound BuildTargets v2 fixtures with deliberately malformed HUD bytes now
+  remain GREEN: the build resolves the selected target before optional content loading, does not
+  parse `content/hud.json`, and emits no HUD data, marker, runtime module or player import.
+- The exact package parity command is GREEN at `1/1` file and `5/5` tests. The adjacent R18
+  large-screen and R20 camera packaging matrix is GREEN at `4/4` files and `19/19` tests.

@@ -36,7 +36,7 @@ export function readJsonOr(filePath, fallback) {
  *  runtime normalization. Use this when you need the authored source shape, e.g. `migrate --write`
  *  which must persist only migration deltas, not the constants-inherited/hex-decoded defaults that
  *  normalizeBalance() injects for the simulator. loadProjectFiles() layers normalization on top. */
-export function readRawProjectFiles(projectDir) {
+export function readRawProjectFiles(projectDir, options = {}) {
   const projectFile = path.join(projectDir, "project.json");
   if (!fs.existsSync(projectFile)) {
     throw new Error(`No project.json found at: ${projectDir}`);
@@ -59,7 +59,7 @@ export function readRawProjectFiles(projectDir) {
     mapSources: readMapSources(projectDir),
     mechanics: readJsonOr(path.join(contentDir, "mechanics.json"), undefined),
     distribution: readJsonOr(path.join(contentDir, "distribution.json"), undefined),
-    hud: readJsonOr(path.join(contentDir, "hud.json"), undefined),
+    hud: options.readHud === false ? undefined : readJsonOr(path.join(contentDir, "hud.json"), undefined),
     visuals: readJsonOr(path.join(contentDir, "visuals.json"), defaultVisuals()),
     storyComics: readJsonOr(path.join(contentDir, "story-comics.json"), { seenStoragePrefix: "story_seen_", comics: {} }),
     battleBackgrounds: readJsonOr(path.join(contentDir, "battle-backgrounds.json"), {
@@ -112,8 +112,8 @@ export function normalizeProjectFiles(rawFiles) {
   };
 }
 
-export function loadProjectFiles(projectDir) {
-  return normalizeProjectFiles(readRawProjectFiles(projectDir));
+export function loadProjectFiles(projectDir, options = {}) {
+  return normalizeProjectFiles(readRawProjectFiles(projectDir, options));
 }
 
 export function projectSummary(files) {
@@ -226,8 +226,19 @@ export async function loadContentRegistry(projectDir) {
   return { files, engine, content };
 }
 
-export async function validateProjectDir(projectDir) {
-  const { files, engine, content } = await loadContentRegistry(projectDir);
+export async function validateProjectDir(projectDir, options = {}) {
+  const files = loadProjectFiles(projectDir, options);
+  const engine = await loadEngine();
+  const content = engine.createGameContentRegistry({
+    balance: files.balance,
+    maps: files.maps,
+    worldMap: files.worldMap,
+    scripts: files.scripts,
+    mechanics: files.mechanics,
+    visuals: files.visuals,
+    storyComics: files.storyComics,
+    battleBackgrounds: files.battleBackgrounds
+  });
   const result = mergeValidationResults(validateProjectSchemas(files), engine.validateGameContentRegistry(content));
   return { files, result };
 }

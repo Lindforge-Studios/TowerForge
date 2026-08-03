@@ -109,6 +109,23 @@ import {
   previewCameraViewVariant,
   previewCameraProfile
 } from "../cli/lib/camera-authoring.mjs";
+import {
+  HUD_AUTHORING_SCHEMA_V1,
+  HUD_MOCK_STATE_IDS,
+  HUD_PROFILE_RECIPE_IDS,
+  HUD_SELECTOR_DESCRIPTORS_V1,
+  applyHudProfile,
+  getHudProfileRecipe,
+  getHudProfiles,
+  previewHudProfile,
+  renderHudPreview
+} from "../cli/lib/hud-authoring.mjs";
+import {
+  HUD_CATALOG_LIMITS,
+  HUD_COMPONENT_TYPES,
+  HUD_SCREEN_EVENTS
+} from "../player-runtime/src/hud-catalog.mjs";
+import { createDefaultPlayerActionDescriptors } from "../player-runtime/src/player-actions.mjs";
 import { projectProceduralJuicePresentation } from "../renderer/src/procedural-juice-presentation.mjs";
 import { TOWERFORGE_AGENT_GUIDE_VERSION } from "./agent-instructions.mjs";
 
@@ -116,7 +133,7 @@ const BALANCE_PATCH_KEYS = [
   "enemies", "towers", "waveSets", "missions", "abilities", "constants", "currencies", "defaultMissionId",
   "defaultDifficultyId", "difficulties", "metaProgression", "terrainTypes"
 ];
-const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "arsenal", "macroEconomy", "heroes", "logistics", "director", "quests", "enemyBehaviors", "personaQa", "multiplayer", "replayLab", "distribution", "playerTargets", "camera", "proceduralJuice", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
+const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "arsenal", "macroEconomy", "heroes", "logistics", "director", "quests", "enemyBehaviors", "personaQa", "multiplayer", "replayLab", "distribution", "playerTargets", "camera", "hud", "proceduralJuice", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
 
 // Maps an upsert_entity/delete_entity `collection` to (a) the balance.json key, (b) the shape
 // (a map keyed by id, or an array of {id,...} items — currencies only), and (c) the
@@ -685,6 +702,34 @@ const CAMERA_VIEW_VARIANT_PROPERTIES = Object.freeze({
   orientation: Object.freeze({ type: "string", enum: CAMERA_AUTHORING_SCHEMA_V1.orientations }),
   variant: CAMERA_VIEW_VARIANT_INPUT_SCHEMA
 });
+const HUD_PROFILE_INPUT_SCHEMA = Object.freeze({
+  type: "object",
+  description: "Closed HudProfileV1 own-data candidate; canonical validation is performed by the shared player runtime."
+});
+const HUD_BINDING_INPUT_SCHEMA = Object.freeze({
+  type: "object",
+  properties: Object.freeze({
+    targetId: Object.freeze({ type: "string", minLength: 1, maxLength: 128 }),
+    enabled: Object.freeze({ type: "boolean" })
+  }),
+  required: Object.freeze(["targetId", "enabled"]),
+  additionalProperties: false
+});
+const HUD_PROFILE_PROPERTIES = Object.freeze({
+  projectDir: Object.freeze({ type: "string" }),
+  profileId: Object.freeze({ type: "string", minLength: 1, maxLength: 128 }),
+  profile: HUD_PROFILE_INPUT_SCHEMA,
+  binding: HUD_BINDING_INPUT_SCHEMA
+});
+const HUD_VIEWPORT_INPUT_SCHEMA = Object.freeze({
+  type: "object",
+  properties: Object.freeze({
+    width: Object.freeze({ type: "number", exclusiveMinimum: 0, maximum: 16384 }),
+    height: Object.freeze({ type: "number", exclusiveMinimum: 0, maximum: 16384 })
+  }),
+  required: Object.freeze(["width", "height"]),
+  additionalProperties: false
+});
 /** Tool definitions advertised over `tools/list`. */
 export const TOOLS = [
   {
@@ -754,6 +799,66 @@ export const TOOLS = [
       type: "object",
       properties: Object.freeze({ ...CAMERA_VIEW_VARIANT_PROPERTIES, ifRevision: IF_REVISION_PROPERTY }),
       required: ["projectDir", "kind", "resourceId", "projection", "orientation", "variant", "ifRevision"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "get_hud_profiles",
+    description: "Read the exact optional HudCatalogV1 profiles, target bindings, and four-source revision without writing project files.",
+    inputSchema: {
+      type: "object",
+      properties: { projectDir: { type: "string" } },
+      additionalProperties: false
+    }
+  },
+  {
+    name: "get_hud_profile_recipe",
+    description: "Return one detached inert HudProfileV1 recipe without reading or writing project files.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string" },
+        recipeId: { type: "string", enum: HUD_PROFILE_RECIPE_IDS },
+        profileId: { type: "string", minLength: 1, maxLength: 128 }
+      },
+      required: ["recipeId", "profileId"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "preview_hud_profile",
+    description: "Validate one exact HUD profile and build-target binding in memory without writing project files.",
+    inputSchema: {
+      type: "object",
+      properties: HUD_PROFILE_PROPERTIES,
+      required: ["projectDir", "profileId", "profile", "binding"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "apply_hud_profile",
+    description: "Revision-guarded HUD profile/binding upsert with canonical validation, four-source backup, and rollback.",
+    inputSchema: {
+      type: "object",
+      properties: Object.freeze({ ...HUD_PROFILE_PROPERTIES, ifRevision: IF_REVISION_PROPERTY }),
+      required: ["projectDir", "profileId", "profile", "binding", "ifRevision"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "render_hud_preview",
+    description: "Compile a detached HUD layout/render plan for one target, screen, viewport, and mock state; emits no HTML or executable code.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string" },
+        targetId: { type: "string", minLength: 1, maxLength: 128 },
+        profileId: { type: "string", minLength: 1, maxLength: 128 },
+        screenId: { type: "string", minLength: 1, maxLength: 128 },
+        viewport: HUD_VIEWPORT_INPUT_SCHEMA,
+        mockState: { type: "string", enum: HUD_MOCK_STATE_IDS }
+      },
+      required: ["projectDir", "targetId", "profileId", "screenId", "viewport", "mockState"],
       additionalProperties: false
     }
   },
@@ -2331,6 +2436,11 @@ const TOOL_RISK = {
   apply_camera_profile: { riskClass: "write_local", sideEffect: "writes project.json and content/visuals.json with revision guard, validation, backup, and rollback" },
   preview_camera_view_variant: { riskClass: "compute_only", sideEffect: "writes no project files" },
   apply_camera_view_variant: { riskClass: "write_local", sideEffect: "writes project.json and content/visuals.json with revision guard, validation, backup, and rollback" },
+  get_hud_profiles: { riskClass: "read_only", sideEffect: "none" },
+  get_hud_profile_recipe: { riskClass: "read_only", sideEffect: "none" },
+  preview_hud_profile: { riskClass: "compute_only", sideEffect: "writes no project files" },
+  apply_hud_profile: { riskClass: "write_local", sideEffect: "writes project.json, build-targets.json, content/hud.json, and content/visuals.json with revision guard, validation, backup, and rollback" },
+  render_hud_preview: { riskClass: "compute_only", sideEffect: "writes no project files" },
   get_procedural_juice: { riskClass: "read_only", sideEffect: "none" },
   get_procedural_juice_recipe: { riskClass: "read_only", sideEffect: "none" },
   preview_procedural_juice: { riskClass: "compute_only", sideEffect: "validates an in-memory candidate and writes no project files" },
@@ -2880,6 +2990,32 @@ export async function callTool(name, args = {}, ctx = {}) {
         authoring: { preview: "preview_camera_view_variant", apply: "apply_camera_view_variant", granularity: "one_variant" }
       }
     };
+    const hud = {
+      ...HUD_AUTHORING_SCHEMA_V1,
+      components: [...HUD_COMPONENT_TYPES],
+      selectors: Object.fromEntries(HUD_SELECTOR_DESCRIPTORS_V1.map((descriptor) => [descriptor.id, {
+        schemaVersion: descriptor.schemaVersion,
+        valueType: descriptor.valueType,
+        cardinality: descriptor.cardinality
+      }])),
+      actions: Object.fromEntries(createDefaultPlayerActionDescriptors().map((descriptor) => [descriptor.id, {
+        schemaVersion: descriptor.schemaVersion,
+        kind: descriptor.kind,
+        labelKey: descriptor.labelKey
+      }])),
+      screenEvents: [...HUD_SCREEN_EVENTS],
+      constraints: { ...HUD_CATALOG_LIMITS },
+      presets: [...HUD_PROFILE_RECIPE_IDS],
+      mockStates: [...HUD_MOCK_STATE_IDS],
+      authoringTransaction: {
+        read: "get_hud_profiles",
+        recipe: "get_hud_profile_recipe",
+        preview: "preview_hud_profile",
+        apply: "apply_hud_profile",
+        renderPreview: "render_hud_preview",
+        revisionGuard: "ifRevision"
+      }
+    };
     const multiplayer = {
       entrypoint: "@towerforge/engine/multiplayer",
       authoring: engine.MULTIPLAYER_MECHANICS_SCHEMA,
@@ -3043,6 +3179,7 @@ export async function callTool(name, args = {}, ctx = {}) {
       } : {}),
       ...(includes("playerTargets") ? { playerTargets } : {}),
       ...(includes("camera") ? { camera } : {}),
+      ...(includes("hud") ? { hud } : {}),
       ...(includes("missions") ? {
         currencyRules: engine.CURRENCY_RULES,
         missionEconomy: engine.MISSION_ECONOMY_SCHEMA,
@@ -3149,6 +3286,13 @@ export async function callTool(name, args = {}, ctx = {}) {
     );
   }
 
+  if (name === "get_hud_profile_recipe") {
+    return getHudProfileRecipe(
+      ownDataValue(args, "recipeId"),
+      ownDataValue(args, "profileId")
+    );
+  }
+
   if (name === "explain_validation") {
     if (args.code !== undefined && typeof args.code !== "string") {
       throw new Error("explain_validation: `code` must be a string.");
@@ -3207,6 +3351,29 @@ export async function callTool(name, args = {}, ctx = {}) {
         orientation: ownDataValue(args, "orientation"),
         variant: ownDataValue(args, "variant"),
         ifRevision: ownDataValue(args, "ifRevision")
+      });
+    case "get_hud_profiles":
+      return getHudProfiles(projectDir);
+    case "preview_hud_profile":
+      return previewHudProfile(projectDir, {
+        profileId: ownDataValue(args, "profileId"),
+        profile: ownDataValue(args, "profile"),
+        binding: ownDataValue(args, "binding")
+      });
+    case "apply_hud_profile":
+      return applyHudProfile(projectDir, {
+        profileId: ownDataValue(args, "profileId"),
+        profile: ownDataValue(args, "profile"),
+        binding: ownDataValue(args, "binding"),
+        ifRevision: ownDataValue(args, "ifRevision")
+      });
+    case "render_hud_preview":
+      return renderHudPreview(projectDir, {
+        targetId: ownDataValue(args, "targetId"),
+        profileId: ownDataValue(args, "profileId"),
+        screenId: ownDataValue(args, "screenId"),
+        viewport: ownDataValue(args, "viewport"),
+        mockState: ownDataValue(args, "mockState")
       });
     case "get_procedural_juice":
       return inspectProceduralJuiceAuthoring(projectDir);
