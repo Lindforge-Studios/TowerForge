@@ -325,6 +325,35 @@ describe("R21.1 HudCatalogV1 closed pure contract (RED)", () => {
     expect(validateHudCatalogV1(cyclic).ok).toBe(false);
   });
 
+  it("rejects a cyclic node graph even when the orphan component is absent from every screen and variant root", () => {
+    const value = catalog();
+    value.profiles.main.commonNodes = [
+      {
+        schemaVersion: 1,
+        id: "orphan_a",
+        type: "panel",
+        childIds: ["orphan_b"],
+        properties: {},
+        bindings: { data: [], actions: [] },
+        states: { normal: { visible: true, enabled: true } }
+      },
+      {
+        schemaVersion: 1,
+        id: "orphan_b",
+        type: "panel",
+        childIds: ["orphan_a"],
+        properties: {},
+        bindings: { data: [], actions: [] },
+        states: { normal: { visible: true, enabled: true } }
+      }
+    ];
+
+    const result = validateHudCatalogV1(value);
+
+    expect(result.ok).toBe(false);
+    expect(result.error?.message).toMatch(/cycle/i);
+  });
+
   it("returns stable diagnostics for equivalent profile insertion orders", () => {
     const first = nullRecord([
       ["zeta", { ...profile(), executable: true }],

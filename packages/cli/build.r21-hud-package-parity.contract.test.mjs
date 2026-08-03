@@ -48,7 +48,19 @@ describe("R21.6 conditional HUD runtime and package parity (RED)", () => {
     }
     expect(fs.readFileSync(path.join(canvasBuild.outDir, "player-shell/hud-dom-runtime.mjs")))
       .toEqual(fs.readFileSync(path.join(phaserBuild.outDir, "player-shell/hud-dom-runtime.mjs")));
-  });
+  }, 60_000);
+
+  it("wires authored bindings, live selector state and player events into each generated active HUD", () => {
+    const { canvasBuild, phaserBuild } = activeBuilds();
+    for (const built of [canvasBuild, phaserBuild]) {
+      const player = fs.readFileSync(path.join(built.outDir, "player.mjs"), "utf8");
+      expect(player).not.toContain("const hudSelectorDescriptors = Object.freeze([])");
+      expect(player).not.toContain("const hudRuntimeState = Object.freeze({ selectors: Object.freeze({}), nodeStates: Object.freeze({}) })");
+      expect(player).toMatch(/playerGold/);
+      expect(player).toMatch(/towerforgeHudRuntime\.dispatch\(["']waveStarted["']/);
+      expect(player).toMatch(/towerforgeHudRuntime\.render\(\{[\s\S]{0,500}state:/);
+    }
+  }, 60_000);
 
   it("embeds the same selected HUD in both single-file players without unresolved runtime imports", () => {
     const { canvasBuild, phaserBuild } = activeBuilds();
@@ -112,6 +124,36 @@ describe("R21.6 conditional HUD runtime and package parity (RED)", () => {
     const built = build(unbound, "desktop-unbound", "dist-unbound");
     assertHudPruned(built.outDir);
   }, 60_000);
+
+  it("prunes malformed HUD for a selected legacy v2 target even when a sibling target binds a custom HUD", () => {
+    const mixed = copyStarter("selected-legacy-sibling-custom-hud");
+    const projectPath = path.join(mixed, "project.json");
+    writeJson(projectPath, { ...readJson(projectPath), schemaVersion: 5 });
+    const targetsPath = path.join(mixed, "build-targets.json");
+    const targets = readJson(targetsPath);
+    const base = targets.targets[targets.defaults.web];
+    writeJson(targetsPath, {
+      schemaVersion: 2,
+      defaults: { web: "custom-hud" },
+      targets: {
+        legacy: {
+          ...base, id: "legacy", renderer: "canvas", webDir: "dist-legacy-selected",
+          formFactor: "legacy",
+          viewport: { fit: "contain", padding: 24, minZoom: 0.5, maxZoom: 4, initialZoom: 1 },
+          quality: "auto", locale: "auto", inputProfile: "hybrid"
+        },
+        "custom-hud": {
+          ...base, id: "custom-hud", renderer: "canvas", webDir: "dist-custom-hud",
+          formFactor: "desktop", hudProfileId: "main",
+          viewport: { fit: "contain", padding: 24, minZoom: 0.5, maxZoom: 4, initialZoom: 1 },
+          quality: "high", locale: "en", inputProfile: "keyboard_mouse"
+        }
+      }
+    });
+    fs.writeFileSync(path.join(mixed, "content", "hud.json"), "{ deliberately invalid HUD bytes", "utf8");
+    const built = build(mixed, "legacy", "dist-legacy-selected");
+    assertHudPruned(built.outDir);
+  }, 60_000);
 });
 
 function configureActiveHud(dir) {
@@ -136,12 +178,28 @@ function configureActiveHud(dir) {
     profiles: {
       main: {
         schemaVersion: 1, label: "Package parity HUD",
-        breakpoints: { mobileMax: 767, tabletMax: 1199 }, commonNodes: [],
+        breakpoints: { mobileMax: 767, tabletMax: 1199 },
+        commonNodes: [{
+          schemaVersion: 1, id: "gold", type: "counter", childIds: [],
+          properties: { format: "integer" },
+          bindings: { data: [{ slot: "value", selectorId: "playerGold" }], actions: [] },
+          states: { normal: { visible: true, enabled: true } }
+        }],
         variants: {
           desktop: variant(1920, 1080), tablet: variant(1024, 768), mobile: variant(390, 844)
         },
-        screens: { gameplay: { schemaVersion: 1, surface: "gameplay", rootNodeIds: [] } },
-        screenGraph: { schemaVersion: 1, initialScreenId: "gameplay", transitions: [] },
+        screens: {
+          setup: { schemaVersion: 1, surface: "setup", rootNodeIds: ["gold"] },
+          gameplay: { schemaVersion: 1, surface: "gameplay", rootNodeIds: ["gold"] }
+        },
+        screenGraph: {
+          schemaVersion: 1,
+          initialScreenId: "setup",
+          transitions: [{
+            id: "wave_started", event: "waveStarted", fromScreenId: "setup",
+            targetScreenId: "gameplay", conditions: []
+          }]
+        },
         assetRoles: {}
       }
     }
@@ -156,7 +214,20 @@ function activeBuilds() {
 }
 
 function variant(width, height) {
-  return { schemaVersion: 1, designViewport: { width, height }, rootNodeIds: [] };
+  return {
+    schemaVersion: 1,
+    designViewport: { width, height },
+    rootNodeIds: ["gold"],
+    layouts: {
+      gold: {
+        schemaVersion: 1,
+        layer: "content",
+        safeArea: true,
+        placement: { kind: "anchor", horizontal: "left", vertical: "top", offsetX: 24, offsetY: 24 },
+        size: { width: 120, height: 44, minWidth: 44, minHeight: 44, maxWidth: 240, maxHeight: 88 }
+      }
+    }
+  };
 }
 
 function build(dir, targetId, out) {

@@ -4419,3 +4419,36 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   with `npm run test -- --maxWorkers=1` and passed `453/453` files, `4349/4349` tests.
 - This evidence was written before the final documentation-only freeze commit. Per the R21 rule,
   the final commit receives a fresh gate pass before either independent verifier signs off.
+
+## 2026-08-04 — R21 verifier-reopened P1 regression RED evidence
+
+- After the independent verification freeze, the Contract/Test Designer reopened R21 with tests
+  and this evidence only; no production runtime, build template, loader, Studio or plugin source
+  changed. The four P1 boundaries are: a generated active HUD must receive live selector
+  descriptors/state and player screen events; the DOM adapter must reuse initial selector state
+  when dispatch omits an override and must materialize build-menu items through one
+  pointer/keyboard/gamepad/touch activation path; target selection must prune an unselected custom
+  HUD even when it is a sibling of the selected legacy target; validation must inspect the complete
+  node graph, including orphan components.
+- The generated-player fixture now contains a real `playerGold` data binding and an authored
+  `waveStarted` screen transition. The build contract rejects the constant empty descriptor/state
+  placeholders and requires render/event refresh wiring. The semantic-DOM regression requires a
+  condition-bearing transition to work without an explicit state override, plus two rendered build
+  items whose activation invokes the existing `selectBuildSlot` handler with stable
+  `{ slotId, index }` payload for all four input families. The pure menu intent asserts the same
+  compatible payload.
+- Exact pure/DOM RED command:
+  `npx vitest run packages/player-shell/src/r21-hud-dom-runtime.regression.test.mjs packages/player-runtime/src/r21-hud-build-menu-presets.contract.test.mjs packages/player-runtime/src/r21-hud-catalog.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`, `3/3` files RED, `4` expected failures and `42` unchanged passes. Observed
+  failures are: omitted dispatch state enters `__towerforge_system_recovery__`; build-menu DOM has
+  zero materialized children; pure intent omits `index`; and an orphan `A -> B -> A` graph is
+  incorrectly accepted.
+- Exact generated/package RED command:
+  `npx vitest run packages/cli/build.r21-hud-package-parity.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`, `1/1` file RED with exactly `2` expected failures and `6` unchanged passes.
+  Canvas/Phaser output still embeds `hudSelectorDescriptors = Object.freeze([])` and constant empty
+  state instead of runtime data/events; selecting the legacy target still fails validation because
+  the unselected sibling's `hudProfileId` is cross-validated after its malformed HUD bytes were
+  deliberately pruned. These RED results invalidate the earlier exact-commit gates and both prior
+  sign-offs until production fixes, focused GREEN, re-freeze, full gates and fresh independent
+  verification complete.

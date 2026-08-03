@@ -200,7 +200,7 @@ describe("R21.4 pure build-menu presets and input parity contract (RED)", () => 
     expect(intents).toEqual(Array.from({ length: 4 }, () => ({
       schemaVersion: 1,
       actionId: "selectBuildSlot",
-      payload: { slotId: "cannon" }
+      payload: { slotId: "cannon", index: 0 }
     })));
   });
 
