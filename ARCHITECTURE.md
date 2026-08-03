@@ -121,7 +121,7 @@ Project schema v3 remains the explicit mechanics-authoring boundary. R17 adds sc
 | Large-screen player | BuildTargets v2; `ViewportTransformV1`; `PlayerActionDescriptorV1`; `PlayerPreferencesV1`; `PlayerSessionSaveV1` | Desktop/responsive targets opt in. Legacy targets omit the new shell/runtime imports. Session/preferences evolve independently from gameplay checkpoint, journal, profile and multiplayer contracts |
 | Native generated game | BuildTargets v2 `platform: desktop`; Tauri carrier contract v1; optional updater config v1 | Native targets compile their own selected player and never borrow a web target. Browser and native players share `PlayerSessionSaveV1`; only the storage/lifecycle port changes. Updater code, permissions and dependencies are absent unless explicitly enabled |
 | Camera projection presentation (Proposed R20) | visuals v4; `CameraProfileV1`; view variants v1; optional BuildTargets v2 `cameraProfileId` | First guarded camera authoring may promote the project to existing v5 and visuals to v4. Resolution is mission -> map -> selected target -> built-in top-down. Projects/targets without camera records keep the literal legacy renderer path and module set. Projection never enters engine state or gameplay identity |
-| Player shell/HUD presentation (Proposed R21) | optional `content/hud.json` `HudCatalogV1`; optional BuildTargets v2 `hudProfileId`; `PlayerShellPortV1` | Custom HUD activates only for project-v5 desktop/responsive targets with an explicit valid profile binding. Unbound large-screen targets use the built-in R18 shell; BuildTargets v1 neither reads nor bundles HUD runtime. HUD state never enters engine state, content/capability digests, checkpoints or replays |
+| Player shell/HUD presentation (R21 implemented candidate) | optional `content/hud.json` `HudCatalogV1`; optional BuildTargets v2 `hudProfileId`; `PlayerShellPortV1` | Custom HUD activates only for project-v5 desktop/responsive targets with an explicit valid profile binding. Unbound large-screen targets use the built-in R18 shell; BuildTargets v1 neither reads nor bundles HUD runtime. HUD state never enters engine state, content/capability digests, checkpoints or replays. Exact-commit gates and independent sign-offs remain pending |
 | Web distribution | `DistributionConfigV1`; `PublishManifestV1`; provider adapter contract v1; public remix source `.tdpack` v2; `RemixProvenanceV1`; `MonetizationHookV1` | This domain is constructor/distribution state, not gameplay. Candidate manifests and source packs are reproducible; upload requires a fresh explicit confirmation bound to candidate, adapter and target. Credentials, provider metadata and user-local paths never enter project content. Ordinary `.tdpack` v1 remains unchanged |
 | Visual catalog and procedural presentation | visuals v2 legacy; visuals v3 with optional `proceduralJuice` v1; Proposed R20 visuals v4 with CameraProfile/view variants v1; `tf-juice-rng-v1` | First R11 authoring explicitly promotes the project manifest and visuals document to v3; first R20 camera authoring promotes only the existing project-v5/visuals-v4 presentation domains. Missing optional blocks keep legacy renderer/audio behavior and snapshot bytes; future inner versions are lossless/read-only and fail closed; presentation data never enters gameplay digests/checkpoints/replays |
 | Mechanics catalog and modules | catalog v1; `combat` v1/v2/v3; `reactions`, `navigation`, `physics`, `ballistics`, `weather`, `terraforming`, `arsenal`, `macroEconomy`, `director`, `quests`, and `enemyBehaviors` v1; `logistics` v1/v2/v3; `heroes` v1/v2/v3/v4/v5/v6/v7; `elevation` v1/v2/v3; `roguelite` v1/v2/v3/v4; `multiplayer` v1/v2 | Reactions depend on the same mission's active combat v2/v3 profile; elevation v2 adds optional LoS and v3 high-ground rules; ballistics v1 independently adds bound direct/arc projectiles, optional clearance/ricochet, and authored destructible objects while preserving immediate legacy damage elsewhere; weather v1 uses its own seeded RNG domain and never activates Ballistics or Juice; arsenal v1 compiles base/barrel/core loadouts and exact artifact recipes without creating a second item/socket system; macroEconomy v1 owns a separate seeded market, fixed-term deposits and atomic rituals without replacing legacy mission interest; roguelite v2 adds optional artifact loot/socket state, v3 independently permits optional artifacts and deterministic wave draft, and v4 adds an independent optional campaign marker while preserving v3 battle behavior; heroes evolve monotonically from static roster through movement, durability, active ability, nullable battle-local skill tree, independently nullable passive tower-damage aura, and nullable dynamic blocking; only active non-null blocking depends on the same mission's explicitly selected Dynamic Navigation profile; logistics v1 independently adds nullable deterministic power, v2 adds finite local ammunition, and v3 adds independently nullable bounded production/storage/transfer; Director v1 only selects from its authored counter pool; quests v1 selects battle-local secondary objectives only for the mission's active supported profile; enemyBehaviors v1 adds targetable boss components plus optional bounded formations/protection only to the active mission; multiplayer v1 is local co-op and v2 is an explicit asymmetric Send-vs-Build profile; null/legacy paths do not activate adjacent mechanics, component/projectile/weather/arsenal/macro-economy state, quests, or multiplayer packaging; unsupported future versions fail closed and upgrades are explicit |
@@ -136,6 +136,38 @@ Project schema v3 remains the explicit mechanics-authoring boundary. R17 adds sc
 | Multiplayer protocol | protocol v1; local/asymmetric journals v1; offline challenge/reconnect/transport v1 | Player/sequence/tick metadata remains outside `GameCommand`; handshake rejects incompatible protocol, engine, content, mode, or capability identity |
 
 These domains MUST evolve independently. A project schema bump MUST NOT rewrite profiles, checkpoints, replays, or network envelopes by implication.
+
+### R21 implemented candidate: data-only HUD boundary
+
+R21 is implemented as a candidate, not yet accepted. A custom shell is selected only when all four
+conditions hold: project schema v5, BuildTargets v2, target form factor `desktop | responsive`, and
+an explicit valid `hudProfileId` that resolves in optional `content/hud.json`. An unbound
+large-screen target keeps the built-in R18 shell. BuildTargets v1 resolves the target before
+optional HUD loading, so it neither parses malformed reusable HUD bytes nor imports R21 runtime
+modules.
+
+`packages/player-runtime` owns the closed own-data `HudCatalogV1` validator, responsive layout
+compiler, bounded declarative screen graph and seven build-menu planners: desktop horizontal
+quickbar, vertical edge dock, category catalog drawer, radial wheel, contextual tile popover,
+mobile bottom sheet and keyboard command palette. These pure modules receive descriptor IDs and
+detached player/snapshot state. They do not import the engine, renderer, DOM, Node or filesystem.
+`packages/player-shell` is the sole browser adapter: it renders semantic DOM, owns focus and input
+routing, retains the mandatory recovery overlay and dispatches only the shared
+`PlayerActionDescriptorV1` registry. Canvas and Phaser therefore share one screen-space shell while
+the renderer remains responsible only for the projected world.
+
+The Studio HUD Hub and MCP `hud` domain reuse the Node-side authoring transaction over
+`project.json + build-targets.json + content/hud.json + content/visuals.json`. Reads and recipes are
+detached; preview and render-preview are compute-only; apply requires the composite revision,
+validates before write, backs up all owned files and rolls back atomically. HUD media is referenced
+only by existing visuals asset IDs and reaches the project through the guarded asset pipeline.
+Authored HTML, CSS, JavaScript, arbitrary paths/URLs and host APIs remain invalid.
+
+For an active binding, the same selected catalog and pure/browser runtime bytes are packaged for
+Canvas and Phaser across PWA, single-file, portable web, native desktop and source `.tdpack`.
+Inactive, unbound and BuildTargets-v1 builds prune HUD data, imports and runtime modules. This
+candidate has focused GREEN evidence for R21.1–R21.6; exact-commit full gates and both independent
+verifier sign-offs remain required before ADR/roadmap acceptance.
 
 ## Cross-Cutting Concerns
 

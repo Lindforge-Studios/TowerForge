@@ -1045,6 +1045,43 @@ AI Chat accepts up to eight JPEG/PNG/GIF/WebP images per turn, at most 4 MB each
   staged asset workflow. A target without `cameraProfileId` and without matching mission/map
   binding intentionally excludes the camera runtime and stays on the literal legacy top-down path.
   Canvas and Phaser must not add their own projection, depth or inverse-picking math.
+- HUD authoring (R21 implemented candidate): open **HUD Studio**, select a project-v5
+  BuildTargets-v2 `desktop | responsive` target, then choose or create its `hudProfileId`. Use the
+  device/variant/screen selectors, safe areas, rulers, snapping, layers, constraints, component
+  states and mock snapshots before Preview and guarded Apply. The bundled menus are desktop
+  horizontal quickbar, vertical edge dock, category catalog drawer, radial wheel, contextual tile
+  popover, mobile bottom sheet and keyboard command palette. HUD art must be bound by a visuals
+  sprite ID and imported through the normal guarded asset route. Disable removes only the target
+  binding, so the reusable catalog and visual assets remain available for re-enable.
+- HUD AI authoring: use `describe_schema(hud) -> get_hud_profiles -> get_hud_profile_recipe ->
+  preview_hud_profile -> apply_hud_profile(ifRevision) -> validate_project ->
+  render_hud_preview`. Preview and render-preview are compute-only; apply guards the composite
+  `project + build-targets + hud + visuals` revision and owns backup/rollback. There is no broad HUD,
+  markup or script writer.
+- HUD player/package issues: confirm all activation conditions are present: project schema v5,
+  BuildTargets v2, `desktop | responsive` form factor and a valid explicit `hudProfileId`. An
+  unbound large-screen target intentionally uses the built-in R18 shell. BuildTargets v1 must not
+  read `content/hud.json` or package HUD modules, even if that optional file is malformed. Active
+  Canvas and Phaser outputs must carry identical catalog/layout/graph/menu/DOM-shell runtime across
+  PWA, single-file, portable web, native desktop and source `.tdpack`. The mandatory recovery
+  overlay is built in and cannot be removed by a custom screen graph.
+
+Focused R21 checks, matching the implemented-candidate evidence in `progress.md`:
+
+```bash
+npx vitest run packages/player-runtime/src/r21-hud-catalog.contract.test.mjs packages/cli/lib/r21-hud-project-schema.contract.test.mjs --reporter=verbose --maxWorkers=1
+npx vitest run packages/cli/lib/r21-hud-authoring.contract.test.mjs --reporter=verbose --maxWorkers=1
+npx vitest run packages/player-runtime/src/r21-hud-catalog.contract.test.mjs packages/player-runtime/src/r21-hud-layout.contract.test.mjs --reporter=verbose --maxWorkers=1
+npx vitest run packages/player-runtime/src/r21-hud-catalog.contract.test.mjs packages/player-runtime/src/r21-hud-screen-graph.contract.test.mjs --reporter=verbose --maxWorkers=1
+npx vitest run packages/player-runtime/src/r21-hud-build-menu-presets.contract.test.mjs --reporter=verbose --maxWorkers=1
+npx vitest run packages/studio/r21-hud-studio.contract.test.mjs --reporter=verbose --maxWorkers=1
+npx vitest run packages/mcp/r21-hud-ai-authoring.contract.test.mjs --reporter=verbose --maxWorkers=1
+npx vitest run packages/cli/build.r21-hud-package-parity.contract.test.mjs --reporter=verbose --maxWorkers=1
+```
+
+These focused commands diagnose the candidate; they do not accept R21. Acceptance still requires
+the full exact-commit gates from `AGENTS.md` and independent Code Verifier plus Constructor
+Integration Verifier sign-offs. Any source change invalidates that evidence.
 
 ## Deploy
 

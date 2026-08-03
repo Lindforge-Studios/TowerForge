@@ -67,14 +67,18 @@ service. Нет соответствующего выбора или локал�
 | R18 — Large-Screen Web Player | Завершён и слит; exact-commit CI green; code + constructor sign-off; ADR Accepted | PR #34: project-v5/BuildTargets-v2 large-screen web target, shared viewport, desktop shell, IndexedDB recovery, localized accessible PWA и unchanged legacy targets |
 | R19 — Native Desktop Distribution | Реализован; exact-commit gates и два независимых sign-off; ADR Accepted; PR #35 | First-class desktop target, native storage/lifecycle, cross-platform installers и optional signed updater |
 | R20 — Camera Projection Studio | R20.1–R20.4 реализованы; focused GREEN; exact gates/sign-off ожидаются | Proposed ADR 0061: visuals v4/CameraProfileV1, renderer-owned top-down/isometric/dimetric projection, shared hit testing/depth и guarded view assets |
-| R21 — Player Shell & HUD Constructor | В работе: contract freeze / R21.1 RED | Proposed ADR 0062: opt-in `HudCatalogV1`, one DOM shell, responsive layouts/screen graph, action registry, presets, guarded Studio/MCP и package parity |
+| R21 — Player Shell & HUD Constructor | Implemented candidate: R21.1–R21.6 focused GREEN; exact-commit gates и два независимых sign-off ожидаются | Proposed ADR 0062: opt-in `HudCatalogV1`, one DOM shell, responsive layouts/screen graph, action registry, семь presets, guarded Studio/MCP и conditional package parity |
 
-### Delivery snapshot на 2026-08-01
+### Delivery snapshot на 2026-08-04
 
 - Предыдущий desktop pre-release — [`v0.5.2`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.5.2); он включает R0–R14.
 - R15 PR #28, R16 PR #29 и R17 PR #30 слиты в `main`; R17 exact-commit CI run `30698019009` завершился SUCCESS.
 - R15–R17 прошли раздельные RED/GREEN-циклы, полные gates и по два независимых sign-off; после финального CI repair в R17 P0–P3 findings отсутствуют.
 - Тег `v0.6.0` сохранён как неизменяемое свидетельство падения Windows release job и не имеет публичного GitHub Release. [`v0.6.1`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.6.1) опубликован как неподписанный pre-release с R0–R17 и CRLF-safe package pruning; exact tag, шесть installers, `SHA256SUMS` и скачанный DMG проверены.
+- R21.1–R21.6 реализованы как candidate и прошли focused GREEN по catalog/authoring, layout,
+  screen graph, семи build-menu presets, Studio, MCP/AI и conditional player/package parity.
+  R21 ещё не принят: exact-commit full gates и независимые Code Verifier/Constructor Integration
+  Verifier sign-off не выполнялись.
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Сейчас исполнимыми являются только
 версии, перечисленные в [ARCHITECTURE.md](../ARCHITECTURE.md): наличие planned descriptor или
@@ -107,17 +111,27 @@ pathfinding, ballistics, snapshots, checkpoints, commands и replay digest не 
 лимиты и четыре отдельные RED/GREEN-поставки зафиксированы в Proposed
 [ADR 0061](adr/0061-r20-camera-projection-studio.md).
 
-R21 добавляет независимый data-only `content/hud.json` (`HudCatalogV1`) и optional
-`BuildTargets-v2 target.hudProfileId`, не создавая mechanics capability. Custom shell активируется
-только для project-v5 desktop/responsive target с явной валидной ссылкой. Large-screen target без
-ссылки использует встроенный R18 shell, а BuildTargets v1 не читает и не включает HUD runtime даже
-при наличии переиспользуемого каталога. Pure validation/layout/selector/graph contracts остаются в
-`packages/player-runtime`; один browser-only `packages/player-shell` владеет semantic DOM,
-focus/input и применяется Canvas, Phaser и Studio preview. Мир по-прежнему рисуется renderer-ом и
-проходит R20 projection независимо от screen-space HUD. Authoring использует общий revision
-`project + build-targets + hud + visuals`, guarded apply, backup и rollback. Контракт, лимиты и шесть
-раздельных RED/GREEN-поставок зафиксированы в Proposed
-[ADR 0062](adr/0062-r21-player-shell-hud-constructor.md).
+R21 implemented candidate добавляет независимый data-only `content/hud.json` (`HudCatalogV1`) и
+optional `BuildTargets-v2 target.hudProfileId`, не создавая mechanics capability. Custom shell
+активируется только для project-v5 desktop/responsive target с явной валидной ссылкой. Large-screen
+target без ссылки использует встроенный R18 shell, а BuildTargets v1 не читает и не включает HUD
+runtime даже при наличии переиспользуемого каталога. Pure validation/layout/selector/screen-graph
+и build-menu contracts остаются в `packages/player-runtime`; один browser-only
+`packages/player-shell` владеет semantic DOM, focus/input и применяется Canvas, Phaser и Studio
+preview. Мир по-прежнему рисуется renderer-ом и проходит R20 projection независимо от screen-space
+HUD. Authoring использует общий revision `project + build-targets + hud + visuals`, guarded apply,
+backup и rollback. Studio HUD Hub и MCP поддерживают один поток
+`describe/read -> recipe -> preview -> guarded apply -> validate -> render preview`.
+
+В candidate входят семь data-only меню: desktop horizontal quickbar, vertical edge dock, category
+catalog drawer, radial wheel, contextual tile popover, mobile bottom sheet и keyboard command
+palette. Один action registry связывает их с безопасными UI actions, существующими commands и
+bounded TowerScript signals. Активный профиль одинаково переносится в Canvas/Phaser PWA,
+single-file, portable web, native desktop и `.tdpack`; inactive/unbound и BuildTargets-v1 пути не
+парсят `content/hud.json` и не включают HUD modules. Контракт, лимиты и шесть раздельных
+RED/GREEN-поставок зафиксированы в Proposed
+[ADR 0062](adr/0062-r21-player-shell-hud-constructor.md). Статус candidate не является acceptance:
+перед принятием остаются exact-commit full gates и два независимых sign-off.
 
 Для R18–R21 действует поуровневый TDD gate. Каждый небольшой срез фиксирует focused RED, затем
 проходит focused GREEN и регрессии только затронутых слоёв. Полный unit/E2E/plugin/package набор

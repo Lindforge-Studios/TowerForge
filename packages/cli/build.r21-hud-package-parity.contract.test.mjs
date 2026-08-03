@@ -29,6 +29,11 @@ afterAll(() => {
 });
 
 describe("R21.6 conditional HUD runtime and package parity (RED)", () => {
+  it("includes the browser shell source in the generated Codex plugin runtime", () => {
+    const builder = fs.readFileSync(path.join(repoRoot, "scripts", "build-codex-plugin.mjs"), "utf8");
+    expect(builder).toMatch(/packages["'],\s*["']player-shell["']/);
+  });
+
   it("ships one shared DOM HUD runtime and selected profile through Canvas and Phaser PWA builds", () => {
     const { canvasBuild, phaserBuild } = activeBuilds();
     for (const built of [canvasBuild, phaserBuild]) {

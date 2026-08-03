@@ -300,6 +300,38 @@ when the authored Distribution config uses them; the absent path remains distrib
 
 `content/visuals.json` schema v2 owns `assetsRoot`, atlases, standalone/frame sprites, weighted tile variants, Wang/signature materials, map/grid tileset bindings, event SFX, looping music tracks, and per-mission music. Schema v3 is an explicit storage-compatible extension with optional closed `proceduralJuice` v1 catalogs for deterministic particles, oscillator audio, camera cues, and event bindings. R20 contract-freezes visuals v4 as a second independent storage-compatible extension with bounded `CameraProfileV1`, mission/map bindings and projection/orientation view variants. Resolution is mission -> map -> BuildTargets-v2 target -> built-in top-down. Absence keeps the literal v2/v3 top-down path unchanged. Asset paths are project-relative only. R21 references those existing sprite IDs from its separate optional `content/hud.json`; the HUD catalog never embeds binaries, URLs, host paths, CSS, HTML, JavaScript, fonts or SVG.
 
+### R21 implemented candidate: HUD catalog and shell
+
+R21 is an implemented candidate and has not yet received exact-commit gates or either independent
+sign-off. `content/hud.json` stores closed data-only `HudCatalogV1`; it becomes active only through
+an explicit `hudProfileId` on a project-v5 BuildTargets-v2 `desktop | responsive` target. An
+unbound large-screen target keeps the built-in R18 layout. A BuildTargets-v1 build resolves its
+target before optional content loading, so it neither parses the HUD file nor includes catalog,
+layout, graph, menu or DOM-shell modules.
+
+The pure `packages/player-runtime` layer validates catalogs and compiles responsive variants,
+safe-area constraints, detached screen-graph transitions and build-menu plans. The seven bundled
+menu recipes are desktop horizontal quickbar, vertical edge dock, category catalog drawer, radial
+wheel, contextual tile popover, mobile bottom sheet and keyboard command palette. They all dispatch
+through `PlayerActionDescriptorV1`; arbitrary object paths, authored code and direct engine access
+remain unavailable. The browser-only `packages/player-shell` renders semantic DOM, owns
+focus/input and the mandatory non-removable recovery overlay. Canvas and Phaser inject the same
+detached snapshot/player state into that shell and never fork HUD rules into a renderer.
+
+Studio exposes a dedicated HUD Hub for profile/target/screen/variant/device selection, constraints,
+safe areas, rulers, snapping, layers, component states, mock states, diagnostics and guarded asset
+role binding. MCP exposes `describe_schema(hud)`, `get_hud_profiles`,
+`get_hud_profile_recipe`, `preview_hud_profile`, `apply_hud_profile` and
+`render_hud_preview`. The authoring flow is
+`describe/read -> recipe -> preview -> guarded apply -> validate -> render preview`; render preview
+returns a detached layout plan, not markup or executable code.
+
+When active, PWA, single-file, portable web, native desktop and source `.tdpack` package the same
+selected profile and runtime graph for Canvas and Phaser. Inactive/unbound and BuildTargets-v1
+builds prune the HUD data and modules. This conditional packaging is an architectural requirement,
+not only a size optimization: malformed inactive HUD bytes must remain irrelevant to a legacy
+build.
+
 `content/story-comics.json` owns mission-linked narrative panels. `content/battle-backgrounds.json` owns mission colors and optional sprite backdrops.
 
 `scripts/**/*.tower.json` owns deterministic project-specific gameplay. TowerScript v1-v7 remain supported; v7 alone may opt a script into Behavior Tree v1 target selection or HFSM v1 state control, without creating `content/mechanics.json`. The later versions add only closed typed engine events/actions/controllers. One action transaction may change at most 64 tiles and a run may hold at most 512 active overrides. Script source is JSON, not executable JavaScript, and has no host filesystem, network, module, DOM, clock, or randomness access. Visual Graph is a lossless projection of this canonical AST, never a second source or language.
@@ -576,13 +608,19 @@ R0A preserves an existing `content/mechanics.json` unchanged and never creates i
 
 Writes are atomic per file and guarded by a content hash across mutable project files. Before overwriting, Studio creates `.towerforge/*.bak` backups.
 
+R21 HUD writes use a dedicated four-source composite revision over `project.json`,
+`build-targets.json`, `content/hud.json`, and `content/visuals.json`. Preview is compute-only;
+guarded apply validates the candidate, writes backups and restores exact prior bytes on failure.
+Disabling a HUD removes the target binding through the same transaction without deleting the
+reusable catalog or its visuals assets.
+
 TowerScript writes use a second file revision guard and backups under `.towerforge/backups/scripts`. Visual Graph preview/apply additionally guards the combined script-source and local-layout revision; its confined layout codec rejects traversal and symlink escapes and restores prior exact layout bytes on rollback. The generic project tree hides sensitive names, generated/editor directories, binary files, and symlinks; only `.tower.json` files below `scripts/` are editable from that tree.
 
 Studio writes action traces for save, sim, build, map compile, and asset import under `.towerforge/runs/*.jsonl`.
 
 ## Roadmap
 
-The staged R0–R21 program, TDD roles, forbidden increment combinations, compatibility baseline, and delivery status live in [ROADMAP.md](ROADMAP.md). Accepted R0–R8 establish opt-in mechanics, the common damage/modifier boundary, deterministic checkpoints/journals/profile state, navigation/elevation/terraforming, roguelite runs, heroes/logistics, TowerScript DX 2.0, generative authoring, and local multiplayer. Accepted R9 adds script-local TowerScript v7 Behavior Tree/HFSM controllers plus v2 Graph/Trace/Debugger surfaces. Accepted R10 adds compute-only Persona QA and mission-selected procedural quests. Accepted R11 independently layers deterministic JSON particle/audio/camera presentation over the authoritative event surface without changing gameplay state. Accepted R12 adds targetable boss components, schema-v7 component-driven phases, bounded formation steering and vanguard shield interception. Accepted R13 adds deterministic projectiles, arc clearance, bounded ricochet, transactional destructibles and independent seeded Weather. R14 adds CampaignRunV2, opt-in modular tower assembly and atomic gem crafting. R15 adds the opt-in deterministic local market, deposits and rituals. Accepted R16 adds isolated Replay Lab and reference-relay boundaries. Accepted R17 adds opt-in Distribution v1, reproducible publish manifests, explicit-confirm provider adapters, deterministic Remix source packs and host-only monetization. Accepted R18 adds the large-screen web player and R19 adds the first-class generated native carrier. R20 adds presentation-only camera profiles and one shared renderer projector. Proposed R21 adds an explicitly bound data-only HUD catalog, a pure layout/screen-graph runtime and one browser DOM shell without engine or renderer rule changes.
+The staged R0–R21 program, TDD roles, forbidden increment combinations, compatibility baseline, and delivery status live in [ROADMAP.md](ROADMAP.md). Accepted R0–R8 establish opt-in mechanics, the common damage/modifier boundary, deterministic checkpoints/journals/profile state, navigation/elevation/terraforming, roguelite runs, heroes/logistics, TowerScript DX 2.0, generative authoring, and local multiplayer. Accepted R9 adds script-local TowerScript v7 Behavior Tree/HFSM controllers plus v2 Graph/Trace/Debugger surfaces. Accepted R10 adds compute-only Persona QA and mission-selected procedural quests. Accepted R11 independently layers deterministic JSON particle/audio/camera presentation over the authoritative event surface without changing gameplay state. Accepted R12 adds targetable boss components, schema-v7 component-driven phases, bounded formation steering and vanguard shield interception. Accepted R13 adds deterministic projectiles, arc clearance, bounded ricochet, transactional destructibles and independent seeded Weather. R14 adds CampaignRunV2, opt-in modular tower assembly and atomic gem crafting. R15 adds the opt-in deterministic local market, deposits and rituals. Accepted R16 adds isolated Replay Lab and reference-relay boundaries. Accepted R17 adds opt-in Distribution v1, reproducible publish manifests, explicit-confirm provider adapters, deterministic Remix source packs and host-only monetization. Accepted R18 adds the large-screen web player and R19 adds the first-class generated native carrier. R20 adds presentation-only camera profiles and one shared renderer projector. R21 is an implemented candidate with an explicitly bound data-only HUD catalog, pure layout/screen-graph/menu runtimes, guarded Studio/MCP authoring, conditional package parity and one browser DOM shell; it remains unaccepted until exact-commit gates and two independent sign-offs complete.
 
 Accepted C3A adds engine-only persistent elevation. `set_elevation` and `restore_elevation` require both an active elevation v1–v3 profile and the active terraforming profile's elevation policy; authored elevation remains the immutable restore base. Terrain/elevation operations may share a cell and commit atomically in declared event order. Each layer is bounded to 512 runtime overrides and the combined ceiling is 1,024. A pure-elevation batch performs no navigation resolver creation, read, or adoption, while `GridMap.elevationAt`, `snapshot.elevation`, LoS, and high-ground immediately use the effective value; reset discards the runtime layer. A committed change emits the real TowerScript-dispatched `elevationChanged` event, and a no-op emits nothing.
 

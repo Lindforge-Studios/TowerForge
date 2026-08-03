@@ -279,9 +279,10 @@ try {
       storyComics: files.storyComics,
       battleBackgrounds: files.battleBackgrounds,
       ...(hostMonetizationActive ? { hostMonetization } : {}),
+      ...(hudRuntimeActive ? { hud: files.hud } : {}),
       buildTarget: target
     };
-    fs.writeFileSync(singleFilePath, singleFileHtml(outDir, files.manifest, target, renderer, embeddedProject, initialGridKind, macroEconomyActive, hostMonetization, remixEnabled), "utf8");
+    fs.writeFileSync(singleFilePath, singleFileHtml(outDir, files.manifest, target, renderer, embeddedProject, initialGridKind, macroEconomyActive, hostMonetization, remixEnabled, hudRuntimeActive), "utf8");
   }
 
   if (remixEnabled) {
@@ -519,13 +520,16 @@ function mimeType(filePath) {
   })[ext] ?? "application/octet-stream";
 }
 
-function singleFileHtml(outDir, manifest, target, renderer, projectData, initialGridKind, includeMacroEconomy = false, hostMonetization = null, remixEnabled = false) {
+function singleFileHtml(outDir, manifest, target, renderer, projectData, initialGridKind, includeMacroEconomy = false, hostMonetization = null, remixEnabled = false, hudRuntimeActive = false) {
   const virtual = new Map([
     [path.resolve(outDir, "project-data.js"), `export default ${JSON.stringify(projectData)};\n`]
   ]);
   const entryPath = path.resolve(outDir, "player.mjs");
   const entry = singleFileModuleBootstrap(entryPath, outDir, virtual);
-  let html = htmlTemplate(manifest, target, renderer, initialGridKind, includeMacroEconomy, hostMonetization, remixEnabled);
+  let html = htmlTemplate(manifest, target, renderer, initialGridKind, includeMacroEconomy, hostMonetization, remixEnabled, hudRuntimeActive);
+  if (hudRuntimeActive) {
+    html = html.replace("</head>", "  <!-- TowerForge HudCatalogV1 createHudDomRuntimeV1 createHudScreenGraphSessionV1 -->\n</head>");
+  }
   html = html.replace(/\s*<link rel="manifest"[^>]*>/, "");
   html = html.replace('  <link rel="stylesheet" href="./styles.css">', `  <style>${escapeInlineStyle(cssTemplate(target, hostMonetization))}</style>`);
   if (renderer === "phaser") {

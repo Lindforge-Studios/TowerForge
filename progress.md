@@ -4401,3 +4401,8 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   parse `content/hud.json`, and emits no HUD data, marker, runtime module or player import.
 - The exact package parity command is GREEN at `1/1` file and `5/5` tests. The adjacent R18
   large-screen and R20 camera packaging matrix is GREEN at `4/4` files and `19/19` tests.
+- A packaging review found that the plugin generator mirrored the new CLI build but not its
+  browser-shell source dependency. A regression was first added and observed RED (`1/1` selected
+  test, missing `packages/player-shell` copy rule), then the generator allowlist was extended. The
+  focused package suite is now `6/6` and plugin validation confirms the generated runtime is
+  self-contained.
