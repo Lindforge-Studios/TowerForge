@@ -3561,3 +3561,28 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   proving the dangling link escaped the exact-path check. GREEN changes the shared nearest-ancestor
   and exact-path discovery to `lstat`, rejects unresolved symlinks before mutation, and makes the
   same command pass `21/21` while preserving the existing symlink and output-isolation cases.
+
+## 2026-08-03 — R19 exact frozen acceptance GREEN
+
+- Exact frozen production source:
+  `9a386303d2d894e17ba81d927074622efe0a912d`. The dangling-symlink repair advances shared project
+  confinement to `lstat`, rejects unresolved exact/intermediate symlinks before mutation and leaves
+  outside targets untouched. The complete focused R19 set passes `14/14` files and `90/90` tests.
+- Exact-commit local gates are GREEN: typecheck, engine build, content validation, tutorial
+  simulation, starter balance, map compilation, complete build, plugin build/validate/smoke and
+  source-to-plugin byte parity. The complete unit suite passes `428/428` files and `4113/4113`
+  tests; Playwright passes `157/157`; desktop Cargo passes `9/9`; mobile packaging, the legacy
+  desktop wrapper and the first-class native carrier all pass.
+- GitHub CI run `30788623051` is GREEN for common, R18 large-screen and ultrawide checks. Generated
+  game acceptance run `30788623046` is GREEN for generation, macOS, Windows, Ubuntu and final
+  acceptance; exactly six installer formats were assembled.
+- The exact-source macOS artifact
+  `/private/tmp/towerforge-r19-exact-ecc86e8.tdproj/native-carrier/src-tauri/target/release/bundle/dmg/R19 Generated Acceptance_0.1.0_aarch64.dmg`
+  passed `hdiutil verify`, mounted read-only and launched the generated application. Its SHA-256 is
+  `00e9cbe161ba88c8acbf17495bf2848801bfc94830ef91b461b383d8ce0b271f`.
+- Fresh read-only Code Verifier and Constructor Integration Verifier audits both issued explicit
+  SIGN-OFF for the exact frozen source. They independently covered exact/intermediate/dangling
+  symlink confinement, scaffold/archive boundaries, updater cleanup, Windows signing scope, output
+  isolation, Studio create/edit/rename/reload/collision/rebinding, native storage/lifecycle,
+  disabled/legacy paths, MCP/AI/plugin parity and all six installer formats. No actionable findings
+  remain. ADR 0060 is Accepted; R19 is ready for PR #35 merge.

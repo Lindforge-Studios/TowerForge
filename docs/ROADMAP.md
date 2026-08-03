@@ -65,7 +65,7 @@ service. Нет соответствующего выбора или локал�
 | R16 — Ghost Replay Lab | Завершён; full gates green; code + constructor sign-off; ADR Accepted | Checksummed ReplayArchiveV1, detached bounded ghost с реальным Studio overlay, immutable What-If branches, read-only Studio/MCP surfaces и отдельный gameplay-free reference relay |
 | R17 — Web Publish, Remix & Monetization | Завершён; full gates; code + constructor sign-off; ADR Accepted | Opt-in Distribution v1/project v4, reproducible publish manifest, explicit-confirm provider adapters, licensed Remix provenance и host-only monetization hooks |
 | R18 — Large-Screen Web Player | Завершён и слит; exact-commit CI green; code + constructor sign-off; ADR Accepted | PR #34: project-v5/BuildTargets-v2 large-screen web target, shared viewport, desktop shell, IndexedDB recovery, localized accessible PWA и unchanged legacy targets |
-| R19 — Native Desktop Distribution | В разработке; ветка `codex/r19-native-desktop-distribution`; ADR In Progress | First-class desktop target, native storage/lifecycle, cross-platform installers и optional signed updater |
+| R19 — Native Desktop Distribution | Реализован; exact-commit gates и два независимых sign-off; ADR Accepted; PR #35 | First-class desktop target, native storage/lifecycle, cross-platform installers и optional signed updater |
 | R20 — Camera Projection Studio | Запланирован после R19 | Renderer-owned top-down/isometric/dimetric projection, shared hit testing/depth и guarded view assets |
 | R21 — Player Shell & HUD Constructor | Запланирован после R20 | Data-only responsive HUD/screen graph, action registry, presets, guarded Studio/MCP и package parity |
 

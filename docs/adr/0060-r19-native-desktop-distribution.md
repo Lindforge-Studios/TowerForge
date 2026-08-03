@@ -1,6 +1,6 @@
 # ADR 0060: R19 Native Desktop Distribution
 
-- Status: In Progress
+- Status: Accepted
 - Date: 2026-08-03
 
 ## Context
@@ -97,6 +97,22 @@ The engine, GameCommand v8, checkpoint, journal, profile, campaign, multiplayer,
 Each slice records focused RED before production work, then runs affected-layer regressions. The
 complete unit, browser, plugin, package and Cargo gates run only on the frozen R19 candidate, before
 two independent sign-offs. Any source change invalidates both sign-offs.
+
+## Acceptance
+
+The exact frozen production source is
+`9a386303d2d894e17ba81d927074622efe0a912d`. Focused R19 contracts pass 90/90, the complete unit
+suite passes 4113/4113, Playwright passes 157/157, and the desktop Rust suite passes 9/9. GitHub CI
+runs `30788623051` and `30788623046` are green for that exact commit; the generated-game matrix
+builds and accepts `.dmg`, `.exe`, `.msi`, `.AppImage`, `.deb` and `.rpm` artifacts.
+
+The locally generated macOS DMG passed `hdiutil verify`, launched its application from the mounted
+read-only image, and has SHA-256
+`00e9cbe161ba88c8acbf17495bf2848801bfc94830ef91b461b383d8ce0b271f`. Fresh independent Code
+Verifier and Constructor Integration Verifier audits both issued explicit sign-off for the frozen
+source after checking exact, intermediate and dangling symlink confinement, Studio target
+transactions, updater opt-in/cleanup, native lifecycle/storage, disabled/legacy behavior, MCP/plugin
+parity and all six installer formats. No actionable findings remain.
 
 ## Consequences
 
