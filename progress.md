@@ -4172,3 +4172,43 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   GREEN at `8/8` files and `101/101` tests. `npm run plugin:build`, `npm run plugin:validate`,
   `npm run plugin:smoke` and `git diff --check` are GREEN; the generated plugin runtime mirrors the
   new CLI authoring module. MCP and Studio authoring remain explicitly deferred to R21.6/R21.5.
+
+## 2026-08-03 — R21.2 pure layout/components/bindings RED evidence
+
+- The independent Contract/Test Designer added only pure player-runtime contract tests and this
+  chronological evidence; no production source, DOM shell, generated runtime or plugin mirror was
+  changed. The slice freezes typed data-only component definitions, per-variant closed layout
+  records, responsive boundary selection, safe-area anchoring, stable traversal and detached
+  frozen layout plans. Screen transitions remain reserved for R21.3.
+- The contract uses the existing `PlayerActionDescriptorV1` IDs and a closed v1 selector-descriptor
+  allowlist. Authored arbitrary object paths, JavaScript/CSS/HTML, renderer state and unknown
+  component states fail closed. The representative matrix covers primitives, stack/container,
+  counter/progress bindings, button actions and the specialized `build_menu`, `radial_menu` and
+  `repeater` components without introducing a DOM dependency.
+- Exact focused command:
+  `npx vitest run packages/player-runtime/src/r21-hud-catalog.contract.test.mjs packages/player-runtime/src/r21-hud-layout.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`; `2/2` files RED, with one expected rich-node catalog assertion failure and one
+  expected collection failure because `packages/player-runtime/src/hud-layout.mjs` does not yet
+  exist. Existing R21.1 catalog coverage remains `19` tests GREEN. The frozen compiler contracts
+  additionally cover desktop/tablet/mobile breakpoints, exact safe rectangles, 44 px diagnostics,
+  radial/repeater ceilings, input-order invariance, future/unknown/malformed/accessor/symbol/sparse/
+  cyclic data and revoked option proxies.
+
+## 2026-08-03 — R21.2 pure layout/components/bindings focused GREEN
+
+- Extended the closed `HudCatalogV1` normalizer with the complete schema-v1 component allowlist,
+  six authorable component states, bounded detached properties/static payloads, typed data/action
+  bindings and optional per-variant layout records. Executable/markup/style/URL/path fields,
+  arbitrary selector paths, unknown layouts/layers, sparse arrays, cycles, accessors, symbols and
+  future records fail closed without invoking authored code.
+- Added the DOM-free `compileHudLayoutV1` runtime. It selects mobile/tablet/desktop variants at the
+  authored breakpoints, computes a safe rectangle and bounded anchor/flow/container rectangles,
+  traverses authored roots and children stably regardless of source record insertion order, checks
+  selector/action descriptors, detaches runtime state and bounded collections, and publishes stable
+  accessibility diagnostics for interactive controls below `44px`.
+- The exact RED command is now GREEN at `2/2` files and `40/40` tests. The full
+  `packages/player-runtime/src` compatibility matrix is GREEN at `12/12` files and `124/124` tests.
+  `node --check` passes for both pure runtime modules; `npm run plugin:build`,
+  `npm run plugin:validate`, `npm run plugin:smoke` and `git diff --check` are GREEN, and the
+  generated plugin runtime contains the same new catalog/layout exports. R21.3 screen navigation
+  and the browser-owned DOM shell remain intentionally outside this slice.

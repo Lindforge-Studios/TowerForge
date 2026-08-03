@@ -53,6 +53,27 @@ function catalog(profiles = { main: profile() }) {
   return { schemaVersion: 1, profiles };
 }
 
+function richButtonNode(id = "start_wave") {
+  return {
+    schemaVersion: 1,
+    id,
+    type: "button",
+    childIds: [],
+    properties: {
+      labelKey: "hud.start_wave",
+      ariaLabelKey: "hud.start_wave"
+    },
+    bindings: {
+      data: [],
+      actions: [{ event: "activate", actionId: "startWave", payload: {} }]
+    },
+    states: {
+      normal: { visible: true, enabled: true },
+      disabled: { visible: true, enabled: false }
+    }
+  };
+}
+
 describe("R21.1 HudCatalogV1 closed pure contract (RED)", () => {
   it("normalizes a valid catalog into frozen prototype-neutral detached own data", () => {
     const source = catalog();
@@ -92,6 +113,46 @@ describe("R21.1 HudCatalogV1 closed pure contract (RED)", () => {
     expect(Object.hasOwn(result.catalog.profiles, "__proto__")).toBe(true);
     expect(result.catalog.profiles.__proto__.label).toBe("Proto HUD");
     expect(Object.getPrototypeOf(result.catalog.profiles)).toBe(null);
+  });
+
+  it("normalizes the R21.2 typed component shape without executable paths or renderer state", () => {
+    const value = catalog();
+    value.profiles.main.commonNodes = [richButtonNode()];
+    value.profiles.main.variants.desktop.rootNodeIds = ["start_wave"];
+    value.profiles.main.variants.tablet.rootNodeIds = ["start_wave"];
+    value.profiles.main.variants.mobile.rootNodeIds = ["start_wave"];
+    value.profiles.main.screens.gameplay.rootNodeIds = ["start_wave"];
+
+    const result = validateHudCatalogV1(value);
+
+    expect(result.ok).toBe(true);
+    expect(result.catalog.profiles.main.commonNodes[0]).toMatchObject({
+      schemaVersion: 1,
+      id: "start_wave",
+      type: "button",
+      properties: { labelKey: "hud.start_wave" }
+    });
+    expect(Object.isFrozen(result.catalog.profiles.main.commonNodes[0].bindings.actions)).toBe(true);
+    expect(Object.getPrototypeOf(result.catalog.profiles.main.commonNodes[0].states)).toBe(null);
+  });
+
+  it.each([
+    ["future component schema", () => ({ ...richButtonNode(), schemaVersion: 2 })],
+    ["unknown executable component field", () => ({ ...richButtonNode(), javascript: "alert(1)" })],
+    ["arbitrary object-path selector", () => {
+      const node = richButtonNode();
+      node.bindings.data = [{ slot: "value", selectorId: "snapshot.player.wallet.gold" }];
+      return node;
+    }],
+    ["unsupported component state", () => {
+      const node = richButtonNode();
+      node.states.executing = { visible: true, enabled: true };
+      return node;
+    }]
+  ])("fails closed for R21.2 %s", (_label, makeNode) => {
+    const value = catalog();
+    value.profiles.main.commonNodes = [makeNode()];
+    expect(validateHudCatalogV1(value).ok).toBe(false);
   });
 
   it.each([

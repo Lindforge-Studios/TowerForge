@@ -12,3 +12,4 @@ export * from "./localized-strings.mjs";
 export * from "./fixed-simulation-clock.mjs";
 export * from "./presentation-quality.mjs";
 export * from "./hud-catalog.mjs";
+export * from "./hud-layout.mjs";
