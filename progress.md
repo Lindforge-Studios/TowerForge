@@ -4546,6 +4546,19 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   repair, focused GREEN, a new exact-commit freeze, full gates and two fresh independent sign-offs
   are required before R21 acceptance.
 
+## 2026-08-04 — R21 asset metadata AI-discovery RED evidence
+
+- A bounded follow-up contract extends only the read-only HUD descriptor and shared agent guidance.
+  `describe_schema(hud)` must describe optional validated `profile.assetMetadata` schema v1, its
+  relationship to string `profile.assetRoles`, the closed `image | atlas_frame | nine_slice` kinds,
+  bounded atlas-frame ID and four non-negative nine-slice borders. Agents must continue using the
+  existing `preview_hud_profile -> apply_hud_profile(ifRevision)` transaction; no asset-metadata
+  write tool is added.
+- Exact RED command:
+  `npx vitest run packages/mcp/r21-hud-ai-authoring.contract.test.mjs --maxWorkers=1`.
+  Result: exit `1`, `1/1` file RED with exactly one new failure and `5` unchanged passes because
+  `describe_schema(hud).assetMetadata` is absent; the pre-existing narrow HUD AI tests remain GREEN.
+
 ## 2026-08-04 — R21 second integration-verifier repair focused GREEN
 
 - Added the browser-safe immutable HUD Studio model and connected the Hub to the same complete

@@ -115,6 +115,34 @@ describe("R21.6 MCP/AI HUD authoring and rendered-preview domain (RED)", () => {
     ]));
   });
 
+  it("describes validated asset presentation metadata without widening the guarded write flow", async () => {
+    const described = await callTool("describe_schema", { domain: "hud" }, {});
+    expect(described.hud.assetMetadata).toEqual({
+      field: "profile.assetMetadata",
+      optional: true,
+      roleReferences: "profile.assetRoles",
+      schemaVersion: 1,
+      kinds: ["image", "atlas_frame", "nine_slice"],
+      atlasFrame: { requiredFor: "atlas_frame", type: "bounded_id" },
+      nineSlice: {
+        requiredFor: "nine_slice",
+        fields: ["top", "right", "bottom", "left"],
+        values: "bounded_non_negative_numbers"
+      }
+    });
+    expect(described.hud.authoringTransaction).toMatchObject({
+      preview: "preview_hud_profile",
+      apply: "apply_hud_profile",
+      revisionGuard: "ifRevision"
+    });
+    expect(TOOLS.map((entry) => entry.name)).not.toEqual(expect.arrayContaining([
+      "write_hud_asset_metadata", "replace_hud_asset_metadata", "apply_hud_asset_metadata"
+    ]));
+    expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(
+      /HUD[\s\S]*assetMetadata[\s\S]*image[\s\S]*atlas_frame[\s\S]*nine_slice[\s\S]*preview_hud_profile[\s\S]*apply_hud_profile[\s\S]*ifRevision/i
+    );
+  });
+
   it("completes describe/read/recipe/preview/guarded apply/validate without widening the write", async () => {
     const projectDir = fixture();
     const read = await callTool("get_hud_profiles", { projectDir }, {});
