@@ -3586,3 +3586,42 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   isolation, Studio create/edit/rename/reload/collision/rebinding, native storage/lifecycle,
   disabled/legacy paths, MCP/AI/plugin parity and all six installer formats. No actionable findings
   remain. ADR 0060 is Accepted; R19 is ready for PR #35 merge.
+
+## 2026-08-03 — R20.1 CameraProfile/projector contract RED
+
+- Contract freeze before production changes: `CameraProfileV1` is a closed own-data renderer
+  contract with `top_down`, `isometric_2_1` and `dimetric_oblique` projections, four fixed authored
+  orientations, scalar presentation elevation, bounded fit/zoom settings and deterministic depth
+  ordering by projected Y, elevation and stable entity ID. The pure projector owns projection,
+  inverse hit coordinates and depth keys; engine coordinates and gameplay are unchanged.
+- Resolution precedence is frozen as mission binding -> map binding -> BuildTargets v2
+  `cameraProfileId` -> visuals default -> bundled top-down fallback. `content/visuals.json` v4 can
+  contain `cameraProfiles` schema v1 together with existing Procedural Juice v1. Visuals v3 and a
+  BuildTargets v2 target without `cameraProfileId` retain their prior normalized shapes.
+- Focused RED tests were added without production changes in
+  `packages/renderer/src/r20-camera-projector.contract.test.mjs` and
+  `packages/cli/lib/r20-camera-project-schema.contract.test.mjs`. They cover golden projection
+  vectors, four orientations, inverse/elevation round trips, stable depth, precedence, input-order
+  invariance, detached results, future/unknown/non-finite/over-budget inputs, accessor/proxy/cycle
+  confinement, visuals v4 validation, v3 compatibility, Procedural Juice coexistence and
+  BuildTargets camera references.
+- Exact RED command:
+  `npx vitest run packages/renderer/src/r20-camera-projector.contract.test.mjs packages/cli/lib/r20-camera-project-schema.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+- Expected RED: renderer import fails because `camera-projector.mjs` does not exist; BuildTargets v2
+  rejects `cameraProfileId` as unknown; visuals has no v4/CameraProfile validation; Procedural Juice
+  still requires exactly visuals v3. Result: exit `1`, both files failed, `15/16` tests failed and
+  the sole passing test proved the camera-absent visuals v3/BuildTargets compatibility baseline.
+  R20.3 view-specific asset variants are explicitly outside this R20.1 slice.
+
+## 2026-08-03 — R20.1 CameraProfile/projector focused GREEN
+
+- Added one browser-safe pure projector in `packages/renderer/src/camera-projector.mjs`. It compiles
+  closed `CameraProfileV1` own data, applies the frozen three projection bases and four rotations,
+  provides the elevation-aware inverse, emits stable depth keys and resolves mission -> map ->
+  build target -> visuals default -> bundled top-down without reading or mutating engine state.
+- `content/visuals.json` validation now accepts schema v4 camera catalogs and preserves inner
+  Procedural Juice v1. BuildTargets v2 accepts one optional bounded `cameraProfileId` and rejects an
+  unknown reference. Visuals v2/v3 defaults and camera-absent v1/v2 build targets remain unchanged.
+- The exact RED command is now GREEN: `2/2` files and `32/32` tests pass. Focused affected-layer
+  regressions for R11 schema/authoring/presentation, R18/R19 build targets and the Canvas renderer
+  pass `6/6` files and `72/72` tests. R20.2 renderer integration remains a separate RED/GREEN slice.

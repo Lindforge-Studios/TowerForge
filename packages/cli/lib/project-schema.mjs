@@ -4,6 +4,7 @@ import {
   normalizeElevationOverrides
 } from "./map-compiler.mjs";
 import { validateDistributionConfigV1 } from "../../distribution/src/index.mjs";
+import { validateCameraProfileCatalogV1 } from "../../renderer/src/camera-projector.mjs";
 
 export const PROJECT_SCHEMA_VERSION = 5;
 export const MECHANICS_PROJECT_SCHEMA_VERSION = 3;
@@ -167,7 +168,7 @@ export function validateProjectSchemas(files) {
   issues.push(...compileMapSources(files.mapSources ?? {}, files.balance?.terrainTypes ?? {}).issues);
   validateVisuals(files.visuals, err, warn, files.balance, files.maps, files.mechanics);
   validateNarrative(files, err, warn);
-  validateBuildTargets(files.buildTargets, err);
+  validateBuildTargets(files.buildTargets, err, files.visuals);
   if ((files.buildTargets?.schemaVersion ?? 1) === 2 && files.manifest?.schemaVersion !== PROJECT_SCHEMA_VERSION) {
     err(
       "project",
@@ -575,6 +576,22 @@ function validateVisuals(visuals, err, warn, balance, maps = {}, mechanics = {})
   const assetsRootIssue = validateSafeAssetPath(visuals.assetsRoot ?? "assets", "assetsRoot");
   if (assetsRootIssue) err("visuals", "content/visuals.json", "assetsRoot", assetsRootIssue);
 
+  const visualsVersion = (() => {
+    try {
+      const descriptor = Object.getOwnPropertyDescriptor(visuals, "schemaVersion");
+      return descriptor && "value" in descriptor ? descriptor.value : undefined;
+    } catch {
+      return undefined;
+    }
+  })();
+  if (!Number.isSafeInteger(visualsVersion) || visualsVersion < 1 || visualsVersion > 4) {
+    err("visuals", "content/visuals.json", "schemaVersion", Number.isSafeInteger(visualsVersion) && visualsVersion > 4
+      ? `Visuals schemaVersion ${visualsVersion} is newer than this runtime supports (4).`
+      : "visuals.schemaVersion must be an integer from 1 to 4.");
+  }
+
+  validateCameraProfiles(visuals, visualsVersion, err, balance, maps);
+
   validateProceduralJuice(visuals, err, balance);
 
   if (visuals.theme !== undefined) {
@@ -776,6 +793,47 @@ function validateVisuals(visuals, err, warn, balance, maps = {}, mechanics = {})
   }
 }
 
+function cameraErrorField(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  const match = /^(cameraProfiles(?:\.[A-Za-z0-9_-]+)*)/.exec(message);
+  return match?.[1] ?? "cameraProfiles";
+}
+
+function cameraCatalogDescriptor(visuals) {
+  try {
+    return Object.getOwnPropertyDescriptor(visuals, "cameraProfiles");
+  } catch {
+    return undefined;
+  }
+}
+
+function validateCameraProfiles(visuals, visualsVersion, err, balance, maps) {
+  const descriptor = cameraCatalogDescriptor(visuals);
+  if (!descriptor) return;
+  if (!descriptor.enumerable || !("value" in descriptor)) {
+    err("visuals", "content/visuals.json", "cameraProfiles", "cameraProfiles must be an enumerable own data property; accessors are not allowed.");
+    return;
+  }
+  if (visualsVersion !== 4) {
+    err("visuals", "content/visuals.json", "cameraProfiles", "cameraProfiles requires visuals schemaVersion 4.");
+  }
+  const result = validateCameraProfileCatalogV1(descriptor.value);
+  if (!result.ok) {
+    err("visuals", "content/visuals.json", cameraErrorField(result.error), result.error?.message ?? "Invalid cameraProfiles catalog.");
+    return;
+  }
+  for (const mapId of Object.keys(result.catalog.bindings.maps)) {
+    if (!Object.hasOwn(maps ?? {}, mapId)) {
+      err("visuals", "content/visuals.json", `cameraProfiles.bindings.maps.${mapId}`, `Camera binding references unknown map "${mapId}".`);
+    }
+  }
+  for (const missionId of Object.keys(result.catalog.bindings.missions)) {
+    if (!Object.hasOwn(balance?.missions ?? {}, missionId)) {
+      err("visuals", "content/visuals.json", `cameraProfiles.bindings.missions.${missionId}`, `Camera binding references unknown mission "${missionId}".`);
+    }
+  }
+}
+
 const PROCEDURAL_JUICE_LIMITS = Object.freeze({
   particleEmitters: 64,
   audioCues: 64,
@@ -945,8 +1003,8 @@ function validateProceduralJuice(visuals, err, balance) {
     err("visuals", "content/visuals.json", "proceduralJuice", "proceduralJuice must be an enumerable own data property; accessors are not allowed.");
     return;
   }
-  if (visuals.schemaVersion !== 3) {
-    err("visuals", "content/visuals.json", "proceduralJuice", "proceduralJuice requires visuals schemaVersion 3.");
+  if (![3, 4].includes(visuals.schemaVersion)) {
+    err("visuals", "content/visuals.json", "proceduralJuice", "proceduralJuice requires visuals schemaVersion 3 or 4.");
   }
   const juice = descriptor.value;
   const root = closedRecord(juice, ["schemaVersion", "particleEmitters", "audioCues", "cameraCues", "eventBindings"], "proceduralJuice", err);
@@ -1078,7 +1136,7 @@ function validateProceduralJuice(visuals, err, balance) {
   }
 }
 
-function validateBuildTargets(buildTargets, err) {
+function validateBuildTargets(buildTargets, err, visuals = {}) {
   if (!buildTargets || typeof buildTargets !== "object") {
     err("buildTargets", "build-targets.json", "root", "build-targets.json must be an object.");
     return;
@@ -1098,7 +1156,7 @@ function validateBuildTargets(buildTargets, err) {
     const targetKeys = new Set([
       "id", "type", "platform", "renderer", "webDir", "outputDir", "market", "storeChannel",
       "appId", "appName", "label", "title", "appTitle", "backgroundColor", "appVersion", "manifest",
-      "formFactor", "viewport", "quality", "locale", "inputProfile", "window", "bundle", "updater"
+      "formFactor", "viewport", "quality", "locale", "inputProfile", "cameraProfileId", "window", "bundle", "updater"
     ]);
     const targets = isRecord(buildTargets.targets) ? buildTargets.targets : {};
     if (!isRecord(buildTargets.defaults)) {
@@ -1155,6 +1213,20 @@ function validateBuildTargets(buildTargets, err) {
       }
       if (!["keyboard_mouse", "touch", "hybrid"].includes(target.inputProfile)) {
         err("buildTargets", targetId, `targets.${targetId}.inputProfile`, "inputProfile must be keyboard_mouse, touch, or hybrid.");
+      }
+      if (target.cameraProfileId !== undefined) {
+        const fieldPath = `targets.${targetId}.cameraProfileId`;
+        if (typeof target.cameraProfileId !== "string" || target.cameraProfileId.length === 0 || target.cameraProfileId.length > 64) {
+          err("buildTargets", targetId, fieldPath, "cameraProfileId must be a non-empty bounded camera profile ID from 1 to 64 characters.");
+        } else {
+          const descriptor = cameraCatalogDescriptor(visuals);
+          const result = descriptor && "value" in descriptor
+            ? validateCameraProfileCatalogV1(descriptor.value)
+            : { ok: false };
+          if (!result.ok || !Object.hasOwn(result.catalog.profiles, target.cameraProfileId)) {
+            err("buildTargets", targetId, fieldPath, `Build target references missing camera profile "${target.cameraProfileId}".`);
+          }
+        }
       }
       const viewportPath = `targets.${targetId}.viewport`;
       if (!isRecord(target.viewport)) {
