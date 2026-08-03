@@ -463,7 +463,11 @@ function validateNodeReferences(nodes, variants, screens, path) {
     visiting.delete(id);
     visited.add(id);
   }
-  for (const id of referencedRoots) visit(id, 1);
+  // Validate the whole authored graph, not only nodes currently reachable from a variant or
+  // screen. Detached nodes are deliberately preserved for Studio editing and future screens, so
+  // accepting a cycle there would let guarded authoring succeed and fail only when the node is
+  // later attached (or when a compiler inspects every definition).
+  for (const id of [...nodeMap.keys()].sort()) visit(id, 1);
 }
 
 function normalizeProfile(value, path) {

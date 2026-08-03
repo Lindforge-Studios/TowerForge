@@ -75,11 +75,17 @@ export function createHudDomRuntimeV1(options) {
     const screen = profile.screens?.[screenId];
     const visible = new Set(screen?.rootNodeIds ?? compiled.plan.rootNodeIds);
     const byId = new Map();
+    const planById = new Map(compiled.plan.nodes.map((node) => [node.id, node]));
     for (const node of compiled.plan.nodes) {
       const element = createNode(document, node, options, activateCollectionItem);
       byId.set(node.id, element);
       if (!node.parentId && !visible.has(node.id)) element.hidden = true;
-      if (node.parentId && byId.has(node.parentId)) byId.get(node.parentId).append(element);
+      if (node.parentId && byId.has(node.parentId)) {
+        const parentNode = planById.get(node.parentId);
+        element.style.left = `${node.rect.x - parentNode.rect.x}px`;
+        element.style.top = `${node.rect.y - parentNode.rect.y}px`;
+        byId.get(node.parentId).append(element);
+      }
       else root.append(element);
     }
     return Object.freeze({ ok: true, plan: compiled.plan, screen: graph.snapshot() });
@@ -119,7 +125,17 @@ function createNode(document, node, options, activateCollectionItem) {
   if (tag === "img") {
     element.alt = String(node.properties.altKey ?? label);
     const assetId = node.properties.assetId;
-    if (typeof assetId === "string") element.src = options.resolveAsset?.(assetId) ?? "";
+    if (typeof assetId === "string") {
+      const asset = options.resolveAsset?.(assetId);
+      if (typeof asset === "string") element.src = asset;
+      else if (asset && typeof asset === "object" && typeof asset.src === "string") {
+        element.src = asset.src;
+        if (asset.frame) {
+          element.style.objectFit = "none";
+          element.style.objectPosition = `${-asset.frame.x}px ${-asset.frame.y}px`;
+        }
+      } else element.src = "";
+    }
   } else if (tag === "input" && node.type === "slider") {
     element.type = "range";
   } else {
@@ -176,11 +192,14 @@ function materializeCollection(document, parent, node, options, activateCollecti
     control.textContent = String(options.localize?.(label) ?? label);
     control.hidden = item?.visible === false;
     control.disabled = item?.enabled === false;
-    control.addEventListener("click", () => activateCollectionItem({
+    control.addEventListener("click", (event) => {
+      event?.stopPropagation?.();
+      activateCollectionItem({
       nodeId: node.id,
       itemId,
       inputFamily: "pointer"
-    }));
+      });
+    });
     parent.append(control);
   });
 }

@@ -113,7 +113,16 @@ export function normalizeProjectFiles(rawFiles) {
 }
 
 export function loadProjectFiles(projectDir, options = {}) {
-  return normalizeProjectFiles(readRawProjectFiles(projectDir, options));
+  const files = normalizeProjectFiles(readRawProjectFiles(projectDir, options));
+  if (options.readHud === false) {
+    // A selected legacy/unbound target must not parse or cross-validate HUD bytes that belong to
+    // a different target. Build-time target resolution already decided the module is inactive.
+    // Strip only the in-memory references; authored build-targets.json remains byte-identical.
+    for (const target of Object.values(files.buildTargets?.targets ?? {})) {
+      if (target && typeof target === "object") delete target.hudProfileId;
+    }
+  }
+  return files;
 }
 
 export function projectSummary(files) {

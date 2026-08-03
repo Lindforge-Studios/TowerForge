@@ -342,25 +342,37 @@ function recipeProfile(recipeId, label) {
     placement: { kind: "flow", order, grow: 0 },
     size: sized(width, height)
   });
-  const variant = (width, height, layouts, rootNodeId) => ({
+  const variant = (width, height, layouts, rootNodeIds) => ({
     schemaVersion: 1,
     designViewport: { width, height },
-    rootNodeIds: [rootNodeId],
+    rootNodeIds,
     layouts
   });
-  const profileShell = (commonNodes, layouts) => ({
+  const profileShell = (authoredNodes, layouts) => {
+    const pauseNodes = [
+      node("pause_panel", "modal", { titleKey: "hud.pause" }, ["resume_game"]),
+      node("resume_game", "button", { labelKey: "hud.resume", ariaLabelKey: "hud.resume" }, [], [
+        { event: "activate", actionId: "pause", payload: {} }
+      ])
+    ];
+    const commonNodes = [...authoredNodes, ...pauseNodes];
+    for (const variantId of ["desktop", "tablet", "mobile"]) {
+      layouts[variantId].pause_panel = anchor(300, 132, "center", "center", 0, 0, "modal");
+      layouts[variantId].resume_game = flow(220, 52, 0);
+    }
+    return ({
     schemaVersion: 1,
     label,
     breakpoints: { mobileMax: 767, tabletMax: 1199 },
     commonNodes,
     variants: {
-      desktop: variant(1920, 1080, layouts.desktop, commonNodes[0].id),
-      tablet: variant(1024, 768, layouts.tablet, commonNodes[0].id),
-      mobile: variant(390, 844, layouts.mobile, commonNodes[0].id)
+      desktop: variant(1920, 1080, layouts.desktop, [commonNodes[0].id, "pause_panel"]),
+      tablet: variant(1024, 768, layouts.tablet, [commonNodes[0].id, "pause_panel"]),
+      mobile: variant(390, 844, layouts.mobile, [commonNodes[0].id, "pause_panel"])
     },
     screens: {
       gameplay: { schemaVersion: 1, surface: "gameplay", rootNodeIds: [commonNodes[0].id] },
-      pause: { schemaVersion: 1, surface: "pause", rootNodeIds: [] }
+      pause: { schemaVersion: 1, surface: "pause", rootNodeIds: ["pause_panel"] }
     },
     screenGraph: {
       schemaVersion: 1,
@@ -371,13 +383,16 @@ function recipeProfile(recipeId, label) {
       ]
     },
     assetRoles: {}
-  });
+    });
+  };
 
   let profile;
   if (recipeId === "desktop_quickbar") {
     const nodes = [
       node("quickbar", "stack", { axis: "horizontal", gap: 12, align: "center" }, ["build_options", "start_wave"]),
-      node("build_options", "build_menu", { presentation: "horizontal_quickbar", selectorId: "buildOptions" }),
+      node("build_options", "build_menu", { presentation: "horizontal_quickbar", selectorId: "buildOptions" }, [], [
+        { event: "select", actionId: "selectBuildSlot", payload: {} }
+      ]),
       node("start_wave", "button", { labelKey: "hud.start_wave", ariaLabelKey: "hud.start_wave" }, [], [
         { event: "activate", actionId: "startWave", payload: {} }
       ])
@@ -393,7 +408,9 @@ function recipeProfile(recipeId, label) {
       mobile: makeLayouts(350, 76, 12)
     });
   } else if (recipeId === "radial_wheel") {
-    const nodes = [node("build_wheel", "radial_menu", { selectorId: "buildOptions", maxVisibleItems: 8 })];
+    const nodes = [node("build_wheel", "radial_menu", { selectorId: "buildOptions", maxVisibleItems: 8 }, [], [
+      { event: "select", actionId: "selectBuildSlot", payload: {} }
+    ])];
     const makeLayouts = (size, offset) => ({
       build_wheel: anchor(size, size, "center", "bottom", 0, offset, "overlay")
     });
@@ -406,7 +423,9 @@ function recipeProfile(recipeId, label) {
     const nodes = [
       node("bottom_sheet", "stack", { axis: "vertical", gap: 8, align: "stretch" }, ["sheet_title", "build_options"]),
       node("sheet_title", "localized_text", { messageId: "hud.build" }),
-      node("build_options", "build_menu", { presentation: "mobile_bottom_sheet", selectorId: "buildOptions" })
+      node("build_options", "build_menu", { presentation: "mobile_bottom_sheet", selectorId: "buildOptions" }, [], [
+        { event: "select", actionId: "selectBuildSlot", payload: {} }
+      ])
     ];
     const makeLayouts = (width, height, offset) => ({
       bottom_sheet: anchor(width, height, "center", "bottom", 0, offset, "overlay"),

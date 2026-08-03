@@ -4487,3 +4487,30 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   `node --check` passes for HUD authoring, Studio server and browser app; `git diff --check` is GREEN.
 - Full exact-commit gates and both independent sign-offs remain invalidated and must be repeated
   after all verifier-reopened P1 repairs are integrated.
+
+## 2026-08-04 — R21 verifier repairs focused GREEN and additional layout/recipe RED→GREEN
+
+- The verifier P1 regressions are GREEN: catalog validation walks every authored node, pure menu
+  intents and DOM collections emit the same `{ slotId, index }`, omitted graph dispatch state reuses
+  the current selector state, and selected legacy targets remove HUD references only from the
+  detached build view without parsing sibling HUD bytes.
+- Active Canvas and Phaser players now use the closed shared selector catalog and derive live state
+  from the authoritative snapshot. They render scalar/collection bindings, dispatch bounded wave,
+  draft, pause/settings and outcome events, expose semantic pointer/keyboard/touch controls plus a
+  bounded gamepad bridge, resolve standalone/atlas HUD sprites and hide the stock R18 chrome when a
+  custom profile is active. The built-in recovery overlay remains independent.
+- A separate layout regression was observed RED before its runtime repair:
+  `npx vitest run packages/player-runtime/src/r21-hud-layout.contract.test.mjs --maxWorkers=1`
+  failed because dock/grid placements collapsed to the parent origin. The compiler now applies
+  safe-area/parent dock edges and deterministic grid cells/spans; the focused layout file is
+  `21/21` GREEN.
+- A recipe-action regression was observed RED after the non-empty recipe slice: the focused CLI
+  authoring file had exactly `3` failures because all three build collections lacked a
+  `selectBuildSlot` binding. Each recipe now contains that typed action and a non-empty pause screen
+  with a resume control.
+- Exact focused runtime/package command is GREEN at `11/11` files and `122/122` tests. A real
+  generated-player Playwright acceptance then exposed nested DOM rectangles being applied twice;
+  after converting compiled absolute child rectangles to parent-relative DOM coordinates,
+  `npx playwright test tests/e2e/r21-hud-generated.spec.mjs --workers=1` is `2/2` GREEN for
+  Canvas/hex and Phaser/square. It proves live status/collections, start-wave action, custom-shell
+  replacement and pause→resume screen transitions without the recovery overlay.

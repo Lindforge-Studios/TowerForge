@@ -155,7 +155,7 @@ try {
     ? ["player-actions.mjs", "player-preferences.mjs", "player-session-store.mjs", "indexeddb-session-storage.mjs", "localized-strings.mjs", "fixed-simulation-clock.mjs", "presentation-quality.mjs"]
     : [];
   const hudRuntimeFiles = hudRuntimeActive
-    ? ["hud-catalog.mjs", "hud-layout.mjs", "hud-screen-graph.mjs", "hud-build-menu-presets.mjs"]
+    ? ["hud-catalog.mjs", "hud-layout.mjs", "hud-screen-graph.mjs", "hud-build-menu-presets.mjs", "hud-selectors.mjs"]
     : [];
   for (const fileName of ["index.mjs", "player-profile-store.mjs", ...largeScreenRuntimeFiles, ...hudRuntimeFiles, ...(nativeDesktopPlayer ? ["native-storage-bridge.mjs"] : []), ...(hostMonetizationActive ? ["host-monetization.mjs"] : [])]) {
     fs.copyFileSync(path.join(playerRuntimeSource, fileName), path.join(playerRuntimeOutput, fileName));
@@ -177,7 +177,7 @@ try {
   if (!hudRuntimeActive) {
     const runtimeIndex = path.join(playerRuntimeOutput, "index.mjs");
     let runtimeSource = fs.readFileSync(runtimeIndex, "utf8");
-    for (const specifier of ["./hud-catalog.mjs", "./hud-layout.mjs", "./hud-screen-graph.mjs", "./hud-build-menu-presets.mjs"]) {
+    for (const specifier of ["./hud-catalog.mjs", "./hud-layout.mjs", "./hud-screen-graph.mjs", "./hud-build-menu-presets.mjs", "./hud-selectors.mjs"]) {
       runtimeSource = pruneSingleModuleExport(runtimeSource, specifier);
     }
     fs.writeFileSync(runtimeIndex, runtimeSource, "utf8");
@@ -833,6 +833,9 @@ body[data-motion="reduced"] *{animation-duration:.001ms!important;transition-dur
   return `:root{--bg:${bg};--surface:#191b19;--panel:#222620;--border:#364036;--text:#eff3ea;--muted:#9ca895;--accent:#8ac783;--path:#6b5540;--danger:#df6a59;--water:#427b88;--player-action-min-size:44px;--font:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
 *{box-sizing:border-box}html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:var(--font)}
 .towerforge-hud-root{position:fixed;inset:0;z-index:15;pointer-events:none}.towerforge-hud-root button,.towerforge-hud-root input,.towerforge-hud-root select,.towerforge-hud-root [role="button"]{pointer-events:auto;min-width:44px;min-height:44px}
+body[data-towerforge-hud-profile]>.towerforge-hud-root,body[data-towerforge-hud-profile] #towerforge-hud-root{display:block}
+body[data-towerforge-hud-profile] .desktop-action-bar,body[data-towerforge-hud-profile] header.hud,body[data-towerforge-hud-profile] .play-shell>aside.panel{display:none}
+body[data-towerforge-hud-profile] .play-shell{grid-template-columns:minmax(0,1fr)}
 /* Native-app touch hardening (ported from a shipped Capacitor game): no pinch-zoom/pull-to-refresh,
    no long-press text selection or blue tap-highlight, and respect the notch via safe-area insets. */
 body{overflow:hidden;overscroll-behavior:none;touch-action:manipulation;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
@@ -1286,7 +1289,7 @@ function phaserViewportMethodsTemplate(enabled, cameraProjectionActive = false) 
   }`;
 }
 
-function desktopPlayerRuntimeTemplate(rendererKind, nativeDesktopPlayer = false) {
+function desktopPlayerRuntimeTemplate(rendererKind, nativeDesktopPlayer = false, hudRuntimeActive = false) {
   const cameraBridge = rendererKind === "phaser" ? `const desktopScene = () => phaserGame?.scene?.getScene?.("PlayScene") ?? phaserGame?.scene?.getScenes?.(true)?.[0] ?? null;
 let disposePromise = null;
 function disposeDesktopPhaserPlayer() {
@@ -1602,7 +1605,7 @@ const playerActionRegistry = createPlayerActionRegistry({
   descriptors: playerActionDescriptors,
   handlers: {
     "continueSession": () => continueDesktopSession(),
-    "pause": () => setPaused(Number($("speed").value) > 0),
+    "pause": () => { const pausing = Number($("speed").value) > 0; setPaused(pausing); ${hudRuntimeActive ? 'dispatchTowerforgeHudEvent(pausing ? "pauseRequested" : "resumeRequested");' : ""} return Object.freeze({ ok: true, paused: pausing }); },
     "cameraPan": (payload) => desktopViewportActions.cameraPan(payload),
     "cameraZoom": (payload) => {
       const previous = desktopViewportActions.cameraSnapshot();
@@ -1625,7 +1628,12 @@ const playerActionRegistry = createPlayerActionRegistry({
         return Object.freeze({ ok: true });
       } catch { return Object.freeze({ ok: false, code: "fullscreen_failed" }); }
     },
-    "openSettings": () => { openDesktopSettings(); return Object.freeze({ ok: true }); },
+    "openSettings": () => { openDesktopSettings(); ${hudRuntimeActive ? 'dispatchTowerforgeHudEvent("settingsRequested");' : ""} return Object.freeze({ ok: true }); },
+    "navigate": (payload) => ${hudRuntimeActive ? 'dispatchTowerforgeHudEvent(payload?.eventId)' : 'Object.freeze({ ok: false, code: "hud_inactive" })'},
+    "back": () => ${hudRuntimeActive ? 'dispatchTowerforgeHudEvent("resumeRequested")' : 'Object.freeze({ ok: false, code: "hud_inactive" })'},
+    "openSurface": (payload) => ${hudRuntimeActive ? 'dispatchTowerforgeHudEvent(({ settings: "settingsRequested", pause: "pauseRequested", result: "resultRequested" })[payload?.surfaceId] || "recoverableError")' : 'Object.freeze({ ok: false, code: "hud_inactive" })'},
+    "closeSurface": (payload) => ${hudRuntimeActive ? 'dispatchTowerforgeHudEvent(payload?.surfaceId === "settings" ? "settingsClosed" : "resumeRequested")' : 'Object.freeze({ ok: false, code: "hud_inactive" })'},
+    "toggleSurface": (payload) => ${hudRuntimeActive ? 'dispatchTowerforgeHudEvent(payload?.surfaceId === "settings" ? "settingsRequested" : "pauseRequested")' : 'Object.freeze({ ok: false, code: "hud_inactive" })'},
     "startWave": () => report(game.startNextWave()),
     "placeTower": (payload) => dispatchRegisteredCommand("placeTower", payload),
     "upgradeTower": (payload) => payload && payload.command
@@ -1656,7 +1664,7 @@ $("desktop-pause")?.addEventListener("click", () => playerActionRegistry.invoke(
 $("desktop-reset-view")?.addEventListener("click", () => playerActionRegistry.invoke("cameraReset"));
 $("desktop-fullscreen")?.addEventListener("click", () => playerActionRegistry.invoke("fullscreen"));
 $("desktop-settings")?.addEventListener("click", () => playerActionRegistry.invoke("openSettings"));
-$("desktop-settings-close")?.addEventListener("click", closeDesktopSettings);
+$("desktop-settings-close")?.addEventListener("click", () => { closeDesktopSettings(); ${hudRuntimeActive ? 'dispatchTowerforgeHudEvent("settingsClosed");' : ""} });
 ${nativeDesktopPlayer ? "" : `document.addEventListener("fullscreenchange", () => {
   storePlayerPreferences({ ...playerPreferences, fullscreen: Boolean(document.fullscreenElement) });
   $("desktop-fullscreen")?.setAttribute("aria-pressed", String(Boolean(document.fullscreenElement)));
@@ -1722,8 +1730,28 @@ globalThis.__towerforgePlayerActions = playerActionRegistry;
 
 function hudPlayerRuntimeTemplate(active = false) {
   if (!active) return "";
-  return `const hudSelectorDescriptors = Object.freeze([]);
-const hudRuntimeState = Object.freeze({ selectors: Object.freeze({}), nodeStates: Object.freeze({}) });
+  return `const hudSelectorDescriptors = HUD_SELECTOR_DESCRIPTORS_V1;
+if (!hudSelectorDescriptors.some((descriptor) => descriptor.id === "playerGold")) throw new Error("HudCatalogV1 playerGold selector is unavailable.");
+function createTowerforgeHudState(snapshot) {
+  const mission = content.missions[missionId] || {};
+  return createHudSelectorStateV1(snapshot, {
+    buildTowerIds: mission.buildTowerIds || Object.keys(content.towers),
+    towers: content.towers,
+    primaryCurrencyId: content.currencies?.[0]?.id,
+    capabilityIds: Object.keys(snapshot.capabilities || {}),
+    statusText: playerProfileStatusText(message)
+  });
+}
+let hudRuntimeState = createTowerforgeHudState(game.getRenderSnapshot());
+function resolveTowerforgeHudAsset(assetId) {
+  const profile = project.hud.profiles[project.buildTarget.hudProfileId];
+  const spriteId = profile?.assetRoles?.[assetId] || assetId;
+  const sprite = content.visuals?.sprites?.[spriteId];
+  if (typeof sprite?.src === "string" && sprite.src) return visualAssetUrl(sprite.src);
+  const atlas = sprite?.atlas && content.visuals?.atlases?.[sprite.atlas];
+  if (atlas?.src && sprite?.frame) return Object.freeze({ src: visualAssetUrl(atlas.src), frame: sprite.frame });
+  return "";
+}
 const towerforgeHudRuntime = createHudDomRuntimeV1({
   document,
   root: $("towerforge-hud-root"),
@@ -1736,9 +1764,64 @@ const towerforgeHudRuntime = createHudDomRuntimeV1({
   selectorDescriptors: hudSelectorDescriptors,
   state: hudRuntimeState,
   actionRegistry: playerActionRegistry,
-  localize: (messageId) => playerStrings.text(messageId)
+  localize: (messageId) => playerStrings.text(messageId),
+  resolveAsset: resolveTowerforgeHudAsset
 });
 towerforgeHudRuntime.render();
+let towerforgeHudGamepadPrevious = Object.freeze([]);
+function pollTowerforgeHudGamepad() {
+  const pad = [...(globalThis.navigator?.getGamepads?.() ?? [])].find((candidate) => candidate?.connected);
+  const pressed = pad ? pad.buttons.map((button) => Boolean(button?.pressed)) : [];
+  const controls = [...document.querySelectorAll("#towerforge-hud-root [data-hud-collection-item-id]:not([hidden]):not(:disabled)")];
+  const focusedIndex = controls.indexOf(document.activeElement);
+  const moved = (buttonIndex, delta) => {
+    if (!pressed[buttonIndex] || towerforgeHudGamepadPrevious[buttonIndex] || controls.length === 0) return;
+    controls[(Math.max(0, focusedIndex) + delta + controls.length) % controls.length].focus();
+  };
+  moved(14, -1); moved(15, 1); moved(12, -1); moved(13, 1);
+  if (pressed[0] && !towerforgeHudGamepadPrevious[0] && controls.length > 0) {
+    const control = focusedIndex >= 0 ? controls[focusedIndex] : controls[0];
+    towerforgeHudRuntime.activateCollectionItem({
+      nodeId: control.dataset.hudCollectionNodeId,
+      itemId: control.dataset.hudCollectionItemId,
+      inputFamily: "gamepad"
+    });
+  }
+  towerforgeHudGamepadPrevious = Object.freeze(pressed);
+  requestAnimationFrame(pollTowerforgeHudGamepad);
+}
+requestAnimationFrame(pollTowerforgeHudGamepad);
+let towerforgeHudLastDigest = "";
+let towerforgeHudLastWaveCount = game.getRenderSnapshot().startedWaveCount || 0;
+let towerforgeHudLastWaveState = game.getRenderSnapshot().waveState;
+let towerforgeHudLastOutcome = game.getRenderSnapshot().outcome;
+let towerforgeHudDraftRequired = Boolean(game.getRenderSnapshot().roguelite?.draft?.pendingOffer);
+function dispatchTowerforgeHudEvent(eventName, state = hudRuntimeState) {
+  return towerforgeHudRuntime.dispatch(eventName, state.selectors);
+}
+function syncTowerforgeHud(snapshot) {
+  const nextState = createTowerforgeHudState(snapshot);
+  if ((snapshot.startedWaveCount || 0) > towerforgeHudLastWaveCount) towerforgeHudRuntime.dispatch("waveStarted", nextState.selectors);
+  if (towerforgeHudLastWaveState === "active" && snapshot.waveState !== "active") towerforgeHudRuntime.dispatch("waveEnded", nextState.selectors);
+  const nextDraftRequired = Boolean(snapshot.roguelite?.draft?.pendingOffer);
+  if (!towerforgeHudDraftRequired && nextDraftRequired) towerforgeHudRuntime.dispatch("draftRequired", nextState.selectors);
+  if (towerforgeHudDraftRequired && !nextDraftRequired) towerforgeHudRuntime.dispatch("draftCompleted", nextState.selectors);
+  if (towerforgeHudLastOutcome !== "victory" && snapshot.outcome === "victory") towerforgeHudRuntime.dispatch("victory", nextState.selectors);
+  if (towerforgeHudLastOutcome !== "defeat" && snapshot.outcome === "defeat") towerforgeHudRuntime.dispatch("defeat", nextState.selectors);
+  towerforgeHudLastWaveCount = snapshot.startedWaveCount || 0;
+  towerforgeHudLastWaveState = snapshot.waveState;
+  towerforgeHudLastOutcome = snapshot.outcome;
+  towerforgeHudDraftRequired = nextDraftRequired;
+  hudRuntimeState = nextState;
+  const digest = JSON.stringify(nextState.selectors) + "|" + towerforgeHudRuntime.snapshot().currentScreenId;
+  if (digest === towerforgeHudLastDigest) return;
+  towerforgeHudLastDigest = digest;
+  towerforgeHudRuntime.render({
+    viewportWidth: globalThis.innerWidth,
+    viewportHeight: globalThis.innerHeight,
+    state: nextState
+  });
+}
 globalThis.addEventListener("resize", () => towerforgeHudRuntime.render({
   viewportWidth: globalThis.innerWidth,
   viewportHeight: globalThis.innerHeight,
@@ -1773,7 +1856,7 @@ function playerTemplate(includeMultiplayer = false, includeMacroEconomy = false,
   validateCampaignRunAgainstContent
 } from "./engine/index.js";
 ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multiplayer/index.js";' : ""}
-import { createPlayerProfileStore, derivePlayerProfileStorageKey${largeScreenPlayer ? ", createDefaultPlayerActionDescriptors, createPlayerActionRegistry, createDefaultPlayerPreferences, createFixedSimulationClockV1, createRotatingPlayerSessionStore, parsePlayerPreferencesV1, parsePlayerSessionSaveV1, resolvePlayerPresentationQualityV1, serializePlayerPreferencesV1, serializePlayerSessionSaveV1" : ""} } from "./player-runtime/index.mjs";
+import { createPlayerProfileStore, derivePlayerProfileStorageKey${largeScreenPlayer ? ", createDefaultPlayerActionDescriptors, createPlayerActionRegistry, createDefaultPlayerPreferences, createFixedSimulationClockV1, createRotatingPlayerSessionStore, parsePlayerPreferencesV1, parsePlayerSessionSaveV1, resolvePlayerPresentationQualityV1, serializePlayerPreferencesV1, serializePlayerSessionSaveV1" : ""}${hudRuntimeActive ? ", createHudSelectorStateV1, HUD_SELECTOR_DESCRIPTORS_V1" : ""} } from "./player-runtime/index.mjs";
 ${largeScreenPlayer ? 'import { createIndexedDbSessionStorage } from "./player-runtime/indexeddb-session-storage.mjs";\nimport { createPlayerStrings } from "./player-runtime/localized-strings.mjs";\nimport { createViewportTransformV1 } from "./renderer/viewport-transform.mjs";' : ""}
 ${cameraProjectionActive ? 'import { createCameraRenderSpaceV1, projectCameraRenderItemsV1, resolveCameraProfileV1 } from "./renderer/camera-renderer-integration.mjs";' : ""}
 ${cameraProjectionActive ? 'import { resolveCameraViewVariantV1 } from "./renderer/camera-view-assets.mjs";' : ""}
@@ -1878,7 +1961,7 @@ $("target-mode").addEventListener("change", () => {
 });
 $("story-next").addEventListener("click", advanceStory);
 $("story-skip").addEventListener("click", finishStory);
-${largeScreenPlayer ? desktopPlayerRuntimeTemplate("canvas", nativeDesktopPlayer) : ""}
+${largeScreenPlayer ? desktopPlayerRuntimeTemplate("canvas", nativeDesktopPlayer, hudRuntimeActive) : ""}
 ${hudPlayerRuntimeTemplate(hudRuntimeActive)}
 document.addEventListener("keydown", (event) => {
   const tag = event.target?.tagName;
@@ -2738,6 +2821,7 @@ function draw(snap, events) {
 }
 
 function updateHud(snap) {
+  ${hudRuntimeActive ? "syncTowerforgeHud(snap);" : ""}
   updateAbilityBar(snap);
   updateHeroActionBar(snap);
   updateHeroSkillTree(snap);
@@ -3071,7 +3155,7 @@ function phaserPlayerTemplate(includeMultiplayer = false, includeMacroEconomy = 
   validateCampaignRunAgainstContent
 } from "./engine/index.js";
 ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multiplayer/index.js";' : ""}
-import { createPlayerProfileStore, derivePlayerProfileStorageKey${largeScreenPlayer ? ", createDefaultPlayerActionDescriptors, createPlayerActionRegistry, createDefaultPlayerPreferences, createFixedSimulationClockV1, createRotatingPlayerSessionStore, parsePlayerPreferencesV1, parsePlayerSessionSaveV1, resolvePlayerPresentationQualityV1, serializePlayerPreferencesV1, serializePlayerSessionSaveV1" : ""} } from "./player-runtime/index.mjs";
+import { createPlayerProfileStore, derivePlayerProfileStorageKey${largeScreenPlayer ? ", createDefaultPlayerActionDescriptors, createPlayerActionRegistry, createDefaultPlayerPreferences, createFixedSimulationClockV1, createRotatingPlayerSessionStore, parsePlayerPreferencesV1, parsePlayerSessionSaveV1, resolvePlayerPresentationQualityV1, serializePlayerPreferencesV1, serializePlayerSessionSaveV1" : ""}${hudRuntimeActive ? ", createHudSelectorStateV1, HUD_SELECTOR_DESCRIPTORS_V1" : ""} } from "./player-runtime/index.mjs";
 ${largeScreenPlayer ? 'import { createIndexedDbSessionStorage } from "./player-runtime/indexeddb-session-storage.mjs";\nimport { createPlayerStrings } from "./player-runtime/localized-strings.mjs";\nimport { createViewportTransformV1 } from "./renderer/viewport-transform.mjs";' : ""}
 ${cameraProjectionActive ? 'import { createCameraRenderSpaceV1, projectCameraRenderItemsV1, resolveCameraProfileV1 } from "./renderer/camera-renderer-integration.mjs";' : ""}
 ${cameraProjectionActive ? 'import { resolveCameraViewVariantV1 } from "./renderer/camera-view-assets.mjs";' : ""}
@@ -3284,7 +3368,7 @@ $("target-mode").addEventListener("change", () => {
 });
 $("story-next").addEventListener("click", advanceStory);
 $("story-skip").addEventListener("click", finishStory);
-${largeScreenPlayer ? desktopPlayerRuntimeTemplate("phaser", nativeDesktopPlayer) : ""}
+${largeScreenPlayer ? desktopPlayerRuntimeTemplate("phaser", nativeDesktopPlayer, hudRuntimeActive) : ""}
 ${hudPlayerRuntimeTemplate(hudRuntimeActive)}
 document.addEventListener("keydown", (event) => {
   const tag = event.target?.tagName;
@@ -5112,6 +5196,7 @@ function finishStory() {
 }
 
 function updateHud(snap) {
+  ${hudRuntimeActive ? "syncTowerforgeHud(snap);" : ""}
   updateAbilityBar(snap);
   updateHeroActionBar(snap);
   updateHeroSkillTree(snap);

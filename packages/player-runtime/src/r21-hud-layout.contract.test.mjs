@@ -220,6 +220,38 @@ describe("R21.2 pure responsive HUD layout and binding compiler (RED)", () => {
     expect(result.plan.variantId).toBe(expected);
   });
 
+  it("applies authored dock edges and grid cells instead of overlapping container fallbacks", () => {
+    const profile = hudProfile();
+    profile.commonNodes = [
+      node("grid_root", "grid", { columns: 2, rows: 2, gap: 10 }, ["cell"]),
+      node("cell", "button", { labelKey: "cell" })
+    ];
+    profile.screens.gameplay.rootNodeIds = ["grid_root"];
+    for (const variantId of ["desktop", "tablet", "mobile"]) {
+      profile.variants[variantId].rootNodeIds = ["grid_root"];
+      profile.variants[variantId].layouts = {
+        grid_root: {
+          ...anchorLayout(400, 220),
+          placement: { kind: "dock", edge: "bottom", offset: 20, order: 0 }
+        },
+        cell: {
+          ...anchorLayout(80, 44),
+          placement: { kind: "grid", row: 1, column: 1, rowSpan: 1, columnSpan: 1 }
+        }
+      };
+    }
+
+    const result = compile(profile);
+
+    expect(result.ok).toBe(true);
+    expect(result.plan.nodes.find((entry) => entry.id === "grid_root").rect).toEqual({
+      x: 40, y: 530, width: 400, height: 220
+    });
+    expect(result.plan.nodes.find((entry) => entry.id === "cell").rect).toEqual({
+      x: 245, y: 645, width: 195, height: 105
+    });
+  });
+
   it("uses authored child/root order but ignores common-node and record insertion order", () => {
     const first = hudProfile();
     const second = hudProfile();

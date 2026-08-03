@@ -160,6 +160,12 @@ describe("R21.1b narrow guarded HUD authoring contract (RED)", () => {
 
     expect(profile.commonNodes.length).toBeGreaterThan(0);
     expect(profile.commonNodes.some((node) => node.type === componentType)).toBe(true);
+    const collection = profile.commonNodes.find((node) => node.type === componentType);
+    expect(collection.bindings.actions).toContainEqual({
+      event: "select",
+      actionId: "selectBuildSlot",
+      payload: {}
+    });
     if (presentation !== undefined) {
       expect(profile.commonNodes.some((node) => node.properties?.presentation === presentation)).toBe(true);
     }
@@ -170,6 +176,8 @@ describe("R21.1b narrow guarded HUD authoring contract (RED)", () => {
       );
     }
     expect(profile.screens.gameplay.rootNodeIds.length).toBeGreaterThan(0);
+    expect(profile.screens.pause.rootNodeIds.length).toBeGreaterThan(0);
+    expect(profile.commonNodes.some((node) => node.bindings.actions.some((action) => action.actionId === "pause"))).toBe(true);
     expect(previewHudProfile(fixture({ withHud: false }), request(profile))).toMatchObject({
       ok: true,
       validation: { ok: true }

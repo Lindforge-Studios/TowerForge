@@ -298,6 +298,53 @@ function fallbackContainerRect(layout, parentId, rects, viewportWidth, viewportH
   return anchoredRect({ ...layout, placement: { kind: "anchor", horizontal: "left", vertical: "top", offsetX: 0, offsetY: 0 } }, viewportWidth, viewportHeight, safeRect);
 }
 
+function placementBase(layout, parentId, rects, viewportWidth, viewportHeight, safeRect) {
+  if (parentId) {
+    if (!rects.has(parentId)) fail("profile.variant.layouts", "container placement requires a compiled parent.");
+    return rects.get(parentId);
+  }
+  return layout.safeArea
+    ? safeRect
+    : { x: 0, y: 0, width: viewportWidth, height: viewportHeight };
+}
+
+function dockRect(layout, parentId, rects, viewportWidth, viewportHeight, safeRect) {
+  const base = placementBase(layout, parentId, rects, viewportWidth, viewportHeight, safeRect);
+  const { edge, offset } = layout.placement;
+  const width = Math.min(layout.size.maxWidth, Math.max(layout.size.minWidth, layout.size.width));
+  const height = Math.min(layout.size.maxHeight, Math.max(layout.size.minHeight, layout.size.height));
+  if (edge === "fill") return {
+    x: base.x + offset, y: base.y + offset,
+    width: Math.max(0, base.width - (offset * 2)), height: Math.max(0, base.height - (offset * 2))
+  };
+  if (edge === "right") return { x: base.x + base.width - width - offset, y: base.y, width, height };
+  if (edge === "bottom") return { x: base.x, y: base.y + base.height - height - offset, width, height };
+  if (edge === "left") return { x: base.x + offset, y: base.y, width, height };
+  return { x: base.x, y: base.y + offset, width, height };
+}
+
+function gridRect(id, layout, parentId, rects, nodeMap) {
+  if (!parentId || !rects.has(parentId)) fail(`profile.variant.layouts.${id}`, "grid placement requires a compiled parent.");
+  const parent = nodeMap.get(parentId);
+  if (parent?.type !== "grid") fail(`profile.variant.layouts.${id}`, "grid placement requires a grid parent.");
+  const columns = Number.isSafeInteger(parent.properties.columns) && parent.properties.columns > 0 ? parent.properties.columns : 1;
+  const rows = Number.isSafeInteger(parent.properties.rows) && parent.properties.rows > 0 ? parent.properties.rows : 1;
+  const gap = Number.isFinite(parent.properties.gap) ? Math.max(0, Math.min(1024, parent.properties.gap)) : 0;
+  const { row, column, rowSpan, columnSpan } = layout.placement;
+  if (row >= rows || column >= columns || row + rowSpan > rows || column + columnSpan > columns) {
+    fail(`profile.variant.layouts.${id}.placement`, "grid cell lies outside the parent grid.");
+  }
+  const base = rects.get(parentId);
+  const cellWidth = (base.width - gap * (columns - 1)) / columns;
+  const cellHeight = (base.height - gap * (rows - 1)) / rows;
+  return {
+    x: base.x + column * (cellWidth + gap),
+    y: base.y + row * (cellHeight + gap),
+    width: cellWidth * columnSpan + gap * (columnSpan - 1),
+    height: cellHeight * rowSpan + gap * (rowSpan - 1)
+  };
+}
+
 function validateNodeBindings(node, actionIds, selectorDescriptors, runtimeState) {
   const data = Object.create(null);
   for (const binding of node.bindings.data) {
@@ -389,6 +436,8 @@ export function compileHudLayoutV1(profileValue, optionsValue) {
       let rect;
       if (layout.placement.kind === "anchor") rect = anchoredRect(layout, options.viewportWidth, options.viewportHeight, safeRect);
       else if (layout.placement.kind === "flow") rect = flowRect(id, layout, parentId, rects, nodeMap, variant.layouts);
+      else if (layout.placement.kind === "dock") rect = dockRect(layout, parentId, rects, options.viewportWidth, options.viewportHeight, safeRect);
+      else if (layout.placement.kind === "grid") rect = gridRect(id, layout, parentId, rects, nodeMap);
       else rect = fallbackContainerRect(layout, parentId, rects, options.viewportWidth, options.viewportHeight, safeRect);
       rects.set(id, rect);
       const selectedState = Object.hasOwn(runtimeState.nodeStates, id) ? runtimeState.nodeStates[id] : "normal";

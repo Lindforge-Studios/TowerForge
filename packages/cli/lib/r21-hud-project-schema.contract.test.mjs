@@ -177,6 +177,18 @@ describe("R21.1 optional HUD project transport and binding contract (RED)", () =
     }));
   });
 
+  it("cross-validates HUD asset roles and node images against the visuals sprite catalog", () => {
+    const hud = hudCatalog();
+    hud.profiles.main.assetRoles.frame = "missing_frame";
+    const result = relevant(validateProjectSchemas(files({ hud })));
+    expect(result).toContainEqual(expect.objectContaining({
+      severity: "error",
+      entityKind: "hud",
+      fieldPath: "profiles.main.assetRoles.frame",
+      message: expect.stringContaining("missing sprite")
+    }));
+  });
+
   it("structurally validates an authored unbound catalog without activating a custom shell", () => {
     const invalidHud = hudCatalog();
     invalidHud.executable = "javascript:alert(1)";

@@ -170,6 +170,7 @@ export function validateProjectSchemas(files) {
   validateVisuals(files.visuals, err, warn, files.balance, files.maps, files.mechanics);
   validateNarrative(files, err, warn);
   const hudCatalog = validateHud(files, err);
+  validateHudAssets(hudCatalog, files.visuals, err);
   validateBuildTargets(files.buildTargets, err, files.visuals, hudCatalog);
   if ((files.buildTargets?.schemaVersion ?? 1) === 2 && files.manifest?.schemaVersion !== PROJECT_SCHEMA_VERSION) {
     err(
@@ -203,6 +204,25 @@ function validateHud(files, err) {
     return undefined;
   }
   return result.catalog;
+}
+
+function validateHudAssets(hudCatalog, visuals, err) {
+  if (!hudCatalog) return;
+  const sprites = visuals?.sprites ?? {};
+  for (const [profileId, profile] of Object.entries(hudCatalog.profiles)) {
+    for (const [roleId, spriteId] of Object.entries(profile.assetRoles ?? {})) {
+      if (!Object.hasOwn(sprites, spriteId)) {
+        err("hud", profileId, `profiles.${profileId}.assetRoles.${roleId}`, `HUD asset role references missing sprite "${spriteId}".`);
+      }
+    }
+    for (const node of profile.commonNodes ?? []) {
+      const authoredAssetId = node.properties?.assetId;
+      const spriteId = profile.assetRoles?.[authoredAssetId] ?? authoredAssetId;
+      if (spriteId !== undefined && !Object.hasOwn(sprites, spriteId)) {
+        err("hud", profileId, `profiles.${profileId}.commonNodes.${node.id}.properties.assetId`, `HUD node references missing sprite or asset role "${authoredAssetId}".`);
+      }
+    }
+  }
 }
 
 function validateMechanics(files, err, warn) {
