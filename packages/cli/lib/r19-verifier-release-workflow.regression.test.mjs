@@ -72,12 +72,26 @@ function workflowText() {
 
 describe("R19 verifier generated release workflow", () => {
   it("recursively assembles artifacts and fails before publication when the installer set or checksum file is empty", () => {
-    const workflow = workflowText();
+    const script = path.join(nativeDir, "scripts", "assemble-release.mjs");
+    const root = path.join(fixtureRoot, "assembler-acceptance");
+    const artifacts = path.join(root, "artifacts");
+    const nested = path.join(artifacts, "nested", "runner");
+    const release = path.join(root, "release");
+    const output = path.join(root, "github-output.txt");
+    fs.mkdirSync(nested, { recursive: true });
+    for (const name of ["game.dmg", "game.exe", "game.msi", "game.AppImage", "game.deb", "game.rpm"]) {
+      fs.writeFileSync(path.join(nested, name), name);
+    }
+    for (const name of ["dmg", "exe", "msi"]) fs.writeFileSync(path.join(artifacts, `signing-status-${name}.txt`), "unsigned\n");
 
-    expect(workflow).toMatch(/find\s+artifacts\s+-type\s+f/i);
-    expect(workflow).not.toMatch(/find\s+artifacts[^\n]*-maxdepth/i);
-    expect(workflow).toMatch(/(?:test\s+[^\n]*(?:installers|artifacts)[^\n]*-(?:eq|gt)\s+[1-9]\d*|(?:installers|artifacts)[\s\S]{0,500}(?:no installers|empty|exit 1))/i);
-    expect(workflow).toMatch(/(?:test\s+-s[^\n]*SHA256SUMS|test\s+[^\n]*wc\s+-l\s*<\s*SHA256SUMS[^\n]*-(?:eq|gt)\s+[1-9]\d*)/i);
+    execFileSync(process.execPath, [script, artifacts, release, "1.2.3", "https://example.test/commit", "https://example.test/tag", output]);
+    const sums = fs.readFileSync(path.join(release, "SHA256SUMS"), "utf8").trim().split("\n");
+    expect(sums).toHaveLength(6);
+    expect(sums.every((line) => /^[0-9a-f]{64}  \S+$/.test(line))).toBe(true);
+
+    fs.rmSync(path.join(nested, "game.rpm"));
+    expect(() => execFileSync(process.execPath, [script, artifacts, path.join(root, "incomplete"), "1.2.3", "https://example.test/commit", "https://example.test/tag", output], { stdio: "pipe" }))
+      .toThrow(/Expected exactly six desktop installers/);
   });
 
   it("does not enable npm caching without a lockfile and uses the lock deterministically when one is emitted", () => {

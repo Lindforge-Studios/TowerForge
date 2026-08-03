@@ -12,6 +12,12 @@ import path from "node:path";
 import process from "node:process";
 import { PNG } from "pngjs";
 import { loadProjectFiles, repoRoot, selectBuildTarget } from "./project-loader.mjs";
+import {
+  generatedDesktopReleaseWorkflow,
+  generatedReleaseAssemblerScript,
+  generatedSigningStatusScript,
+  generatedUpdaterEntryScript
+} from "./generated-desktop-release.mjs";
 import { assertConfinedProjectOutput } from "./path-confinement.mjs";
 import { writeDirectoryZip } from "./zip-store.mjs";
 
@@ -396,7 +402,10 @@ fn main() {
   writeText(path.join(outDir, "src-tauri", "src", "lib.rs"),
     nativePlayerRustTemplate(updaterActive));
   writeText(path.join(outDir, "scripts", "build-current-platform.mjs"), currentPlatformBuildTemplate(target.bundle.targets));
-  writeText(path.join(outDir, ".github", "workflows", "towerforge-desktop-release.yml"), desktopReleaseWorkflowTemplate(updaterActive));
+  writeText(path.join(outDir, "scripts", "assemble-release.mjs"), generatedReleaseAssemblerScript(updaterActive));
+  writeText(path.join(outDir, "scripts", "write-signing-status.mjs"), generatedSigningStatusScript());
+  if (updaterActive) writeText(path.join(outDir, "scripts", "collect-updater-entry.mjs"), generatedUpdaterEntryScript());
+  writeText(path.join(outDir, ".github", "workflows", "towerforge-desktop-release.yml"), generatedDesktopReleaseWorkflow(updaterActive));
   writeText(path.join(outDir, "SIGNING.md"), desktopSigningGuide());
   fs.writeFileSync(path.join(outDir, ".gitignore"), "node_modules/\nsrc-tauri/target/\n", "utf8");
   fs.writeFileSync(path.join(outDir, "README.md"), nativeTauriReadme(app), "utf8");
@@ -436,132 +445,14 @@ process.exit(result.status ?? 1);
 `;
 }
 
-function desktopReleaseWorkflowTemplate(updaterActive = false) {
-  return `name: Generated TowerForge Desktop Release
-
-on:
-  workflow_dispatch:
-  push:
-    tags: ["v*"]
-
-permissions:
-  contents: read
-
-jobs:
-  installers:
-    ${updaterActive ? `env:
-      TAURI_SIGNING_PRIVATE_KEY: \${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: \${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-    ` : ""}strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            name: dmg
-            format: dmg
-            bundles: dmg
-            extension: .dmg
-          - os: windows-latest
-            name: exe
-            format: exe
-            bundles: nsis
-            extension: .exe
-          - os: windows-latest
-            name: msi
-            format: msi
-            bundles: msi
-            extension: .msi
-          - os: ubuntu-22.04
-            name: AppImage
-            format: AppImage
-            bundles: appimage
-            extension: .AppImage
-          - os: ubuntu-22.04
-            name: deb
-            format: deb
-            bundles: deb
-            extension: .deb
-          - os: ubuntu-22.04
-            name: rpm
-            format: rpm
-            bundles: rpm
-            extension: .rpm
-    runs-on: \${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          ref: \${{ github.sha }}
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: "22.14.0"
-      - name: Install pinned Rust toolchain
-        run: rustup toolchain install 1.88.0 --profile minimal && rustup default 1.88.0
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
-      - run: npm install --ignore-scripts --no-package-lock
-      - name: Build \${{ matrix.format }} installer
-        run: npm run tauri:build -- --bundles \${{ matrix.bundles }}
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: installer-\${{ matrix.name }}
-          if-no-files-found: error
-          path: src-tauri/target/**/bundle/**/*\${{ matrix.extension }}
-
-  assemble:
-    needs: installers
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          pattern: installer-*
-          path: artifacts
-          merge-multiple: true
-      - name: Create SHA256SUMS and RELEASE_NOTES.md
-        shell: bash
-        run: |
-          mkdir release
-          mapfile -d '' installers < <(find artifacts -type f -print0)
-          test "\${#installers[@]}" -eq 6
-          for installer in "\${installers[@]}"; do cp "$installer" release/; done
-          cd release
-          find . -maxdepth 1 -type f ! -name SHA256SUMS ! -name RELEASE_NOTES.md -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
-          test "$(wc -l < SHA256SUMS)" -eq 6
-          { echo "# Unsigned build"; echo; echo "Built from exact commit [\${{ github.sha }}](\${{ github.server_url }}/\${{ github.repository }}/tree/\${{ github.sha }})."; echo; echo "Tag/source: [\${{ github.ref_name }}](\${{ github.server_url }}/\${{ github.repository }}/tree/\${{ github.ref_name }})."; echo; echo '## SHA-256'; echo '\`\`\`'; cat SHA256SUMS; echo '\`\`\`'; } > RELEASE_NOTES.md
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: desktop-release-candidate
-          path: release/*
-
-  release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: assemble
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: desktop-release-candidate
-          path: release
-      - name: Publish Unsigned build
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
-        with:
-          name: \${{ github.ref_name }} - Unsigned build
-          prerelease: true
-          body_path: release/RELEASE_NOTES.md
-          files: |
-            release/*
-`;
-}
-
 function desktopSigningGuide() {
   return `# Signing and notarization
 
 Generated games are unsigned unless the author explicitly configures signing in CI. Credentials
 belong to the operating system or GitHub Actions secrets and must never be written into this
 project. The reference unsigned workflow always publishes a pre-release labelled **Unsigned
-build**.
+build**. When every required platform secret is configured, the workflow imports the native
+certificate and can publish the verified signed candidate as a normal release.
 
 Documented macOS secret names:
 
@@ -583,7 +474,9 @@ Documented updater signing secret names (required only when updater is enabled):
 - TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 
 Use environment variables or GitHub Actions secrets for values. Do not commit certificates,
-passwords, private keys, provisioning profiles, or a local .env file.
+passwords, private keys, provisioning profiles, or a local .env file. With updater support enabled,
+the workflow also publishes the Tauri update payloads, their adjacent detached .sig files, and the
+static latest.json platform manifest; these paths are not generated when updater support is off.
 `;
 }
 
@@ -746,6 +639,9 @@ function selectPackagingTarget(buildTargets, kind, explicitTargetId) {
     const desktopId = buildTargets.defaults?.desktop;
     if (desktopId && buildTargets.targets?.[desktopId]?.platform === "desktop") {
       return [desktopId, buildTargets.targets[desktopId]];
+    }
+    if (buildTargets.schemaVersion === 2) {
+      throw new Error("Desktop packaging requires defaults.desktop or an explicit targetId; the legacy web wrapper is explicit-only for BuildTargets v2.");
     }
   }
   return selectBuildTarget(buildTargets, null);

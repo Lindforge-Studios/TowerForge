@@ -22,6 +22,10 @@ as `platform: "desktop"` and owns its renderer, form factor, viewport, window an
 `desktop_large_screen` recipe remains a web target; R19 adds the distinct
 `native_desktop_game` recipe. An explicit legacy web target may still be passed to
 `package --kind desktop`, but only through the documented compatibility adapter.
+Reads and guarded applies return the authoritative `defaults` record; committing a first-class
+desktop target selects it as `defaults.desktop`. Packaging without an explicit target requires that
+authored default and fails before output mutation when it is missing. It never guesses from target
+order or borrows `defaults.web`.
 
 The first-class target never searches for a sibling web target. The CLI compiles the selected
 desktop target through the common generated-player builder, then emits a separate Tauri v2 carrier.
@@ -43,13 +47,20 @@ R19.3 emits a project-owned release workflow for `.dmg`, `.exe`, `.msi`, `.AppIm
 contains intent only; secret values stay in OS/CI storage. If signing is not configured, the release
 is labelled `Unsigned build` and published only as a pre-release. Generated Actions are pinned by
 immutable commit, Node/Rust toolchains and direct native dependencies are fixed, artifact assembly
-is recursive and requires exactly six installers before checksums/publication.
+is recursive and requires exactly six installers before checksums/publication. The macOS job imports
+the author certificate and uses the standard Apple signing/notarization environment; the Windows
+job imports the authored PFX and binds its thumbprint to the Tauri build. The repository-owned R19
+acceptance workflow generates a carrier from current source and builds all six formats on native
+macOS, Windows and Linux runners before accepting the delivery contract.
 
 R19.4 is wholly absent unless the target enables it. Enabled updater configuration accepts HTTPS
 endpoints and a public verification key only. Private keys remain CI secrets. Signature, downgrade,
 platform/architecture and manifest validation are owned by the native Tauri updater and must
 complete before installation begins. The WebView cannot supply a `signatureStatus`, updater
-resource ID or arbitrary candidate and receives no direct updater plugin permission.
+resource ID or arbitrary candidate and receives no direct updater plugin permission. The enabled
+release workflow stages the Tauri-produced update payload and adjacent detached `.sig`, then emits
+the signed static `latest.json` platform map beside installers and checksums. Disabled carriers omit
+the updater scripts, secrets, payload paths and metadata bytes entirely.
 
 The engine, GameCommand v8, checkpoint, journal, profile, campaign, multiplayer,
 `PlayerSessionSaveV1` and `PlayerPreferencesV1` version domains do not change.

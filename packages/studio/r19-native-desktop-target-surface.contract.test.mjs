@@ -17,7 +17,8 @@ describe("R19.1 Studio first-class native desktop target surface", () => {
     expect(native).toContain('allocatePlayerTargetId(read.targets, "native-desktop")');
     expect(native).toContain('recipeId: "native_desktop_game"');
     expect(native).toMatch(/player-targets\/preview[\s\S]*player-targets\/apply[\s\S]*ifRevision/);
-    expect(native).toMatch(/defaults[\s\S]{0,100}desktop:\s*targetId/);
+    expect(native).toContain("defaults: { ...(applied.defaults ?? bt.defaults ?? {}) }");
+    expect(native).not.toMatch(/defaults[\s\S]{0,100}desktop:\s*targetId/);
   });
 
   it("edits the closed native window and bundle fields without changing R18 viewport controls", () => {

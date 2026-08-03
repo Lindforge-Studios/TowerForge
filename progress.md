@@ -3316,3 +3316,54 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   `6dd6141f4fdb54bcc483488a0a14846f658fb658f0ba760b8398a6dd9c8bf83d`. The app executable was
   launched directly from the read-only mounted DMG, observed alive as PID `52669`, then terminated
   and the image detached cleanly. This is local acceptance evidence, not a signed/published release.
+
+## 2026-08-03 — R19 frozen commit 284a44d authoring/distribution audit RED
+
+- Contract/Test Designer added only two regression suites around the independently rejected frozen
+  commit. The authoring suite requires raw CLI and MCP `read_player_targets` to return the authored
+  `defaults.desktop`, guarded native apply to select and report the newly committed native default,
+  and Studio to reconcile its post-apply state from that authoritative server result instead of
+  inventing a local default that changes after reload. The fixture deliberately orders `native-a`
+  before the authored `native-b` default.
+- The packaging/workflow suite requires `packageDesktop` without an explicit `targetId` to reject
+  when `defaults.desktop` is absent, both for a web-only project and for multiple native targets;
+  only an explicitly supplied web target remains the legacy wrapper control. It also requires an
+  updater-enabled generated workflow to publish updater payloads, detached signatures and signed
+  `latest.json`-style metadata, while the disabled carrier/workflow remains updater-byte-clean.
+- Signing contracts require generated macOS jobs to consume all six documented Apple
+  signing/notarization secrets, Windows jobs to consume and actually import the documented PFX
+  certificate/password, and the unconfigured path to remain an explicitly labelled pre-release.
+  A repository-owned `.github/workflows/r19-generated-game-acceptance.yml` must run on PR and
+  manual dispatch, generate a first-class carrier, build DMG, NSIS, MSI, AppImage, deb and rpm on
+  native runners, then verify the complete expected-format set in a separate acceptance job. These
+  are source/workflow contracts only; this RED run did not attempt cross-platform CI.
+- Exact focused command:
+  `npx vitest run packages/studio/r19-default-desktop-selection.regression.test.mjs packages/cli/lib/r19-frozen-workflow-audit.regression.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`; both files failed, `9/11` tests failed and `2/11` controls passed. Exact failures:
+  `read_player_targets` omits defaults; guarded apply neither changes nor reports `defaults.desktop`;
+  Studio hard-codes `desktop: targetId` after apply; both implicit desktop package cases succeed;
+  the updater workflow omits payload/signature metadata; macOS secrets are unused; Windows secrets
+  are unused and no certificate is imported; and the repository-owned acceptance workflow is
+  absent. The updater-disabled byte-clean control and unsigned pre-release control pass. No
+  production source or workflow was changed by this RED slice.
+
+## 2026-08-03 — R19 authoring/distribution audit GREEN
+
+- The authoritative BuildTargets-v2 `defaults` record now round-trips through CLI/MCP reads,
+  previews, guarded applies and Studio reconciliation. Saving a first-class desktop target selects
+  it as `defaults.desktop`; implicit desktop packaging rejects a missing authored desktop default
+  before creating output, while an explicitly selected web target remains the compatibility path.
+- Generated native release carriers now include executable release assembly and signing-status
+  scripts. macOS imports the documented certificate and uses the Apple signing/notarization
+  environment, Windows imports the documented PFX and applies its thumbprint, and the no-secret path
+  remains an explicitly labelled `Unsigned build` pre-release. Updater-enabled carriers stage the
+  real Tauri payload plus adjacent `.sig`, assemble `latest.json`, and include every release asset in
+  `SHA256SUMS`; updater-disabled carriers remain byte-clean.
+- Repository workflow `r19-generated-game-acceptance.yml` generates a first-class carrier from the
+  current source, then builds and verifies DMG, NSIS EXE, MSI, AppImage, DEB and RPM on native
+  macOS/Windows/Linux runners. Cross-platform execution is still pending the frozen PR commit.
+- Focused R19 suite: `14` files and `74` tests passed. The executable release-assembler regression
+  exposed invalid generated newline escaping, and the new updater round-trip exposed an invalid
+  generated URL-normalization regular expression; both defects received focused failing evidence
+  before repair. The final executable updater/release pair passes `14/14` focused audit tests,
+  including six-installers enforcement and `payload + .sig -> latest.json -> SHA256SUMS`.

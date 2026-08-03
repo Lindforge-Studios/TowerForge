@@ -7,7 +7,10 @@ separate project-owned workflow inside their exported Tauri carrier. It builds t
 formats from the exact game commit, attaches `SHA256SUMS`, repeats hashes in generated notes, and
 publishes only an `Unsigned build` pre-release until the game author configures signing. Generated
 game credentials remain OS/CI-owned; TowerForge never copies signing or updater private keys into
-the `.tdproj` or carrier. See [ADR 0060](adr/0060-r19-native-desktop-distribution.md).
+the `.tdproj` or carrier. Configured macOS and Windows jobs import their native certificates; the
+unsigned fallback remains a pre-release. If updater support is enabled, the same candidate also
+contains Tauri update payloads, detached `.sig` files and `latest.json`. See
+[ADR 0060](adr/0060-r19-native-desktop-distribution.md).
 
 ## Published Baseline
 

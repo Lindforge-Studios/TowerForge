@@ -13169,12 +13169,11 @@ function renderBuildTargetsTab() {
         const applied = await apiPost("/api/player-targets/apply", { targetId, target, ifRevision: read.revision });
         if (!applied.ok) throw new Error("Native desktop target could not be saved.");
         bt.schemaVersion = 2;
-        bt.defaults = { ...(bt.defaults ?? {}), desktop: targetId };
         S.project.manifest.schemaVersion = 5;
         S.project.buildTargets = {
           ...bt,
           schemaVersion: 2,
-          defaults: { ...(bt.defaults ?? {}), desktop: targetId },
+          defaults: { ...(applied.defaults ?? bt.defaults ?? {}) },
           targets: { ...bt.targets, [targetId]: target }
         };
         S.contentHash = applied.newHash;

@@ -14,6 +14,7 @@ export function readPlayerTargets(projectDir) {
     projectSchemaVersion: raw.manifest?.schemaVersion ?? 1,
     buildTargetsSchemaVersion: raw.buildTargets?.schemaVersion ?? 1,
     revision: playerTargetsRevision(raw),
+    defaults: Object.freeze(structuredClone(raw.buildTargets?.defaults ?? {})),
     targets: Object.freeze(structuredClone(raw.buildTargets?.targets ?? {}))
   });
 }
@@ -120,7 +121,11 @@ export function previewPlayerTarget(projectDir, targetId, target) {
     projectSchemaVersion: 5,
     buildTargetsSchemaVersion: 2,
     validation,
-    candidate: validation.ok ? Object.freeze({ targetId, target: Object.freeze(detachedTarget) }) : undefined
+    candidate: validation.ok ? Object.freeze({
+      targetId,
+      target: Object.freeze(detachedTarget),
+      defaults: Object.freeze(structuredClone(candidateRaw.buildTargets.defaults))
+    }) : undefined
   });
 }
 
@@ -160,6 +165,7 @@ export function applyPlayerTarget(projectDir, targetId, target, options = {}) {
       rolledBack: false,
       previousRevision,
       revision: playerTargetsRevision(afterRaw),
+      defaults: Object.freeze(structuredClone(afterRaw.buildTargets?.defaults ?? {})),
       validation,
       backup: Object.freeze({ directory: path.relative(projectDir, backupDir).split(path.sep).join("/") })
     });
@@ -175,7 +181,7 @@ function candidateProject(raw, targetId, target) {
   const nextTarget = cloneClosedPlayerTarget(target);
   nextTarget.id = targetId;
   const defaults = { ...(raw.buildTargets?.defaults ?? {}) };
-  if (nextTarget.platform === "desktop" && !defaults.desktop) defaults.desktop = targetId;
+  if (nextTarget.platform === "desktop") defaults.desktop = targetId;
   if (nextTarget.platform === "web" && !defaults.web) defaults.web = targetId;
   return {
     ...raw,

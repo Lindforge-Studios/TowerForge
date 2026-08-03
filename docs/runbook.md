@@ -991,9 +991,15 @@ AI Chat accepts up to eight JPEG/PNG/GIF/WebP images per turn, at most 4 MB each
   preview_player_target -> apply_player_target(ifRevision) -> validate_project -> package_desktop`.
   Run `npm install` and `npm run build` inside the generated output. Session files live under the
   OS app-data directory and the WebView never receives arbitrary paths or shell/filesystem access.
+  Packaging without `--target` requires an authored `defaults.desktop`; an absent default is a
+  configuration error, not permission to use the first target or `defaults.web`.
   If updater is enabled, only HTTPS endpoints and the public verification key belong in the target;
   signing/private updater keys stay in environment or CI secrets. Inspect the generated
-  `SIGNING.md` and workflow. TowerForge does not submit generated games to stores.
+  `SIGNING.md` and workflow. An enabled tagged build publishes the Tauri updater payloads, adjacent
+  detached signatures and `latest.json`; a disabled carrier contains none of those paths. The
+  repository workflow `.github/workflows/r19-generated-game-acceptance.yml` is the constructor gate
+  that generates a current carrier and builds DMG, NSIS, MSI, AppImage, DEB and RPM on native
+  runners. TowerForge does not submit generated games to stores.
 - Desktop Studio packaging issues: run `npm run desktop:dev` first to verify the sidecar starts, then inspect `packages/desktop/src-tauri/runtime` for Studio files and production agent-runtime dependencies, and `packages/desktop/src-tauri/binaries` for the Node sidecar binary. If `/api/health` works but the app UI does not load, check the desktop session token/cookie handshake in the Tauri console.
 - Linux AppImage agent runtime issues: the bundled Claude executable is stored with a masked ELF header plus a SHA-256 manifest so `linuxdeploy` does not rewrite or inspect the standalone runtime. On first use Studio verifies it, restores a `0700` copy under the private desktop app-data `agent-runtimes/bin` directory, verifies it again, and only then executes it. Do not unpack or patch this file manually.
 - Desktop menu/bridge issues: confirm `packages/desktop/src-tauri/build.rs` registers every command in the Rust `generate_handler!` list and `packages/desktop/src-tauri/capabilities/main.json` grants the matching `allow-desktop-*` permissions only to the main `http://127.0.0.1:*` WebView. Then inspect the WebView console for `Desktop bridge setup failed`. Delete only `<app-data>/desktop-state.json` to reset last/recent projects without touching project data.
@@ -1015,7 +1021,10 @@ A generated first-class desktop game has its own release boundary under the chos
 Its `npm run build` emits only formats supported by the current OS. The generated
 `.github/workflows/towerforge-desktop-release.yml` builds DMG, NSIS EXE, MSI, AppImage, DEB and RPM
 from the exact workflow commit, assembles `SHA256SUMS`, repeats hashes in release notes, and uses a
-pre-release titled `Unsigned build` until the author adds platform signing in CI. Those artifacts
+pre-release titled `Unsigned build` until the author adds platform signing in CI. With the documented
+Apple and Windows secrets, the workflow imports the native certificates and may publish the signed
+candidate as a normal release. An enabled updater also attaches its payloads, `.sig` files and static
+`latest.json`; these are absent when updater support is disabled. Those artifacts
 are for the generated game and are distinct from TowerForge Studio installers below.
 
 - Windows: `packages/desktop/src-tauri/target/release/bundle/nsis/*.exe` and `packages/desktop/src-tauri/target/release/bundle/msi/*.msi`

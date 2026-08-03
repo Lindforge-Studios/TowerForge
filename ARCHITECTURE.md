@@ -250,9 +250,12 @@ These domains MUST evolve independently. A project schema bump MUST NOT rewrite 
   from a selected BuildTargets-v2 `platform: "desktop"` target. The first-class carrier owns a
   restrictive CSP, fixed app-data session commands, single-instance/close/resume/fullscreen
   lifecycle, project-derived icons and a six-format GitHub release workflow. Local builds create
-  only current-OS installers. Signing secrets never enter the project; the reference workflow is an
-  `Unsigned build` pre-release. The updater plugin/config/runtime are emitted only for an explicitly
-  enabled HTTPS/public-key target and fail closed before installation. See
+  only current-OS installers. Signing secrets never enter the project; configured Apple/PFX secrets
+  are consumed only by native CI runners, while the unconfigured path is an `Unsigned build`
+  pre-release. The updater plugin/config/runtime and release payload/`.sig`/`latest.json` assembly
+  are emitted only for an explicitly enabled HTTPS/public-key target and fail closed before
+  installation. `defaults.desktop` is authoritative and implicit packaging never guesses from file
+  order or a web default. See
   [ADR 0060](docs/adr/0060-r19-native-desktop-distribution.md).
 - Studio desktop packaging: `packages/desktop` builds installable TowerForge Studio apps with Tauri v2 and bundled Node, Codex, and Claude Code runtimes. The packaged runtime mirrors CLI, prebuilt engine, renderer, and player runtime and MUST NOT require user-installed Node, npm, TypeScript, Codex, or Claude Code after installation. macOS builds without Developer ID credentials use an explicit complete ad-hoc bundle signature, ARM64 target, narrowly scoped Node JIT entitlements, and verify the signature, architecture, Node/V8 startup, and DMG before acceptance. Tauri `setup` returns after showing the loading window; Studio boot is deferred, reports recoverable errors in that window, and the sidecar watches the desktop parent PID so a shell crash cannot leave orphan servers.
 - Desktop commands: Rust owns native menu/window/project-switch lifecycle; Studio owns the shared command registry, unsaved-change UX, and editor actions. `build.rs` generates app-manifest permissions for the exact seven custom invoke commands, and the external loopback WebView receives only those permissions plus event listening; it never gets raw filesystem or shell access.

@@ -652,10 +652,6 @@ function normalizeBuildTargets(input) {
     const firstWeb = Object.entries(buildTargets.targets).find(([, target]) => target.platform === "web");
     if (firstWeb) buildTargets.defaults.web = firstWeb[0];
   }
-  if (buildTargets.schemaVersion === 2 && !buildTargets.defaults.desktop) {
-    const firstDesktop = Object.entries(buildTargets.targets).find(([, target]) => target.platform === "desktop");
-    if (firstDesktop) buildTargets.defaults.desktop = firstDesktop[0];
-  }
   return buildTargets;
 }
 
