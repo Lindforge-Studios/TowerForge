@@ -8,6 +8,8 @@ export const HUD_CATALOG_LIMITS = Object.freeze({
   layoutRecordsPerProfile: 1536,
   transitionsPerProfile: 256,
   conditionTermsPerTransition: 16,
+  assetRolesPerProfile: 512,
+  assetMetadataPerProfile: 512,
   visibleRadialItems: 12,
   repeaterItemsPerScreen: 128
 });
@@ -428,6 +430,9 @@ function normalizeScreenGraph(value, path, screens) {
 
 function normalizeAssetRoles(value, path) {
   const record = inspectRecord(value, path);
+  if (Object.keys(record).length > HUD_CATALOG_LIMITS.assetRolesPerProfile) {
+    fail(path, `exceeds the limit of ${HUD_CATALOG_LIMITS.assetRolesPerProfile}.`);
+  }
   const entries = [];
   for (const key of Object.keys(record).sort()) {
     boundedId(key, `${path}.${key}`);
@@ -438,6 +443,9 @@ function normalizeAssetRoles(value, path) {
 
 function normalizeAssetMetadata(value, path, assetRoles) {
   const record = inspectRecord(value, path);
+  if (Object.keys(record).length > HUD_CATALOG_LIMITS.assetMetadataPerProfile) {
+    fail(path, `exceeds the limit of ${HUD_CATALOG_LIMITS.assetMetadataPerProfile}.`);
+  }
   const entries = [];
   for (const roleId of Object.keys(record).sort()) {
     boundedId(roleId, `${path}.${roleId}`);
