@@ -7,6 +7,7 @@ import {
   applyHudStudioComponentDraft,
   createHudStudioDescriptorModel,
   removeHudStudioTransitionCondition,
+  resolveHudStudioAssetImportKind,
   upsertHudStudioAssetRole,
   upsertHudStudioTransitionCondition
 } from "/hud-studio-model.mjs";
@@ -12945,7 +12946,7 @@ function renderHudAssetRoleEditor() {
   syncAssetRoleFields();
   $("btn-hud-import-asset").onclick = async () => {
     try {
-      const kind = $("hud-asset-kind").value === "atlas_frame" ? "atlas" : "sprite";
+      const kind = resolveHudStudioAssetImportKind($("hud-asset-kind").value);
       const result = await apiPost("/api/assets/import", {
         sourcePath: $("hud-import-source").value.trim(),
         targetPath: $("hud-import-target").value.trim(),

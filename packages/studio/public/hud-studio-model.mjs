@@ -203,3 +203,13 @@ export function upsertHudStudioAssetRole(profile, input) {
   next.assetMetadata[roleId] = normalizeAssetMetadata(draft.metadata);
   return deepFreeze(next);
 }
+
+/** HUD imports create a visuals sprite role. Atlas catalogs are authored separately; an existing
+ * atlas-frame sprite can still be selected by ID, while uploading a standalone frame remains a
+ * valid billboard fallback and cannot leave an unresolvable atlas-only role behind. */
+export function resolveHudStudioAssetImportKind(kind) {
+  if (!["icon", "image", "atlas_frame", "nine_slice"].includes(kind)) {
+    invalid("asset import kind is unsupported.");
+  }
+  return "sprite";
+}

@@ -121,6 +121,7 @@ fields, non-finite numbers and data beyond these schema-v1 ceilings:
 - 32 screens and 512 unique nodes per profile;
 - nesting depth 16 and 1,536 total layout records per profile;
 - 256 transitions and 16 condition terms per transition;
+- 512 asset roles and 512 matching asset-metadata records per profile;
 - 12 simultaneously visible radial items;
 - 128 materialized repeater items per screen.
 

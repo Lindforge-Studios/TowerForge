@@ -4597,6 +4597,25 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   invalidating the complete gate evidence and both forthcoming independent sign-offs. Full gates run
   on this exact commit; verifier reports and PR evidence remain external to the frozen tree.
 
+## 2026-08-04 — R21 code-verifier atlas/budget RED → GREEN
+
+- Code Verification rejected frozen candidate `90a7f1c6ddb00121dba646470a2694d138ed77b3`:
+  HUD Studio mapped an `atlas_frame` upload to an atlas-only visuals record even though a HUD role
+  must resolve through `visuals.sprites`, and `assetRoles`/`assetMetadata` had no record ceiling.
+  The prior freeze, partial full-gate run and both verifier results were invalidated.
+- Contract-first RED required an uploaded HUD frame to become a visuals sprite and complete
+  `preview -> guarded apply -> reload`. It also fixed explicit limits of 512 roles and 512 metadata
+  records per profile, with 513/accessor/revoked-proxy inputs failing closed. Exact RED command:
+  `npx vitest run packages/player-runtime/src/r21-hud-catalog.contract.test.mjs packages/studio/r21-hud-atlas-import.contract.test.mjs --maxWorkers=1`.
+  Result before production repair: `2` expected failures and `37` unchanged passes.
+- GREEN adds both catalog budgets and one browser-safe import-kind resolver shared by Studio. HUD
+  uploads always create a resolvable visuals sprite; existing atlas-frame sprites remain selectable
+  by ID through the normal visuals authoring path. Exact focused command:
+  `npx vitest run packages/player-runtime/src/r21-hud-catalog.contract.test.mjs packages/studio/r21-hud-atlas-import.contract.test.mjs packages/studio/r21-hud-studio-model.contract.test.mjs packages/studio/r21-hud-studio.contract.test.mjs --maxWorkers=1`.
+  Result: `4/4` files and `54/54` tests GREEN; both browser sources pass `node --check` and
+  `git diff --check` is GREEN. A fresh plugin mirror, exact-candidate freeze, full gates and both
+  independent sign-offs are still required.
+
 ## 2026-08-04 — R21 Code Verifier atlas-import and asset-budget RED evidence
 
 - Code verification reopened exact candidate `90a7f1c6ddb00121dba646470a2694d138ed77b3`
