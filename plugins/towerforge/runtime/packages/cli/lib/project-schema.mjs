@@ -1229,7 +1229,7 @@ function validateBuildTargets(buildTargets, err) {
           "buildTargets",
           targetId,
           `targets.${targetId}.${field}`,
-          `${field} overlaps build target "${existingOwner}"; output directories must be isolated.`
+          `${field} overlaps build target "${existingOwner}"; output directories must remain unique and isolated.`
         );
       } else {
         outputOwners.set(canonicalDir, targetId);

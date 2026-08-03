@@ -3482,3 +3482,14 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   tests passed. The complete focused R19 regression set also passed sequentially: `14/14` files and
   `85/85` tests. This remains pre-commit evidence; all repository gates and both independent
   sign-offs must be repeated on the next exact frozen source commit.
+
+## 2026-08-03 — R19 nested-output diagnostic compatibility RED
+
+- The first full unit gate on candidate `9ae9591` exposed two existing R18 contract failures:
+  `packages/mcp/r18-player-targets-authoring.contract.test.mjs` and
+  `packages/cli/lib/r18-build-targets.contract.test.mjs`. Result: `2/4108` failed while `4106/4108`
+  passed. Both expected the stable duplicate-output diagnostic vocabulary (`unique`, `duplicate` or
+  `already used`), while the stricter nested-path implementation emitted only `isolated`.
+- This is accepted as the compatibility RED for the verifier-driven diagnostic repair. The minimal
+  fix preserves the new ancestor/descendant rejection and restores the word `unique`. Candidate
+  `9ae9591` and all of its partial gate evidence are invalidated.
