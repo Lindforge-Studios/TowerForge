@@ -1,0 +1,122 @@
+name: R19 Generated Game Acceptance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/r19-generated-game-acceptance.yml"
+      - "packages/cli/lib/packaging.mjs"
+      - "packages/cli/lib/generated-desktop-release.mjs"
+      - "packages/cli/lib/player-target-authoring.mjs"
+      - "packages/cli/lib/project-schema.mjs"
+      - "scripts/create-r19-acceptance-project.mjs"
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22.14.0"
+      - run: npm ci
+      - run: npm run build:engine
+      - name: Generate first-class native carrier
+        shell: bash
+        run: |
+          node scripts/create-r19-acceptance-project.mjs "$RUNNER_TEMP/r19-generated-game.tdproj"
+          node packages/cli/package.mjs --project "$RUNNER_TEMP/r19-generated-game.tdproj" --kind desktop --target native-acceptance --out native-carrier --json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: generated-carrier
+          if-no-files-found: error
+          include-hidden-files: true
+          path: ${{ runner.temp }}/r19-generated-game.tdproj/native-carrier
+
+  macos-generated-game:
+    needs: generate
+    runs-on: macos-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: { name: generated-carrier, path: carrier }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: { node-version: "22.14.0" }
+      - run: |
+          rustup toolchain install 1.88.0 --profile minimal
+          rustup default 1.88.0
+      - run: npm install --ignore-scripts --no-package-lock
+        working-directory: carrier
+      - name: Build macos dmg
+        run: npx tauri build --bundles "dmg"
+        working-directory: carrier
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with: { name: r19-macos-dmg, path: "carrier/src-tauri/target/**/bundle/**/*.dmg", if-no-files-found: error }
+
+  windows-generated-game:
+    needs: generate
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: { name: generated-carrier, path: carrier }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: { node-version: "22.14.0" }
+      - run: |
+          rustup toolchain install 1.88.0 --profile minimal
+          rustup default 1.88.0
+      - run: npm install --ignore-scripts --no-package-lock
+        working-directory: carrier
+      - name: Build windows nsis and msi
+        run: npx tauri build --bundles "nsis,msi"
+        working-directory: carrier
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: r19-windows-nsis-msi
+          path: |
+            carrier/src-tauri/target/**/bundle/**/*.exe
+            carrier/src-tauri/target/**/bundle/**/*.msi
+          if-no-files-found: error
+
+  ubuntu-generated-game:
+    needs: generate
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: { name: generated-carrier, path: carrier }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: { node-version: "22.14.0" }
+      - run: |
+          rustup toolchain install 1.88.0 --profile minimal
+          rustup default 1.88.0
+      - run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - run: npm install --ignore-scripts --no-package-lock
+        working-directory: carrier
+      - name: Build ubuntu appimage deb and rpm
+        run: npx tauri build --bundles "appimage,deb,rpm"
+        working-directory: carrier
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: r19-ubuntu-appimage-deb-rpm
+          path: |
+            carrier/src-tauri/target/**/bundle/**/*.AppImage
+            carrier/src-tauri/target/**/bundle/**/*.deb
+            carrier/src-tauri/target/**/bundle/**/*.rpm
+          if-no-files-found: error
+
+  acceptance:
+    needs: [macos-generated-game, windows-generated-game, ubuntu-generated-game]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: { pattern: "r19-*", path: artifacts, merge-multiple: true }
+      - name: Verify dmg nsis exe msi appimage deb rpm formats
+        shell: bash
+        run: |
+          test "$(find artifacts -type f -name '*.dmg' | wc -l)" -eq 1
+          test "$(find artifacts -type f -name '*.exe' | wc -l)" -eq 1
+          test "$(find artifacts -type f -name '*.msi' | wc -l)" -eq 1
+          test "$(find artifacts -type f -name '*.AppImage' | wc -l)" -eq 1
+          test "$(find artifacts -type f -name '*.deb' | wc -l)" -eq 1
+          test "$(find artifacts -type f -name '*.rpm' | wc -l)" -eq 1

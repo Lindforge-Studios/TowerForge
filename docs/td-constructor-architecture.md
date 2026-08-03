@@ -40,7 +40,8 @@ The current "full constructor" means:
 - Prepare a deterministic publish candidate, choose a remix/license policy, and explicitly publish
   through an injected provider adapter without storing provider credentials in the project.
 - Export or import a permitted deterministic public remix source pack with preserved provenance.
-- Export Capacitor mobile and Tauri desktop scaffolds around the built web bundle.
+- Export Capacitor mobile, legacy web-wrapped Tauri, or a first-class native game from an explicit
+  BuildTargets-v2 `platform: "desktop"` target.
 - Install TowerForge Studio itself as a native desktop app for Windows, macOS, and Linux.
 - Preview and interact with the built game in a browser.
 - Hand off a project as one verified `.tdpack`, or a game as a single HTML / portable web ZIP.
@@ -472,7 +473,18 @@ npx towerforge create my-game --template classic --dir /tmp
 
 `npm run build` validates the project, compiles `packages/engine` to ES modules, copies the engine/renderer and safe referenced visual/audio assets, emits gameplay, TowerScripts, narrative, and background data, and writes a playable web player. `--single-file` also emits an asset-inlined `file://`-runnable HTML.
 
-`node packages/cli/package.mjs` creates a portable web archive or wraps a web build into a native project scaffold. It does not install native SDKs, sign, upload, or publish binaries.
+`node packages/cli/package.mjs` creates a portable web archive, a Capacitor wrapper, or a generated
+Tauri game. A selected first-class desktop target is compiled directly and owns its window,
+project-derived icons, restrictive capabilities, native two-slot session storage and lifecycle.
+The carrier includes a current-OS build command and a project-local six-format GitHub workflow.
+Without author-provided signing configuration that workflow publishes only an `Unsigned build`
+pre-release. Optional updater bytes, generated sources, signing-guide metadata and permissions are
+absent unless the desktop target enables an HTTPS/public-key updater, including after repackaging an
+existing carrier; disabling after a native build clears the disposable target cache and generated
+Cargo lock while preserving unrelated carrier files. Native/web output directories must be mutually non-overlapping, including
+ancestor and descendant paths. The legacy web-target wrapper remains available as a compatibility
+path.
+See [ADR 0060](adr/0060-r19-native-desktop-distribution.md).
 
 `npm run desktop:build` builds installable TowerForge Studio desktop bundles through `packages/desktop`. This is separate from game export packaging: it prepares a bundled runtime with the Studio server, CLI/MCP libraries, renderer files, and precompiled engine dist, then launches it through a Tauri v2 shell with a Node sidecar.
 

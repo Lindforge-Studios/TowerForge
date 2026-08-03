@@ -225,7 +225,7 @@ const PLAYER_TARGET_SCHEMA = Object.freeze({
   maxProperties: 32,
   properties: Object.freeze({
     id: Object.freeze({ type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }),
-    platform: Object.freeze({ type: "string", enum: ["web", "android", "ios"] }),
+    platform: Object.freeze({ type: "string", enum: ["web", "android", "ios", "desktop"] }),
     renderer: Object.freeze({ type: "string", enum: ["canvas", "phaser"] }),
     webDir: Object.freeze({ type: "string", maxLength: 256 }),
     market: Object.freeze({ type: "string", maxLength: 64 }),
@@ -250,7 +250,48 @@ const PLAYER_TARGET_SCHEMA = Object.freeze({
     }),
     quality: Object.freeze({ type: "string", enum: ["auto", "low", "balanced", "high"] }),
     locale: Object.freeze({ type: "string", minLength: 1, maxLength: 64 }),
-    inputProfile: Object.freeze({ type: "string", enum: ["keyboard_mouse", "touch", "hybrid"] })
+    inputProfile: Object.freeze({ type: "string", enum: ["keyboard_mouse", "touch", "hybrid"] }),
+    window: Object.freeze({
+      type: "object",
+      properties: Object.freeze({
+        width: Object.freeze({ type: "integer", minimum: 640, maximum: 7680 }),
+        height: Object.freeze({ type: "integer", minimum: 480, maximum: 4320 }),
+        minWidth: Object.freeze({ type: "integer", minimum: 640, maximum: 7680 }),
+        minHeight: Object.freeze({ type: "integer", minimum: 480, maximum: 4320 }),
+        fullscreen: Object.freeze({ type: "boolean" }),
+        resizable: Object.freeze({ type: "boolean" })
+      }),
+      required: Object.freeze(["width", "height", "minWidth", "minHeight", "fullscreen", "resizable"]),
+      additionalProperties: false
+    }),
+    bundle: Object.freeze({
+      type: "object",
+      properties: Object.freeze({
+        iconSource: Object.freeze({ type: "string", minLength: 1, maxLength: 256 }),
+        targets: Object.freeze({
+          type: "array",
+          minItems: 1,
+          maxItems: 6,
+          uniqueItems: true,
+          items: Object.freeze({ type: "string", enum: ["dmg", "nsis", "msi", "appimage", "deb", "rpm"] })
+        })
+      }),
+      required: Object.freeze(["iconSource", "targets"]),
+      additionalProperties: false
+    }),
+    updater: Object.freeze({
+      type: "object",
+      properties: Object.freeze({
+        enabled: Object.freeze({ type: "boolean" }),
+        endpoints: Object.freeze({
+          type: "array", minItems: 1, maxItems: 16, uniqueItems: true,
+          items: Object.freeze({ type: "string", minLength: 1, maxLength: 2048, pattern: "^https://" })
+        }),
+        publicKey: Object.freeze({ type: "string", minLength: 1, maxLength: 32768 })
+      }),
+      required: Object.freeze(["enabled"]),
+      additionalProperties: false
+    })
   }),
   required: Object.freeze(["id", "platform", "renderer", "formFactor", "viewport", "quality", "locale", "inputProfile"]),
   additionalProperties: false
@@ -957,12 +998,12 @@ export const TOOLS = [
   },
   {
     name: "get_player_target_recipe",
-    description: "Return an inert detached large-screen desktop player target recipe without changing project files.",
+    description: "Return an inert detached large-screen web or first-class native desktop player target recipe without changing project files.",
     inputSchema: {
       type: "object",
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server project." },
-        recipeId: { type: "string", enum: ["desktop_large_screen"] },
+        recipeId: { type: "string", enum: ["desktop_large_screen", "native_desktop_game"] },
         targetId: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }
       },
       required: ["recipeId", "targetId"],
@@ -1465,13 +1506,15 @@ export const TOOLS = [
   {
     name: "package_desktop",
     description:
-      "Wrap the built web bundle into a Tauri v2 desktop project (Windows/macOS/Linux) under <project>/desktop — tauri.conf.json, Cargo/Rust scaffold, the built game in dist/, and a README with the local build + distribution steps. Does not publish anything. Returns app metadata and next steps.",
+      "Package a first-class platform desktop target into its authored Tauri v2 game scaffold. An explicit legacy web target remains supported as the scaffold-only compatibility adapter. Does not publish anything and never selects a different target silently.",
     inputSchema: {
       type: "object",
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory." },
-        targetId: { type: "string", description: "Build target id whose app metadata (appId/appName/version) to use. Defaults to the canonical web target." }
-      }
+        targetId: { type: "string", description: "Exact platform desktop target id, or an explicit legacy web target id for compatibility packaging." }
+      },
+      required: ["targetId"],
+      additionalProperties: false
     }
   },
   {
@@ -2792,9 +2835,21 @@ export async function callTool(name, args = {}, ctx = {}) {
       desktop: {
         formFactor: "desktop",
         viewport: { fit: "contain" },
-        inputProfile: "keyboard_mouse"
+        inputProfile: "keyboard_mouse",
+        native: {
+          platform: "desktop",
+          window: "closed",
+          bundle: "closed",
+          updater: "optional HTTPS endpoints plus public verification key; private material forbidden"
+        }
       },
-      recipes: ["desktop_large_screen"],
+      nativeDesktop: {
+        platform: "desktop",
+        defaultSelector: "defaults.desktop",
+        window: { width: 1440, height: 900, minWidth: 1024, minHeight: 720, fullscreen: false, resizable: true },
+        bundle: { iconSource: "project-relative 1024x1024 PNG", targets: ["dmg", "nsis", "msi", "appimage", "deb", "rpm"] }
+      },
+      recipes: ["desktop_large_screen", "native_desktop_game"],
       authoringTransaction: {
         read: "read_player_targets",
         recipe: "get_player_target_recipe",
@@ -2802,7 +2857,8 @@ export async function callTool(name, args = {}, ctx = {}) {
         apply: "apply_player_target",
         revisionGuard: "ifRevision"
       },
-      compatibility: "BuildTargets schema v1 and legacy player targets remain byte-path isolated until an explicit v2 candidate is applied."
+      packaging: { tool: "package_desktop", targetSpecific: true, legacyWebAdapter: true },
+      compatibility: "BuildTargets schema v1 and R18 platform web large-screen targets remain available; only native_desktop_game authors a first-class platform desktop target."
     };
     return {
       schemaVersion: 5,

@@ -10,11 +10,28 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { PNG } from "pngjs";
 import { loadProjectFiles, repoRoot, selectBuildTarget } from "./project-loader.mjs";
+import {
+  generatedDesktopReleaseWorkflow,
+  generatedReleaseAssemblerScript,
+  generatedSigningStatusScript,
+  generatedUpdaterEntryScript
+} from "./generated-desktop-release.mjs";
+import { assertConfinedProjectOutput } from "./path-confinement.mjs";
 import { writeDirectoryZip } from "./zip-store.mjs";
 
 const CAPACITOR_VERSION = "^6.0.0";
-const TAURI_CLI_VERSION = "^2.0.0";
+const TAURI_CLI_VERSION = "2.11.4";
+const DESKTOP_ICON_MAX_BYTES = 16 * 1024 * 1024;
+const DESKTOP_ICON_FILES = Object.freeze([
+  "icons/32x32.png",
+  "icons/128x128.png",
+  "icons/128x128@2x.png",
+  "icons/icon.icns",
+  "icons/icon.ico"
+]);
+const DESKTOP_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self' ipc:; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
 
 /**
  * @param {string} projectDir
@@ -24,17 +41,33 @@ export async function packageProject(projectDir, opts = {}) {
   const kind = ["desktop", "web"].includes(opts.kind) ? opts.kind : "mobile";
   const files = loadProjectFiles(projectDir);
 
-  // The native app wraps a WEB bundle — pick a web target to actually build.
-  const [selectedId, selected] = selectBuildTarget(files.buildTargets, opts.targetId ?? null);
-  const webTarget = selected.platform === "web" ? [selectedId, selected] : firstWebTarget(files.buildTargets);
-  if (!webTarget) {
+  const [selectedId, selected] = selectPackagingTarget(files.buildTargets, kind, opts.targetId ?? null);
+  const selectedPlatform = selected.platform ?? selected.type ?? "web";
+  if ((kind === "web" || kind === "mobile") && selectedPlatform !== "web") {
+    return { ok: false, projectDir, error: `Build target "${selectedId}" uses platform "${selectedPlatform}". ${kind} packaging requires an explicit web target.` };
+  }
+  if (kind === "desktop" && selectedPlatform !== "web" && selectedPlatform !== "desktop") {
+    return { ok: false, projectDir, error: `Build target "${selectedId}" uses platform "${selectedPlatform}". Desktop packaging accepts only an explicit desktop target or legacy web target.` };
+  }
+  const nativeDesktopTarget = kind === "desktop" && selected.platform === "desktop";
+
+  // Mobile, portable web, and legacy desktop packaging continue to wrap a web target. A
+  // first-class desktop target is compiled directly below and must never fall back to another
+  // target's renderer, form factor, or player settings.
+  const webTarget = selectedPlatform === "web" ? [selectedId, selected] : null;
+  if (!nativeDesktopTarget && !webTarget) {
     return { ok: false, projectDir, error: "No web build target found. Packaging wraps a web bundle — add a platform \"web\" target first." };
   }
-  const [webTargetId] = webTarget;
+  const webTargetId = webTarget?.[0];
+  const buildTargetId = nativeDesktopTarget ? selectedId : webTargetId;
 
   const app = appMeta(files.manifest, selected);
-  const outDir = path.resolve(projectDir, opts.outDir ?? kind);
+  const defaultOutputDir = nativeDesktopTarget
+    ? (selected.outputDir ?? `desktop-${selectedId}`)
+    : kind;
+  const outDir = path.resolve(projectDir, opts.outDir ?? defaultOutputDir);
   assertUnderProject(projectDir, outDir);
+  const writer = createConfinedPackagingWriter(projectDir);
   // Do NOT wipe the whole outDir: on a re-package it would destroy the user's native projects
   // (android/, ios/ from `npx cap add`, src-tauri/target/), their signing config, and node_modules.
   // The child build cleans only the web subdir (www/dist) below, and the scaffold files are
@@ -46,22 +79,32 @@ export async function packageProject(projectDir, opts = {}) {
   // cleared) rather than deleting everything under outDir.
   const webSub = kind === "desktop" ? "dist" : (kind === "web" ? "game" : "www");
   const webRel = path.join(path.relative(projectDir, outDir), webSub);
-  const build = await runBuild(projectDir, webTargetId, webRel, { singleFile: kind === "web" });
+  const build = await runBuild(projectDir, buildTargetId, webRel, {
+    singleFile: kind === "web",
+    nativeDesktopBundle: nativeDesktopTarget
+  });
   if (!build.ok) {
     return { ok: false, projectDir, error: build.error ?? "Web build failed.", output: build.output };
   }
 
   if (kind === "web") {
-    const nextSteps = writeWebPackage(outDir, app);
+    const nextSteps = writeWebPackage(outDir, app, writer);
     const archiveName = `${app.slug}-${app.version}-web.zip`;
     const archivePath = path.join(outDir, archiveName);
+    writer.assert(archivePath, "create package archive");
     const archive = writeDirectoryZip(outDir, archivePath, { exclude: [archiveName] });
     return { ok: true, projectDir, outDir, kind, webTargetId, app, copiedAssets: build.copiedAssets, archive, nextSteps };
   }
 
-  const nextSteps = kind === "desktop" ? writeTauri(outDir, app) : writeCapacitor(outDir, app);
+  const nextSteps = kind === "desktop"
+    ? nativeDesktopTarget
+      ? writeNativeTauri(projectDir, outDir, app, selected, writer)
+      : writeLegacyTauri(outDir, app, writer)
+    : writeCapacitor(outDir, app, writer);
 
-  return { ok: true, projectDir, outDir, kind, webTargetId, app, copiedAssets: build.copiedAssets, nextSteps };
+  return nativeDesktopTarget
+    ? { ok: true, projectDir, outDir, kind, targetId: selectedId, app, copiedAssets: build.copiedAssets, nextSteps }
+    : { ok: true, projectDir, outDir, kind, webTargetId, app, copiedAssets: build.copiedAssets, nextSteps };
 }
 
 /** @deprecated kept for the mobile call sites; prefer packageProject. */
@@ -77,9 +120,9 @@ export function packageWeb(projectDir, opts = {}) {
 
 // ── Portable web archive ──────────────────────────────────────────────────────
 
-function writeWebPackage(outDir, app) {
-  writeText(path.join(outDir, "serve.mjs"), webServerTemplate());
-  writeText(path.join(outDir, "README.md"), `# ${app.appName} — Portable web build
+function writeWebPackage(outDir, app, writer) {
+  writer.writeText(path.join(outDir, "serve.mjs"), webServerTemplate());
+  writer.writeText(path.join(outDir, "README.md"), `# ${app.appName} — Portable web build
 
 This archive contains a complete offline game under \`game/\`.
 
@@ -149,8 +192,8 @@ server.listen(port, "127.0.0.1", () => {
 
 // ── Capacitor (mobile) ──────────────────────────────────────────────────────────
 
-function writeCapacitor(outDir, app) {
-  writeJson(path.join(outDir, "capacitor.config.json"), {
+function writeCapacitor(outDir, app, writer) {
+  writer.writeJson(path.join(outDir, "capacitor.config.json"), {
     appId: app.appId,
     appName: app.appName,
     webDir: "www",
@@ -178,7 +221,7 @@ function writeCapacitor(outDir, app) {
       }
     }
   });
-  writeJson(path.join(outDir, "package.json"), {
+  writer.writeJson(path.join(outDir, "package.json"), {
     name: app.slug,
     version: app.version,
     private: true,
@@ -197,8 +240,8 @@ function writeCapacitor(outDir, app) {
       "@capacitor/ios": CAPACITOR_VERSION
     }
   });
-  fs.writeFileSync(path.join(outDir, ".gitignore"), "node_modules/\nandroid/\nios/\n", "utf8");
-  fs.writeFileSync(path.join(outDir, "README.md"), capacitorReadme(app), "utf8");
+  writer.writeText(path.join(outDir, ".gitignore"), "node_modules/\nandroid/\nios/\n");
+  writer.writeText(path.join(outDir, "README.md"), capacitorReadme(app));
   return [
     "cd mobile",
     "npm install",
@@ -209,9 +252,9 @@ function writeCapacitor(outDir, app) {
 
 // ── Tauri (desktop) ─────────────────────────────────────────────────────────────
 
-function writeTauri(outDir, app) {
+function writeLegacyTauri(outDir, app, writer) {
   const crate = app.crate;
-  writeJson(path.join(outDir, "package.json"), {
+  writer.writeJson(path.join(outDir, "package.json"), {
     name: app.slug,
     version: app.version,
     private: true,
@@ -219,7 +262,7 @@ function writeTauri(outDir, app) {
     scripts: { tauri: "tauri", dev: "tauri dev", build: "tauri build" },
     devDependencies: { "@tauri-apps/cli": TAURI_CLI_VERSION }
   });
-  writeJson(path.join(outDir, "src-tauri", "tauri.conf.json"), {
+  writer.writeJson(path.join(outDir, "src-tauri", "tauri.conf.json"), {
     $schema: "https://schema.tauri.app/config/2",
     productName: app.appName,
     version: app.version,
@@ -235,7 +278,7 @@ function writeTauri(outDir, app) {
       icon: ["icons/32x32.png", "icons/128x128.png", "icons/icon.icns", "icons/icon.ico"]
     }
   });
-  writeText(path.join(outDir, "src-tauri", "Cargo.toml"),
+  writer.writeText(path.join(outDir, "src-tauri", "Cargo.toml"),
     `[package]
 name = "${crate}"
 version = "${app.version}"
@@ -251,15 +294,15 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 `);
-  writeText(path.join(outDir, "src-tauri", "build.rs"), `fn main() {\n  tauri_build::build()\n}\n`);
-  writeText(path.join(outDir, "src-tauri", "src", "main.rs"),
+  writer.writeText(path.join(outDir, "src-tauri", "build.rs"), `fn main() {\n  tauri_build::build()\n}\n`);
+  writer.writeText(path.join(outDir, "src-tauri", "src", "main.rs"),
     `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
   ${crate}_lib::run()
 }
 `);
-  writeText(path.join(outDir, "src-tauri", "src", "lib.rs"),
+  writer.writeText(path.join(outDir, "src-tauri", "src", "lib.rs"),
     `#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -267,8 +310,8 @@ pub fn run() {
     .expect("error while running tauri application");
 }
 `);
-  fs.writeFileSync(path.join(outDir, ".gitignore"), "node_modules/\nsrc-tauri/target/\n", "utf8");
-  fs.writeFileSync(path.join(outDir, "README.md"), tauriReadme(app), "utf8");
+  writer.writeText(path.join(outDir, ".gitignore"), "node_modules/\nsrc-tauri/target/\n");
+  writer.writeText(path.join(outDir, "README.md"), tauriReadme(app));
   return [
     "cd desktop",
     "npm install",
@@ -277,13 +320,477 @@ pub fn run() {
   ];
 }
 
+function writeNativeTauri(projectDir, outDir, app, target, writer) {
+  const crate = app.crate;
+  const window = target.window;
+  const updaterActive = target.updater?.enabled === true;
+  const updaterEntryPath = path.join(outDir, "scripts", "collect-updater-entry.mjs");
+  const existingCargoPath = path.join(outDir, "src-tauri", "Cargo.toml");
+  const hadUpdaterSources = writer.exists(updaterEntryPath, "inspect generated updater source")
+    || (writer.exists(existingCargoPath, "inspect generated Cargo manifest")
+      && writer.readText(existingCargoPath, "inspect generated Cargo manifest").includes("tauri-plugin-updater"));
+  if (!updaterActive && hadUpdaterSources) {
+    // A generated target and lock can retain updater code/payloads after an enabled native build.
+    // They are disposable build state, while all other carrier files and author notes are preserved.
+    writer.remove(path.join(outDir, "src-tauri", "target"), { recursive: true, force: true }, "remove generated updater build state");
+    const cargoLockPath = path.join(outDir, "src-tauri", "Cargo.lock");
+    writer.unlinkIfExists(cargoLockPath, "remove generated updater lockfile");
+  }
+  generateDesktopIcons(projectDir, target.bundle.iconSource, path.join(outDir, "src-tauri", "icons"), writer);
+  writer.writeJson(path.join(outDir, "package.json"), {
+    name: app.slug,
+    version: app.version,
+    private: true,
+    description: `${app.appName} — native desktop game (Tauri).`,
+    scripts: {
+      tauri: "tauri",
+      dev: "tauri dev",
+      build: "node scripts/build-current-platform.mjs",
+      "tauri:build": "tauri build"
+    },
+    devDependencies: { "@tauri-apps/cli": TAURI_CLI_VERSION }
+  });
+  writer.writeJson(path.join(outDir, "src-tauri", "tauri.conf.json"), {
+    $schema: "https://schema.tauri.app/config/2",
+    productName: app.appName,
+    version: app.version,
+    identifier: app.appId,
+    build: { frontendDist: "../dist" },
+    app: {
+      withGlobalTauri: false,
+      windows: [{
+        label: "main",
+        title: target.appTitle ?? app.appName,
+        width: window.width,
+        height: window.height,
+        minWidth: window.minWidth,
+        minHeight: window.minHeight,
+        fullscreen: window.fullscreen,
+        resizable: window.resizable,
+        backgroundColor: app.backgroundColor
+      }],
+      security: { csp: DESKTOP_CSP }
+    },
+    bundle: {
+      active: true,
+      targets: [...target.bundle.targets],
+      icon: [...DESKTOP_ICON_FILES],
+      ...(updaterActive ? { createUpdaterArtifacts: true } : {})
+    },
+    ...(updaterActive ? { plugins: { updater: { endpoints: [...target.updater.endpoints], pubkey: target.updater.publicKey } } } : {})
+  });
+  writer.writeJson(path.join(outDir, "src-tauri", "capabilities", "main.json"), {
+    $schema: "../gen/schemas/desktop-schema.json",
+    identifier: "player-main",
+    description: "Allowlisted local capabilities for the generated TowerForge player window.",
+    windows: ["main"],
+    local: true,
+    permissions: [
+      "core:event:allow-listen",
+      "core:event:allow-emit"
+    ]
+  });
+  writer.writeText(path.join(outDir, "src-tauri", "Cargo.toml"),
+    `[package]
+name = "${crate}"
+version = "${app.version}"
+edition = "2021"
+
+[lib]
+name = "${crate}_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.6.3", features = [] }
+
+[dependencies]
+tauri = { version = "=2.11.5", features = [] }
+tauri-plugin-single-instance = "=2.4.3"
+tempfile = "=3.27.0"${updaterActive ? '\ntauri-plugin-updater = "=2.10.1"\nserde_json = "=1.0.151"' : ""}
+`);
+  writer.writeText(path.join(outDir, "src-tauri", "build.rs"), `fn main() {\n  tauri_build::build()\n}\n`);
+  writer.writeText(path.join(outDir, "src-tauri", "src", "main.rs"),
+    `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+fn main() {
+  ${crate}_lib::run()
+}
+`);
+  writer.writeText(path.join(outDir, "src-tauri", "src", "lib.rs"),
+    nativePlayerRustTemplate(updaterActive));
+  writer.writeText(path.join(outDir, "scripts", "build-current-platform.mjs"), currentPlatformBuildTemplate(target.bundle.targets));
+  writer.writeText(path.join(outDir, "scripts", "assemble-release.mjs"), generatedReleaseAssemblerScript(updaterActive));
+  writer.writeText(path.join(outDir, "scripts", "write-signing-status.mjs"), generatedSigningStatusScript());
+  if (updaterActive) writer.writeText(updaterEntryPath, generatedUpdaterEntryScript());
+  else writer.unlinkIfExists(updaterEntryPath, "remove generated updater source");
+  writer.writeText(path.join(outDir, ".github", "workflows", "towerforge-desktop-release.yml"), generatedDesktopReleaseWorkflow(updaterActive));
+  writer.writeText(path.join(outDir, "SIGNING.md"), desktopSigningGuide(updaterActive));
+  writer.writeText(path.join(outDir, ".gitignore"), "node_modules/\nsrc-tauri/target/\n");
+  writer.writeText(path.join(outDir, "README.md"), nativeTauriReadme(app));
+  return [
+    `cd ${path.basename(outDir)}`,
+    "npm install",
+    "npm run build   # produces current-platform installers under src-tauri/target/release/bundle"
+  ];
+}
+
+function currentPlatformBuildTemplate(authoredTargets) {
+  return `import { spawnSync } from "node:child_process";
+import process from "node:process";
+
+const authoredTargets = Object.freeze(${JSON.stringify(authoredTargets)});
+const supportedTargets = process.platform === "darwin"
+  ? new Set(["dmg"])
+  : process.platform === "win32"
+    ? new Set(["nsis", "msi"])
+    : process.platform === "linux"
+      ? new Set(["appimage", "deb", "rpm"])
+      : null;
+
+if (!supportedTargets) throw new Error("Desktop installers are not supported on this operating system.");
+const targets = authoredTargets.filter((target) => supportedTargets.has(target)).join(",");
+if (!targets) throw new Error("The desktop target does not author an installer for this operating system.");
+
+if (process.argv.includes("--print-targets")) {
+  process.stdout.write(targets + "\\n");
+  process.exit(0);
+}
+
+const executable = process.platform === "win32" ? "npx.cmd" : "npx";
+const result = spawnSync(executable, ["tauri", "build", "--bundles", targets], { stdio: "inherit" });
+if (result.error) throw result.error;
+process.exit(result.status ?? 1);
+`;
+}
+
+function desktopSigningGuide(updaterActive = false) {
+  return `# Signing and notarization
+
+Generated games are unsigned unless the author explicitly configures signing in CI. Credentials
+belong to the operating system or GitHub Actions secrets and must never be written into this
+project. The reference unsigned workflow always publishes a pre-release labelled **Unsigned
+build**. When every required platform secret is configured, the workflow imports the native
+certificate, verifies the produced macOS signature/notarization ticket or Windows Authenticode
+signer, and only then can publish the verified signed candidate as a normal release.
+
+Documented macOS secret names:
+
+- APPLE_CERTIFICATE
+- APPLE_CERTIFICATE_PASSWORD
+- APPLE_SIGNING_IDENTITY
+- APPLE_ID
+- APPLE_PASSWORD
+- APPLE_TEAM_ID
+
+Documented Windows secret names:
+
+- WINDOWS_CERTIFICATE
+- WINDOWS_CERTIFICATE_PASSWORD
+${updaterActive ? `
+Documented updater signing secret names (required only when updater is enabled):
+
+- TAURI_SIGNING_PRIVATE_KEY
+- TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+` : ""}
+
+Use environment variables or GitHub Actions secrets for values. Do not commit certificates,
+passwords, private keys, provisioning profiles, or a local .env file.${updaterActive ? ` With updater support enabled,
+the workflow also publishes the Tauri update payloads, their adjacent detached .sig files, and the
+static latest.json platform manifest.` : ""}
+`;
+}
+
+function nativePlayerRustTemplate(updaterActive = false) {
+  return `use std::fs::{self, File};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::{Emitter, Manager, State, WebviewWindow};
+use tempfile::NamedTempFile;
+
+const MAX_SESSION_BYTES: usize = 32 * 1024 * 1024;
+
+struct PlayerState {
+  root: PathBuf,
+  pending_write: AtomicBool,
+  close_authorized: AtomicBool,
+}
+
+fn checked_slot(slot: u8) -> Result<u8, String> {
+  if slot <= 1 { Ok(slot) } else { Err("unsupported session slot".into()) }
+}
+
+fn session_file(root: &Path, slot: u8) -> PathBuf {
+  root.join(format!("slot-{slot}.json"))
+}
+
+fn atomic_write(destination: &Path, value: &[u8]) -> Result<(), String> {
+  if value.len() > MAX_SESSION_BYTES { return Err("session value exceeds native limit".into()); }
+  let parent = destination.parent().ok_or_else(|| "session destination has no parent".to_string())?;
+  let mut temporary = NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
+  let file = temporary.as_file_mut();
+  file.write_all(value).map_err(|error| error.to_string())?;
+  file.sync_all().map_err(|error| error.to_string())?;
+  temporary.persist(destination).map_err(|error| error.error.to_string())?;
+  #[cfg(unix)]
+  File::open(parent).and_then(|directory| directory.sync_all()).map_err(|error| error.to_string())?;
+  Ok(())
+}
+
+fn read_optional(file: &Path) -> Result<Option<String>, String> {
+  match fs::read(file) {
+    Ok(bytes) if bytes.len() <= MAX_SESSION_BYTES => String::from_utf8(bytes).map(Some).map_err(|_| "session value is not UTF-8".into()),
+    Ok(_) => Err("session value exceeds native limit".into()),
+    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+    Err(error) => Err(error.to_string()),
+  }
+}
+
+#[tauri::command]
+fn player_session_read_head(state: State<PlayerState>) -> Result<Option<String>, String> {
+  read_optional(&state.root.join("head"))
+}
+
+#[tauri::command]
+fn player_session_read_slot(slot: u8, state: State<PlayerState>) -> Result<Option<String>, String> {
+  read_optional(&session_file(&state.root, checked_slot(slot)?))
+}
+
+#[tauri::command]
+fn player_session_write_slot(slot: u8, value: String, state: State<PlayerState>) -> Result<(), String> {
+  atomic_write(&session_file(&state.root, checked_slot(slot)?), value.as_bytes())
+}
+
+#[tauri::command]
+fn player_session_write_head(slot: u8, state: State<PlayerState>) -> Result<(), String> {
+  let slot = checked_slot(slot)?;
+  atomic_write(&state.root.join("head"), slot.to_string().as_bytes())
+}
+
+#[tauri::command]
+fn player_session_remove_slot(slot: u8, state: State<PlayerState>) -> Result<(), String> {
+  let file = session_file(&state.root, checked_slot(slot)?);
+  match fs::remove_file(file) { Ok(()) => Ok(()), Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()), Err(error) => Err(error.to_string()) }
+}
+
+#[tauri::command]
+fn player_session_remove_head(state: State<PlayerState>) -> Result<(), String> {
+  match fs::remove_file(state.root.join("head")) { Ok(()) => Ok(()), Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()), Err(error) => Err(error.to_string()) }
+}
+
+#[tauri::command]
+fn player_set_pending_write(pending: bool, window: WebviewWindow, state: State<PlayerState>) -> Result<(), String> {
+  state.pending_write.store(pending, Ordering::SeqCst);
+  let _ = window;
+  Ok(())
+}
+
+#[tauri::command]
+fn player_get_fullscreen(window: WebviewWindow) -> Result<bool, String> {
+  window.is_fullscreen().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn player_set_fullscreen(fullscreen: bool, window: WebviewWindow) -> Result<(), String> {
+  window.set_fullscreen(fullscreen).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn player_finish_close(window: WebviewWindow, state: State<PlayerState>) -> Result<(), String> {
+  if state.pending_write.load(Ordering::SeqCst) { return Err("session write still pending".into()); }
+  state.close_authorized.store(true, Ordering::SeqCst);
+  window.close().map_err(|error| error.to_string())
+}
+
+${updaterActive ? `#[tauri::command]
+async fn player_check_and_install_update(app: tauri::AppHandle) -> Result<Option<String>, String> {
+  use tauri_plugin_updater::UpdaterExt;
+  let updater = app.updater().map_err(|error| error.to_string())?;
+  let Some(update) = updater.check().await.map_err(|error| error.to_string())? else { return Ok(None); };
+  let version = update.version.to_string();
+  update.download_and_install(|_, _| {}, || {}).await.map_err(|error| error.to_string())?;
+  Ok(Some(version))
+}
+` : ""}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+  let app = tauri::Builder::default()
+    ${updaterActive ? ".plugin(tauri_plugin_updater::Builder::new().build())\n    " : ""}.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+      if let Some(window) = app.get_webview_window("main") { let _ = window.show(); let _ = window.set_focus(); }
+    }))
+    .setup(|app| {
+      let root = app.path().app_data_dir()?.join("player-session-v1");
+      fs::create_dir_all(&root)?;
+      app.manage(PlayerState { root, pending_write: AtomicBool::new(false), close_authorized: AtomicBool::new(false) });
+      Ok(())
+    })
+    .invoke_handler(tauri::generate_handler![
+      player_session_read_head, player_session_read_slot, player_session_write_slot,
+      player_session_write_head, player_session_remove_slot, player_session_remove_head,
+      player_set_pending_write, player_get_fullscreen, player_set_fullscreen, player_finish_close${updaterActive ? ",\n      player_check_and_install_update" : ""}
+    ])
+    .on_window_event(|window, event| {
+      match event {
+        tauri::WindowEvent::CloseRequested { api, .. } => {
+          let state = window.state::<PlayerState>();
+          if !state.close_authorized.swap(false, Ordering::SeqCst) {
+            api.prevent_close();
+            let _ = window.emit("towerforge-native-close-requested", ());
+          }
+        }
+        tauri::WindowEvent::Focused(false) => { let _ = window.emit("towerforge-native-suspend", ()); }
+        tauri::WindowEvent::Focused(true) => { let _ = window.emit("towerforge-native-resume", ()); }
+        _ => {}
+      }
+    })
+    .build(tauri::generate_context!())
+    .expect("error while building tauri application");
+  app.run(|app, event| {
+    match event {
+      tauri::RunEvent::Resumed => { let _ = app.emit("towerforge-native-resume", ()); }
+      _ => {}
+    }
+  });
+}
+`;
+}
+
 // ── helpers ────────────────────────────────────────────────────────────────────
 
-function firstWebTarget(buildTargets) {
-  for (const [id, t] of Object.entries(buildTargets?.targets ?? {})) {
-    if ((t.platform ?? "web") === "web") return [id, t];
+function selectPackagingTarget(buildTargets, kind, explicitTargetId) {
+  if (explicitTargetId) return selectBuildTarget(buildTargets, explicitTargetId);
+  if (kind === "desktop") {
+    const desktopId = buildTargets.defaults?.desktop;
+    if (desktopId && buildTargets.targets?.[desktopId]?.platform === "desktop") {
+      return [desktopId, buildTargets.targets[desktopId]];
+    }
+    if (buildTargets.schemaVersion === 2) {
+      throw new Error("Desktop packaging requires defaults.desktop or an explicit targetId; the legacy web wrapper is explicit-only for BuildTargets v2.");
+    }
   }
-  return null;
+  return selectBuildTarget(buildTargets, null);
+}
+
+function generateDesktopIcons(projectDir, sourceRelativePath, iconsDir, writer) {
+  const sourcePath = resolveProjectFile(projectDir, sourceRelativePath, "Desktop icon source");
+  const stat = fs.statSync(sourcePath);
+  if (!stat.isFile() || stat.size < 24 || stat.size > DESKTOP_ICON_MAX_BYTES) {
+    throw new Error(`Desktop icon source must be a PNG between 24 bytes and ${DESKTOP_ICON_MAX_BYTES} bytes.`);
+  }
+  const bytes = fs.readFileSync(sourcePath);
+  assertPngHeader(bytes);
+  const width = bytes.readUInt32BE(16);
+  const height = bytes.readUInt32BE(20);
+  if (width !== 1024 || height !== 1024) {
+    throw new Error(`Desktop icon source must be exactly 1024x1024 pixels; got ${width}x${height}.`);
+  }
+  let source;
+  try {
+    source = PNG.sync.read(bytes, { checkCRC: true });
+  } catch (error) {
+    throw new Error(`Desktop icon source is not a valid PNG: ${error.message}`);
+  }
+  if (source.width !== 1024 || source.height !== 1024) throw new Error("Desktop icon PNG dimensions changed while decoding.");
+
+  const sizes = new Map();
+  for (const size of [32, 128, 256, 512, 1024]) {
+    sizes.set(size, size === 1024 ? bytes : PNG.sync.write(resizePng(source, size)));
+  }
+  writer.writeFile(path.join(iconsDir, "32x32.png"), sizes.get(32));
+  writer.writeFile(path.join(iconsDir, "128x128.png"), sizes.get(128));
+  writer.writeFile(path.join(iconsDir, "128x128@2x.png"), sizes.get(256));
+  writer.writeFile(path.join(iconsDir, "icon.icns"), createIcns(sizes));
+  writer.writeFile(path.join(iconsDir, "icon.ico"), createIco(sizes));
+}
+
+function resolveProjectFile(projectDir, relativePath, label) {
+  if (typeof relativePath !== "string" || !relativePath || path.isAbsolute(relativePath) || relativePath.includes("\0")) {
+    throw new Error(`${label} must be a project-relative path.`);
+  }
+  const projectReal = fs.realpathSync(projectDir);
+  const lexical = path.resolve(projectReal, relativePath);
+  const lexicalRelative = path.relative(projectReal, lexical);
+  if (!lexicalRelative || lexicalRelative.startsWith("..") || path.isAbsolute(lexicalRelative)) {
+    throw new Error(`${label} must stay inside the project.`);
+  }
+  let sourceReal;
+  try {
+    sourceReal = fs.realpathSync(lexical);
+  } catch {
+    throw new Error(`${label} does not exist: ${relativePath}`);
+  }
+  const realRelative = path.relative(projectReal, sourceReal);
+  if (!realRelative || realRelative.startsWith("..") || path.isAbsolute(realRelative)) {
+    throw new Error(`${label} resolves outside the project.`);
+  }
+  return sourceReal;
+}
+
+function assertPngHeader(bytes) {
+  const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (signature.some((value, index) => bytes[index] !== value)
+    || bytes.toString("ascii", 12, 16) !== "IHDR"
+    || bytes.readUInt32BE(8) !== 13) {
+    throw new Error("Desktop icon source must have a valid PNG signature and IHDR header.");
+  }
+}
+
+function resizePng(source, size) {
+  const output = new PNG({ width: size, height: size });
+  for (let y = 0; y < size; y += 1) {
+    const sourceY = Math.min(source.height - 1, Math.floor(y * source.height / size));
+    for (let x = 0; x < size; x += 1) {
+      const sourceX = Math.min(source.width - 1, Math.floor(x * source.width / size));
+      const from = (sourceY * source.width + sourceX) * 4;
+      const to = (y * size + x) * 4;
+      output.data[to] = source.data[from];
+      output.data[to + 1] = source.data[from + 1];
+      output.data[to + 2] = source.data[from + 2];
+      output.data[to + 3] = source.data[from + 3];
+    }
+  }
+  return output;
+}
+
+function createIcns(sizes) {
+  const records = [["icp5", 32], ["ic07", 128], ["ic08", 256], ["ic09", 512], ["ic10", 1024]].map(([type, size]) => {
+    const data = sizes.get(size);
+    const record = Buffer.allocUnsafe(8 + data.length);
+    record.write(type, 0, 4, "ascii");
+    record.writeUInt32BE(record.length, 4);
+    data.copy(record, 8);
+    return record;
+  });
+  const total = 8 + records.reduce((sum, record) => sum + record.length, 0);
+  const header = Buffer.allocUnsafe(8);
+  header.write("icns", 0, 4, "ascii");
+  header.writeUInt32BE(total, 4);
+  return Buffer.concat([header, ...records], total);
+}
+
+function createIco(sizes) {
+  const entries = [32, 128, 256].map((size) => ({ size, data: sizes.get(size) }));
+  const headerSize = 6 + entries.length * 16;
+  const header = Buffer.alloc(headerSize);
+  header.writeUInt16LE(0, 0);
+  header.writeUInt16LE(1, 2);
+  header.writeUInt16LE(entries.length, 4);
+  let offset = headerSize;
+  for (let index = 0; index < entries.length; index += 1) {
+    const { size, data } = entries[index];
+    const entry = 6 + index * 16;
+    header[entry] = size === 256 ? 0 : size;
+    header[entry + 1] = size === 256 ? 0 : size;
+    header[entry + 2] = 0;
+    header[entry + 3] = 0;
+    header.writeUInt16LE(1, entry + 4);
+    header.writeUInt16LE(32, entry + 6);
+    header.writeUInt32LE(data.length, entry + 8);
+    header.writeUInt32LE(offset, entry + 12);
+    offset += data.length;
+  }
+  return Buffer.concat([header, ...entries.map((entry) => entry.data)], offset);
 }
 
 /** Derive native app metadata from the target + manifest, with a valid reverse-DNS appId + Rust crate. */
@@ -295,12 +802,16 @@ function appMeta(manifest, target) {
   const idSegment = letterLed(slug.replace(/-/g, ""));
   const appId = isReverseDns(target.appId) ? target.appId : `com.towerforge.${idSegment}`;
   const crate = letterLed(slug.replace(/-/g, "_"));
+  const version = typeof target.appVersion === "string" && target.appVersion ? target.appVersion : "0.1.0";
+  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(version)) {
+    throw new Error("Desktop appVersion must be a bounded semantic version.");
+  }
   return {
     appId,
     appName: rawName,
     slug,
     crate,
-    version: typeof target.appVersion === "string" && target.appVersion ? target.appVersion : "0.1.0",
+    version,
     backgroundColor: target.backgroundColor ?? "#111111"
   };
 }
@@ -325,6 +836,7 @@ function runBuild(projectDir, targetId, outRel, options = {}) {
   return new Promise((resolve) => {
     const args = [path.join(repoRoot, "packages", "cli", "build.mjs"), "--project", projectDir, "--target", targetId, "--out", outRel, "--json"];
     if (options.singleFile) args.push("--single-file");
+    if (options.nativeDesktopBundle) args.push("--native-desktop-bundle");
     const child = spawn(process.execPath, args, { cwd: repoRoot, timeout: BUILD_TIMEOUT_MS, killSignal: "SIGKILL" });
     let stdout = "";
     let stderr = "";
@@ -344,20 +856,49 @@ function runBuild(projectDir, targetId, outRel, options = {}) {
 }
 
 function assertUnderProject(projectDir, outDir) {
-  const rel = path.relative(projectDir, outDir);
-  if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) {
-    throw new Error(`Refusing to package outside the project directory: ${outDir}`);
-  }
+  assertConfinedProjectOutput(projectDir, outDir, "package");
 }
 
-function writeJson(filePath, data) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", "utf8");
-}
-
-function writeText(filePath, text) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, text, "utf8");
+function createConfinedPackagingWriter(projectDir) {
+  const assert = (targetPath, operation = "write package output") =>
+    assertConfinedProjectOutput(projectDir, targetPath, operation);
+  const writeFile = (filePath, data) => {
+    assert(filePath, "write generated package file");
+    const parent = path.dirname(filePath);
+    assert(parent, "create generated package directory");
+    fs.mkdirSync(parent, { recursive: true });
+    // Re-check after mkdir so an existing nested symlink cannot turn a confined lexical child into
+    // an external write. The exact file check also rejects pre-existing file symlinks.
+    assert(parent, "write generated package file");
+    assert(filePath, "write generated package file");
+    fs.writeFileSync(filePath, data);
+  };
+  return Object.freeze({
+    assert,
+    exists(targetPath, operation) {
+      assert(targetPath, operation);
+      return fs.existsSync(targetPath);
+    },
+    readText(filePath, operation) {
+      assert(filePath, operation);
+      return fs.readFileSync(filePath, "utf8");
+    },
+    remove(targetPath, options, operation) {
+      assert(targetPath, operation);
+      fs.rmSync(targetPath, options);
+    },
+    unlinkIfExists(filePath, operation) {
+      assert(filePath, operation);
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    },
+    writeFile,
+    writeJson(filePath, data) {
+      writeFile(filePath, JSON.stringify(data, null, 2) + "\n");
+    },
+    writeText(filePath, text) {
+      writeFile(filePath, text);
+    }
+  });
 }
 
 function capacitorReadme(app) {
@@ -452,5 +993,29 @@ npm run build                           # → installers in src-tauri/target/rel
   (\`bundle.macOS\` / \`bundle.windows\`) — see the Tauri distribution guide.
 - **Stores:** the produced \`.dmg\`/\`.msi\`/\`.AppImage\`/\`.deb\` can be submitted to the Mac App Store,
   Microsoft Store, or distributed directly. The game runs fully offline.
+`;
+}
+
+function nativeTauriReadme(app) {
+  return `# ${app.appName} — Native desktop game (Tauri v2)
+
+This project was generated from a first-class TowerForge desktop target. The exact target's player
+bundle is in \`dist/\`; it is not a wrapper around another web target.
+
+- **Identifier:** \`${app.appId}\`
+- **Product name:** ${app.appName}
+- **Version:** ${app.version}
+- **Icons:** generated from the validated project-bound 1024×1024 PNG
+- **WebView:** restrictive CSP, no global Tauri object, and an explicit local capability allowlist
+
+## Build the current-platform installers
+
+\`\`\`bash
+npm install
+npm run build
+\`\`\`
+
+Tauri writes installers under \`src-tauri/target/release/bundle/\`. Re-run the TowerForge desktop
+package action to refresh the deterministic player bundle and generated native contract.
 `;
 }

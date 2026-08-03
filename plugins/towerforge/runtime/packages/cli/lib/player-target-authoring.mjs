@@ -6,6 +6,7 @@ import { normalizeProjectFiles, readRawProjectFiles } from "./project-loader.mjs
 import { validateProjectSchemas } from "./project-schema.mjs";
 
 export const DESKTOP_LARGE_SCREEN_RECIPE_ID = "desktop_large_screen";
+export const NATIVE_DESKTOP_GAME_RECIPE_ID = "native_desktop_game";
 
 export function readPlayerTargets(projectDir) {
   const raw = readRawProjectFiles(projectDir);
@@ -13,18 +14,49 @@ export function readPlayerTargets(projectDir) {
     projectSchemaVersion: raw.manifest?.schemaVersion ?? 1,
     buildTargetsSchemaVersion: raw.buildTargets?.schemaVersion ?? 1,
     revision: playerTargetsRevision(raw),
+    defaults: Object.freeze(structuredClone(raw.buildTargets?.defaults ?? {})),
     targets: Object.freeze(structuredClone(raw.buildTargets?.targets ?? {}))
   });
 }
 
 export function getPlayerTargetRecipe(projectDir, recipeId, targetId) {
-  if (recipeId !== DESKTOP_LARGE_SCREEN_RECIPE_ID) {
+  if (![DESKTOP_LARGE_SCREEN_RECIPE_ID, NATIVE_DESKTOP_GAME_RECIPE_ID].includes(recipeId)) {
     const error = new Error(`Unknown player target recipe "${recipeId}".`);
     error.code = "unknown_player_target_recipe";
     throw error;
   }
   assertTargetId(targetId);
   const read = readPlayerTargets(projectDir);
+  if (recipeId === NATIVE_DESKTOP_GAME_RECIPE_ID) {
+    return Object.freeze({
+      recipeId,
+      targetId,
+      detached: true,
+      written: false,
+      revision: read.revision,
+      target: Object.freeze({
+        id: targetId,
+        platform: "desktop",
+        renderer: "canvas",
+        outputDir: allocateNativeDesktopOutputDir(read.targets, targetId),
+        appId: "com.example.nativegame",
+        appName: "Native Game",
+        appTitle: "Native Game",
+        backgroundColor: "#111111",
+        appVersion: "0.1.0",
+        formFactor: "desktop",
+        viewport: Object.freeze({ fit: "contain", padding: 32, minZoom: 0.5, maxZoom: 3, initialZoom: 1 }),
+        quality: "balanced",
+        locale: "auto",
+        inputProfile: "keyboard_mouse",
+        window: Object.freeze({ width: 1440, height: 900, minWidth: 1024, minHeight: 720, fullscreen: false, resizable: true }),
+        bundle: Object.freeze({
+          iconSource: "assets/app-icon.png",
+          targets: Object.freeze(["dmg", "nsis", "msi", "appimage", "deb", "rpm"])
+        })
+      })
+    });
+  }
   const webDir = allocateDesktopWebDir(read.targets, targetId);
   return Object.freeze({
     recipeId,
@@ -54,18 +86,40 @@ export function getPlayerTargetRecipe(projectDir, recipeId, targetId) {
 }
 
 function allocateDesktopWebDir(targets, targetId) {
-  const occupied = new Set();
-  for (const [existingId, target] of Object.entries(targets)) {
-    if (existingId === targetId || target?.platform !== "web") continue;
-    occupied.add(canonicalOutputDirectory(target.webDir ?? target.outputDir ?? "dist"));
-  }
+  const occupied = collectOccupiedOutputDirectories(targets, targetId);
   for (let suffix = 1; suffix <= 256; suffix += 1) {
     const candidate = suffix === 1 ? "dist-desktop" : `dist-desktop-${suffix}`;
-    if (!occupied.has(canonicalOutputDirectory(candidate))) return candidate;
+    if (isOutputDirectoryIsolated(candidate, occupied)) return candidate;
   }
   const error = new Error("No free desktop output directory remains in the bounded allocation range.");
   error.code = "desktop_output_budget_exceeded";
   throw error;
+}
+
+function allocateNativeDesktopOutputDir(targets, targetId) {
+  const occupied = collectOccupiedOutputDirectories(targets, targetId);
+  const base = `desktop-${targetId}`;
+  for (let suffix = 1; suffix <= 256; suffix += 1) {
+    const candidate = suffix === 1 ? base : `${base}-${suffix}`;
+    if (isOutputDirectoryIsolated(candidate, occupied)) return candidate;
+  }
+  const error = new Error("No free native desktop output directory remains in the bounded allocation range.");
+  error.code = "native_desktop_output_budget_exceeded";
+  throw error;
+}
+
+function collectOccupiedOutputDirectories(targets, targetId) {
+  const occupied = new Set();
+  for (const [existingId, target] of Object.entries(targets)) {
+    if (existingId === targetId || !target || typeof target !== "object") continue;
+    const platform = target.platform ?? target.type ?? "web";
+    if (platform === "web") {
+      occupied.add(canonicalOutputDirectory(target.webDir ?? target.outputDir ?? "dist"));
+    } else if (platform === "desktop") {
+      occupied.add(canonicalOutputDirectory(target.outputDir ?? `desktop-${existingId}`));
+    }
+  }
+  return occupied;
 }
 
 function canonicalOutputDirectory(value) {
@@ -75,6 +129,16 @@ function canonicalOutputDirectory(value) {
     .join("/")
     .normalize("NFC")
     .toLowerCase();
+}
+
+function isOutputDirectoryIsolated(candidate, occupied) {
+  const canonicalCandidate = canonicalOutputDirectory(candidate);
+  for (const existing of occupied) {
+    if (canonicalCandidate === existing
+      || canonicalCandidate.startsWith(`${existing}/`)
+      || existing.startsWith(`${canonicalCandidate}/`)) return false;
+  }
+  return true;
 }
 
 export function previewPlayerTarget(projectDir, targetId, target) {
@@ -90,7 +154,11 @@ export function previewPlayerTarget(projectDir, targetId, target) {
     projectSchemaVersion: 5,
     buildTargetsSchemaVersion: 2,
     validation,
-    candidate: validation.ok ? Object.freeze({ targetId, target: Object.freeze(detachedTarget) }) : undefined
+    candidate: validation.ok ? Object.freeze({
+      targetId,
+      target: Object.freeze(detachedTarget),
+      defaults: Object.freeze(structuredClone(candidateRaw.buildTargets.defaults))
+    }) : undefined
   });
 }
 
@@ -130,6 +198,7 @@ export function applyPlayerTarget(projectDir, targetId, target, options = {}) {
       rolledBack: false,
       previousRevision,
       revision: playerTargetsRevision(afterRaw),
+      defaults: Object.freeze(structuredClone(afterRaw.buildTargets?.defaults ?? {})),
       validation,
       backup: Object.freeze({ directory: path.relative(projectDir, backupDir).split(path.sep).join("/") })
     });
@@ -144,13 +213,16 @@ function candidateProject(raw, targetId, target) {
   assertTargetId(targetId);
   const nextTarget = cloneClosedPlayerTarget(target);
   nextTarget.id = targetId;
+  const defaults = { ...(raw.buildTargets?.defaults ?? {}) };
+  if (nextTarget.platform === "desktop") defaults.desktop = targetId;
+  if (nextTarget.platform === "web" && !defaults.web) defaults.web = targetId;
   return {
     ...raw,
     manifest: { ...raw.manifest, schemaVersion: 5 },
     buildTargets: {
       ...raw.buildTargets,
       schemaVersion: 2,
-      defaults: { ...(raw.buildTargets?.defaults ?? {}) },
+      defaults,
       targets: { ...(raw.buildTargets?.targets ?? {}), [targetId]: nextTarget }
     }
   };

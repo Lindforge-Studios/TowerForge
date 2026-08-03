@@ -861,6 +861,8 @@ label { font-size: 11px; font-weight: 500; color: var(--text-muted); display: bl
 .target-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px 14px; margin-bottom: 10px; }
 .target-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
 .target-card-title { font-size: 13px; font-weight: 600; flex: 1; }
+.target-card .form-section-label { margin: 12px 0 7px; color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.target-card .checkbox-field { flex: 0 1 auto; min-width: 132px; flex-direction: row; align-items: center; align-self: end; min-height: 32px; }
 
 /* ── Scrollbars ──────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }

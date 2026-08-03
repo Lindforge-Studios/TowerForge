@@ -2,6 +2,17 @@
 
 TowerForge desktop artifacts are built and published through GitHub Actions. Until authenticated platform signing credentials are configured, every macOS and Windows artifact is an internal/alpha **Unsigned build**. macOS bundles still receive a complete Tauri ad-hoc signature so Apple Silicon and Gatekeeper can validate bundle integrity; this signature does not identify or authenticate the publisher.
 
+This document primarily governs the TowerForge Studio release. R19 generated games receive a
+separate project-owned workflow inside their exported Tauri carrier. It builds the same six desktop
+formats from the exact game commit, attaches `SHA256SUMS`, repeats hashes in generated notes, and
+publishes only an `Unsigned build` pre-release until the game author configures signing. Generated
+game credentials remain OS/CI-owned; TowerForge never copies signing or updater private keys into
+the `.tdproj` or carrier. Configured macOS and Windows jobs import their native certificates and
+classify the result as signed only after validating the built app/notarization ticket or
+Authenticode signer. The unsigned fallback remains a pre-release. If updater support is enabled, the same candidate also
+contains Tauri update payloads, detached `.sig` files and `latest.json`. See
+[ADR 0060](adr/0060-r19-native-desktop-distribution.md).
+
 ## Published Baseline
 
 The current public release is `v0.6.1`, an unsigned pre-release containing accepted R0–R17 and the cross-platform Windows package-pruning repair. Tagged workflow `30703649784` published all six installers plus `SHA256SUMS` from exact commit `db1dd07`; the downloaded hashes and macOS bundle/DMG were independently verified. The `v0.6.0` tag is retained as immutable failed-pipeline evidence and has no public release. A local build or GitHub Actions artifact MUST NOT be described as a release until the matching tag, public release page, installers, notes, and `SHA256SUMS` exist and have been verified.
