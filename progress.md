@@ -4126,3 +4126,49 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   tests. `npm run plugin:build`, `npm run plugin:validate`, `npm run plugin:smoke` and
   `git diff --check` are GREEN; the generated plugin runtime mirrors the touched CLI/runtime
   sources. Composite authoring remains intentionally deferred to R21.1b.
+
+## 2026-08-03 — R21.1b guarded HUD authoring RED evidence
+
+- The independent Contract/Test Designer added only
+  `packages/cli/lib/r21-hud-authoring.contract.test.mjs` and this chronological evidence; no
+  production source, MCP surface or generated plugin runtime changed. This slice freezes one
+  narrow CLI-owned profile upsert with an optional single build-target binding. It deliberately
+  does not add the R21.6 MCP tools or a broad catalog/project writer.
+- The composite revision owns exactly `project.json`, `build-targets.json`, optional
+  `content/hud.json` and `content/visuals.json`. Read, inert recipe and preview are write-free;
+  apply requires the exact preview revision, rechecks it before mutation, promotes the first save
+  to project v5 / BuildTargets v2, validates the complete candidate, writes confined four-source
+  backup evidence and rolls all already-replaced sources back after a partial atomic-write failure.
+  An absent HUD source is represented explicitly in the backup rather than synthesized before
+  commit.
+- The contract preserves existing HUD profiles, every unrelated build target, CameraProfile and
+  all other visuals data. Disabling its one target binding removes only `hudProfileId`, so the
+  built-in R18 shell becomes active again without deleting the reusable profile. Malformed and
+  future catalogs, a missing revision and stale changes in any of the four sources fail before a
+  HUD write.
+- Exact focused command:
+  `npx vitest run packages/cli/lib/r21-hud-authoring.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`, one expected RED suite before test collection because the new narrow
+  `packages/cli/lib/hud-authoring.mjs` module does not exist. The contract contains nine tests;
+  the missing module is the first expected production boundary, and no fallback writer was used.
+
+## 2026-08-03 — R21.1b guarded HUD authoring focused GREEN
+
+- Added the narrow CLI-owned HUD authoring surface: detached read and bundled recipe, compute-only
+  preview and revision-guarded apply. The composite SHA-256 covers the exact bytes of
+  `project.json`, `build-targets.json`, optional `content/hud.json` (with an explicit absent marker)
+  and `content/visuals.json`; a stale change in any owned source is rejected before validation or
+  mutation.
+- First save promotes only the required project/build-target version fields, upserts one validated
+  reusable profile and optionally binds one existing desktop/responsive target. Unrelated targets,
+  defaults, visuals and camera data are preserved; disabling removes only that target's
+  `hudProfileId`. Apply creates confined four-source backup evidence and restores exact prior bytes,
+  including the absent HUD state, after an injected partial rename failure.
+- The frozen RED fixture's BuildTargets stale case originally rewrote identical bytes. The test-only
+  mutation was corrected to a real stale target value so it measures the frozen exact-byte revision
+  contract rather than filesystem metadata. The exact former RED command is GREEN at `1/1` file and
+  `9/9` tests.
+- The focused HUD catalog/project/authoring plus loader/schema and R20 camera compatibility matrix is
+  GREEN at `8/8` files and `101/101` tests. `npm run plugin:build`, `npm run plugin:validate`,
+  `npm run plugin:smoke` and `git diff --check` are GREEN; the generated plugin runtime mirrors the
+  new CLI authoring module. MCP and Studio authoring remain explicitly deferred to R21.6/R21.5.
