@@ -565,6 +565,19 @@ export function listVisualAssetPaths(visuals) {
   for (const [trackId, track] of Object.entries(visuals?.audio?.musicTracks ?? {})) {
     if (typeof track?.src === "string") add({ kind: "music", id: trackId, path: track.src });
   }
+  const viewVariants = visuals?.viewVariants;
+  for (const spriteId of Object.keys(viewVariants?.sprites ?? {}).sort()) {
+    for (const key of Object.keys(viewVariants.sprites[spriteId] ?? {}).sort()) {
+      const asset = viewVariants.sprites[spriteId]?.[key];
+      if (typeof asset?.src === "string") add({ kind: "cameraSpriteVariant", id: `${spriteId}@${key}`, path: asset.src, mimeType: asset.mimeType });
+    }
+  }
+  for (const tileSetId of Object.keys(viewVariants?.tileSets ?? {}).sort()) {
+    for (const key of Object.keys(viewVariants.tileSets[tileSetId] ?? {}).sort()) {
+      const atlas = viewVariants.tileSets[tileSetId]?.[key]?.atlas;
+      if (typeof atlas?.src === "string") add({ kind: "cameraTileSetVariant", id: `${tileSetId}@${key}`, path: atlas.src, mimeType: atlas.mimeType });
+    }
+  }
   return paths;
 }
 
@@ -591,6 +604,8 @@ function validateVisuals(visuals, err, warn, balance, maps = {}, mechanics = {})
   }
 
   validateCameraProfiles(visuals, visualsVersion, err, balance, maps);
+
+  validateCameraViewVariants(visuals, visualsVersion, err, warn);
 
   validateProceduralJuice(visuals, err, balance);
 
@@ -790,6 +805,92 @@ function validateVisuals(visuals, err, warn, balance, maps = {}, mechanics = {})
   } else for (const [missionId, trackId] of Object.entries(musicByMission)) {
     if (trackId && !tracks[trackId]) warn("visuals", missionId, `audio.musicByMission.${missionId}`, `Mission "${missionId}" is bound to unknown music track "${trackId}".`);
     if (trackId && balance?.missions && !balance.missions[missionId]) warn("visuals", missionId, `audio.musicByMission.${missionId}`, `Music is bound to unknown mission "${missionId}".`);
+  }
+}
+
+const CAMERA_VIEW_KEYS = new Set([
+  "top_down:north", "top_down:east", "top_down:south", "top_down:west",
+  "isometric_2_1:north", "isometric_2_1:east", "isometric_2_1:south", "isometric_2_1:west",
+  "dimetric_oblique:north", "dimetric_oblique:east", "dimetric_oblique:south", "dimetric_oblique:west"
+]);
+const CAMERA_VIEW_MIME_EXTENSIONS = Object.freeze({
+  "image/png": [".png"],
+  "image/jpeg": [".jpg", ".jpeg"],
+  "image/webp": [".webp"]
+});
+
+function cameraViewRecord(value, fieldPath, allowedKeys, err) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) {
+    err("visuals", "content/visuals.json", fieldPath, `${fieldPath} must be a plain object.`);
+    return null;
+  }
+  let descriptors;
+  try { descriptors = Object.getOwnPropertyDescriptors(value); } catch {
+    err("visuals", "content/visuals.json", fieldPath, `${fieldPath} could not be inspected safely.`);
+    return null;
+  }
+  for (const [key, descriptor] of Object.entries(descriptors)) {
+    if (!("value" in descriptor) || !descriptor.enumerable) {
+      err("visuals", "content/visuals.json", `${fieldPath}.${key}`, `${fieldPath}.${key} must be an enumerable data property.`);
+    } else if (allowedKeys && !allowedKeys.has(key)) {
+      err("visuals", "content/visuals.json", `${fieldPath}.${key}`, `${fieldPath}.${key} is not supported.`);
+    }
+  }
+  return value;
+}
+
+function validateCameraImageAsset(asset, fieldPath, err, { anchor = false } = {}) {
+  const record = cameraViewRecord(asset, fieldPath, new Set(anchor ? ["src", "mimeType", "anchor"] : ["src", "mimeType"]), err);
+  if (!record) return;
+  const pathIssue = validateSafeAssetPath(record.src, `${fieldPath}.src`);
+  if (pathIssue) err("visuals", "content/visuals.json", `${fieldPath}.src`, pathIssue);
+  const extensions = CAMERA_VIEW_MIME_EXTENSIONS[record.mimeType];
+  const extension = typeof record.src === "string" ? record.src.slice(record.src.lastIndexOf(".")).toLowerCase() : "";
+  if (!extensions || !extensions.includes(extension)) {
+    err("visuals", "content/visuals.json", extensions ? `${fieldPath}.mimeType` : fieldPath, `${fieldPath} must use matching PNG, JPEG, or WebP src and mimeType.`);
+  }
+  if (anchor) {
+    const point = cameraViewRecord(record.anchor, `${fieldPath}.anchor`, new Set(["x", "y"]), err);
+    if (point) for (const axis of ["x", "y"]) {
+      if (!Number.isFinite(point[axis]) || point[axis] < 0 || point[axis] > 1) {
+        err("visuals", "content/visuals.json", `${fieldPath}.anchor.${axis}`, `${fieldPath}.anchor.${axis} must be between 0 and 1.`);
+      }
+    }
+  }
+}
+
+function validateCameraViewVariants(visuals, visualsVersion, err, warn) {
+  if (visuals.viewVariants === undefined) return;
+  if (visualsVersion !== 4) err("visuals", "content/visuals.json", "viewVariants", "viewVariants requires visuals schemaVersion 4.");
+  const catalog = cameraViewRecord(visuals.viewVariants, "viewVariants", new Set(["schemaVersion", "sprites", "tileSets"]), err);
+  if (!catalog) return;
+  if (catalog.schemaVersion !== 1) err("visuals", "content/visuals.json", "viewVariants.schemaVersion", "viewVariants.schemaVersion must be 1.");
+  const sprites = cameraViewRecord(catalog.sprites, "viewVariants.sprites", null, err);
+  const tileSets = cameraViewRecord(catalog.tileSets, "viewVariants.tileSets", null, err);
+  for (const [spriteId, variants] of Object.entries(sprites ?? {})) {
+    const base = `viewVariants.sprites.${spriteId}`;
+    const table = cameraViewRecord(variants, base, CAMERA_VIEW_KEYS, err);
+    for (const [key, asset] of Object.entries(table ?? {})) {
+      if (!CAMERA_VIEW_KEYS.has(key)) continue;
+      validateCameraImageAsset(asset, `${base}.${key}`, err, { anchor: true });
+      if (!Object.hasOwn(visuals.sprites ?? {}, spriteId)) warn("visuals", "content/visuals.json", `${base}.${key}`, `Optional camera variant references unavailable base sprite "${spriteId}".`);
+    }
+  }
+  for (const [tileSetId, variants] of Object.entries(tileSets ?? {})) {
+    const base = `viewVariants.tileSets.${tileSetId}`;
+    const table = cameraViewRecord(variants, base, CAMERA_VIEW_KEYS, err);
+    const authoredTileSet = visuals.tileSets?.[tileSetId];
+    for (const [key, variant] of Object.entries(table ?? {})) {
+      if (!CAMERA_VIEW_KEYS.has(key)) continue;
+      const field = `${base}.${key}`;
+      const record = cameraViewRecord(variant, field, new Set(["atlas", "materials"]), err);
+      if (!record) continue;
+      validateCameraImageAsset(record.atlas, `${field}.atlas`, err);
+      const materials = cameraViewRecord(record.materials, `${field}.materials`, null, err);
+      for (const materialId of Object.keys(authoredTileSet?.materials ?? {}).sort()) {
+        if (!Object.hasOwn(materials ?? {}, materialId)) err("visuals", "content/visuals.json", `${field}.materials.${materialId}`, `Camera tileset variant is missing mandatory material "${materialId}".`);
+      }
+    }
   }
 }
 

@@ -3672,3 +3672,38 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - The combined focused command passes `3/3` files and `22/22` tests. Renderer/build regressions pass
   `4/4` files and `43/43` tests; syntax checks, `git diff --check` and `npm run build` are GREEN.
   R20.3 asset variants and R20.4 Camera Studio/MCP remain separate contract-first slices.
+
+## 2026-08-03 — R20.3 view-specific assets RED
+
+- Contract/Test Designer added focused pure-renderer and CLI/package contracts before production
+  changes. The frozen v1 shape is `visuals.viewVariants` with an exact
+  `projection:orientation` key, optional sprite billboard fallback, mandatory tileset-material
+  coverage, bounded anchors and project-local PNG/JPEG/WebP assets. Coverage rows must be detached
+  and binary-stable; another authored view is never an implicit fallback.
+- The CLI contract also requires deterministic asset enumeration/copying, signature and declared
+  size verification, PWA/single-file inclusion, WebP support in the existing guarded staging
+  pipeline, and preservation of visuals v4/view variants through ordinary asset and tileset
+  imports. The known tileset write that forced `schemaVersion = 2` is captured as a regression.
+- Exact RED command:
+  `npx vitest run packages/renderer/src/r20-camera-view-assets.contract.test.mjs packages/cli/lib/r20-camera-view-assets.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`, `2/2` files and all `17/17` tests failed for the expected missing resolver,
+  missing schema/path/copy validation, missing WebP signature support and visuals-v4 downgrade.
+  No production file was changed by the Contract/Test Designer.
+
+## 2026-08-03 — R20.3 view-specific assets focused GREEN
+
+- Added the shared `camera-view-assets.mjs` resolver and coverage projector. Exact variants are
+  keyed only by projection plus orientation; standalone sprites use the authored billboard as a
+  warning-producing fallback, while missing tileset materials are blocking coverage errors.
+  Results are detached, deeply frozen and binary-stable.
+- Visuals v4 now validates a closed `viewVariants` v1 catalog with bounded anchors, mandatory
+  authored tileset materials and project-local PNG/JPEG/WebP declarations. Build asset enumeration
+  and copying include the variant files and verify their signatures and 32 MiB size ceiling.
+  Single-file builds embed the same assets, and WebP is accepted by the existing guarded staging
+  pipeline. Asset and MCP tileset imports preserve visuals v4 instead of downgrading it to v2.
+- Canvas resolves camera-specific standalone sprites and anchors at presentation time; generated
+  Phaser players preload and resolve the same catalog. Legacy projects remain on their base
+  sprites, and inactive packages exclude the R20 view-asset module.
+- The exact RED command is now GREEN at `2/2` files and `17/17` tests. Focused schema, assets,
+  generated-asset, renderer and generative-MCP regressions pass `6/6` files and `78/78` tests;
+  MCP asset/tileset selection passes `5/5`. Syntax checks and `git diff --check` are GREEN.

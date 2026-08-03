@@ -156,7 +156,7 @@ try {
   copyDir(path.join(repoRoot, "packages", "renderer", "src"), path.join(outDir, "renderer"), {
     excludeRootEntries: new Set([
       ...(!largeScreenPlayer && !cameraProjectionActive ? ["viewport-transform.mjs"] : []),
-      ...(!cameraProjectionActive ? ["camera-projector.mjs", "camera-renderer-integration.mjs"] : [])
+      ...(!cameraProjectionActive ? ["camera-projector.mjs", "camera-renderer-integration.mjs", "camera-view-assets.mjs"] : [])
     ])
   });
   if (!cameraProjectionActive) pruneInactiveCameraProjectionRuntime(outDir);
@@ -342,8 +342,10 @@ function pruneInactiveCameraProjectionRuntime(outDir) {
   const rendererIndex = path.join(outDir, "renderer", "index.mjs");
   let source = fs.readFileSync(rendererIndex, "utf8");
   source = pruneSingleModuleImport(source, "./camera-renderer-integration.mjs");
+  source = pruneSingleModuleImport(source, "./camera-view-assets.mjs");
   source = pruneSingleModuleExport(source, "./camera-projector.mjs");
   source = pruneSingleModuleExport(source, "./camera-renderer-integration.mjs");
+  source = pruneSingleModuleExport(source, "./camera-view-assets.mjs");
   fs.writeFileSync(rendererIndex, source, "utf8");
 }
 
@@ -440,7 +442,9 @@ function writeJsonModule(filePath, data) {
 
 function embedVisualAssets(projectDir, visuals) {
   const embedded = JSON.parse(JSON.stringify(visuals ?? {}));
-  const groups = [embedded.atlases, embedded.sprites, embedded.audio?.sounds, embedded.audio?.musicTracks];
+  const cameraSpriteAssets = Object.values(embedded.viewVariants?.sprites ?? {}).flatMap((variants) => Object.values(variants ?? {}));
+  const cameraTileSetAssets = Object.values(embedded.viewVariants?.tileSets ?? {}).flatMap((variants) => Object.values(variants ?? {}).map((variant) => variant?.atlas));
+  const groups = [embedded.atlases, embedded.sprites, embedded.audio?.sounds, embedded.audio?.musicTracks, cameraSpriteAssets, cameraTileSetAssets];
   for (const group of groups) {
     for (const entry of Object.values(group ?? {})) {
       if (!entry?.src || /^(?:data:|blob:|https?:)/i.test(entry.src)) continue;
@@ -476,6 +480,8 @@ function singleFileHtml(outDir, manifest, target, renderer, projectData, initial
   }
   html = html.replace('  <script src="./boot.js"></script>', `  <script>${escapeInlineScript(bootRecoveryTemplate(manifest, target, projectData.storyComics))}</script>`);
   html = html.replace('  <script type="module" src="./player.mjs"></script>', `  <script>${escapeInlineScript(entry)}</script>`);
+  const embeddedImageMimes = [...new Set(JSON.stringify(projectData.visuals ?? {}).match(/data:image\/(?:png|jpeg|webp);base64,/g) ?? [])].sort();
+  if (embeddedImageMimes.length) html = html.replace("</head>", `  <!-- embedded image MIME markers: ${embeddedImageMimes.join(" ")} -->\n</head>`);
   return html;
 }
 
@@ -1662,6 +1668,7 @@ ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multipl
 import { createPlayerProfileStore, derivePlayerProfileStorageKey${largeScreenPlayer ? ", createDefaultPlayerActionDescriptors, createPlayerActionRegistry, createDefaultPlayerPreferences, createFixedSimulationClockV1, createRotatingPlayerSessionStore, parsePlayerPreferencesV1, parsePlayerSessionSaveV1, resolvePlayerPresentationQualityV1, serializePlayerPreferencesV1, serializePlayerSessionSaveV1" : ""} } from "./player-runtime/index.mjs";
 ${largeScreenPlayer ? 'import { createIndexedDbSessionStorage } from "./player-runtime/indexeddb-session-storage.mjs";\nimport { createPlayerStrings } from "./player-runtime/localized-strings.mjs";\nimport { createViewportTransformV1 } from "./renderer/viewport-transform.mjs";' : ""}
 ${cameraProjectionActive ? 'import { createCameraRenderSpaceV1, projectCameraRenderItemsV1, resolveCameraProfileV1 } from "./renderer/camera-renderer-integration.mjs";' : ""}
+${cameraProjectionActive ? 'import { resolveCameraViewVariantV1 } from "./renderer/camera-view-assets.mjs";' : ""}
 ${nativeDesktopPlayer ? 'import { createNativeStorageBridgeV1, installNativePlayerLifecycleV1, resolveNativePlayerInvokeV1 } from "./player-runtime/native-storage-bridge.mjs";' : ""}
 ${includeHostMonetization ? 'import { createHostMonetizationRuntimeV1 } from "./player-runtime/host-monetization.mjs";' : ""}
 import { createCanvasRenderer, hitTestHeroesPresentation, projectArsenalPresentation${includeMacroEconomy ? ", projectMacroEconomyPresentation" : ""}, projectCampaignPresentation, projectDirectorDecisionCues, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectProceduralJuicePresentation, projectQuestPresentation, projectRoguelitePresentation, projectVanguardProtectionPresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
@@ -2957,6 +2964,7 @@ ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multipl
 import { createPlayerProfileStore, derivePlayerProfileStorageKey${largeScreenPlayer ? ", createDefaultPlayerActionDescriptors, createPlayerActionRegistry, createDefaultPlayerPreferences, createFixedSimulationClockV1, createRotatingPlayerSessionStore, parsePlayerPreferencesV1, parsePlayerSessionSaveV1, resolvePlayerPresentationQualityV1, serializePlayerPreferencesV1, serializePlayerSessionSaveV1" : ""} } from "./player-runtime/index.mjs";
 ${largeScreenPlayer ? 'import { createIndexedDbSessionStorage } from "./player-runtime/indexeddb-session-storage.mjs";\nimport { createPlayerStrings } from "./player-runtime/localized-strings.mjs";\nimport { createViewportTransformV1 } from "./renderer/viewport-transform.mjs";' : ""}
 ${cameraProjectionActive ? 'import { createCameraRenderSpaceV1, projectCameraRenderItemsV1, resolveCameraProfileV1 } from "./renderer/camera-renderer-integration.mjs";' : ""}
+${cameraProjectionActive ? 'import { resolveCameraViewVariantV1 } from "./renderer/camera-view-assets.mjs";' : ""}
 ${nativeDesktopPlayer ? 'import { createNativeStorageBridgeV1, installNativePlayerLifecycleV1, resolveNativePlayerInvokeV1 } from "./player-runtime/native-storage-bridge.mjs";' : ""}
 ${includeHostMonetization ? 'import { createHostMonetizationRuntimeV1 } from "./player-runtime/host-monetization.mjs";' : ""}
 import { createAudioPlayer } from "./renderer/audio.mjs";
@@ -3414,6 +3422,11 @@ class PlayScene extends Phaser.Scene {
     for (const [spriteId, sprite] of Object.entries(content.visuals?.sprites || {})) {
       if (sprite?.src) this.load.image("tf-sprite:" + spriteId, visualAssetUrl(sprite.src));
     }
+    ${cameraProjectionActive ? `for (const [spriteId, variants] of Object.entries(content.visuals?.viewVariants?.sprites || {})) {
+      for (const [viewKey, sprite] of Object.entries(variants || {})) {
+        if (sprite?.src) this.load.image("tf-camera-sprite:" + spriteId + "@" + viewKey, visualAssetUrl(sprite.src));
+      }
+    }` : ""}
   }
   create() {
     const proceduralJuiceEnabled = [3, 4].includes(content.visuals?.schemaVersion) && content.visuals?.proceduralJuice !== undefined;
@@ -3524,8 +3537,19 @@ class PlayScene extends Phaser.Scene {
   spriteTexture(spriteId) {
     if (typeof spriteId !== "string" || !spriteId) return null;
     const sprites = ownDataValue(content.visuals, "sprites");
-    const sprite = ownDataValue(sprites, spriteId);
+    let sprite = ownDataValue(sprites, spriteId);
     if (!sprite) return null;
+    ${cameraProjectionActive ? `const cameraProfile = this.cameraRenderSpace?.profile;
+    if (cameraProfile && content.visuals?.viewVariants) {
+      const resolved = resolveCameraViewVariantV1({
+        visuals: content.visuals, kind: "sprite", id: spriteId,
+        projection: cameraProfile.projection, orientation: cameraProfile.orientation
+      });
+      if (resolved.status === "exact") {
+        const key = "tf-camera-sprite:" + spriteId + "@" + resolved.key;
+        if (this.textures.exists(key)) return { key, anchor: resolved.asset.anchor || { x: 0.5, y: 0.5 } };
+      }
+    }` : ""}
     if (sprite.atlas && sprite.frame && this.textures.exists("tf-atlas:" + sprite.atlas)) return { key: "tf-atlas:" + sprite.atlas, frame: spriteId };
     if (sprite.src && this.textures.exists("tf-sprite:" + spriteId)) return { key: "tf-sprite:" + spriteId };
     return null;

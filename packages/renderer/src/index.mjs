@@ -36,6 +36,7 @@ import {
   createProceduralJuiceWorldSnapshotBuffer
 } from "./procedural-juice-runtime.mjs";
 import { createCameraRenderSpaceV1, projectCameraRenderItemsV1, resolveCameraProfileV1 } from "./camera-renderer-integration.mjs";
+import { resolveCameraViewVariantV1 } from "./camera-view-assets.mjs";
 export * from "./autotile.mjs";
 export * from "./combat-presentation.mjs";
 export * from "./navigation-presentation.mjs";
@@ -60,6 +61,7 @@ export * from "./weather-presentation.mjs";
 export * from "./ghost-replay-presentation.mjs";
 export * from "./camera-projector.mjs";
 export * from "./camera-renderer-integration.mjs";
+export * from "./camera-view-assets.mjs";
 export { projectLogisticsPresentation } from "./logistics-power-presentation.mjs";
 
 function ownDataValue(record, key) {
@@ -849,7 +851,17 @@ export class TowerForgeCanvasRenderer {
 
   spriteById(spriteId) {
     const visuals = this.content.visuals;
-    const sprite = spriteId ? ownDataValue(ownDataValue(visuals, "sprites"), spriteId) : null;
+    let sprite = spriteId ? ownDataValue(ownDataValue(visuals, "sprites"), spriteId) : null;
+    if (sprite && this.cameraProfile && ownDataValue(visuals, "viewVariants")) {
+      const resolved = resolveCameraViewVariantV1({
+        visuals,
+        kind: "sprite",
+        id: spriteId,
+        projection: this.cameraProfile.projection,
+        orientation: this.cameraProfile.orientation
+      });
+      if (resolved.status === "exact") sprite = resolved.asset;
+    }
     if (!sprite || typeof sprite !== "object") return null;
     if (sprite.atlas && sprite.frame) {
       const atlas = ownDataValue(ownDataValue(visuals, "atlases"), sprite.atlas);
@@ -859,10 +871,16 @@ export class TowerForgeCanvasRenderer {
       // Reject degenerate/negative frames so a malformed catalog draws nothing rather than
       // feeding a negative or non-finite source rect into drawImage (NaN >= 0 is false).
       if (!(f.w > 0) || !(f.h > 0) || !(f.x >= 0) || !(f.y >= 0)) return null;
-      return { img, sx: f.x, sy: f.y, sw: f.w, sh: f.h };
+      return { img, sx: f.x, sy: f.y, sw: f.w, sh: f.h, anchor: { x: 0.5, y: 0.5 } };
     }
     const img = this.loadImage(sprite.src);
-    return img ? { img, sx: 0, sy: 0, sw: img.naturalWidth, sh: img.naturalHeight } : null;
+    return img ? { img, sx: 0, sy: 0, sw: img.naturalWidth, sh: img.naturalHeight, anchor: sprite.anchor ?? { x: 0.5, y: 0.5 } } : null;
+  }
+
+  drawAnchoredSprite(sprite, point, width, height = width) {
+    const anchorX = Number.isFinite(sprite.anchor?.x) ? sprite.anchor.x : 0.5;
+    const anchorY = Number.isFinite(sprite.anchor?.y) ? sprite.anchor.y : 0.5;
+    this.ctx.drawImage(sprite.img, sprite.sx, sprite.sy, sprite.sw, sprite.sh, point.x - width * anchorX, point.y - height * anchorY, width, height);
   }
 
   loadImage(src) {
@@ -1074,7 +1092,7 @@ export class TowerForgeCanvasRenderer {
     if (disabled) this.ctx.globalAlpha = 0.4;
     if (sprite) {
       const s = geom.r * 1.4;
-      this.ctx.drawImage(sprite.img, sprite.sx, sprite.sy, sprite.sw, sprite.sh, p.x - s / 2, p.y - s / 2, s, s);
+      this.drawAnchoredSprite(sprite, p, s);
     } else {
       this.ctx.beginPath();
       this.ctx.arc(p.x, p.y, geom.r * 0.52, 0, Math.PI * 2);
@@ -1121,7 +1139,7 @@ export class TowerForgeCanvasRenderer {
     if (hero.durability?.defeated) this.ctx.globalAlpha = 0.38;
     if (sprite) {
       const size = geom.r * 1.35;
-      this.ctx.drawImage(sprite.img, sprite.sx, sprite.sy, sprite.sw, sprite.sh, p.x - size / 2, p.y - size / 2, size, size);
+      this.drawAnchoredSprite(sprite, p, size);
     } else {
       this.ctx.beginPath();
       this.ctx.arc(p.x, p.y, geom.r * 0.5, 0, Math.PI * 2);
@@ -1227,7 +1245,7 @@ export class TowerForgeCanvasRenderer {
     const sprite = this.spriteFor("enemies", enemy.typeId);
     if (sprite) {
       const s = geom.r * 0.95;
-      this.ctx.drawImage(sprite.img, sprite.sx, sprite.sy, sprite.sw, sprite.sh, p.x - s / 2, p.y - s / 2, s, s);
+      this.drawAnchoredSprite(sprite, p, s);
     } else {
       this.ctx.beginPath();
       this.ctx.arc(p.x, p.y, geom.r * 0.38, 0, Math.PI * 2);

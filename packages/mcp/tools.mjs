@@ -1986,7 +1986,7 @@ export const TOOLS = [
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory." },
         dataBase64: { type: "string", description: "Base64-encoded generated image bytes; data URLs are rejected." },
-        declaredMimeType: { type: "string", enum: ["image/png", "image/jpeg"] },
+        declaredMimeType: { type: "string", enum: ["image/png", "image/jpeg", "image/webp"] },
         fileName: { type: "string", description: "Safe basename proposed by the provider hook." },
         license: {
           type: "object",
@@ -4857,7 +4857,7 @@ async function applyTilesetImport(projectDir, args) {
   preview.atlas.src = normalizeImportedAssetPath(files.visuals.assetsRoot, preview.atlas.src);
   inspectLocalPng(projectDir, preview.atlas.src, preview);
   const visuals = structuredCloneCompat(raw.visuals ?? {});
-  visuals.schemaVersion = 2;
+  visuals.schemaVersion ??= 2;
   visuals.atlases ??= {};
   visuals.sprites ??= {};
   visuals.tileSets ??= {};
