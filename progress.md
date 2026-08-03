@@ -4406,3 +4406,16 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   test, missing `packages/player-shell` copy rule), then the generator allowlist was extended. The
   focused package suite is now `6/6` and plugin validation confirms the generated runtime is
   self-contained.
+
+## 2026-08-04 — R21 pre-freeze full-gate evidence
+
+- Candidate `195671b1c8d2db2a1857aa635e71303196e66e2e` passed `npm run typecheck`,
+  `npm run build:engine`, `npm run validate`, `npm run sim tutorial_01 60`, `npm run build`,
+  `npm run test:e2e` (`161/161`), all three plugin gates, both starter native package commands and
+  `cargo test` (`9/9`).
+- The first parallel `npm run test` attempt completed `4348/4349`; the sole failure was the existing
+  R5.8B filesystem rollback case reaching its five-second timeout under full parallel load. The
+  exact test passed independently at `5/5` in 4.77 seconds. The complete suite was then repeated
+  with `npm run test -- --maxWorkers=1` and passed `453/453` files, `4349/4349` tests.
+- This evidence was written before the final documentation-only freeze commit. Per the R21 rule,
+  the final commit receives a fresh gate pass before either independent verifier signs off.
