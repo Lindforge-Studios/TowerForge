@@ -3900,3 +3900,18 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   assertion was narrowed to those gameplay concepts. Focused R13 plus R20 elevation verification
   is GREEN at `2/2` files and `5/5` tests. Because a tracked test changed, `0359fd9` is no longer
   the frozen candidate and the complete gate sequence restarts on the next commit.
+
+## 2026-08-03 — R20 final candidate gate evidence
+
+- Production/test candidate `7be82f407481ee9880c27c737daaa433e8ba96eb` is clean. Full unit gate
+  passed `441/441` files and `4212/4212` tests with the repository/CI one-worker setting. Full
+  Playwright E2E passed `159/159` scenarios in the same one-worker setting, including the Camera
+  Studio lifecycle and both generated player paths.
+- `npm run typecheck`, `npm run build:engine`, `npm run validate`,
+  `npm run sim tutorial_01 60` and `npm run build` are GREEN. The generated web PWA is valid.
+- `npm run plugin:build`, `npm run plugin:validate` and `npm run plugin:smoke` are GREEN with no
+  mirror diff. Mobile and desktop scaffold packaging both succeed for `examples/starter.tdproj`;
+  desktop Rust tests pass `9/9` and the working tree remains clean.
+- The full gates ran after the R13 contract correction and on the exact production/test tree above.
+  Independent Code Verifier and Constructor Integration Verifier reviews are still required before
+  R20 acceptance or merge.
