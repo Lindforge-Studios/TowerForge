@@ -184,6 +184,49 @@ describe("R21.1 HudCatalogV1 closed pure contract (RED)", () => {
     expect(Object.isFrozen(result.catalog.profiles.main.assetMetadata.panel_frame.nineSlice)).toBe(true);
   });
 
+  it("bounds asset roles and metadata to 512 records per profile", () => {
+    expect(HUD_CATALOG_LIMITS).toMatchObject({
+      assetRolesPerProfile: 512,
+      assetMetadataPerProfile: 512
+    });
+    const withinBudget = catalog();
+    withinBudget.profiles.main.assetRoles = Object.fromEntries(
+      Array.from({ length: 512 }, (_, index) => [`role_${index}`, `sprite_${index}`])
+    );
+    withinBudget.profiles.main.assetMetadata = Object.fromEntries(
+      Array.from({ length: 512 }, (_, index) => [`role_${index}`, { schemaVersion: 1, kind: "image" }])
+    );
+    expect(validateHudCatalogV1(withinBudget).ok).toBe(true);
+
+    const tooManyRoles = structuredClone(withinBudget);
+    tooManyRoles.profiles.main.assetRoles.role_512 = "sprite_512";
+    expect(validateHudCatalogV1(tooManyRoles).ok).toBe(false);
+
+    const tooManyMetadata = structuredClone(tooManyRoles);
+    tooManyMetadata.profiles.main.assetMetadata.role_512 = { schemaVersion: 1, kind: "image" };
+    expect(validateHudCatalogV1(tooManyMetadata).ok).toBe(false);
+  });
+
+  it("rejects accessor and revoked-proxy asset catalogs without invoking user code", () => {
+    for (const field of ["assetRoles", "assetMetadata"]) {
+      const value = catalog();
+      value.profiles.main.assetRoles = { frame: "ui_frame" };
+      value.profiles.main.assetMetadata = { frame: { schemaVersion: 1, kind: "image" } };
+      let reads = 0;
+      Object.defineProperty(value.profiles.main[field], "trap", {
+        enumerable: true,
+        get() { reads += 1; return field === "assetRoles" ? "ui_trap" : { schemaVersion: 1, kind: "image" }; }
+      });
+      expect(validateHudCatalogV1(value).ok).toBe(false);
+      expect(reads).toBe(0);
+
+      const revoked = Proxy.revocable({}, {});
+      revoked.revoke();
+      value.profiles.main[field] = revoked.proxy;
+      expect(validateHudCatalogV1(value).ok).toBe(false);
+    }
+  });
+
   it.each([
     ["metadata without a role", { ghost: { schemaVersion: 1, kind: "image" } }],
     ["future metadata", { frame: { schemaVersion: 2, kind: "image" } }],

@@ -4596,3 +4596,24 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - No production, test, generated runtime or documentation bytes may change after this freeze without
   invalidating the complete gate evidence and both forthcoming independent sign-offs. Full gates run
   on this exact commit; verifier reports and PR evidence remain external to the frozen tree.
+
+## 2026-08-04 — R21 Code Verifier atlas-import and asset-budget RED evidence
+
+- Code verification reopened exact candidate `90a7f1c6ddb00121dba646470a2694d138ed77b3`
+  with tests and this evidence only. A HUD Studio `atlas_frame` selection currently asks the shared
+  asset importer for an atlas record, but `assetRoles` must reference a visuals sprite. The new
+  integration contract requires a browser-safe import-kind resolver reused by Studio, imports the
+  staged image as a sprite, attaches closed logical atlas-frame metadata to that sprite role, then
+  proves `preview -> guarded apply -> reload` succeeds. It does not add an unguarded HUD or asset
+  writer and does not relax visuals cross-reference validation.
+- `HudCatalogV1` now contract-freezes explicit per-profile ceilings of `512` asset roles and `512`
+  metadata entries. A 512-record catalog remains valid, 513 records fail closed, metadata remains a
+  subset of roles, and accessor/revoked-proxy records are rejected without invoking user code.
+- Exact RED command:
+  `npx vitest run packages/player-runtime/src/r21-hud-catalog.contract.test.mjs packages/studio/r21-hud-atlas-import.contract.test.mjs --maxWorkers=1`.
+  Result: exit `1`, `2/2` files RED with exactly `2` expected failures and `37` unchanged passes.
+  The Studio model lacks `resolveHudStudioAssetImportKind`, while `HUD_CATALOG_LIMITS` lacks both
+  asset-record ceilings. Accessor/proxy and existing metadata validation remain GREEN.
+- This source-test commit invalidates the `90a7f1c` freeze, its full-gate evidence and both verifier
+  sign-offs until production repair, focused GREEN, a new exact freeze and two fresh independent
+  verifications complete.
