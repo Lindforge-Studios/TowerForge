@@ -4254,3 +4254,53 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   GREEN at `13/13` files and `146/146` tests. `node --check` passes for the catalog and screen graph;
   `npm run plugin:build`, `npm run plugin:validate`, `npm run plugin:smoke`, source-to-plugin byte
   parity and `git diff --check` are GREEN.
+
+## 2026-08-04 — R21.4 build menus/input parity RED evidence
+
+- The independent Contract/Test Designer added only
+  `packages/player-runtime/src/r21-hud-build-menu-presets.contract.test.mjs` and this chronological
+  evidence; no production source, DOM shell, generated runtime or plugin mirror was changed. The
+  pure contract freezes seven recipes built from the existing HUD primitives: desktop horizontal
+  quickbar, vertical edge dock, category catalog drawer, radial wheel, contextual tile popover,
+  mobile bottom sheet and keyboard command palette.
+- One compiler contract applies availability independently by input family, responsive form factor,
+  player phase and the complete required-capability set. It preserves authored menu/item order,
+  ignores record/capability insertion order, detaches and freezes plans, and caps simultaneously
+  visible radial entries at `12` with deterministic overflow evidence. Pointer, keyboard, gamepad
+  and touch activations resolve to the same existing `PlayerActionDescriptorV1` intent rather than
+  creating another gameplay command vocabulary.
+- Closed-input coverage includes future/unknown definitions, missing action descriptors, malformed
+  input families, sparse arrays, cyclic item data, accessors, symbols, revoked proxies and menu/item
+  budgets. The runtime remains DOM-, renderer- and gameplay-free; browser focus and actual device
+  event handling remain a later shared-shell concern.
+- Exact focused command:
+  `npx vitest run packages/player-runtime/src/r21-hud-build-menu-presets.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`; the single expected RED suite fails before test collection because
+  `packages/player-runtime/src/hud-build-menu-presets.mjs` does not exist. The file contains eight
+  compact contract blocks, and the missing pure runtime API is the only observed failure boundary.
+
+## 2026-08-04 — R21.5 HUD Studio and guarded asset workflow RED evidence
+
+- The independent Contract/Test Designer added only
+  `packages/studio/r21-hud-studio.contract.test.mjs` and this chronological evidence. No Studio,
+  CLI/MCP, player runtime, renderer, asset pipeline or generated plugin production source was
+  changed. R21.5 remains separate from the R21.4 input/preset slice.
+- The source contract freezes a dedicated HUD Studio tab and Hub with saved profile/build-target/
+  screen/variant pickers; desktop/tablet/mobile device presets; safe-area controls; rulers,
+  snapping, layers and constraint inspection; WYSIWYG and rendered preview surfaces; every
+  component state; and victory, defeat, low-HP, draft, inventory and capability mock states.
+- Preview diagnostics must expose overlap, clipping, low-contrast and sub-44px findings before
+  save. The authoring lifecycle is the narrow
+  `read -> recipe -> compute preview -> revision-guarded apply -> render preview` route and must
+  propagate conflict/rollback results from the existing four-file HUD transaction. Disable and
+  re-enable also use preview/apply rather than the broad project-save route.
+- HUD art is selected only by visuals asset ID/atlas frame/nine-slice metadata. Import reuses the
+  existing confined `/api/assets/import` and provider-neutral staging pipeline; HUD data gets no
+  asset path or URL field. Asset-role edits return through guarded HUD preview/apply so
+  `content/visuals.json` remains part of the composite revision and rollback boundary.
+- Exact RED command:
+  `npx vitest run packages/studio/r21-hud-studio.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`; `1/1` file RED and all `6/6` expected assertions fail because the R21 HUD tab,
+  authoring controls, diagnostics, narrow `/api/hud/*` routes and asset-role UI do not exist yet.
+  The pre-existing Camera Studio and generic asset import paths are not accepted as substitute HUD
+  surfaces.
