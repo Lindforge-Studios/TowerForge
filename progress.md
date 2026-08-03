@@ -4558,6 +4558,9 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   `npx vitest run packages/mcp/r21-hud-ai-authoring.contract.test.mjs --maxWorkers=1`.
   Result: exit `1`, `1/1` file RED with exactly one new failure and `5` unchanged passes because
   `describe_schema(hud).assetMetadata` is absent; the pre-existing narrow HUD AI tests remain GREEN.
+- GREEN adds the closed metadata descriptor to the shared HUD authoring schema and documents the
+  same contract in the common agent guide without adding a write tool or widening the transaction.
+  The exact command is now `1/1` file and `6/6` tests GREEN.
 
 ## 2026-08-04 — R21 second integration-verifier repair focused GREEN
 
