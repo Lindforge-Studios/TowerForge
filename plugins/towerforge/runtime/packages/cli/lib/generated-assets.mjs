@@ -6,6 +6,8 @@ const MAX_GENERATED_ASSET_BYTES = 32 * 1024 * 1024;
 const LICENSE_IDS = new Set(["CC0-1.0", "CC-BY-4.0", "proprietary-owned"]);
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const JPEG_SIGNATURE = Buffer.from([0xff, 0xd8, 0xff]);
+const WEBP_RIFF_SIGNATURE = Buffer.from("RIFF", "ascii");
+const WEBP_FORMAT_SIGNATURE = Buffer.from("WEBP", "ascii");
 
 function plain(value, label) {
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) {
@@ -56,6 +58,7 @@ function stageRoot(projectDir, create = false) {
 function signatureMime(bytes) {
   if (bytes.length >= PNG_SIGNATURE.length && bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) return "image/png";
   if (bytes.length >= JPEG_SIGNATURE.length && bytes.subarray(0, JPEG_SIGNATURE.length).equals(JPEG_SIGNATURE)) return "image/jpeg";
+  if (bytes.length >= 12 && bytes.subarray(0, 4).equals(WEBP_RIFF_SIGNATURE) && bytes.subarray(8, 12).equals(WEBP_FORMAT_SIGNATURE)) return "image/webp";
   return undefined;
 }
 
@@ -106,7 +109,7 @@ function validateStoredMetadata(value, expectedHandle) {
   if (metadata.schemaVersion !== 1 || metadata.handle !== expectedHandle) {
     throw new Error("Generated asset metadata handle or schema version was tampered with.");
   }
-  if (metadata.mimeType !== "image/png" && metadata.mimeType !== "image/jpeg") {
+  if (!["image/png", "image/jpeg", "image/webp"].includes(metadata.mimeType)) {
     throw new Error("Generated asset metadata MIME is unsupported.");
   }
   if (!Number.isSafeInteger(metadata.size) || metadata.size < 1 || metadata.size > MAX_GENERATED_ASSET_BYTES) {

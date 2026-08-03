@@ -3836,3 +3836,15 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   camera modules and profile reads. The exact package RED command is GREEN at `5/5` tests.
 - This remains pre-freeze evidence. The exact candidate commit, full gates and two independent
   sign-offs are recorded separately after the focused matrix and generated package smoke pass.
+
+## 2026-08-03 — R20 first full-gate parity repair
+
+- The first frozen candidate `96afd13f8d2415f5a6dfc6d4062d0dffcfc2c373` passed typecheck and
+  engine build, then the complete unit gate correctly failed `16` tests. The failures were confined
+  to the generated Codex plugin runtime still carrying the pre-R20 renderer/MCP/guide bytes and
+  legacy contracts pinning agent guide v52 after the intentional camera authoring bump to v53.
+- No camera runtime or constructor behavior failed. `npm run plugin:build` regenerated the owned
+  mirror from source, and the nine exact guide-version assertions were promoted to v53. The focused
+  set covering all 16 prior failures is GREEN at `14/14` files and `73/73` tests.
+- Because this repair changes tracked test/mirror files, the first freeze and its partial gate
+  evidence are invalid. A new exact candidate commit receives the complete gate set from the start.

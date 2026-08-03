@@ -20,6 +20,7 @@ let transactionSequence = 0;
 export const PROCEDURAL_JUICE_AUTHORING_SCHEMA = Object.freeze({
   schemaVersion: 1,
   visualsSchemaVersion: 3,
+  supportedVisualsSchemaVersions: Object.freeze([3, 4]),
   activation: "content/visuals.json.proceduralJuice",
   mechanicsRequired: false,
   deterministic: true,
@@ -37,7 +38,7 @@ export const PROCEDURAL_JUICE_AUTHORING_SCHEMA = Object.freeze({
     durationMs: 10_000,
     hitStopDurationMs: 1_000
   }),
-  disable: "remove proceduralJuice; keep the remaining visuals v3 catalog",
+  disable: "remove proceduralJuice; keep the remaining visuals v3/v4 catalog",
   tools: Object.freeze({
     read: "get_procedural_juice",
     recipe: "get_procedural_juice_recipe",
@@ -165,7 +166,7 @@ export async function inspectProceduralJuiceAuthoring(projectDir) {
   const juice = ownValue(ownRecord(snapshot.rawFiles.visuals), "proceduralJuice");
   const authored = juice !== undefined;
   let active = authored
-    && snapshot.rawFiles.visuals?.schemaVersion === 3
+    && [3, 4].includes(snapshot.rawFiles.visuals?.schemaVersion)
     && juice?.schemaVersion === 1;
   if (active) {
     try {
@@ -295,8 +296,8 @@ async function buildPlan(projectDir, unsafeArgs) {
     return invalidPlan(snapshot, "project_version_unsupported", "project.json.schemaVersion", `Project schemaVersion must be between 1 and ${PROJECT_SCHEMA_VERSION}.`, request);
   }
   const visualsVersion = snapshot.rawFiles.visuals?.schemaVersion;
-  if (!Number.isSafeInteger(visualsVersion) || visualsVersion < 1 || visualsVersion > 3) {
-    return invalidPlan(snapshot, "visuals_version_unsupported", "content/visuals.json.schemaVersion", "Procedural Juice authoring supports visuals schema versions 1 through 3.", request);
+  if (!Number.isSafeInteger(visualsVersion) || visualsVersion < 1 || visualsVersion > 4) {
+    return invalidPlan(snapshot, "visuals_version_unsupported", "content/visuals.json.schemaVersion", "Procedural Juice authoring supports visuals schema versions 1 through 4.", request);
   }
   const authoredVersion = snapshot.rawFiles.visuals?.proceduralJuice?.schemaVersion;
   if (Number.isSafeInteger(authoredVersion) && authoredVersion > 1) {
@@ -319,8 +320,8 @@ function createCandidate(rawFiles, request) {
     delete visuals.proceduralJuice;
     return { manifest, visuals };
   }
-  manifest.schemaVersion = 3;
-  visuals.schemaVersion = 3;
+  manifest.schemaVersion = Math.max(3, Number(manifest.schemaVersion) || 1);
+  visuals.schemaVersion = Math.max(3, Number(visuals.schemaVersion) || 1);
   defineOwnData(visuals, "proceduralJuice", cloneJson(request.proceduralJuice));
   return { manifest, visuals };
 }

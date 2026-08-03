@@ -4,6 +4,7 @@ import {
   normalizeElevationOverrides
 } from "./map-compiler.mjs";
 import { validateDistributionConfigV1 } from "../../distribution/src/index.mjs";
+import { validateCameraProfileCatalogV1 } from "../../renderer/src/camera-projector.mjs";
 
 export const PROJECT_SCHEMA_VERSION = 5;
 export const MECHANICS_PROJECT_SCHEMA_VERSION = 3;
@@ -167,7 +168,7 @@ export function validateProjectSchemas(files) {
   issues.push(...compileMapSources(files.mapSources ?? {}, files.balance?.terrainTypes ?? {}).issues);
   validateVisuals(files.visuals, err, warn, files.balance, files.maps, files.mechanics);
   validateNarrative(files, err, warn);
-  validateBuildTargets(files.buildTargets, err);
+  validateBuildTargets(files.buildTargets, err, files.visuals);
   if ((files.buildTargets?.schemaVersion ?? 1) === 2 && files.manifest?.schemaVersion !== PROJECT_SCHEMA_VERSION) {
     err(
       "project",
@@ -564,6 +565,19 @@ export function listVisualAssetPaths(visuals) {
   for (const [trackId, track] of Object.entries(visuals?.audio?.musicTracks ?? {})) {
     if (typeof track?.src === "string") add({ kind: "music", id: trackId, path: track.src });
   }
+  const viewVariants = visuals?.viewVariants;
+  for (const spriteId of Object.keys(viewVariants?.sprites ?? {}).sort()) {
+    for (const key of Object.keys(viewVariants.sprites[spriteId] ?? {}).sort()) {
+      const asset = viewVariants.sprites[spriteId]?.[key];
+      if (typeof asset?.src === "string") add({ kind: "cameraSpriteVariant", id: `${spriteId}@${key}`, path: asset.src, mimeType: asset.mimeType });
+    }
+  }
+  for (const tileSetId of Object.keys(viewVariants?.tileSets ?? {}).sort()) {
+    for (const key of Object.keys(viewVariants.tileSets[tileSetId] ?? {}).sort()) {
+      const atlas = viewVariants.tileSets[tileSetId]?.[key]?.atlas;
+      if (typeof atlas?.src === "string") add({ kind: "cameraTileSetVariant", id: `${tileSetId}@${key}`, path: atlas.src, mimeType: atlas.mimeType });
+    }
+  }
   return paths;
 }
 
@@ -574,6 +588,24 @@ function validateVisuals(visuals, err, warn, balance, maps = {}, mechanics = {})
   }
   const assetsRootIssue = validateSafeAssetPath(visuals.assetsRoot ?? "assets", "assetsRoot");
   if (assetsRootIssue) err("visuals", "content/visuals.json", "assetsRoot", assetsRootIssue);
+
+  const visualsVersion = (() => {
+    try {
+      const descriptor = Object.getOwnPropertyDescriptor(visuals, "schemaVersion");
+      return descriptor && "value" in descriptor ? descriptor.value : undefined;
+    } catch {
+      return undefined;
+    }
+  })();
+  if (!Number.isSafeInteger(visualsVersion) || visualsVersion < 1 || visualsVersion > 4) {
+    err("visuals", "content/visuals.json", "schemaVersion", Number.isSafeInteger(visualsVersion) && visualsVersion > 4
+      ? `Visuals schemaVersion ${visualsVersion} is newer than this runtime supports (4).`
+      : "visuals.schemaVersion must be an integer from 1 to 4.");
+  }
+
+  validateCameraProfiles(visuals, visualsVersion, err, balance, maps);
+
+  validateCameraViewVariants(visuals, visualsVersion, err, warn);
 
   validateProceduralJuice(visuals, err, balance);
 
@@ -776,6 +808,134 @@ function validateVisuals(visuals, err, warn, balance, maps = {}, mechanics = {})
   }
 }
 
+const CAMERA_VIEW_KEYS = new Set([
+  "top_down:north", "top_down:east", "top_down:south", "top_down:west",
+  "isometric_2_1:north", "isometric_2_1:east", "isometric_2_1:south", "isometric_2_1:west",
+  "dimetric_oblique:north", "dimetric_oblique:east", "dimetric_oblique:south", "dimetric_oblique:west"
+]);
+const CAMERA_VIEW_MIME_EXTENSIONS = Object.freeze({
+  "image/png": [".png"],
+  "image/jpeg": [".jpg", ".jpeg"],
+  "image/webp": [".webp"]
+});
+
+function cameraViewRecord(value, fieldPath, allowedKeys, err) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) {
+    err("visuals", "content/visuals.json", fieldPath, `${fieldPath} must be a plain object.`);
+    return null;
+  }
+  let descriptors;
+  try { descriptors = Object.getOwnPropertyDescriptors(value); } catch {
+    err("visuals", "content/visuals.json", fieldPath, `${fieldPath} could not be inspected safely.`);
+    return null;
+  }
+  for (const [key, descriptor] of Object.entries(descriptors)) {
+    if (!("value" in descriptor) || !descriptor.enumerable) {
+      err("visuals", "content/visuals.json", `${fieldPath}.${key}`, `${fieldPath}.${key} must be an enumerable data property.`);
+    } else if (allowedKeys && !allowedKeys.has(key)) {
+      err("visuals", "content/visuals.json", `${fieldPath}.${key}`, `${fieldPath}.${key} is not supported.`);
+    }
+  }
+  return value;
+}
+
+function validateCameraImageAsset(asset, fieldPath, err, { anchor = false } = {}) {
+  const record = cameraViewRecord(asset, fieldPath, new Set(anchor ? ["src", "mimeType", "anchor"] : ["src", "mimeType"]), err);
+  if (!record) return;
+  const pathIssue = validateSafeAssetPath(record.src, `${fieldPath}.src`);
+  if (pathIssue) err("visuals", "content/visuals.json", `${fieldPath}.src`, pathIssue);
+  const extensions = CAMERA_VIEW_MIME_EXTENSIONS[record.mimeType];
+  const extension = typeof record.src === "string" ? record.src.slice(record.src.lastIndexOf(".")).toLowerCase() : "";
+  if (!extensions || !extensions.includes(extension)) {
+    err("visuals", "content/visuals.json", extensions ? `${fieldPath}.mimeType` : fieldPath, `${fieldPath} must use matching PNG, JPEG, or WebP src and mimeType.`);
+  }
+  if (anchor) {
+    if (record.anchor === undefined) return;
+    const point = cameraViewRecord(record.anchor, `${fieldPath}.anchor`, new Set(["x", "y"]), err);
+    if (point) for (const axis of ["x", "y"]) {
+      if (!Number.isFinite(point[axis]) || point[axis] < 0 || point[axis] > 1) {
+        err("visuals", "content/visuals.json", `${fieldPath}.anchor.${axis}`, `${fieldPath}.anchor.${axis} must be between 0 and 1.`);
+      }
+    }
+  }
+}
+
+function validateCameraViewVariants(visuals, visualsVersion, err, warn) {
+  if (visuals.viewVariants === undefined) return;
+  if (visualsVersion !== 4) err("visuals", "content/visuals.json", "viewVariants", "viewVariants requires visuals schemaVersion 4.");
+  const catalog = cameraViewRecord(visuals.viewVariants, "viewVariants", new Set(["schemaVersion", "sprites", "tileSets"]), err);
+  if (!catalog) return;
+  if (catalog.schemaVersion !== 1) err("visuals", "content/visuals.json", "viewVariants.schemaVersion", "viewVariants.schemaVersion must be 1.");
+  const sprites = cameraViewRecord(catalog.sprites, "viewVariants.sprites", null, err);
+  const tileSets = cameraViewRecord(catalog.tileSets, "viewVariants.tileSets", null, err);
+  for (const [spriteId, variants] of Object.entries(sprites ?? {})) {
+    const base = `viewVariants.sprites.${spriteId}`;
+    const table = cameraViewRecord(variants, base, CAMERA_VIEW_KEYS, err);
+    for (const [key, asset] of Object.entries(table ?? {})) {
+      if (!CAMERA_VIEW_KEYS.has(key)) continue;
+      validateCameraImageAsset(asset, `${base}.${key}`, err, { anchor: true });
+      if (!Object.hasOwn(visuals.sprites ?? {}, spriteId)) warn("visuals", "content/visuals.json", `${base}.${key}`, `Optional camera variant references unavailable base sprite "${spriteId}".`);
+    }
+  }
+  for (const [tileSetId, variants] of Object.entries(tileSets ?? {})) {
+    const base = `viewVariants.tileSets.${tileSetId}`;
+    const table = cameraViewRecord(variants, base, CAMERA_VIEW_KEYS, err);
+    const authoredTileSet = visuals.tileSets?.[tileSetId];
+    for (const [key, variant] of Object.entries(table ?? {})) {
+      if (!CAMERA_VIEW_KEYS.has(key)) continue;
+      const field = `${base}.${key}`;
+      const record = cameraViewRecord(variant, field, new Set(["atlas", "materials"]), err);
+      if (!record) continue;
+      validateCameraImageAsset(record.atlas, `${field}.atlas`, err);
+      const materials = cameraViewRecord(record.materials, `${field}.materials`, null, err);
+      for (const materialId of Object.keys(authoredTileSet?.materials ?? {}).sort()) {
+        if (!Object.hasOwn(materials ?? {}, materialId)) err("visuals", "content/visuals.json", `${field}.materials.${materialId}`, `Camera tileset variant is missing mandatory material "${materialId}".`);
+      }
+    }
+  }
+}
+
+function cameraErrorField(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  const match = /^(cameraProfiles(?:\.[A-Za-z0-9_-]+)*)/.exec(message);
+  return match?.[1] ?? "cameraProfiles";
+}
+
+function cameraCatalogDescriptor(visuals) {
+  try {
+    return Object.getOwnPropertyDescriptor(visuals, "cameraProfiles");
+  } catch {
+    return undefined;
+  }
+}
+
+function validateCameraProfiles(visuals, visualsVersion, err, balance, maps) {
+  const descriptor = cameraCatalogDescriptor(visuals);
+  if (!descriptor) return;
+  if (!descriptor.enumerable || !("value" in descriptor)) {
+    err("visuals", "content/visuals.json", "cameraProfiles", "cameraProfiles must be an enumerable own data property; accessors are not allowed.");
+    return;
+  }
+  if (visualsVersion !== 4) {
+    err("visuals", "content/visuals.json", "cameraProfiles", "cameraProfiles requires visuals schemaVersion 4.");
+  }
+  const result = validateCameraProfileCatalogV1(descriptor.value);
+  if (!result.ok) {
+    err("visuals", "content/visuals.json", cameraErrorField(result.error), result.error?.message ?? "Invalid cameraProfiles catalog.");
+    return;
+  }
+  for (const mapId of Object.keys(result.catalog.bindings.maps)) {
+    if (!Object.hasOwn(maps ?? {}, mapId)) {
+      err("visuals", "content/visuals.json", `cameraProfiles.bindings.maps.${mapId}`, `Camera binding references unknown map "${mapId}".`);
+    }
+  }
+  for (const missionId of Object.keys(result.catalog.bindings.missions)) {
+    if (!Object.hasOwn(balance?.missions ?? {}, missionId)) {
+      err("visuals", "content/visuals.json", `cameraProfiles.bindings.missions.${missionId}`, `Camera binding references unknown mission "${missionId}".`);
+    }
+  }
+}
+
 const PROCEDURAL_JUICE_LIMITS = Object.freeze({
   particleEmitters: 64,
   audioCues: 64,
@@ -945,8 +1105,8 @@ function validateProceduralJuice(visuals, err, balance) {
     err("visuals", "content/visuals.json", "proceduralJuice", "proceduralJuice must be an enumerable own data property; accessors are not allowed.");
     return;
   }
-  if (visuals.schemaVersion !== 3) {
-    err("visuals", "content/visuals.json", "proceduralJuice", "proceduralJuice requires visuals schemaVersion 3.");
+  if (![3, 4].includes(visuals.schemaVersion)) {
+    err("visuals", "content/visuals.json", "proceduralJuice", "proceduralJuice requires visuals schemaVersion 3 or 4.");
   }
   const juice = descriptor.value;
   const root = closedRecord(juice, ["schemaVersion", "particleEmitters", "audioCues", "cameraCues", "eventBindings"], "proceduralJuice", err);
@@ -1078,7 +1238,7 @@ function validateProceduralJuice(visuals, err, balance) {
   }
 }
 
-function validateBuildTargets(buildTargets, err) {
+function validateBuildTargets(buildTargets, err, visuals = {}) {
   if (!buildTargets || typeof buildTargets !== "object") {
     err("buildTargets", "build-targets.json", "root", "build-targets.json must be an object.");
     return;
@@ -1098,7 +1258,7 @@ function validateBuildTargets(buildTargets, err) {
     const targetKeys = new Set([
       "id", "type", "platform", "renderer", "webDir", "outputDir", "market", "storeChannel",
       "appId", "appName", "label", "title", "appTitle", "backgroundColor", "appVersion", "manifest",
-      "formFactor", "viewport", "quality", "locale", "inputProfile", "window", "bundle", "updater"
+      "formFactor", "viewport", "quality", "locale", "inputProfile", "cameraProfileId", "window", "bundle", "updater"
     ]);
     const targets = isRecord(buildTargets.targets) ? buildTargets.targets : {};
     if (!isRecord(buildTargets.defaults)) {
@@ -1155,6 +1315,20 @@ function validateBuildTargets(buildTargets, err) {
       }
       if (!["keyboard_mouse", "touch", "hybrid"].includes(target.inputProfile)) {
         err("buildTargets", targetId, `targets.${targetId}.inputProfile`, "inputProfile must be keyboard_mouse, touch, or hybrid.");
+      }
+      if (target.cameraProfileId !== undefined) {
+        const fieldPath = `targets.${targetId}.cameraProfileId`;
+        if (typeof target.cameraProfileId !== "string" || target.cameraProfileId.length === 0 || target.cameraProfileId.length > 64) {
+          err("buildTargets", targetId, fieldPath, "cameraProfileId must be a non-empty bounded camera profile ID from 1 to 64 characters.");
+        } else {
+          const descriptor = cameraCatalogDescriptor(visuals);
+          const result = descriptor && "value" in descriptor
+            ? validateCameraProfileCatalogV1(descriptor.value)
+            : { ok: false };
+          if (!result.ok || !Object.hasOwn(result.catalog.profiles, target.cameraProfileId)) {
+            err("buildTargets", targetId, fieldPath, `Build target references missing camera profile "${target.cameraProfileId}".`);
+          }
+        }
       }
       const viewportPath = `targets.${targetId}.viewport`;
       if (!isRecord(target.viewport)) {

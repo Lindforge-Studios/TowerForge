@@ -122,7 +122,9 @@ function uniqueAssetId(base, collection, newSrc) {
   return `${base}-${n}`;
 }
 
-export function copyVisualAssets(projectDir, outDir, visuals) {
+const MAX_CAMERA_ASSET_BYTES = 32 * 1024 * 1024;
+
+export function copyVisualAssets(projectDir, outDir, visuals, _options = {}) {
   const copied = [];
   const missing = [];
   const invalid = [];
@@ -137,12 +139,32 @@ export function copyVisualAssets(projectDir, outDir, visuals) {
       missing.push(item);
       continue;
     }
+    if (item.mimeType) {
+      const size = fs.statSync(sourcePath).size;
+      if (size < 1 || size > MAX_CAMERA_ASSET_BYTES) {
+        invalid.push({ ...item, reason: `Camera asset size must be from 1 byte through ${MAX_CAMERA_ASSET_BYTES} bytes (32 MiB).` });
+        continue;
+      }
+      const bytes = fs.readFileSync(sourcePath);
+      const detected = imageSignatureMime(bytes);
+      if (detected !== item.mimeType) {
+        invalid.push({ ...item, reason: `Camera asset MIME/signature mismatch: declared ${item.mimeType}, detected ${detected ?? "unknown"}.` });
+        continue;
+      }
+    }
     const destPath = path.join(outDir, item.path);
     fs.mkdirSync(path.dirname(destPath), { recursive: true });
     fs.copyFileSync(sourcePath, destPath);
     copied.push(item);
   }
   return { copied, missing, invalid };
+}
+
+function imageSignatureMime(bytes) {
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes.length >= 12 && bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP") return "image/webp";
+  return undefined;
 }
 
 function resolveInsideProject(projectDir, relPath) {

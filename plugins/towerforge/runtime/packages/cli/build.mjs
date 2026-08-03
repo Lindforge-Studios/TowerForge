@@ -112,6 +112,9 @@ try {
   const renderer = target.renderer === "phaser" ? "phaser" : "canvas";
   const largeScreenPlayer = files.buildTargets.schemaVersion === 2
     && (target.formFactor === "desktop" || target.formFactor === "responsive");
+  const cameraProjectionActive = typeof target.cameraProfileId === "string"
+    && files.visuals?.schemaVersion === 4
+    && files.visuals?.cameraProfiles?.schemaVersion === 1;
   const nativeDesktopPlayer = args.nativeDesktopBundle && target.platform === "desktop";
   const nativeUpdaterActive = nativeDesktopPlayer && target.updater?.enabled === true;
   const multiplayerActive = hasActiveMultiplayer(files);
@@ -152,8 +155,12 @@ try {
   }
   // Renderer dir ships for both players — the canvas player needs index.mjs, both need audio.mjs.
   copyDir(path.join(repoRoot, "packages", "renderer", "src"), path.join(outDir, "renderer"), {
-    excludeRootEntries: new Set(largeScreenPlayer ? [] : ["viewport-transform.mjs"])
+    excludeRootEntries: new Set([
+      ...(!largeScreenPlayer && !cameraProjectionActive ? ["viewport-transform.mjs"] : []),
+      ...(!cameraProjectionActive ? ["camera-projector.mjs", "camera-renderer-integration.mjs", "camera-view-assets.mjs"] : [])
+    ])
   });
+  if (!cameraProjectionActive) pruneInactiveCameraProjectionRuntime(outDir);
   if (largeScreenPlayer) {
     const pwaAssets = [
       [path.join("packages", "desktop", "src-tauri", "icons", "android", "mipmap-xxxhdpi", "ic_launcher.png"), "icon-192.png"],
@@ -196,8 +203,8 @@ try {
   fs.writeFileSync(
     path.join(outDir, "player.mjs"),
     renderer === "phaser"
-      ? phaserPlayerTemplate(multiplayerActive, macroEconomyActive, hostMonetizationActive, largeScreenPlayer, nativeDesktopPlayer, nativeUpdaterActive)
-      : playerTemplate(multiplayerActive, macroEconomyActive, hostMonetizationActive, largeScreenPlayer, nativeDesktopPlayer, nativeUpdaterActive),
+      ? phaserPlayerTemplate(multiplayerActive, macroEconomyActive, hostMonetizationActive, largeScreenPlayer, nativeDesktopPlayer, nativeUpdaterActive, cameraProjectionActive)
+      : playerTemplate(multiplayerActive, macroEconomyActive, hostMonetizationActive, largeScreenPlayer, nativeDesktopPlayer, nativeUpdaterActive, cameraProjectionActive),
     "utf8"
   );
   fs.writeFileSync(path.join(outDir, "manifest.webmanifest"), JSON.stringify(webManifest(files.manifest, target), null, 2) + "\n", "utf8");
@@ -332,6 +339,17 @@ function copyDir(src, dest, options = {}, depth = 0) {
   }
 }
 
+function pruneInactiveCameraProjectionRuntime(outDir) {
+  const rendererIndex = path.join(outDir, "renderer", "index.mjs");
+  let source = fs.readFileSync(rendererIndex, "utf8");
+  source = pruneSingleModuleImport(source, "./camera-renderer-integration.mjs");
+  source = pruneSingleModuleImport(source, "./camera-view-assets.mjs");
+  source = pruneSingleModuleExport(source, "./camera-projector.mjs");
+  source = pruneSingleModuleExport(source, "./camera-renderer-integration.mjs");
+  source = pruneSingleModuleExport(source, "./camera-view-assets.mjs");
+  fs.writeFileSync(rendererIndex, source, "utf8");
+}
+
 function pruneInactiveMacroEconomyRuntime(outDir) {
   const engineIndex = path.join(outDir, "engine", "index.js");
   const rendererIndex = path.join(outDir, "renderer", "index.mjs");
@@ -425,7 +443,9 @@ function writeJsonModule(filePath, data) {
 
 function embedVisualAssets(projectDir, visuals) {
   const embedded = JSON.parse(JSON.stringify(visuals ?? {}));
-  const groups = [embedded.atlases, embedded.sprites, embedded.audio?.sounds, embedded.audio?.musicTracks];
+  const cameraSpriteAssets = Object.values(embedded.viewVariants?.sprites ?? {}).flatMap((variants) => Object.values(variants ?? {}));
+  const cameraTileSetAssets = Object.values(embedded.viewVariants?.tileSets ?? {}).flatMap((variants) => Object.values(variants ?? {}).map((variant) => variant?.atlas));
+  const groups = [embedded.atlases, embedded.sprites, embedded.audio?.sounds, embedded.audio?.musicTracks, cameraSpriteAssets, cameraTileSetAssets];
   for (const group of groups) {
     for (const entry of Object.values(group ?? {})) {
       if (!entry?.src || /^(?:data:|blob:|https?:)/i.test(entry.src)) continue;
@@ -461,6 +481,8 @@ function singleFileHtml(outDir, manifest, target, renderer, projectData, initial
   }
   html = html.replace('  <script src="./boot.js"></script>', `  <script>${escapeInlineScript(bootRecoveryTemplate(manifest, target, projectData.storyComics))}</script>`);
   html = html.replace('  <script type="module" src="./player.mjs"></script>', `  <script>${escapeInlineScript(entry)}</script>`);
+  const embeddedImageMimes = [...new Set(JSON.stringify(projectData.visuals ?? {}).match(/data:image\/(?:png|jpeg|webp);base64,/g) ?? [])].sort();
+  if (embeddedImageMimes.length) html = html.replace("</head>", `  <!-- embedded image MIME markers: ${embeddedImageMimes.join(" ")} -->\n</head>`);
   return html;
 }
 
@@ -1093,7 +1115,7 @@ function macroEconomyPlayerRuntimeTemplate() {
 }`;
 }
 
-function phaserViewportMethodsTemplate(enabled) {
+function phaserViewportMethodsTemplate(enabled, cameraProjectionActive = false) {
   if (!enabled) return `  geometry(tiles, grid) {
     let maxQ = 1, maxR = 1;
     for (const t of tiles) { if (t.q > maxQ) maxQ = t.q; if (t.r > maxR) maxR = t.r; }
@@ -1122,12 +1144,26 @@ function phaserViewportMethodsTemplate(enabled) {
       base = { r, ox: r * 1.5, oy: r * 1.5, grid: grid || { kind: "hex", layout: "odd-r" } };
     }
     if (!tiles.length) return base;
-    const signature = W + "x" + H + "|" + base.grid.kind + "|" + maxQ + "," + maxR;
+    const cameraResolution = ${cameraProjectionActive ? `resolveCameraProfileV1(project.visuals.cameraProfiles, {
+      missionId,
+      mapId: content.missions?.[missionId]?.mapId,
+      buildTargetCameraProfileId: project.buildTarget.cameraProfileId
+    })` : "null"};
+    const cameraProfile = cameraResolution?.profile ?? null;
+    const signature = W + "x" + H + "|" + base.grid.kind + "|" + maxQ + "," + maxR
+      + (cameraProfile ? "|" + cameraResolution.source + "|" + (cameraResolution.profileId || "fallback") + "|" + JSON.stringify(cameraProfile) : "|legacy");
     if (!this.viewportController || this.viewportSignature !== signature) {
       const baseCenter = (coord) => base.grid.kind === "square"
         ? { x: base.ox + coord.q * base.r * 2, y: base.oy + coord.r * base.r * 2 }
         : { x: base.ox + coord.q * base.r * 1.48 + (coord.r % 2) * base.r * 0.74, y: base.oy + coord.r * base.r * 1.28 };
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      ${cameraProjectionActive ? `const worldPoints = tiles.map((tile) => ({ ...baseCenter(tile), elevation: Number(tile.elevation) || 0 }));
+      this.cameraRenderSpace = createCameraRenderSpaceV1({
+        cameraProfile,
+        worldPoints,
+        viewport: { width: W, height: H },
+        viewportProfile: project.buildTarget.viewport
+      });
+      this.viewportController = this.cameraRenderSpace.viewportTransform;` : `let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const tile of tiles) {
         const point = baseCenter(tile);
         minX = Math.min(minX, point.x - base.r); minY = Math.min(minY, point.y - base.r);
@@ -1142,18 +1178,23 @@ function phaserViewportMethodsTemplate(enabled) {
         minZoom: fitZoom * profile.minZoom,
         maxZoom: fitZoom * profile.maxZoom,
         initialZoom: fitZoom * profile.initialZoom
-      });
+      });`}
       this.viewportSignature = signature;
     }
     const view = this.viewportController.getSnapshot();
-    return { ...base, worldR: base.r, r: base.r * view.zoom, viewportTransform: this.viewportController };
+    return { ...base, worldR: base.r, r: base.r * view.zoom, viewportTransform: this.viewportController, cameraRenderSpace: this.cameraRenderSpace ?? null };
   }
   center(coord, g) {
+    const point = this.worldCenter(coord, g);
+    return g.cameraRenderSpace
+      ? g.cameraRenderSpace.worldToScreen({ ...point, elevation: Number(coord.elevation) || 0 })
+      : g.viewportTransform ? g.viewportTransform.worldToScreen(point) : point;
+  }
+  worldCenter(coord, g) {
     const radius = g.worldR ?? g.r;
-    const point = g.grid.kind === "square"
+    return g.grid.kind === "square"
       ? { x: g.ox + coord.q * radius * 2, y: g.oy + coord.r * radius * 2 }
       : { x: g.ox + coord.q * radius * 1.48 + (coord.r % 2) * radius * 0.74, y: g.oy + coord.r * radius * 1.28 };
-    return g.viewportTransform ? g.viewportTransform.worldToScreen(point) : point;
   }
   cameraPan(delta) {
     if (!this.viewportController) return null;
@@ -1603,7 +1644,7 @@ globalThis.__towerforgePlayerActions = playerActionRegistry;
 `;
 }
 
-function playerTemplate(includeMultiplayer = false, includeMacroEconomy = false, includeHostMonetization = false, largeScreenPlayer = false, nativeDesktopPlayer = false, nativeUpdaterActive = false) {
+function playerTemplate(includeMultiplayer = false, includeMacroEconomy = false, includeHostMonetization = false, largeScreenPlayer = false, nativeDesktopPlayer = false, nativeUpdaterActive = false, cameraProjectionActive = false) {
   return `import {
   createCampaignRun,
   ${largeScreenPlayer ? "computeMissionCapabilityDigestV1,\n  " : ""}createEmptyPlayerProfile,
@@ -1630,6 +1671,8 @@ function playerTemplate(includeMultiplayer = false, includeMacroEconomy = false,
 ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multiplayer/index.js";' : ""}
 import { createPlayerProfileStore, derivePlayerProfileStorageKey${largeScreenPlayer ? ", createDefaultPlayerActionDescriptors, createPlayerActionRegistry, createDefaultPlayerPreferences, createFixedSimulationClockV1, createRotatingPlayerSessionStore, parsePlayerPreferencesV1, parsePlayerSessionSaveV1, resolvePlayerPresentationQualityV1, serializePlayerPreferencesV1, serializePlayerSessionSaveV1" : ""} } from "./player-runtime/index.mjs";
 ${largeScreenPlayer ? 'import { createIndexedDbSessionStorage } from "./player-runtime/indexeddb-session-storage.mjs";\nimport { createPlayerStrings } from "./player-runtime/localized-strings.mjs";\nimport { createViewportTransformV1 } from "./renderer/viewport-transform.mjs";' : ""}
+${cameraProjectionActive ? 'import { createCameraRenderSpaceV1, projectCameraRenderItemsV1, resolveCameraProfileV1 } from "./renderer/camera-renderer-integration.mjs";' : ""}
+${cameraProjectionActive ? 'import { resolveCameraViewVariantV1 } from "./renderer/camera-view-assets.mjs";' : ""}
 ${nativeDesktopPlayer ? 'import { createNativeStorageBridgeV1, installNativePlayerLifecycleV1, resolveNativePlayerInvokeV1 } from "./player-runtime/native-storage-bridge.mjs";' : ""}
 ${includeHostMonetization ? 'import { createHostMonetizationRuntimeV1 } from "./player-runtime/host-monetization.mjs";' : ""}
 import { createCanvasRenderer, hitTestHeroesPresentation, projectArsenalPresentation${includeMacroEconomy ? ", projectMacroEconomyPresentation" : ""}, projectCampaignPresentation, projectDirectorDecisionCues, projectElevationCues, projectHeroPresentationPoint, projectHeroesPresentation, projectLogisticsPresentation, projectNavigationPlacementCues, projectPhysicsPresentationCues, projectProceduralJuicePresentation, projectQuestPresentation, projectRoguelitePresentation, projectVanguardProtectionPresentation, selectHeroAbilityEnemy } from "./renderer/index.mjs";
@@ -1670,7 +1713,7 @@ const activeCampaign = resolveWorldCampaign(content);
 let campaignRun = activeCampaign ? createCampaignRun("campaign") : null;
 let pendingCampaignNodeId = null;
 let pendingCampaignBattle = false;
-const renderer = createCanvasRenderer({ canvas, content, theme: content.visuals?.theme?.renderer${largeScreenPlayer ? ", createViewportTransform: createViewportTransformV1, viewportProfile: project.buildTarget.viewport, maxDevicePixelRatio: canvasPresentationQuality.maxDevicePixelRatio" : ""} });
+const renderer = createCanvasRenderer({ canvas, content, theme: content.visuals?.theme?.renderer${largeScreenPlayer ? ", createViewportTransform: createViewportTransformV1, viewportProfile: project.buildTarget.viewport, maxDevicePixelRatio: canvasPresentationQuality.maxDevicePixelRatio" : ""}${cameraProjectionActive ? ", cameraProfileId: project.buildTarget.cameraProfileId" : ""} });
 ${largeScreenPlayer ? `function applyPlayerPresentationQuality(quality) {
   const profile = resolvePlayerPresentationQualityV1(quality, { width: globalThis.innerWidth, height: globalThis.innerHeight });
   canvasPresentationQuality = profile;
@@ -2897,7 +2940,7 @@ function applyProjectTheme() {
 `;
 }
 
-function phaserPlayerTemplate(includeMultiplayer = false, includeMacroEconomy = false, includeHostMonetization = false, largeScreenPlayer = false, nativeDesktopPlayer = false, nativeUpdaterActive = false) {
+function phaserPlayerTemplate(includeMultiplayer = false, includeMacroEconomy = false, includeHostMonetization = false, largeScreenPlayer = false, nativeDesktopPlayer = false, nativeUpdaterActive = false, cameraProjectionActive = false) {
   return `import {
   createCampaignRun,
   ${largeScreenPlayer ? "computeMissionCapabilityDigestV1,\n  " : ""}createEmptyPlayerProfile,
@@ -2924,6 +2967,8 @@ function phaserPlayerTemplate(includeMultiplayer = false, includeMacroEconomy = 
 ${includeMultiplayer ? 'import * as TowerForgeMultiplayer from "./engine/multiplayer/index.js";' : ""}
 import { createPlayerProfileStore, derivePlayerProfileStorageKey${largeScreenPlayer ? ", createDefaultPlayerActionDescriptors, createPlayerActionRegistry, createDefaultPlayerPreferences, createFixedSimulationClockV1, createRotatingPlayerSessionStore, parsePlayerPreferencesV1, parsePlayerSessionSaveV1, resolvePlayerPresentationQualityV1, serializePlayerPreferencesV1, serializePlayerSessionSaveV1" : ""} } from "./player-runtime/index.mjs";
 ${largeScreenPlayer ? 'import { createIndexedDbSessionStorage } from "./player-runtime/indexeddb-session-storage.mjs";\nimport { createPlayerStrings } from "./player-runtime/localized-strings.mjs";\nimport { createViewportTransformV1 } from "./renderer/viewport-transform.mjs";' : ""}
+${cameraProjectionActive ? 'import { createCameraRenderSpaceV1, projectCameraRenderItemsV1, resolveCameraProfileV1 } from "./renderer/camera-renderer-integration.mjs";' : ""}
+${cameraProjectionActive ? 'import { resolveCameraViewVariantV1 } from "./renderer/camera-view-assets.mjs";' : ""}
 ${nativeDesktopPlayer ? 'import { createNativeStorageBridgeV1, installNativePlayerLifecycleV1, resolveNativePlayerInvokeV1 } from "./player-runtime/native-storage-bridge.mjs";' : ""}
 ${includeHostMonetization ? 'import { createHostMonetizationRuntimeV1 } from "./player-runtime/host-monetization.mjs";' : ""}
 import { createAudioPlayer } from "./renderer/audio.mjs";
@@ -2966,7 +3011,7 @@ ${includeMacroEconomy ? "  projectMacroEconomyPresentation," : ""}
   resolveShieldPresentation,
   selectHeroAbilityEnemy
 } from "./renderer/index.mjs";
-import { expandAutotileInvalidations, resolveAutotile } from "./renderer/autotile.mjs";
+import { expandAutotileInvalidations, resolveAutotile${cameraProjectionActive ? ", resolveTileSetBinding" : ""} } from "./renderer/autotile.mjs";
 import project from "./project-data.js";
 
 const content = createGameContentRegistry({
@@ -3381,9 +3426,19 @@ class PlayScene extends Phaser.Scene {
     for (const [spriteId, sprite] of Object.entries(content.visuals?.sprites || {})) {
       if (sprite?.src) this.load.image("tf-sprite:" + spriteId, visualAssetUrl(sprite.src));
     }
+    ${cameraProjectionActive ? `for (const [spriteId, variants] of Object.entries(content.visuals?.viewVariants?.sprites || {})) {
+      for (const [viewKey, sprite] of Object.entries(variants || {})) {
+        if (sprite?.src) this.load.image("tf-camera-sprite:" + spriteId + "@" + viewKey, visualAssetUrl(sprite.src));
+      }
+    }
+    for (const [tileSetId, variants] of Object.entries(content.visuals?.viewVariants?.tileSets || {})) {
+      for (const [viewKey, tileSet] of Object.entries(variants || {})) {
+        if (tileSet?.atlas?.src) this.load.image("tf-camera-tileset:" + tileSetId + "@" + viewKey, visualAssetUrl(tileSet.atlas.src));
+      }
+    }` : ""}
   }
   create() {
-    const proceduralJuiceEnabled = content.visuals?.schemaVersion === 3 && content.visuals?.proceduralJuice !== undefined;
+    const proceduralJuiceEnabled = [3, 4].includes(content.visuals?.schemaVersion) && content.visuals?.proceduralJuice !== undefined;
     this.tileG = this.add.graphics();
     this.fxG = this.add.graphics();
     this.juiceNormalG = proceduralJuiceEnabled ? this.add.graphics() : null;
@@ -3487,24 +3542,103 @@ class PlayScene extends Phaser.Scene {
       const frame = sprite.frame;
       if (texture?.key !== "__MISSING" && !texture.has(spriteId)) texture.add(spriteId, 0, frame.x, frame.y, frame.w, frame.h);
     }
+    ${cameraProjectionActive ? `for (const [tileSetId, variants] of Object.entries(content.visuals?.viewVariants?.tileSets || {})) {
+      for (const viewKey of Object.keys(variants || {})) {
+        const texture = this.textures.get("tf-camera-tileset:" + tileSetId + "@" + viewKey);
+        if (texture?.key === "__MISSING") continue;
+        for (const [spriteId, sprite] of Object.entries(content.visuals?.sprites || {})) {
+          if (!sprite?.frame || texture.has(spriteId)) continue;
+          const frame = sprite.frame;
+          texture.add(spriteId, 0, frame.x, frame.y, frame.w, frame.h);
+        }
+      }
+    }` : ""}
   }
   spriteTexture(spriteId) {
     if (typeof spriteId !== "string" || !spriteId) return null;
     const sprites = ownDataValue(content.visuals, "sprites");
-    const sprite = ownDataValue(sprites, spriteId);
+    let sprite = ownDataValue(sprites, spriteId);
     if (!sprite) return null;
-    if (sprite.atlas && sprite.frame && this.textures.exists("tf-atlas:" + sprite.atlas)) return { key: "tf-atlas:" + sprite.atlas, frame: spriteId };
-    if (sprite.src && this.textures.exists("tf-sprite:" + spriteId)) return { key: "tf-sprite:" + spriteId };
+    ${cameraProjectionActive ? `const cameraProfile = this.cameraRenderSpace?.profile;
+    if (cameraProfile && content.visuals?.viewVariants) {
+      const resolved = resolveCameraViewVariantV1({
+        visuals: content.visuals, kind: "sprite", id: spriteId,
+        projection: cameraProfile.projection, orientation: cameraProfile.orientation
+      });
+      if (resolved.status === "exact") {
+        const key = "tf-camera-sprite:" + spriteId + "@" + resolved.key;
+        if (this.textures.exists(key)) return { key, anchor: resolved.asset.anchor || { x: 0.5, y: 1 } };
+      }
+    }` : ""}
+    if (sprite.atlas && sprite.frame && this.textures.exists("tf-atlas:" + sprite.atlas)) return { key: "tf-atlas:" + sprite.atlas, frame: spriteId${cameraProjectionActive ? ", anchor: sprite.anchor || { x: 0.5, y: 1 }" : ""} };
+    if (sprite.src && this.textures.exists("tf-sprite:" + spriteId)) return { key: "tf-sprite:" + spriteId${cameraProjectionActive ? ", anchor: sprite.anchor || { x: 0.5, y: 1 }" : ""} };
     return null;
   }
-${phaserViewportMethodsTemplate(largeScreenPlayer)}
+  ${cameraProjectionActive ? `cameraTileSetVariant(map) {
+    const cameraProfile = this.cameraRenderSpace?.profile;
+    const tileSetId = cameraProfile ? resolveTileSetBinding(content.visuals, map) : null;
+    if (!tileSetId) return null;
+    const resolved = resolveCameraViewVariantV1({
+      visuals: content.visuals, kind: "tileSet", id: tileSetId,
+      projection: cameraProfile.projection, orientation: cameraProfile.orientation
+    });
+    return resolved.status === "exact" ? { tileSetId, ...resolved } : null;
+  }
+  cameraAutotileVisuals(variant) {
+    if (!variant) return content.visuals;
+    const base = content.visuals?.tileSets?.[variant.tileSetId];
+    return { ...content.visuals, tileSets: { ...content.visuals.tileSets,
+      [variant.tileSetId]: { ...base, materials: variant.asset.materials }
+    } };
+  }
+  tileTexture(spriteId, tileSetVariant) {
+    if (tileSetVariant && typeof spriteId === "string") {
+      const key = "tf-camera-tileset:" + tileSetVariant.tileSetId + "@" + tileSetVariant.key;
+      if (this.textures.exists(key) && this.textures.get(key)?.has(spriteId)) {
+        return { key, frame: spriteId, anchor: { x: 0.5, y: 0.5 } };
+      }
+    }
+    return this.spriteTexture(spriteId);
+  }` : ""}
+${phaserViewportMethodsTemplate(largeScreenPlayer, cameraProjectionActive)}
   pickTile(x, y) {
     const snap = game.getRenderSnapshot();
     const g = this.geometry(snap.tiles, snap.grid);
+    ${cameraProjectionActive ? `const worldPoint = g.cameraRenderSpace?.screenToWorld({ x, y }, 0) ?? null;` : ""}
     let best = null, bestD = Infinity;
-    for (const t of snap.tiles) { const p = this.center(t, g); const d = Math.hypot(p.x - x, p.y - y); if (d < bestD) { bestD = d; best = t; } }
-    return best && bestD <= (g.grid.kind === "square" ? g.r * Math.SQRT2 : g.r * 0.95) ? { q: best.q, r: best.r } : null;
+    for (const t of snap.tiles) {
+      const p = ${cameraProjectionActive ? `worldPoint ? this.worldCenter(t, g) : this.center(t, g)` : `this.center(t, g)`};
+      const d = Math.hypot(p.x - (${cameraProjectionActive ? "worldPoint?.x ?? x" : "x"}), p.y - (${cameraProjectionActive ? "worldPoint?.y ?? y" : "y"}));
+      if (d < bestD) { bestD = d; best = t; }
+    }
+    const radius = ${cameraProjectionActive ? `worldPoint ? (g.worldR ?? g.r) : g.r` : `g.r`};
+    return best && bestD <= (g.grid.kind === "square" ? radius * Math.SQRT2 : radius * 0.95) ? { q: best.q, r: best.r } : null;
   }
+  ${cameraProjectionActive ? `cameraTileDepth(tiles, g) {
+    if (!g.cameraRenderSpace || !tiles.length) return new Map();
+    const tileRenderRows = tiles.map((tile) => ({ id: tile.q + "," + tile.r, kind: "tile", ...this.worldCenter(tile, g), elevation: Number(tile.elevation) || 0 }));
+    const ordered = projectCameraRenderItemsV1(g.cameraRenderSpace, tileRenderRows);
+    return new Map(ordered.map((row, index) => [row.id, -1000 + index / Math.max(1, ordered.length)]));
+  }
+  cameraActorDepth(snap, g, enemyPositions, towerPositions) {
+    if (!g.cameraRenderSpace) return new Map();
+    const towerEnemyHeroProjectileRows = [];
+    for (const tower of snap.towers || []) towerEnemyHeroProjectileRows.push({ id: tower.id, kind: "tower", ...this.worldCenter(tower.coord, g), elevation: Number(tower.coord?.elevation) || 0 });
+    for (const enemy of snap.enemies || []) {
+      const screen = enemyPositions.get(enemy.id); if (!screen) continue;
+      towerEnemyHeroProjectileRows.push({ id: enemy.id, kind: "enemy", ...g.cameraRenderSpace.screenToWorld(screen, 0), elevation: 0 });
+    }
+    for (const hero of projectHeroesPresentation(snap).units) {
+      const screen = projectHeroPresentationPoint(hero, (coord) => this.center(coord, g)); if (!screen) continue;
+      towerEnemyHeroProjectileRows.push({ id: hero.id, kind: "hero", ...g.cameraRenderSpace.screenToWorld(screen, 0), elevation: 0 });
+    }
+    const ordered = projectCameraRenderItemsV1(g.cameraRenderSpace, towerEnemyHeroProjectileRows);
+    const depths = new Map(ordered.map((row, index) => [row.id, 1 + index / Math.max(1, ordered.length)]));
+    for (const [id, label] of this.towerLabels) label.setDepth(depths.get(id) ?? 10);
+    for (const [id, image] of this.heroImages) image.setDepth(depths.get(id) ?? 9);
+    for (const [id, label] of this.heroLabels) label.setDepth(depths.get(id) ?? 10);
+    return depths;
+  }` : ""}
   enemyPos(enemy, snap, g) {
     const route = enemy.routeId ? snap.pathRoutes?.find((rt) => rt.id === enemy.routeId)?.pathCenterline : snap.pathCenterline;
     const track = route && route.length ? route : snap.pathCenterline;
@@ -3554,6 +3688,9 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer)}
       this.tileImageKey = stateKey;
     }
     const map = { id: snap.mapId || snap.missionId, grid: snap.grid, tiles: snap.tiles, pathRoutes: snap.pathRoutes || [] };
+    ${cameraProjectionActive ? `const tileSetVariant = this.cameraTileSetVariant(map);
+    const autotileVisuals = this.cameraAutotileVisuals(tileSetVariant);
+    this.cameraTileDepthByKey = this.cameraTileDepth(snap.tiles, g);` : ""}
     const tileByKey = new Map(snap.tiles.map((tile) => [tile.q + "," + tile.r, tile]));
     const changedRoots = [];
     for (const tile of snap.tiles) {
@@ -3582,12 +3719,12 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer)}
       this.tileImages.delete(key);
       const tile = tileByKey.get(key);
       if (!tile) continue;
-      const resolved = resolveAutotile({ map, visuals: content.visuals, coord: tile, terrain: tile.terrain, seed: content.visuals?.tileSeed || 0 });
+      const resolved = resolveAutotile({ map, visuals: ${cameraProjectionActive ? "autotileVisuals" : "content.visuals"}, coord: tile, terrain: tile.terrain, seed: content.visuals?.tileSeed || 0 });
       const p = this.center(tile, g);
       if (resolved.sectors?.length) {
-        for (const sector of resolved.sectors) this.addTileImage(sector.selected, p, g, sector.direction, key);
+        for (const sector of resolved.sectors) this.addTileImage(sector.selected, p, g, sector.direction, key${cameraProjectionActive ? ", tileSetVariant" : ""});
       } else {
-        this.addTileImage(resolved.selected, p, g, null, key);
+        this.addTileImage(resolved.selected, p, g, null, key${cameraProjectionActive ? ", tileSetVariant" : ""});
       }
     }
     this.tileTerrainState = new Map(snap.tiles.map((tile) => [tile.q + "," + tile.r, tile.terrain]));
@@ -3605,11 +3742,12 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer)}
     }
     return unique.size <= 1024 ? [...unique.values()] : null;
   }
-  addTileImage(selected, p, g, sectorDirection, tileKey) {
-    const texture = this.spriteTexture(selected?.spriteId);
+  addTileImage(selected, p, g, sectorDirection, tileKey${cameraProjectionActive ? ", tileSetVariant" : ""}) {
+    const texture = ${cameraProjectionActive ? "this.tileTexture(selected?.spriteId, tileSetVariant)" : "this.spriteTexture(selected?.spriteId)"};
     if (!texture) return;
     const size = g.r * 1.72;
-    const image = this.add.image(p.x, p.y, texture.key, texture.frame).setDisplaySize(size, size).setDepth(-1);
+    const image = this.add.image(p.x, p.y, texture.key, texture.frame)
+      ${cameraProjectionActive ? ".setOrigin(texture.anchor.x, texture.anchor.y)" : ""}.setDisplaySize(size, size).setDepth(${cameraProjectionActive ? "this.cameraTileDepthByKey?.get(tileKey) ?? -1" : "-1"});
     const transform = selected.transform;
     image.setFlip(Boolean(transform?.flipX), Boolean(transform?.flipY));
     image.setAngle(Number(transform?.rotate || 0));
@@ -3707,6 +3845,7 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer)}
       if (point) enemyPositions.set(enemy.id, point);
     }
     const towerPositions = new Map(snap.towers.map((tower) => [tower.id, this.center(tower.coord, g)]));
+    ${cameraProjectionActive ? `const cameraActorDepth = this.cameraActorDepth(snap, g, enemyPositions, towerPositions);` : ""}
     const directorCue = projectDirectorDecisionCues(presentationSnapshot).at(-1);
     if (directorCue) message = directorCue.label;
     const questPresentation = projectQuestPresentation(presentationSnapshot);
@@ -3718,13 +3857,15 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer)}
     const terraformingPresentation = projectTerraformingPresentation(presentationSnapshot);
     this.syncTileImages(snap, g, terraformingPresentation);
     const map = { id: snap.mapId || snap.missionId, grid: snap.grid, tiles: snap.tiles, pathRoutes: snap.pathRoutes || [] };
+    ${cameraProjectionActive ? `const cameraTileSetVariant = this.cameraTileSetVariant(map);
+    const cameraAutotileVisuals = this.cameraAutotileVisuals(cameraTileSetVariant);` : ""}
 
     this.tileG.clear();
     for (const t of snap.tiles) {
-      const resolved = resolveAutotile({ map, visuals: content.visuals, coord: t, terrain: t.terrain, seed: content.visuals?.tileSeed || 0 });
+      const resolved = resolveAutotile({ map, visuals: ${cameraProjectionActive ? "cameraAutotileVisuals" : "content.visuals"}, coord: t, terrain: t.terrain, seed: content.visuals?.tileSeed || 0 });
       const missingVisual = resolved.sectors?.length
-        ? resolved.sectors.some((sector) => !this.spriteTexture(sector.selected?.spriteId))
-        : !this.spriteTexture(resolved.selected?.spriteId);
+        ? resolved.sectors.some((sector) => !${cameraProjectionActive ? "this.tileTexture(sector.selected?.spriteId, cameraTileSetVariant)" : "this.spriteTexture(sector.selected?.spriteId)"})
+        : !${cameraProjectionActive ? "this.tileTexture(resolved.selected?.spriteId, cameraTileSetVariant)" : "this.spriteTexture(resolved.selected?.spriteId)"};
       if (missingVisual) {
         const p = this.center(t, g);
         this.cell(this.tileG, p.x, p.y, g.r * 0.86, TERRAIN_COLORS[t.terrain] ?? TERRAIN_COLORS.buildable, 1, g.grid);
@@ -3940,8 +4081,8 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer)}
       this.shieldRing(this.entG, p.x, p.y, g.r * 0.66, resolveShieldPresentation(snap, "tower", tw.id));
       let label = this.towerLabels.get(tw.id);
       const text = (content.towers[tw.typeId]?.label || tw.typeId).slice(0, 2);
-      if (!label) { label = this.add.text(0, 0, text, { fontFamily: "sans-serif", color: "#101410" }).setOrigin(0.5).setDepth(10); this.towerLabels.set(tw.id, label); }
-      label.setText(text).setFontSize(Math.max(10, Math.round(g.r * 0.42))).setPosition(p.x, p.y).setAlpha(alpha);
+      if (!label) { label = this.add.text(0, 0, text, { fontFamily: "sans-serif", color: "#101410" }).setOrigin(0.5).setDepth(${cameraProjectionActive ? "cameraActorDepth.get(tw.id) ?? 10" : "10"}); this.towerLabels.set(tw.id, label); }
+      label.setText(text).setFontSize(Math.max(10, Math.round(g.r * 0.42))).setPosition(p.x, p.y).setAlpha(alpha)${cameraProjectionActive ? ".setDepth(cameraActorDepth.get(tw.id) ?? 10)" : ""};
     }
     for (const [id, lbl] of this.towerLabels) { if (!seen.has(id)) { lbl.destroy(); this.towerLabels.delete(id); } }
 
@@ -3970,10 +4111,10 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer)}
       const heroAlpha = hero.durability?.defeated ? 0.38 : 1;
       if (texture) {
         if (!image) {
-          image = this.add.image(point.x, point.y, texture.key, texture.frame).setDepth(9);
+          image = this.add.image(point.x, point.y, texture.key, texture.frame)${cameraProjectionActive ? ".setOrigin(texture.anchor.x, texture.anchor.y)" : ""}.setDepth(${cameraProjectionActive ? "cameraActorDepth.get(hero.id) ?? 9" : "9"});
           this.heroImages.set(hero.id, image);
         }
-        image.setTexture(texture.key, texture.frame).setPosition(point.x, point.y)
+        image.setTexture(texture.key, texture.frame).setPosition(point.x, point.y)${cameraProjectionActive ? ".setOrigin(texture.anchor.x, texture.anchor.y).setDepth(cameraActorDepth.get(hero.id) ?? 9)" : ""}
           .setDisplaySize(g.r * 1.35, g.r * 1.35).setAlpha(heroAlpha).setVisible(true);
         if (label) { label.destroy(); this.heroLabels.delete(hero.id); label = null; }
       } else {
@@ -3981,11 +4122,11 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer)}
         this.entG.fillStyle(0xe6b85c, heroAlpha); this.entG.fillCircle(point.x, point.y, g.r * 0.5);
         this.entG.lineStyle(2, 0xfff0bd, heroAlpha); this.entG.strokeCircle(point.x, point.y, g.r * 0.5);
         if (!label) {
-          label = this.add.text(0, 0, "", { fontFamily: "sans-serif", fontStyle: "bold", color: "#101410" }).setOrigin(0.5).setDepth(10);
+          label = this.add.text(0, 0, "", { fontFamily: "sans-serif", fontStyle: "bold", color: "#101410" }).setOrigin(0.5).setDepth(${cameraProjectionActive ? "cameraActorDepth.get(hero.id) ?? 10" : "10"});
           this.heroLabels.set(hero.id, label);
         }
         label.setText(hero.label.slice(0, 2)).setFontSize(Math.max(10, Math.round(g.r * 0.38)))
-          .setPosition(point.x, point.y).setAlpha(heroAlpha).setVisible(true);
+          .setPosition(point.x, point.y).setAlpha(heroAlpha).setVisible(true)${cameraProjectionActive ? ".setDepth(cameraActorDepth.get(hero.id) ?? 10)" : ""};
       }
       if (hero.durability) {
         const width = g.r * 1.05;

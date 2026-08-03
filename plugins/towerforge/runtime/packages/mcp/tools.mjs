@@ -100,6 +100,13 @@ import {
   listProceduralJuiceRecipes,
   previewProceduralJuiceAuthoring
 } from "../cli/lib/procedural-juice-authoring.mjs";
+import {
+  CAMERA_AUTHORING_SCHEMA_V1,
+  applyCameraProfile,
+  getCameraProfileRecipe,
+  getCameraProfiles,
+  previewCameraProfile
+} from "../cli/lib/camera-authoring.mjs";
 import { projectProceduralJuicePresentation } from "../renderer/src/procedural-juice-presentation.mjs";
 import { TOWERFORGE_AGENT_GUIDE_VERSION } from "./agent-instructions.mjs";
 
@@ -107,7 +114,7 @@ const BALANCE_PATCH_KEYS = [
   "enemies", "towers", "waveSets", "missions", "abilities", "constants", "currencies", "defaultMissionId",
   "defaultDifficultyId", "difficulties", "metaProgression", "terrainTypes"
 ];
-const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "arsenal", "macroEconomy", "heroes", "logistics", "director", "quests", "enemyBehaviors", "personaQa", "multiplayer", "replayLab", "distribution", "playerTargets", "proceduralJuice", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
+const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "arsenal", "macroEconomy", "heroes", "logistics", "director", "quests", "enemyBehaviors", "personaQa", "multiplayer", "replayLab", "distribution", "playerTargets", "camera", "proceduralJuice", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
 
 // Maps an upsert_entity/delete_entity `collection` to (a) the balance.json key, (b) the shape
 // (a map keyed by id, or an array of {id,...} items — currencies only), and (c) the
@@ -606,6 +613,43 @@ const JUICE_COORD_SCHEMA = Object.freeze({
   required: Object.freeze(["q", "r"]),
   additionalProperties: false
 });
+const CAMERA_PROFILE_INPUT_SCHEMA = Object.freeze({
+  type: "object",
+  properties: Object.freeze({
+    schemaVersion: Object.freeze({ const: 1 }),
+    projection: Object.freeze({ type: "string", enum: CAMERA_AUTHORING_SCHEMA_V1.projections }),
+    orientation: Object.freeze({ type: "string", enum: CAMERA_AUTHORING_SCHEMA_V1.orientations }),
+    elevationScale: Object.freeze({ type: "number", minimum: 0, maximum: 4 }),
+    fitPadding: Object.freeze({ type: "integer", minimum: 0, maximum: 512 }),
+    minZoom: Object.freeze({ type: "number", minimum: 0.1, maximum: 8 }),
+    maxZoom: Object.freeze({ type: "number", minimum: 0.1, maximum: 8 }),
+    initialZoom: Object.freeze({ type: "number", minimum: 0.1, maximum: 8 }),
+    panPadding: Object.freeze({ type: "integer", minimum: 0, maximum: 2048 })
+  }),
+  required: Object.freeze(["schemaVersion", "projection", "orientation", "elevationScale", "fitPadding", "minZoom", "maxZoom", "initialZoom"]),
+  additionalProperties: false
+});
+const CAMERA_BINDING_INPUT_SCHEMA = Object.freeze({
+  type: "object",
+  properties: Object.freeze({ scope: Object.freeze({ type: "string", enum: ["map", "mission"] }), id: Object.freeze({ type: "string", minLength: 1, maxLength: 128 }), enabled: Object.freeze({ type: "boolean", description: "False removes only this binding and keeps the profile reusable." }) }),
+  required: Object.freeze(["scope", "id"]),
+  additionalProperties: false
+});
+const CAMERA_CONTEXT_INPUT_SCHEMA = Object.freeze({
+  type: "object",
+  properties: Object.freeze({
+    missionId: Object.freeze({ type: "string", maxLength: 128 }),
+    mapId: Object.freeze({ type: "string", maxLength: 128 }),
+    buildTargetId: Object.freeze({ type: "string", maxLength: 128 }),
+    viewport: Object.freeze({
+      type: "object",
+      properties: Object.freeze({ width: Object.freeze({ type: "number", exclusiveMinimum: 0, maximum: 16384 }), height: Object.freeze({ type: "number", exclusiveMinimum: 0, maximum: 16384 }) }),
+      required: Object.freeze(["width", "height"]),
+      additionalProperties: false
+    })
+  }),
+  additionalProperties: false
+});
 /** Tool definitions advertised over `tools/list`. */
 export const TOOLS = [
   {
@@ -615,6 +659,46 @@ export const TOOLS = [
     inputSchema: {
       type: "object",
       properties: { domain: { type: "string", enum: SCHEMA_DOMAINS, description: "Focused contract to return; defaults to all." } },
+      additionalProperties: false
+    }
+  },
+  {
+    name: "get_camera_profiles",
+    description: "Read the exact visuals v4 camera profile catalog and revision without writing project files.",
+    inputSchema: { type: "object", properties: { projectDir: { type: "string" } }, additionalProperties: false }
+  },
+  {
+    name: "get_camera_profile_recipe",
+    description: "Return one detached CameraProfileV1 recipe for a fixed projection and orientation without reading or writing a project.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string" },
+        recipeId: { type: "string", enum: CAMERA_AUTHORING_SCHEMA_V1.projections },
+        orientation: { type: "string", enum: CAMERA_AUTHORING_SCHEMA_V1.orientations },
+        profileId: { type: "string", minLength: 1, maxLength: 128 }
+      },
+      required: ["recipeId", "orientation", "profileId"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "preview_camera_profile",
+    description: "Compute profile resolution, projected bounds, clipping/depth diagnostics and view-asset coverage without writing project files.",
+    inputSchema: {
+      type: "object",
+      properties: { projectDir: { type: "string" }, profileId: { type: "string", minLength: 1, maxLength: 128 }, profile: CAMERA_PROFILE_INPUT_SCHEMA, binding: CAMERA_BINDING_INPUT_SCHEMA, context: CAMERA_CONTEXT_INPUT_SCHEMA },
+      required: ["projectDir", "profileId", "profile"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "apply_camera_profile",
+    description: "Revision-guarded upsert of one camera profile/binding with validation, backup, and rollback while preserving adjacent visuals catalogs.",
+    inputSchema: {
+      type: "object",
+      properties: { projectDir: { type: "string" }, profileId: { type: "string", minLength: 1, maxLength: 128 }, profile: CAMERA_PROFILE_INPUT_SCHEMA, binding: CAMERA_BINDING_INPUT_SCHEMA, ifRevision: IF_REVISION_PROPERTY },
+      required: ["projectDir", "profileId", "profile", "ifRevision"],
       additionalProperties: false
     }
   },
@@ -1986,7 +2070,7 @@ export const TOOLS = [
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory." },
         dataBase64: { type: "string", description: "Base64-encoded generated image bytes; data URLs are rejected." },
-        declaredMimeType: { type: "string", enum: ["image/png", "image/jpeg"] },
+        declaredMimeType: { type: "string", enum: ["image/png", "image/jpeg", "image/webp"] },
         fileName: { type: "string", description: "Safe basename proposed by the provider hook." },
         license: {
           type: "object",
@@ -2186,6 +2270,10 @@ export const TOOLS = [
 
 const TOOL_RISK = {
   describe_schema: { riskClass: "read_only", sideEffect: "none" },
+  get_camera_profiles: { riskClass: "read_only", sideEffect: "none" },
+  get_camera_profile_recipe: { riskClass: "read_only", sideEffect: "none" },
+  preview_camera_profile: { riskClass: "compute_only", sideEffect: "writes no project files" },
+  apply_camera_profile: { riskClass: "write_local", sideEffect: "writes project.json and content/visuals.json with revision guard, validation, backup, and rollback" },
   get_procedural_juice: { riskClass: "read_only", sideEffect: "none" },
   get_procedural_juice_recipe: { riskClass: "read_only", sideEffect: "none" },
   preview_procedural_juice: { riskClass: "compute_only", sideEffect: "validates an in-memory candidate and writes no project files" },
@@ -2723,6 +2811,17 @@ export async function callTool(name, args = {}, ctx = {}) {
         projector: "@towerforge/renderer/projectProceduralJuicePresentation"
       }
     };
+    const camera = {
+      ...CAMERA_AUTHORING_SCHEMA_V1,
+      recipes: CAMERA_AUTHORING_SCHEMA_V1.projections,
+      viewVariants: {
+        schemaVersion: 1,
+        key: "projection:orientation",
+        imageMimeTypes: ["image/png", "image/jpeg", "image/webp"],
+        optionalSpriteFallback: "billboard",
+        missingTileSetMaterial: "validation_error"
+      }
+    };
     const multiplayer = {
       entrypoint: "@towerforge/engine/multiplayer",
       authoring: engine.MULTIPLAYER_MECHANICS_SCHEMA,
@@ -2885,6 +2984,7 @@ export async function callTool(name, args = {}, ctx = {}) {
           "Mission ability ids are open. Presets work without effects; a custom id composes damage/status effects without engine code."
       } : {}),
       ...(includes("playerTargets") ? { playerTargets } : {}),
+      ...(includes("camera") ? { camera } : {}),
       ...(includes("missions") ? {
         currencyRules: engine.CURRENCY_RULES,
         missionEconomy: engine.MISSION_ECONOMY_SCHEMA,
@@ -2983,6 +3083,14 @@ export async function callTool(name, args = {}, ctx = {}) {
     });
   }
 
+  if (name === "get_camera_profile_recipe") {
+    return getCameraProfileRecipe(
+      ownDataValue(args, "recipeId"),
+      ownDataValue(args, "orientation"),
+      ownDataValue(args, "profileId")
+    );
+  }
+
   if (name === "explain_validation") {
     if (args.code !== undefined && typeof args.code !== "string") {
       throw new Error("explain_validation: `code` must be a string.");
@@ -3009,6 +3117,22 @@ export async function callTool(name, args = {}, ctx = {}) {
   const projectDir = resolveDir(args.projectDir, ctx.defaultProjectDir, ctx);
 
   switch (name) {
+    case "get_camera_profiles":
+      return getCameraProfiles(projectDir);
+    case "preview_camera_profile":
+      return previewCameraProfile(projectDir, {
+        profileId: ownDataValue(args, "profileId"),
+        profile: ownDataValue(args, "profile"),
+        binding: ownDataValue(args, "binding"),
+        context: ownDataValue(args, "context")
+      });
+    case "apply_camera_profile":
+      return applyCameraProfile(projectDir, {
+        profileId: ownDataValue(args, "profileId"),
+        profile: ownDataValue(args, "profile"),
+        binding: ownDataValue(args, "binding"),
+        ifRevision: ownDataValue(args, "ifRevision")
+      });
     case "get_procedural_juice":
       return inspectProceduralJuiceAuthoring(projectDir);
     case "preview_procedural_juice":
@@ -4857,7 +4981,7 @@ async function applyTilesetImport(projectDir, args) {
   preview.atlas.src = normalizeImportedAssetPath(files.visuals.assetsRoot, preview.atlas.src);
   inspectLocalPng(projectDir, preview.atlas.src, preview);
   const visuals = structuredCloneCompat(raw.visuals ?? {});
-  visuals.schemaVersion = 2;
+  visuals.schemaVersion ??= 2;
   visuals.atlases ??= {};
   visuals.sprites ??= {};
   visuals.tileSets ??= {};
