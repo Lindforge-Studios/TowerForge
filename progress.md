@@ -4062,3 +4062,17 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   runtime mirrors all four repaired source files.
 - This is pre-freeze evidence. Because production changed after the rejected candidate, the full
   exact-candidate gates and both independent sign-offs must run again before PR creation or merge.
+
+## 2026-08-03 — R20 hidden-key repaired exact-candidate gates
+
+- Production/test candidate `7fbbf1b2131654ff2330d6e242d76c773157d75e` was clean before and
+  after the complete gate run. `npm run typecheck`, `npm run build:engine`, `npm run validate`,
+  `npm run sim tutorial_01 60` and `npm run build` are GREEN.
+- Full unit passed `444/444` files and `4238/4238` tests. Full Playwright E2E passed `161/161`,
+  including Camera Studio and actual generated Canvas/Phaser camera-player boot coverage.
+- `npm run plugin:build`, `npm run plugin:validate` and `npm run plugin:smoke` are GREEN. Starter
+  mobile and desktop package commands are GREEN, and desktop Rust lifecycle tests pass `9/9`.
+  `git diff --exit-code` and `git diff --cached --exit-code` are GREEN after all generators and
+  gates.
+- This evidence-only entry is the sole change after the exact production/test candidate. R20 is
+  frozen again for two fresh independent sign-offs; any source change invalidates both.
