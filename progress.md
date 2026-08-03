@@ -4514,3 +4514,34 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   `npx playwright test tests/e2e/r21-hud-generated.spec.mjs --workers=1` is `2/2` GREEN for
   Canvas/hex and Phaser/square. It proves live status/collections, start-wave action, custom-shell
   replacement and pause→resume screen transitions without the recovery overlay.
+
+## 2026-08-04 — R21 second integration-verifier RED evidence
+
+- The exact candidate `652d989a0dd3872ae25d45481082093c2664d697` was reopened after independent
+  Constructor Integration verification. This change contains tests and chronological evidence
+  only; production runtime, Studio, build templates and plugin mirror remain unchanged. The new
+  contracts cover four findings: complete descriptor-driven component semantics in HUD Studio,
+  typed transition-condition CRUD, static-control gamepad activation in generated players, and
+  validated asset presentation metadata that is actually persisted instead of merely printed.
+- The Studio contract now requires a browser-safe `hud-studio-model.mjs` reused by the UI, every
+  `HUD_COMPONENT_TYPES` entry and bounded editors for
+  properties, children/container relationships, data bindings, action event/ID/payload, visible and
+  enabled component states, layout layer/safe-area and collection selector/template/item limits.
+  Transition conditions require ordered selector/operator/value add, update and remove controls.
+  The asset contract preserves string `assetRoles` as visuals sprite references while adding
+  optional typed `assetMetadata`: `image`, `atlas_frame` with a bounded frame ID, or `nine_slice`
+  with four non-negative borders.
+- Exact pure/Studio RED command:
+  `npx vitest run packages/studio/r21-hud-studio.contract.test.mjs packages/studio/r21-hud-studio-model.contract.test.mjs packages/player-runtime/src/r21-hud-catalog.contract.test.mjs --maxWorkers=1`.
+  Result: exit `1`; exactly `8` failures and `42` unchanged passes. The failures prove the missing
+  browser-safe semantic model and UI controls for the complete descriptor catalog, component draft
+  mutation, transition-condition editing and asset-role round-trip, plus the closed catalog rejecting
+  the new valid `assetMetadata` contract.
+- Exact generated browser RED command (run with loopback permission):
+  `npx playwright test tests/e2e/r21-hud-generated.spec.mjs --workers=1`.
+  Result: exit `1`; `2/2` expected failures. In both Canvas/hex and Phaser/square the authored
+  static `resume_game` button receives DOM focus, but gamepad South/A leaves the active screen at
+  `pause`; the bridge still queries collection-item controls only.
+- These RED results invalidate the prior full-gate evidence and all earlier sign-offs. Production
+  repair, focused GREEN, a new exact-commit freeze, full gates and two fresh independent sign-offs
+  are required before R21 acceptance.

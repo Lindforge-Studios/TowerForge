@@ -89,6 +89,18 @@ describe("R21.5 HUD Studio and guarded asset workflow (RED)", () => {
     expect(app).toMatch(/btn-hud-load-recipe[\s\S]*HUDStudioUI\.draft\s*=\s*deep\(recipe\.profile\)/);
   });
 
+  it("authors every descriptor component and its complete bounded semantic contract", () => {
+    expectIds(html, [
+      "hud-component-properties", "hud-component-children", "hud-component-data-bindings",
+      "hud-component-action-bindings", "hud-component-state-visible", "hud-component-state-enabled",
+      "hud-layout-layer", "hud-layout-safe-area", "hud-collection-selector",
+      "hud-collection-item-template", "hud-collection-max-items", "btn-hud-component-semantics-apply"
+    ]);
+    expect(server).toMatch(/\/api\/hud\/recipes[\s\S]*(?:HUD_COMPONENT_TYPES|components)[\s\S]*(?:HUD_COMPONENT_STATES|states)[\s\S]*(?:HUD_LAYOUT_LAYERS|layers)/);
+    expect(app).toMatch(/hud-studio-model\.mjs/);
+    expect(app).toMatch(/recipeCatalog\.(?:descriptor|components)[\s\S]*(?:createHudStudioDescriptorModel|descriptorModel)/);
+  });
+
   it("supports screen creation/removal and ordered transition CRUD without raw JSON editing", () => {
     expectIds(html, [
       "hud-screen-id", "hud-screen-surface", "btn-hud-screen-add", "btn-hud-screen-remove",
@@ -100,5 +112,20 @@ describe("R21.5 HUD Studio and guarded asset workflow (RED)", () => {
     expect(app).toMatch(/function\s+removeHudStudioScreen[\s\S]*screenGraph\.transitions/);
     expect(app).toMatch(/function\s+(?:add|upsert)HudStudioTransition[\s\S]*screenGraph\.transitions/);
     expect(app).toMatch(/function\s+removeHudStudioTransition[\s\S]*screenGraph\.transitions/);
+  });
+
+  it("creates, updates and removes ordered transition conditions through typed fields", () => {
+    expectIds(html, [
+      "hud-transition-condition-picker", "hud-transition-condition-selector",
+      "hud-transition-condition-operator", "hud-transition-condition-value",
+      "btn-hud-transition-condition-add", "btn-hud-transition-condition-update",
+      "btn-hud-transition-condition-remove"
+    ]);
+    expect(app).toMatch(/(?:upsert|remove)HudStudioTransitionCondition/);
+  });
+
+  it("persists asset kind, atlas frame and nine-slice values in the guarded profile candidate", () => {
+    expect(app).toMatch(/upsertHudStudioAssetRole/);
+    expect(app).toMatch(/hudStudioCandidate[\s\S]*(?:assetMetadata|assetPresentations)/);
   });
 });

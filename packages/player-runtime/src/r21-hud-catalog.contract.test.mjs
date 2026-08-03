@@ -147,6 +147,59 @@ describe("R21.1 HudCatalogV1 closed pure contract (RED)", () => {
     expect(Object.getPrototypeOf(result.catalog.profiles.main.commonNodes[0].states)).toBe(null);
   });
 
+  it("normalizes typed HUD asset presentation metadata independently from visuals sprite IDs", () => {
+    const value = catalog();
+    value.profiles.main.assetRoles = {
+      portrait: "hero_portrait",
+      command_frame: "ui_command_atlas",
+      panel_frame: "ui_panel"
+    };
+    value.profiles.main.assetMetadata = {
+      portrait: { schemaVersion: 1, kind: "image" },
+      command_frame: { schemaVersion: 1, kind: "atlas_frame", atlasFrame: "command_idle" },
+      panel_frame: {
+        schemaVersion: 1,
+        kind: "nine_slice",
+        nineSlice: { top: 8, right: 12, bottom: 8, left: 12 }
+      }
+    };
+
+    const result = validateHudCatalogV1(value);
+
+    expect(result.ok).toBe(true);
+    expect(result.catalog.profiles.main.assetRoles).toEqual({
+      command_frame: "ui_command_atlas",
+      panel_frame: "ui_panel",
+      portrait: "hero_portrait"
+    });
+    expect(result.catalog.profiles.main.assetMetadata).toEqual({
+      command_frame: { schemaVersion: 1, kind: "atlas_frame", atlasFrame: "command_idle" },
+      panel_frame: {
+        schemaVersion: 1,
+        kind: "nine_slice",
+        nineSlice: { bottom: 8, left: 12, right: 12, top: 8 }
+      },
+      portrait: { schemaVersion: 1, kind: "image" }
+    });
+    expect(Object.isFrozen(result.catalog.profiles.main.assetMetadata.panel_frame.nineSlice)).toBe(true);
+  });
+
+  it.each([
+    ["metadata without a role", { ghost: { schemaVersion: 1, kind: "image" } }],
+    ["future metadata", { frame: { schemaVersion: 2, kind: "image" } }],
+    ["atlas without a frame", { frame: { schemaVersion: 1, kind: "atlas_frame" } }],
+    ["unsafe atlas frame", { frame: { schemaVersion: 1, kind: "atlas_frame", atlasFrame: "../secret" } }],
+    ["nine-slice without borders", { frame: { schemaVersion: 1, kind: "nine_slice" } }],
+    ["negative nine-slice border", {
+      frame: { schemaVersion: 1, kind: "nine_slice", nineSlice: { top: -1, right: 8, bottom: 8, left: 8 } }
+    }]
+  ])("fails closed for HUD asset %s", (_label, assetMetadata) => {
+    const value = catalog();
+    value.profiles.main.assetRoles = { frame: "ui_frame" };
+    value.profiles.main.assetMetadata = assetMetadata;
+    expect(validateHudCatalogV1(value).ok).toBe(false);
+  });
+
   it("normalizes R21.3 ordered typed screen transitions without treating them as gameplay actions", () => {
     const value = catalog();
     value.profiles.main.screens.pause = {

@@ -48,6 +48,16 @@ for (const renderer of ["canvas", "phaser"]) {
   test(`@r21-hud generated ${renderer} player renders live authored controls and screen events`, async ({ page }) => {
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
+    await page.addInitScript(() => {
+      globalThis.__towerforgeTestGamepad = {
+        connected: true,
+        buttons: Array.from({ length: 16 }, () => ({ pressed: false }))
+      };
+      Object.defineProperty(navigator, "getGamepads", {
+        configurable: true,
+        value: () => [globalThis.__towerforgeTestGamepad]
+      });
+    });
     await page.goto(`${origin}/${renderer}/`);
     await page.waitForFunction(() => globalThis.__towerforgeBootOk === true);
     await expect(page.locator("[data-hud-system-recovery=true]")).toHaveCount(0);
@@ -64,8 +74,10 @@ for (const renderer of ["canvas", "phaser"]) {
     await page.evaluate(() => globalThis.__towerforgePlayerActions.invoke("pause"));
     await expect(page.locator("#towerforge-hud-root")).toHaveAttribute("data-towerforge-hud-screen", "pause");
     await expect(page.locator('[data-hud-node-id="resume_game"]')).toBeVisible();
-    await page.locator('[data-hud-node-id="resume_game"]').click();
-    await expect(page.locator("#towerforge-hud-root")).toHaveAttribute("data-towerforge-hud-screen", "gameplay");
+    await page.locator('[data-hud-node-id="resume_game"]').focus();
+    await page.evaluate(() => { globalThis.__towerforgeTestGamepad.buttons[0].pressed = true; });
+    await expect(page.locator("#towerforge-hud-root")).toHaveAttribute("data-towerforge-hud-screen", "gameplay", { timeout: 1_500 });
+    await page.evaluate(() => { globalThis.__towerforgeTestGamepad.buttons[0].pressed = false; });
     expect(errors).toEqual([]);
   });
 }
