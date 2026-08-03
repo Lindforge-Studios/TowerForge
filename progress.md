@@ -3956,3 +3956,18 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   sandboxed attempt failed only because binding `127.0.0.1` was denied, and the approved local-port
   rerun passed. `git diff --check` is GREEN. This is pre-freeze evidence: the full gates and both
   independent reviews must run again on the next exact committed candidate.
+
+## 2026-08-03 — R20 repaired candidate full gates
+
+- Production/test candidate `65c7e530d2e05ce63fa98ee55745952695395796` was clean before and
+  after the complete gate run. `npm run typecheck`, `npm run build:engine`, `npm run validate`,
+  `npm run sim tutorial_01 60` and `npm run build` are GREEN.
+- Full one-worker unit gate passed `442/442` files and `4219/4219` tests. Full one-worker
+  Playwright E2E passed `159/159`, including R20 Camera Studio, Canvas/Phaser, hex/square,
+  legacy paths and all R18 large-screen viewport scenarios.
+- `npm run plugin:build`, `npm run plugin:validate` and `npm run plugin:smoke` are GREEN and leave
+  the generated mirror unchanged. Starter mobile and desktop package commands are GREEN; desktop
+  Rust lifecycle tests pass `9/9`. `git diff --exit-code` is GREEN after all generators and gates.
+- This entry is the only change after the exact production/test candidate. The production tree is
+  frozen; fresh independent Code Verifier and Constructor Integration Verifier sign-offs must
+  review the docs-only child commit before PR creation or merge.
