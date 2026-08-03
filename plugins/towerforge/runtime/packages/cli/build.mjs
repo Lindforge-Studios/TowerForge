@@ -159,6 +159,13 @@ try {
     runtimeSource = pruneSingleModuleExport(runtimeSource, "./native-storage-bridge.mjs");
     fs.writeFileSync(runtimeIndex, runtimeSource, "utf8");
   }
+  // R21.1 transports and validates the authored catalog only. The browser HUD runtime is
+  // intentionally not packaged until the later opt-in shell slice wires a selected profile.
+  {
+    const runtimeIndex = path.join(playerRuntimeOutput, "index.mjs");
+    const runtimeSource = pruneSingleModuleExport(fs.readFileSync(runtimeIndex, "utf8"), "./hud-catalog.mjs");
+    fs.writeFileSync(runtimeIndex, runtimeSource, "utf8");
+  }
   // Renderer dir ships for both players — the canvas player needs index.mjs, both need audio.mjs.
   copyDir(path.join(repoRoot, "packages", "renderer", "src"), path.join(outDir, "renderer"), {
     excludeRootEntries: new Set([

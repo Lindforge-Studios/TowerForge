@@ -4094,3 +4094,35 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - Forbidden scope is fixed: no engine or command changes, arbitrary JavaScript/CSS/HTML, executable
   object paths, renderer-owned HUD, HUD-owned world projection, host/native APIs, external network
   access, broad write tools, unsafe media, automatic asset commit or removable recovery overlay.
+
+## 2026-08-03 — R21.1a HudCatalog/project transport RED evidence
+
+- The independent Contract/Test Designer added tests and this chronological evidence only; no
+  production source, generated runtime or plugin mirror was changed. The narrow slice freezes the
+  pure closed `HudCatalogV1` compiler, optional `content/hud.json` transport, explicit
+  `hudAuthored`, BuildTargets-v2 `hudProfileId` cross-reference and the missing/unbound/v1 legacy
+  matrix. Composite guarded authoring revision remains a separate R21.1b RED/GREEN slice.
+- Exact focused command:
+  `npx vitest run packages/player-runtime/src/r21-hud-catalog.contract.test.mjs packages/cli/lib/r21-hud-project-schema.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`; `2/2` files RED, with one failed pure-runtime suite plus `7` failed and `1`
+  passing CLI tests. The pure failure is the expected missing `./hud-catalog.mjs` module. CLI RED
+  proves that the loader drops authored HUD data/flags, `hudProfileId` is still an unknown target
+  field, profile references and legacy form-factor bindings are not checked, and malformed/future/
+  symbol/accessor-bearing unbound catalogs are ignored. The already-existing project-v5 rule is
+  the single passing compatibility assertion.
+
+## 2026-08-03 — R21.1a HudCatalog/project transport focused GREEN
+
+- Added the pure renderer-neutral `HudCatalogV1` validator/normalizer with closed own-data
+  inspection, schema-v1 budgets, detached deeply frozen output, prototype-neutral dynamic
+  records, stable diagnostics and safe handling of special JSON IDs. No DOM, Node, engine or
+  gameplay dependency was introduced.
+- `content/hud.json` now travels through raw and normalized project loading with explicit
+  `hudAuthored` state. BuildTargets v2 accepts optional `hudProfileId`, validates it against an
+  authored catalog and restricts custom bindings to desktop/responsive form factors. Missing,
+  unbound and BuildTargets-v1 legacy paths remain inactive and do not synthesize a HUD.
+- The exact former RED command is GREEN at `2/2` files and `23/23` tests. The focused loader,
+  schema and R18/R20 generated-build compatibility matrix is GREEN at `9/9` files and `88/88`
+  tests. `npm run plugin:build`, `npm run plugin:validate`, `npm run plugin:smoke` and
+  `git diff --check` are GREEN; the generated plugin runtime mirrors the touched CLI/runtime
+  sources. Composite authoring remains intentionally deferred to R21.1b.

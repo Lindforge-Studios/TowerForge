@@ -59,6 +59,7 @@ export function readRawProjectFiles(projectDir) {
     mapSources: readMapSources(projectDir),
     mechanics: readJsonOr(path.join(contentDir, "mechanics.json"), undefined),
     distribution: readJsonOr(path.join(contentDir, "distribution.json"), undefined),
+    hud: readJsonOr(path.join(contentDir, "hud.json"), undefined),
     visuals: readJsonOr(path.join(contentDir, "visuals.json"), defaultVisuals()),
     storyComics: readJsonOr(path.join(contentDir, "story-comics.json"), { seenStoragePrefix: "story_seen_", comics: {} }),
     battleBackgrounds: readJsonOr(path.join(contentDir, "battle-backgrounds.json"), {
@@ -85,6 +86,7 @@ export function normalizeProjectFiles(rawFiles) {
   const migrated = migrateProjectFiles(rawFiles);
   const mechanicsAuthored = migrated.files.mechanics !== undefined;
   const distributionAuthored = migrated.files.distribution !== undefined;
+  const hudAuthored = migrated.files.hudAuthored ?? migrated.files.hud !== undefined;
 
   return {
     projectDir: rawFiles.projectDir,
@@ -97,6 +99,8 @@ export function normalizeProjectFiles(rawFiles) {
     mechanicsAuthored,
     distribution: distributionAuthored ? migrated.files.distribution : undefined,
     distributionAuthored,
+    hud: hudAuthored ? migrated.files.hud : undefined,
+    hudAuthored,
     visuals: normalizeVisuals(migrated.files.visuals),
     storyComics: normalizeStoryComics(migrated.files.storyComics),
     battleBackgrounds: normalizeBattleBackgrounds(migrated.files.battleBackgrounds),
@@ -131,6 +135,8 @@ export function projectSummary(files) {
     mechanicsAuthored: files.mechanicsAuthored ?? false,
     distribution: files.distribution,
     distributionAuthored: files.distributionAuthored ?? false,
+    hud: files.hud,
+    hudAuthored: files.hudAuthored ?? false,
     maps: Object.fromEntries(Object.entries(files.maps).map(([id, map]) => [id, {
       id,
       grid: map.grid,
@@ -152,6 +158,7 @@ export function projectSummary(files) {
       buildTargets: files.buildTargets.schemaVersion ?? 1,
       visuals: files.visuals.schemaVersion ?? 1,
       mechanics: files.mechanics.schemaVersion ?? 1,
+      ...(files.hudAuthored ? { hud: files.hud?.schemaVersion } : {}),
       ...(files.distributionAuthored ? { distribution: files.distribution?.schemaVersion } : {})
     },
     appliedMigrations: files.appliedMigrations ?? [],
