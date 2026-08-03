@@ -11,3 +11,8 @@ export * from "./native-storage-bridge.mjs";
 export * from "./localized-strings.mjs";
 export * from "./fixed-simulation-clock.mjs";
 export * from "./presentation-quality.mjs";
+export * from "./hud-catalog.mjs";
+export * from "./hud-layout.mjs";
+export * from "./hud-screen-graph.mjs";
+export * from "./hud-build-menu-presets.mjs";
+export * from "./hud-selectors.mjs";

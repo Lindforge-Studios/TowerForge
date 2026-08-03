@@ -4076,3 +4076,584 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   gates.
 - This evidence-only entry is the sole change after the exact production/test candidate. R20 is
   frozen again for two fresh independent sign-offs; any source change invalidates both.
+
+## 2026-08-03 — R21 contract freeze
+
+- R21 is isolated on `codex/r21-hud-studio` and begins only after the R20 merge. ADR 0062 freezes
+  optional `content/hud.json` as `HudCatalogV1`, optional BuildTargets-v2 `hudProfileId`, reuse of
+  `PlayerActionDescriptorV1`, and one browser DOM shell over a pure renderer-neutral HUD runtime.
+  Project v5, BuildTargets v2, visuals v4, GameCommand/journal v8, checkpoint, profile, campaign,
+  TowerScript and multiplayer versions remain unchanged.
+- Runtime activation requires project v5 + BuildTargets v2 + a desktop/responsive selected target +
+  an explicit valid HUD profile binding. An unbound large-screen target keeps the built-in R18
+  shell. BuildTargets v1 does not read or bundle HUD code even if a reusable catalog exists.
+- R21.1 through R21.6 stay independent RED/GREEN slices: catalog/project transport; pure layout,
+  components and bindings; screen graph/recovery; menu/input presets; Studio/assets; MCP/AI and
+  package parity. Each slice must record its own expected RED before production changes. Full gates
+  and both independent sign-offs are reserved for the exact frozen R21 candidate.
+- Forbidden scope is fixed: no engine or command changes, arbitrary JavaScript/CSS/HTML, executable
+  object paths, renderer-owned HUD, HUD-owned world projection, host/native APIs, external network
+  access, broad write tools, unsafe media, automatic asset commit or removable recovery overlay.
+
+## 2026-08-03 — R21.1a HudCatalog/project transport RED evidence
+
+- The independent Contract/Test Designer added tests and this chronological evidence only; no
+  production source, generated runtime or plugin mirror was changed. The narrow slice freezes the
+  pure closed `HudCatalogV1` compiler, optional `content/hud.json` transport, explicit
+  `hudAuthored`, BuildTargets-v2 `hudProfileId` cross-reference and the missing/unbound/v1 legacy
+  matrix. Composite guarded authoring revision remains a separate R21.1b RED/GREEN slice.
+- Exact focused command:
+  `npx vitest run packages/player-runtime/src/r21-hud-catalog.contract.test.mjs packages/cli/lib/r21-hud-project-schema.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`; `2/2` files RED, with one failed pure-runtime suite plus `7` failed and `1`
+  passing CLI tests. The pure failure is the expected missing `./hud-catalog.mjs` module. CLI RED
+  proves that the loader drops authored HUD data/flags, `hudProfileId` is still an unknown target
+  field, profile references and legacy form-factor bindings are not checked, and malformed/future/
+  symbol/accessor-bearing unbound catalogs are ignored. The already-existing project-v5 rule is
+  the single passing compatibility assertion.
+
+## 2026-08-03 — R21.1a HudCatalog/project transport focused GREEN
+
+- Added the pure renderer-neutral `HudCatalogV1` validator/normalizer with closed own-data
+  inspection, schema-v1 budgets, detached deeply frozen output, prototype-neutral dynamic
+  records, stable diagnostics and safe handling of special JSON IDs. No DOM, Node, engine or
+  gameplay dependency was introduced.
+- `content/hud.json` now travels through raw and normalized project loading with explicit
+  `hudAuthored` state. BuildTargets v2 accepts optional `hudProfileId`, validates it against an
+  authored catalog and restricts custom bindings to desktop/responsive form factors. Missing,
+  unbound and BuildTargets-v1 legacy paths remain inactive and do not synthesize a HUD.
+- The exact former RED command is GREEN at `2/2` files and `23/23` tests. The focused loader,
+  schema and R18/R20 generated-build compatibility matrix is GREEN at `9/9` files and `88/88`
+  tests. `npm run plugin:build`, `npm run plugin:validate`, `npm run plugin:smoke` and
+  `git diff --check` are GREEN; the generated plugin runtime mirrors the touched CLI/runtime
+  sources. Composite authoring remains intentionally deferred to R21.1b.
+
+## 2026-08-03 — R21.1b guarded HUD authoring RED evidence
+
+- The independent Contract/Test Designer added only
+  `packages/cli/lib/r21-hud-authoring.contract.test.mjs` and this chronological evidence; no
+  production source, MCP surface or generated plugin runtime changed. This slice freezes one
+  narrow CLI-owned profile upsert with an optional single build-target binding. It deliberately
+  does not add the R21.6 MCP tools or a broad catalog/project writer.
+- The composite revision owns exactly `project.json`, `build-targets.json`, optional
+  `content/hud.json` and `content/visuals.json`. Read, inert recipe and preview are write-free;
+  apply requires the exact preview revision, rechecks it before mutation, promotes the first save
+  to project v5 / BuildTargets v2, validates the complete candidate, writes confined four-source
+  backup evidence and rolls all already-replaced sources back after a partial atomic-write failure.
+  An absent HUD source is represented explicitly in the backup rather than synthesized before
+  commit.
+- The contract preserves existing HUD profiles, every unrelated build target, CameraProfile and
+  all other visuals data. Disabling its one target binding removes only `hudProfileId`, so the
+  built-in R18 shell becomes active again without deleting the reusable profile. Malformed and
+  future catalogs, a missing revision and stale changes in any of the four sources fail before a
+  HUD write.
+- Exact focused command:
+  `npx vitest run packages/cli/lib/r21-hud-authoring.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`, one expected RED suite before test collection because the new narrow
+  `packages/cli/lib/hud-authoring.mjs` module does not exist. The contract contains nine tests;
+  the missing module is the first expected production boundary, and no fallback writer was used.
+
+## 2026-08-03 — R21.1b guarded HUD authoring focused GREEN
+
+- Added the narrow CLI-owned HUD authoring surface: detached read and bundled recipe, compute-only
+  preview and revision-guarded apply. The composite SHA-256 covers the exact bytes of
+  `project.json`, `build-targets.json`, optional `content/hud.json` (with an explicit absent marker)
+  and `content/visuals.json`; a stale change in any owned source is rejected before validation or
+  mutation.
+- First save promotes only the required project/build-target version fields, upserts one validated
+  reusable profile and optionally binds one existing desktop/responsive target. Unrelated targets,
+  defaults, visuals and camera data are preserved; disabling removes only that target's
+  `hudProfileId`. Apply creates confined four-source backup evidence and restores exact prior bytes,
+  including the absent HUD state, after an injected partial rename failure.
+- The frozen RED fixture's BuildTargets stale case originally rewrote identical bytes. The test-only
+  mutation was corrected to a real stale target value so it measures the frozen exact-byte revision
+  contract rather than filesystem metadata. The exact former RED command is GREEN at `1/1` file and
+  `9/9` tests.
+- The focused HUD catalog/project/authoring plus loader/schema and R20 camera compatibility matrix is
+  GREEN at `8/8` files and `101/101` tests. `npm run plugin:build`, `npm run plugin:validate`,
+  `npm run plugin:smoke` and `git diff --check` are GREEN; the generated plugin runtime mirrors the
+  new CLI authoring module. MCP and Studio authoring remain explicitly deferred to R21.6/R21.5.
+
+## 2026-08-03 — R21.2 pure layout/components/bindings RED evidence
+
+- The independent Contract/Test Designer added only pure player-runtime contract tests and this
+  chronological evidence; no production source, DOM shell, generated runtime or plugin mirror was
+  changed. The slice freezes typed data-only component definitions, per-variant closed layout
+  records, responsive boundary selection, safe-area anchoring, stable traversal and detached
+  frozen layout plans. Screen transitions remain reserved for R21.3.
+- The contract uses the existing `PlayerActionDescriptorV1` IDs and a closed v1 selector-descriptor
+  allowlist. Authored arbitrary object paths, JavaScript/CSS/HTML, renderer state and unknown
+  component states fail closed. The representative matrix covers primitives, stack/container,
+  counter/progress bindings, button actions and the specialized `build_menu`, `radial_menu` and
+  `repeater` components without introducing a DOM dependency.
+- Exact focused command:
+  `npx vitest run packages/player-runtime/src/r21-hud-catalog.contract.test.mjs packages/player-runtime/src/r21-hud-layout.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`; `2/2` files RED, with one expected rich-node catalog assertion failure and one
+  expected collection failure because `packages/player-runtime/src/hud-layout.mjs` does not yet
+  exist. Existing R21.1 catalog coverage remains `19` tests GREEN. The frozen compiler contracts
+  additionally cover desktop/tablet/mobile breakpoints, exact safe rectangles, 44 px diagnostics,
+  radial/repeater ceilings, input-order invariance, future/unknown/malformed/accessor/symbol/sparse/
+  cyclic data and revoked option proxies.
+
+## 2026-08-03 — R21.2 pure layout/components/bindings focused GREEN
+
+- Extended the closed `HudCatalogV1` normalizer with the complete schema-v1 component allowlist,
+  six authorable component states, bounded detached properties/static payloads, typed data/action
+  bindings and optional per-variant layout records. Executable/markup/style/URL/path fields,
+  arbitrary selector paths, unknown layouts/layers, sparse arrays, cycles, accessors, symbols and
+  future records fail closed without invoking authored code.
+- Added the DOM-free `compileHudLayoutV1` runtime. It selects mobile/tablet/desktop variants at the
+  authored breakpoints, computes a safe rectangle and bounded anchor/flow/container rectangles,
+  traverses authored roots and children stably regardless of source record insertion order, checks
+  selector/action descriptors, detaches runtime state and bounded collections, and publishes stable
+  accessibility diagnostics for interactive controls below `44px`.
+- The exact RED command is now GREEN at `2/2` files and `40/40` tests. The full
+  `packages/player-runtime/src` compatibility matrix is GREEN at `12/12` files and `124/124` tests.
+  `node --check` passes for both pure runtime modules; `npm run plugin:build`,
+  `npm run plugin:validate`, `npm run plugin:smoke` and `git diff --check` are GREEN, and the
+  generated plugin runtime contains the same new catalog/layout exports. R21.3 screen navigation
+  and the browser-owned DOM shell remain intentionally outside this slice.
+
+## 2026-08-03 — R21.3 pure screen graph/recovery RED evidence
+
+- The independent Contract/Test Designer added only the pure player-runtime screen-graph contract,
+  minimal `HudCatalogV1` transition assertions and this chronological evidence; no production
+  source, browser DOM shell, generated runtime or plugin mirror was changed. The slice freezes
+  ordered typed navigation transitions with optional source screens, allowlisted player events,
+  bounded descriptor conditions and at most one transition per dispatch. Screen navigation cannot
+  execute gameplay actions.
+- The DOM-free session contract covers every R21 shell surface, authored first-match ordering,
+  insertion-order invariance for record maps, AND conditions, detached runtime selector state and
+  structurally cyclic graphs that advance only one edge per dispatch. Malformed/future/unknown/
+  accessor/symbol/sparse/proxy/over-budget inputs fail into a reserved built-in recovery overlay;
+  authors cannot replace or remove that system fallback.
+- Exact focused command:
+  `npx vitest run packages/player-runtime/src/r21-hud-catalog.contract.test.mjs packages/player-runtime/src/r21-hud-screen-graph.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`; `2/2` files RED, `26` existing assertions GREEN and two expected catalog
+  assertions RED because non-empty transitions are not yet normalized and the recovery screen ID
+  is not reserved. The new runtime suite fails before collection because
+  `packages/player-runtime/src/hud-screen-graph.mjs` does not yet exist. These are the expected
+  production boundaries; no alternate navigation implementation was used.
+
+## 2026-08-04 — R21.3 pure screen graph/recovery focused GREEN
+
+- Added the DOM-free `hud-screen-graph.mjs` runtime and public player-runtime export. It validates
+  the same closed selector descriptors as the layout compiler, detaches bounded selector state,
+  evaluates authored transitions in stable order and performs at most one navigation hop per
+  dispatch. Navigation has no command, signal, renderer or gameplay mutation surface.
+- `HudCatalogV1` now normalizes frozen schema-v1 transitions with optional source screens,
+  allowlisted player events, scalar typed conditions and the frozen 256/16 budgets. Transition and
+  screen lookup remains prototype-safe; authored profiles cannot claim the reserved
+  `__towerforge_system_recovery__` identity.
+- Invalid/future/malformed catalog, descriptor or runtime state creates a non-throwing failed
+  session whose frozen snapshot activates the mandatory built-in recovery overlay. Unknown
+  dispatch events also fail closed into that overlay; a valid dispatch uses detached state and
+  never follows a second edge recursively.
+- Exact focused command:
+  `npx vitest run packages/player-runtime/src/r21-hud-catalog.contract.test.mjs packages/player-runtime/src/r21-hud-screen-graph.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: `2/2` files and `42/42` tests GREEN. The complete `packages/player-runtime/src` matrix is
+  GREEN at `13/13` files and `146/146` tests. `node --check` passes for the catalog and screen graph;
+  `npm run plugin:build`, `npm run plugin:validate`, `npm run plugin:smoke`, source-to-plugin byte
+  parity and `git diff --check` are GREEN.
+
+## 2026-08-04 — R21.4 build menus/input parity RED evidence
+
+- The independent Contract/Test Designer added only
+  `packages/player-runtime/src/r21-hud-build-menu-presets.contract.test.mjs` and this chronological
+  evidence; no production source, DOM shell, generated runtime or plugin mirror was changed. The
+  pure contract freezes seven recipes built from the existing HUD primitives: desktop horizontal
+  quickbar, vertical edge dock, category catalog drawer, radial wheel, contextual tile popover,
+  mobile bottom sheet and keyboard command palette.
+- One compiler contract applies availability independently by input family, responsive form factor,
+  player phase and the complete required-capability set. It preserves authored menu/item order,
+  ignores record/capability insertion order, detaches and freezes plans, and caps simultaneously
+  visible radial entries at `12` with deterministic overflow evidence. Pointer, keyboard, gamepad
+  and touch activations resolve to the same existing `PlayerActionDescriptorV1` intent rather than
+  creating another gameplay command vocabulary.
+- Closed-input coverage includes future/unknown definitions, missing action descriptors, malformed
+  input families, sparse arrays, cyclic item data, accessors, symbols, revoked proxies and menu/item
+  budgets. The runtime remains DOM-, renderer- and gameplay-free; browser focus and actual device
+  event handling remain a later shared-shell concern.
+- Exact focused command:
+  `npx vitest run packages/player-runtime/src/r21-hud-build-menu-presets.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`; the single expected RED suite fails before test collection because
+  `packages/player-runtime/src/hud-build-menu-presets.mjs` does not exist. The file contains eight
+  compact contract blocks, and the missing pure runtime API is the only observed failure boundary.
+
+## 2026-08-04 — R21.5 HUD Studio and guarded asset workflow RED evidence
+
+- The independent Contract/Test Designer added only
+  `packages/studio/r21-hud-studio.contract.test.mjs` and this chronological evidence. No Studio,
+  CLI/MCP, player runtime, renderer, asset pipeline or generated plugin production source was
+  changed. R21.5 remains separate from the R21.4 input/preset slice.
+- The source contract freezes a dedicated HUD Studio tab and Hub with saved profile/build-target/
+  screen/variant pickers; desktop/tablet/mobile device presets; safe-area controls; rulers,
+  snapping, layers and constraint inspection; WYSIWYG and rendered preview surfaces; every
+  component state; and victory, defeat, low-HP, draft, inventory and capability mock states.
+- Preview diagnostics must expose overlap, clipping, low-contrast and sub-44px findings before
+  save. The authoring lifecycle is the narrow
+  `read -> recipe -> compute preview -> revision-guarded apply -> render preview` route and must
+  propagate conflict/rollback results from the existing four-file HUD transaction. Disable and
+  re-enable also use preview/apply rather than the broad project-save route.
+- HUD art is selected only by visuals asset ID/atlas frame/nine-slice metadata. Import reuses the
+  existing confined `/api/assets/import` and provider-neutral staging pipeline; HUD data gets no
+  asset path or URL field. Asset-role edits return through guarded HUD preview/apply so
+  `content/visuals.json` remains part of the composite revision and rollback boundary.
+- Exact RED command:
+  `npx vitest run packages/studio/r21-hud-studio.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`; `1/1` file RED and all `6/6` expected assertions fail because the R21 HUD tab,
+  authoring controls, diagnostics, narrow `/api/hud/*` routes and asset-role UI do not exist yet.
+  The pre-existing Camera Studio and generic asset import paths are not accepted as substitute HUD
+  surfaces.
+
+## 2026-08-04 — R21.6 AI discovery and conditional packaging parity RED evidence
+
+- The independent Contract/Test Designer added only
+  `packages/mcp/r21-hud-ai-authoring.contract.test.mjs`,
+  `packages/cli/build.r21-hud-package-parity.contract.test.mjs` and this chronological evidence.
+  No MCP registry, agent policy/instructions, build template, DOM shell, packaging or plugin runtime
+  production source was changed.
+- The MCP contract freezes a `hud` schema domain that describes components, selectors, actions,
+  screen events, limits and presets, plus the narrow
+  `get_hud_profiles -> get_hud_profile_recipe -> preview_hud_profile -> apply_hud_profile -> render_hud_preview`
+  workflow. Read/recipe/render/preview are non-writing, apply is the sole revision-guarded local
+  write with validation/backup/rollback, and neither external nor embedded agents receive broad
+  catalog/HTML/script writers.
+- The package contract selects the same `main` HUD profile on one Canvas desktop and one Phaser
+  responsive BuildTargets-v2 target. Both must ship the byte-identical common DOM shell and pure
+  HUD runtime through PWA and single-file outputs; portable web and native desktop wrappers must
+  preserve the same selected profile; the source `.tdpack` must carry `content/hud.json`.
+- Strict pruning is tested as a read boundary rather than only an output-name assertion. A
+  BuildTargets-v1 project and an unbound BuildTargets-v2 large-screen target each contain
+  deliberately invalid `content/hud.json` bytes: both builds must still succeed without parsing
+  the file, copying HUD modules, exposing `hudProfileId`, or changing the legacy generated player.
+- Exact RED commands:
+  - `npx vitest run packages/mcp/r21-hud-ai-authoring.contract.test.mjs --reporter=verbose --maxWorkers=1`:
+    exit `1`, `1/1` file RED, `5/5` expected failures. The `hud` schema domain, all five narrow
+    tools, embedded policy entries and HUD agent guidance are absent.
+  - `npx vitest run packages/cli/build.r21-hud-package-parity.contract.test.mjs --reporter=verbose --maxWorkers=1`:
+    exit `1`, `1/1` file RED, `5/5` expected failures. Active builds stop at the missing packaged
+    HUD runtime, web/native packaging cannot complete, and both inactive fixtures incorrectly parse
+    the deliberately invalid HUD file instead of pruning it before project-content loading.
+
+## 2026-08-04 — R21.4 pure build menus/input parity focused GREEN
+
+- Added the DOM-free `hud-build-menu-presets.mjs` runtime and public player-runtime export. It
+  publishes exactly seven frozen recipes composed from the existing HUD primitives, validates
+  closed own-data menu/availability/action/selector contracts, preserves authored menu and item
+  order, and returns detached frozen plans without importing renderer, browser or gameplay code.
+- Availability is evaluated independently for pointer/keyboard/gamepad/touch, desktop/tablet/mobile,
+  setup/live/between-wave phase and the complete required-capability set. Radial menus expose at
+  most 12 items with deterministic overflow evidence; all presets resolve device activation to the
+  existing `selectBuildSlot` `PlayerActionDescriptorV1` intent.
+- Future, unknown, sparse, accessor, symbol, revoked-proxy, cyclic and over-budget inputs fail
+  closed without invoking authored code. Exact focused command:
+  `npx vitest run packages/player-runtime/src/r21-hud-build-menu-presets.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: `1/1` file and `15/15` tests GREEN. The complete `packages/player-runtime/src` matrix is
+  GREEN at `14/14` files and `161/161` tests. Source and plugin modules pass `node --check`;
+  `npm run plugin:build`, `npm run plugin:validate`, `npm run plugin:smoke`, source-to-plugin byte
+  parity and `git diff --check` are GREEN. Browser focus/device event wiring remains outside this
+  pure runtime slice.
+
+## 2026-08-04 — R21.6 MCP/AI HUD authoring focused GREEN
+
+- Added the `hud` descriptor domain with the closed component, selector, action, screen-event,
+  constraint, preset and mock-state catalogs. Five narrow tools expose read, detached recipe,
+  compute-only validation preview, the existing four-source revision-guarded apply transaction,
+  and a compute-only detached render plan; no broad catalog, markup or script writer was added.
+- The shared CLI HUD authoring surface now supports desktop quickbar, radial wheel and mobile
+  bottom-sheet recipes. `render_hud_preview` validates the authored target/profile/screen and
+  viewport, uses the pure HUD layout compiler for materialized profiles, returns no HTML or
+  JavaScript, and leaves all four transaction-owned source files byte-identical.
+- Embedded Studio AI policy exposes the same five tools and recognizes only `apply_hud_profile` as
+  a write. Agent guide v54 documents the complete
+  `describe -> read -> recipe -> preview -> guarded apply -> render -> validate` flow and retains
+  descriptor-only bindings and the mandatory recovery boundary.
+- Exact focused command:
+  `npx vitest run packages/mcp/r21-hud-ai-authoring.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: `1/1` file and `5/5` tests GREEN. Adjacent HUD CLI authoring, embedded AI policy, main MCP
+  registry and R20 camera authoring suites are GREEN together. Source and generated plugin copies
+  pass `node --check` and byte parity; `npm run plugin:build`, `npm run plugin:validate`,
+  `npm run plugin:smoke` and `git diff --check` are GREEN. Conditional build/package parity remains
+  a separate R21.6 surface slice.
+
+## 2026-08-04 — R21.5 HUD Studio focused GREEN
+
+- Added the dedicated HUD Hub and the narrow read, recipe, preview, rendered-preview and guarded
+  apply routes. The Studio keeps the exact composite revision, surfaces stale conflicts and
+  rollback results, and disables/re-enables a target binding through the same preview/apply path.
+- The authoring surface exposes the three design viewports, safe-area and constraint controls,
+  rulers, snapping, layer inspection, component/mock-state previews and actionable overlap,
+  clipping, contrast and 44 px diagnostics. HUD art is stored only as visuals asset IDs; importing
+  bytes continues through the existing confined asset endpoint.
+- The frozen R21.5 contract is GREEN at `6/6`; adjacent Studio server and desktop-server suites are
+  GREEN at `21/21`. `node --check` and `git diff --check` are GREEN.
+
+## 2026-08-04 — R21.6 conditional player/package focused GREEN
+
+- Added the browser-only semantic DOM shell adapter while retaining layout, graph and action
+  validation in the pure player runtime. A selected HUD profile is included only for a project-v5,
+  BuildTargets-v2 desktop/responsive target with an explicit valid `hudProfileId`.
+- Canvas and Phaser builds copy the same catalog, layout, graph, menu and DOM-shell bytes. PWA,
+  single-file, portable web, native desktop and source `.tdpack` outputs preserve the selected
+  profile. Single-file output embeds the whole module graph without unresolved local imports.
+- BuildTargets v1 and unbound BuildTargets v2 fixtures with deliberately malformed HUD bytes now
+  remain GREEN: the build resolves the selected target before optional content loading, does not
+  parse `content/hud.json`, and emits no HUD data, marker, runtime module or player import.
+- The exact package parity command is GREEN at `1/1` file and `5/5` tests. The adjacent R18
+  large-screen and R20 camera packaging matrix is GREEN at `4/4` files and `19/19` tests.
+- A packaging review found that the plugin generator mirrored the new CLI build but not its
+  browser-shell source dependency. A regression was first added and observed RED (`1/1` selected
+  test, missing `packages/player-shell` copy rule), then the generator allowlist was extended. The
+  focused package suite is now `6/6` and plugin validation confirms the generated runtime is
+  self-contained.
+
+## 2026-08-04 — R21 pre-freeze full-gate evidence
+
+- Candidate `195671b1c8d2db2a1857aa635e71303196e66e2e` passed `npm run typecheck`,
+  `npm run build:engine`, `npm run validate`, `npm run sim tutorial_01 60`, `npm run build`,
+  `npm run test:e2e` (`161/161`), all three plugin gates, both starter native package commands and
+  `cargo test` (`9/9`).
+- The first parallel `npm run test` attempt completed `4348/4349`; the sole failure was the existing
+  R5.8B filesystem rollback case reaching its five-second timeout under full parallel load. The
+  exact test passed independently at `5/5` in 4.77 seconds. The complete suite was then repeated
+  with `npm run test -- --maxWorkers=1` and passed `453/453` files, `4349/4349` tests.
+- This evidence was written before the final documentation-only freeze commit. Per the R21 rule,
+  the final commit receives a fresh gate pass before either independent verifier signs off.
+
+## 2026-08-04 — R21 verifier-reopened P1 regression RED evidence
+
+- After the independent verification freeze, the Contract/Test Designer reopened R21 with tests
+  and this evidence only; no production runtime, build template, loader, Studio or plugin source
+  changed. The four P1 boundaries are: a generated active HUD must receive live selector
+  descriptors/state and player screen events; the DOM adapter must reuse initial selector state
+  when dispatch omits an override and must materialize build-menu items through one
+  pointer/keyboard/gamepad/touch activation path; target selection must prune an unselected custom
+  HUD even when it is a sibling of the selected legacy target; validation must inspect the complete
+  node graph, including orphan components.
+- The generated-player fixture now contains a real `playerGold` data binding and an authored
+  `waveStarted` screen transition. The build contract rejects the constant empty descriptor/state
+  placeholders and requires render/event refresh wiring. The semantic-DOM regression requires a
+  condition-bearing transition to work without an explicit state override, plus two rendered build
+  items whose activation invokes the existing `selectBuildSlot` handler with stable
+  `{ slotId, index }` payload for all four input families. The pure menu intent asserts the same
+  compatible payload.
+- Exact pure/DOM RED command:
+  `npx vitest run packages/player-shell/src/r21-hud-dom-runtime.regression.test.mjs packages/player-runtime/src/r21-hud-build-menu-presets.contract.test.mjs packages/player-runtime/src/r21-hud-catalog.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`, `3/3` files RED, `4` expected failures and `42` unchanged passes. Observed
+  failures are: omitted dispatch state enters `__towerforge_system_recovery__`; build-menu DOM has
+  zero materialized children; pure intent omits `index`; and an orphan `A -> B -> A` graph is
+  incorrectly accepted.
+- Exact generated/package RED command:
+  `npx vitest run packages/cli/build.r21-hud-package-parity.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`, `1/1` file RED with exactly `2` expected failures and `6` unchanged passes.
+  Canvas/Phaser output still embeds `hudSelectorDescriptors = Object.freeze([])` and constant empty
+  state instead of runtime data/events; selecting the legacy target still fails validation because
+  the unselected sibling's `hudProfileId` is cross-validated after its malformed HUD bytes were
+  deliberately pruned. These RED results invalidate the earlier exact-commit gates and both prior
+  sign-offs until production fixes, focused GREEN, re-freeze, full gates and fresh independent
+  verification complete.
+
+## 2026-08-04 — R21 constructor usability P1 RED evidence
+
+- Constructor Integration verification found that all three CLI/Studio recipes returned valid but
+  empty catalogs and that HUD Studio was only a rendered preview: an author could not add/remove a
+  component, select it and edit bounded placement/size constraints, or create/remove screens and
+  ordered screen transitions without editing raw JSON outside the Hub.
+- Contract tests were added before production changes. Exact recipe RED command:
+  `npx vitest run packages/cli/lib/r21-hud-authoring.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`, `1/1` file RED, `3` expected failures and `9` unchanged passes. Each recipe
+  failed because `commonNodes` and all root/layout sets were empty.
+- Exact Studio RED command:
+  `npx vitest run packages/studio/r21-hud-studio.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`, `1/1` file RED, `2` expected failures and `6` unchanged passes. The practical
+  component/placement and screen/transition controls and draft-mutation functions were absent.
+- This integration slice is confined to CLI-owned recipes and Studio authoring UI. It does not
+  change the player runtime, DOM shell, renderer, build templates, engine or gameplay contracts.
+
+## 2026-08-04 — R21 constructor usability P1 focused GREEN
+
+- `desktop_quickbar`, `radial_wheel` and `mobile_bottom_sheet` now return detached frozen,
+  schema-valid profiles with real typed nodes, responsive layouts, non-empty roots and a minimal
+  gameplay/pause screen graph. Studio exposes all three through an explicit editable recipe picker.
+- HUD Studio can add/select/remove typed components, preserve graph references during deletion,
+  and edit bounded per-variant anchor/dock offsets and sizes. It can add/remove screens and add,
+  update or remove ordered transitions; transition update preserves authored conditions not exposed
+  by this focused form. Every change invalidates the previous preview and remains behind the
+  existing composite revision preview/apply transaction.
+- Exact focused integration command:
+  `npx vitest run packages/cli/lib/r21-hud-authoring.contract.test.mjs packages/studio/r21-hud-studio.contract.test.mjs packages/studio/server.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: `3/3` files and `39/39` tests GREEN, including a real loopback response proving all three
+  non-empty Studio recipes. `packages/studio/server.desktop.test.mjs` is separately `3/3` GREEN.
+  `node --check` passes for HUD authoring, Studio server and browser app; `git diff --check` is GREEN.
+- Full exact-commit gates and both independent sign-offs remain invalidated and must be repeated
+  after all verifier-reopened P1 repairs are integrated.
+
+## 2026-08-04 — R21 verifier repairs focused GREEN and additional layout/recipe RED→GREEN
+
+- The verifier P1 regressions are GREEN: catalog validation walks every authored node, pure menu
+  intents and DOM collections emit the same `{ slotId, index }`, omitted graph dispatch state reuses
+  the current selector state, and selected legacy targets remove HUD references only from the
+  detached build view without parsing sibling HUD bytes.
+- Active Canvas and Phaser players now use the closed shared selector catalog and derive live state
+  from the authoritative snapshot. They render scalar/collection bindings, dispatch bounded wave,
+  draft, pause/settings and outcome events, expose semantic pointer/keyboard/touch controls plus a
+  bounded gamepad bridge, resolve standalone/atlas HUD sprites and hide the stock R18 chrome when a
+  custom profile is active. The built-in recovery overlay remains independent.
+- A separate layout regression was observed RED before its runtime repair:
+  `npx vitest run packages/player-runtime/src/r21-hud-layout.contract.test.mjs --maxWorkers=1`
+  failed because dock/grid placements collapsed to the parent origin. The compiler now applies
+  safe-area/parent dock edges and deterministic grid cells/spans; the focused layout file is
+  `21/21` GREEN.
+- A recipe-action regression was observed RED after the non-empty recipe slice: the focused CLI
+  authoring file had exactly `3` failures because all three build collections lacked a
+  `selectBuildSlot` binding. Each recipe now contains that typed action and a non-empty pause screen
+  with a resume control.
+- Exact focused runtime/package command is GREEN at `11/11` files and `122/122` tests. A real
+  generated-player Playwright acceptance then exposed nested DOM rectangles being applied twice;
+  after converting compiled absolute child rectangles to parent-relative DOM coordinates,
+  `npx playwright test tests/e2e/r21-hud-generated.spec.mjs --workers=1` is `2/2` GREEN for
+  Canvas/hex and Phaser/square. It proves live status/collections, start-wave action, custom-shell
+  replacement and pause→resume screen transitions without the recovery overlay.
+
+## 2026-08-04 — R21 second integration-verifier RED evidence
+
+- The exact candidate `652d989a0dd3872ae25d45481082093c2664d697` was reopened after independent
+  Constructor Integration verification. This change contains tests and chronological evidence
+  only; production runtime, Studio, build templates and plugin mirror remain unchanged. The new
+  contracts cover four findings: complete descriptor-driven component semantics in HUD Studio,
+  typed transition-condition CRUD, static-control gamepad activation in generated players, and
+  validated asset presentation metadata that is actually persisted instead of merely printed.
+- The Studio contract now requires a browser-safe `hud-studio-model.mjs` reused by the UI, every
+  `HUD_COMPONENT_TYPES` entry and bounded editors for
+  properties, children/container relationships, data bindings, action event/ID/payload, visible and
+  enabled component states, layout layer/safe-area and collection selector/template/item limits.
+  Transition conditions require ordered selector/operator/value add, update and remove controls.
+  The asset contract preserves string `assetRoles` as visuals sprite references while adding
+  optional typed `assetMetadata`: `image`, `atlas_frame` with a bounded frame ID, or `nine_slice`
+  with four non-negative borders.
+- Exact pure/Studio RED command:
+  `npx vitest run packages/studio/r21-hud-studio.contract.test.mjs packages/studio/r21-hud-studio-model.contract.test.mjs packages/player-runtime/src/r21-hud-catalog.contract.test.mjs --maxWorkers=1`.
+  Result: exit `1`; exactly `8` failures and `42` unchanged passes. The failures prove the missing
+  browser-safe semantic model and UI controls for the complete descriptor catalog, component draft
+  mutation, transition-condition editing and asset-role round-trip, plus the closed catalog rejecting
+  the new valid `assetMetadata` contract.
+- Exact generated browser RED command (run with loopback permission):
+  `npx playwright test tests/e2e/r21-hud-generated.spec.mjs --workers=1`.
+  Result: exit `1`; `2/2` expected failures. In both Canvas/hex and Phaser/square the authored
+  static `resume_game` button receives DOM focus, but gamepad South/A leaves the active screen at
+  `pause`; the bridge still queries collection-item controls only.
+- These RED results invalidate the prior full-gate evidence and all earlier sign-offs. Production
+  repair, focused GREEN, a new exact-commit freeze, full gates and two fresh independent sign-offs
+  are required before R21 acceptance.
+
+## 2026-08-04 — R21 asset metadata AI-discovery RED evidence
+
+- A bounded follow-up contract extends only the read-only HUD descriptor and shared agent guidance.
+  `describe_schema(hud)` must describe optional validated `profile.assetMetadata` schema v1, its
+  relationship to string `profile.assetRoles`, the closed `image | atlas_frame | nine_slice` kinds,
+  bounded atlas-frame ID and four non-negative nine-slice borders. Agents must continue using the
+  existing `preview_hud_profile -> apply_hud_profile(ifRevision)` transaction; no asset-metadata
+  write tool is added.
+- Exact RED command:
+  `npx vitest run packages/mcp/r21-hud-ai-authoring.contract.test.mjs --maxWorkers=1`.
+  Result: exit `1`, `1/1` file RED with exactly one new failure and `5` unchanged passes because
+  `describe_schema(hud).assetMetadata` is absent; the pre-existing narrow HUD AI tests remain GREEN.
+- GREEN adds the closed metadata descriptor to the shared HUD authoring schema and documents the
+  same contract in the common agent guide without adding a write tool or widening the transaction.
+  The exact command is now `1/1` file and `6/6` tests GREEN.
+
+## 2026-08-04 — R21 second integration-verifier repair focused GREEN
+
+- Added the browser-safe immutable HUD Studio model and connected the Hub to the same complete
+  component/state/layer/selector/action descriptors exposed to agents. All 24 schema-v1 component
+  types are available. The selected component editor now persists bounded properties, ordered
+  children, data/action bindings, state visibility/enabled flags, collection selector/template/item
+  ceilings and per-variant layer/safe-area constraints through the existing guarded preview/apply
+  transaction. Typed selector/action helpers make functional buttons and counters authorable without
+  leaving the Hub; bounded JSON remains only the escape hatch for static payload/property values.
+- Screen transitions now expose ordered selector/operator/value condition add, update and remove.
+  The pure model returns detached frozen candidates while the UI keeps an explicit mutable draft;
+  authored conditions survive transition updates. Optional `assetMetadata` remains separate from
+  string visuals `assetRoles` and validates `image`, bounded `atlas_frame` identifiers and four-sided
+  non-negative `nine_slice` insets. Generated players carry that metadata into atlas diagnostics and
+  DOM nine-slice border rendering.
+- The DOM shell exposes one bounded static-node activation method. Generated gamepad polling now
+  cycles through visible enabled semantic buttons, toggles, sliders and selects as well as dynamic
+  collection items; South/A invokes the selected node through the existing action registry.
+- Exact focused contract command:
+  `npx vitest run packages/studio/r21-hud-studio.contract.test.mjs packages/studio/r21-hud-studio-model.contract.test.mjs packages/player-runtime/src/r21-hud-catalog.contract.test.mjs packages/player-shell/src/r21-hud-dom-runtime.regression.test.mjs packages/cli/lib/r21-hud-authoring.contract.test.mjs packages/cli/lib/r21-hud-project-schema.contract.test.mjs packages/cli/build.r21-hud-package-parity.contract.test.mjs --maxWorkers=1`.
+  Result: `7/7` files and `83/83` tests GREEN. Loopback Studio tests are `2/2` files and `22/22`
+  GREEN. The actual generated Canvas/hex and Phaser/square browser acceptance is `2/2` GREEN with
+  gamepad activation of the static resume control. `node --check` and `git diff --check` are GREEN.
+- Full exact-commit gates, plugin refresh and both new independent sign-offs remain pending.
+
+## 2026-08-04 — R21 second exact-candidate freeze
+
+- The commit containing this entry is the new frozen R21 candidate after the independent verifier
+  repair cycle. It includes the RED evidence, semantic Studio/model repair, generated static-control
+  gamepad parity, validated asset metadata, AI discovery parity, updated architecture/runbook and
+  refreshed source-to-plugin runtime.
+- No production, test, generated runtime or documentation bytes may change after this freeze without
+  invalidating the complete gate evidence and both forthcoming independent sign-offs. Full gates run
+  on this exact commit; verifier reports and PR evidence remain external to the frozen tree.
+
+## 2026-08-04 — R21 code-verifier atlas/budget RED → GREEN
+
+- Code Verification rejected frozen candidate `90a7f1c6ddb00121dba646470a2694d138ed77b3`:
+  HUD Studio mapped an `atlas_frame` upload to an atlas-only visuals record even though a HUD role
+  must resolve through `visuals.sprites`, and `assetRoles`/`assetMetadata` had no record ceiling.
+  The prior freeze, partial full-gate run and both verifier results were invalidated.
+- Contract-first RED required an uploaded HUD frame to become a visuals sprite and complete
+  `preview -> guarded apply -> reload`. It also fixed explicit limits of 512 roles and 512 metadata
+  records per profile, with 513/accessor/revoked-proxy inputs failing closed. Exact RED command:
+  `npx vitest run packages/player-runtime/src/r21-hud-catalog.contract.test.mjs packages/studio/r21-hud-atlas-import.contract.test.mjs --maxWorkers=1`.
+  Result before production repair: `2` expected failures and `37` unchanged passes.
+- GREEN adds both catalog budgets and one browser-safe import-kind resolver shared by Studio. HUD
+  uploads always create a resolvable visuals sprite; existing atlas-frame sprites remain selectable
+  by ID through the normal visuals authoring path. Exact focused command:
+  `npx vitest run packages/player-runtime/src/r21-hud-catalog.contract.test.mjs packages/studio/r21-hud-atlas-import.contract.test.mjs packages/studio/r21-hud-studio-model.contract.test.mjs packages/studio/r21-hud-studio.contract.test.mjs --maxWorkers=1`.
+  Result: `4/4` files and `54/54` tests GREEN; both browser sources pass `node --check` and
+  `git diff --check` is GREEN. A fresh plugin mirror, exact-candidate freeze, full gates and both
+  independent sign-offs are still required.
+
+## 2026-08-04 — R21 final candidate re-freeze after code verification
+
+- The commit containing this entry is the replacement frozen candidate after resolving every
+  finding from both independent verification rounds. It includes the 512-record asset budgets,
+  resolvable HUD frame import, refreshed plugin mirror and all prior R21 functionality/evidence.
+- The complete gate matrix and both independent sign-offs restart from zero on this exact commit.
+  Any subsequent source, generated-runtime, test or documentation change invalidates them.
+
+## 2026-08-04 — R21 Code Verifier atlas-import and asset-budget RED evidence
+
+- Code verification reopened exact candidate `90a7f1c6ddb00121dba646470a2694d138ed77b3`
+  with tests and this evidence only. A HUD Studio `atlas_frame` selection currently asks the shared
+  asset importer for an atlas record, but `assetRoles` must reference a visuals sprite. The new
+  integration contract requires a browser-safe import-kind resolver reused by Studio, imports the
+  staged image as a sprite, attaches closed logical atlas-frame metadata to that sprite role, then
+  proves `preview -> guarded apply -> reload` succeeds. It does not add an unguarded HUD or asset
+  writer and does not relax visuals cross-reference validation.
+- `HudCatalogV1` now contract-freezes explicit per-profile ceilings of `512` asset roles and `512`
+  metadata entries. A 512-record catalog remains valid, 513 records fail closed, metadata remains a
+  subset of roles, and accessor/revoked-proxy records are rejected without invoking user code.
+- Exact RED command:
+  `npx vitest run packages/player-runtime/src/r21-hud-catalog.contract.test.mjs packages/studio/r21-hud-atlas-import.contract.test.mjs --maxWorkers=1`.
+  Result: exit `1`, `2/2` files RED with exactly `2` expected failures and `37` unchanged passes.
+  The Studio model lacks `resolveHudStudioAssetImportKind`, while `HUD_CATALOG_LIMITS` lacks both
+  asset-record ceilings. Accessor/proxy and existing metadata validation remain GREEN.
+- This source-test commit invalidates the `90a7f1c` freeze, its full-gate evidence and both verifier
+  sign-offs until production repair, focused GREEN, a new exact freeze and two fresh independent
+  verifications complete.
+
+## 2026-08-04 — R21 clean-install CI RED → GREEN
+
+- GitHub Actions run `30836135928` rejected exact candidate
+  `63d984a506bab4b230cf10826db483262504aa5a` before tests. All three jobs failed at `npm ci` with
+  `EUSAGE`: `@towerforge/player-shell@0.1.0` was missing from `package-lock.json` even though the
+  workspace was present in the root package manifest.
+- The repair is lockfile-only: `npm install --package-lock-only --ignore-scripts` records the new
+  workspace link and synchronizes stale workspace metadata with the current package manifests.
+  A subsequent `npm ci --ignore-scripts` completes successfully from the repaired lock.
+- Because the exact candidate commit changes, the previous freeze and both sign-offs are treated as
+  invalid. The full R21 gate matrix, independent Code Verifier sign-off and independent Constructor
+  Integration Verifier sign-off must be repeated on the replacement commit before merge.

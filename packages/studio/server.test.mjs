@@ -46,6 +46,22 @@ describe("studio server origin/host guard", () => {
     expect(res.headers.get("access-control-allow-origin")).toBeNull();
   });
 
+  it("serves all three meaningful detached HUD Studio recipes", async () => {
+    const response = await fetch(`${BASE}/api/hud/recipes`);
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.recipes.map((recipe) => recipe.recipeId)).toEqual([
+      "desktop_quickbar", "radial_wheel", "mobile_bottom_sheet"
+    ]);
+    for (const recipe of payload.recipes) {
+      expect(recipe).toMatchObject({ detached: true, written: false, profile: { schemaVersion: 1 } });
+      expect(recipe.profile.commonNodes.length).toBeGreaterThan(0);
+      expect(recipe.profile.variants.desktop.rootNodeIds.length).toBeGreaterThan(0);
+      expect(recipe.profile.screens.gameplay.rootNodeIds.length).toBeGreaterThan(0);
+    }
+  });
+
   it("returns normalized mechanics for the unauthored starter without materializing or upgrading it", async () => {
     const manifestPath = path.join(projectDir, "project.json");
     const mechanicsPath = path.join(projectDir, "content", "mechanics.json");

@@ -212,7 +212,7 @@ describe("R18 playerTargets MCP/AI authoring (RED)", () => {
   }, 30_000);
 
   it("teaches agents the exact target-local workflow and legacy isolation", () => {
-    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(53);
+    expect(TOWERFORGE_AGENT_GUIDE_VERSION).toBe(54);
     expect(TOWERFORGE_AGENT_INSTRUCTIONS).toMatch(
       /describe_schema[^\n]*playerTargets[\s\S]*read_player_targets[\s\S]*get_player_target_recipe[\s\S]*desktop_large_screen[\s\S]*preview_player_target[\s\S]*apply_player_target[\s\S]*ifRevision[\s\S]*validate_project/i
     );

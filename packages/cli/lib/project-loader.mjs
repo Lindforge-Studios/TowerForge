@@ -36,7 +36,7 @@ export function readJsonOr(filePath, fallback) {
  *  runtime normalization. Use this when you need the authored source shape, e.g. `migrate --write`
  *  which must persist only migration deltas, not the constants-inherited/hex-decoded defaults that
  *  normalizeBalance() injects for the simulator. loadProjectFiles() layers normalization on top. */
-export function readRawProjectFiles(projectDir) {
+export function readRawProjectFiles(projectDir, options = {}) {
   const projectFile = path.join(projectDir, "project.json");
   if (!fs.existsSync(projectFile)) {
     throw new Error(`No project.json found at: ${projectDir}`);
@@ -59,6 +59,7 @@ export function readRawProjectFiles(projectDir) {
     mapSources: readMapSources(projectDir),
     mechanics: readJsonOr(path.join(contentDir, "mechanics.json"), undefined),
     distribution: readJsonOr(path.join(contentDir, "distribution.json"), undefined),
+    hud: options.readHud === false ? undefined : readJsonOr(path.join(contentDir, "hud.json"), undefined),
     visuals: readJsonOr(path.join(contentDir, "visuals.json"), defaultVisuals()),
     storyComics: readJsonOr(path.join(contentDir, "story-comics.json"), { seenStoragePrefix: "story_seen_", comics: {} }),
     battleBackgrounds: readJsonOr(path.join(contentDir, "battle-backgrounds.json"), {
@@ -85,6 +86,7 @@ export function normalizeProjectFiles(rawFiles) {
   const migrated = migrateProjectFiles(rawFiles);
   const mechanicsAuthored = migrated.files.mechanics !== undefined;
   const distributionAuthored = migrated.files.distribution !== undefined;
+  const hudAuthored = migrated.files.hudAuthored ?? migrated.files.hud !== undefined;
 
   return {
     projectDir: rawFiles.projectDir,
@@ -97,6 +99,8 @@ export function normalizeProjectFiles(rawFiles) {
     mechanicsAuthored,
     distribution: distributionAuthored ? migrated.files.distribution : undefined,
     distributionAuthored,
+    hud: hudAuthored ? migrated.files.hud : undefined,
+    hudAuthored,
     visuals: normalizeVisuals(migrated.files.visuals),
     storyComics: normalizeStoryComics(migrated.files.storyComics),
     battleBackgrounds: normalizeBattleBackgrounds(migrated.files.battleBackgrounds),
@@ -108,8 +112,17 @@ export function normalizeProjectFiles(rawFiles) {
   };
 }
 
-export function loadProjectFiles(projectDir) {
-  return normalizeProjectFiles(readRawProjectFiles(projectDir));
+export function loadProjectFiles(projectDir, options = {}) {
+  const files = normalizeProjectFiles(readRawProjectFiles(projectDir, options));
+  if (options.readHud === false) {
+    // A selected legacy/unbound target must not parse or cross-validate HUD bytes that belong to
+    // a different target. Build-time target resolution already decided the module is inactive.
+    // Strip only the in-memory references; authored build-targets.json remains byte-identical.
+    for (const target of Object.values(files.buildTargets?.targets ?? {})) {
+      if (target && typeof target === "object") delete target.hudProfileId;
+    }
+  }
+  return files;
 }
 
 export function projectSummary(files) {
@@ -131,6 +144,8 @@ export function projectSummary(files) {
     mechanicsAuthored: files.mechanicsAuthored ?? false,
     distribution: files.distribution,
     distributionAuthored: files.distributionAuthored ?? false,
+    hud: files.hud,
+    hudAuthored: files.hudAuthored ?? false,
     maps: Object.fromEntries(Object.entries(files.maps).map(([id, map]) => [id, {
       id,
       grid: map.grid,
@@ -152,6 +167,7 @@ export function projectSummary(files) {
       buildTargets: files.buildTargets.schemaVersion ?? 1,
       visuals: files.visuals.schemaVersion ?? 1,
       mechanics: files.mechanics.schemaVersion ?? 1,
+      ...(files.hudAuthored ? { hud: files.hud?.schemaVersion } : {}),
       ...(files.distributionAuthored ? { distribution: files.distribution?.schemaVersion } : {})
     },
     appliedMigrations: files.appliedMigrations ?? [],
@@ -219,8 +235,19 @@ export async function loadContentRegistry(projectDir) {
   return { files, engine, content };
 }
 
-export async function validateProjectDir(projectDir) {
-  const { files, engine, content } = await loadContentRegistry(projectDir);
+export async function validateProjectDir(projectDir, options = {}) {
+  const files = loadProjectFiles(projectDir, options);
+  const engine = await loadEngine();
+  const content = engine.createGameContentRegistry({
+    balance: files.balance,
+    maps: files.maps,
+    worldMap: files.worldMap,
+    scripts: files.scripts,
+    mechanics: files.mechanics,
+    visuals: files.visuals,
+    storyComics: files.storyComics,
+    battleBackgrounds: files.battleBackgrounds
+  });
   const result = mergeValidationResults(validateProjectSchemas(files), engine.validateGameContentRegistry(content));
   return { files, result };
 }

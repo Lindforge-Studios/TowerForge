@@ -5,6 +5,7 @@ import {
 } from "./map-compiler.mjs";
 import { validateDistributionConfigV1 } from "../../distribution/src/index.mjs";
 import { validateCameraProfileCatalogV1 } from "../../renderer/src/camera-projector.mjs";
+import { validateHudCatalogV1 } from "../../player-runtime/src/hud-catalog.mjs";
 
 export const PROJECT_SCHEMA_VERSION = 5;
 export const MECHANICS_PROJECT_SCHEMA_VERSION = 3;
@@ -168,7 +169,9 @@ export function validateProjectSchemas(files) {
   issues.push(...compileMapSources(files.mapSources ?? {}, files.balance?.terrainTypes ?? {}).issues);
   validateVisuals(files.visuals, err, warn, files.balance, files.maps, files.mechanics);
   validateNarrative(files, err, warn);
-  validateBuildTargets(files.buildTargets, err, files.visuals);
+  const hudCatalog = validateHud(files, err);
+  validateHudAssets(hudCatalog, files.visuals, err);
+  validateBuildTargets(files.buildTargets, err, files.visuals, hudCatalog);
   if ((files.buildTargets?.schemaVersion ?? 1) === 2 && files.manifest?.schemaVersion !== PROJECT_SCHEMA_VERSION) {
     err(
       "project",
@@ -182,6 +185,44 @@ export function validateProjectSchemas(files) {
     ok: issues.filter((i) => i.severity === "error").length === 0,
     issues
   };
+}
+
+function validateHud(files, err) {
+  const authored = files.hudAuthored ?? files.hud !== undefined;
+  if (!authored) return undefined;
+  if (files.manifest?.schemaVersion !== PROJECT_SCHEMA_VERSION) {
+    err("project", "project.json", "schemaVersion", `Projects that author HUD content must use project schema v${PROJECT_SCHEMA_VERSION}.`);
+  }
+  const result = validateHudCatalogV1(files.hud);
+  if (!result.ok) {
+    err(
+      "hud",
+      "content/hud.json",
+      result.error?.fieldPath ?? "root",
+      result.error?.message ?? "content/hud.json is invalid."
+    );
+    return undefined;
+  }
+  return result.catalog;
+}
+
+function validateHudAssets(hudCatalog, visuals, err) {
+  if (!hudCatalog) return;
+  const sprites = visuals?.sprites ?? {};
+  for (const [profileId, profile] of Object.entries(hudCatalog.profiles)) {
+    for (const [roleId, spriteId] of Object.entries(profile.assetRoles ?? {})) {
+      if (!Object.hasOwn(sprites, spriteId)) {
+        err("hud", profileId, `profiles.${profileId}.assetRoles.${roleId}`, `HUD asset role references missing sprite "${spriteId}".`);
+      }
+    }
+    for (const node of profile.commonNodes ?? []) {
+      const authoredAssetId = node.properties?.assetId;
+      const spriteId = profile.assetRoles?.[authoredAssetId] ?? authoredAssetId;
+      if (spriteId !== undefined && !Object.hasOwn(sprites, spriteId)) {
+        err("hud", profileId, `profiles.${profileId}.commonNodes.${node.id}.properties.assetId`, `HUD node references missing sprite or asset role "${authoredAssetId}".`);
+      }
+    }
+  }
 }
 
 function validateMechanics(files, err, warn) {
@@ -1285,7 +1326,7 @@ function validateProceduralJuice(visuals, err, balance) {
   }
 }
 
-function validateBuildTargets(buildTargets, err, visuals = {}) {
+function validateBuildTargets(buildTargets, err, visuals = {}, hudCatalog = undefined) {
   if (!buildTargets || typeof buildTargets !== "object") {
     err("buildTargets", "build-targets.json", "root", "build-targets.json must be an object.");
     return;
@@ -1305,7 +1346,7 @@ function validateBuildTargets(buildTargets, err, visuals = {}) {
     const targetKeys = new Set([
       "id", "type", "platform", "renderer", "webDir", "outputDir", "market", "storeChannel",
       "appId", "appName", "label", "title", "appTitle", "backgroundColor", "appVersion", "manifest",
-      "formFactor", "viewport", "quality", "locale", "inputProfile", "cameraProfileId", "window", "bundle", "updater"
+      "formFactor", "viewport", "quality", "locale", "inputProfile", "cameraProfileId", "hudProfileId", "window", "bundle", "updater"
     ]);
     const targets = isRecord(buildTargets.targets) ? buildTargets.targets : {};
     if (!isRecord(buildTargets.defaults)) {
@@ -1375,6 +1416,16 @@ function validateBuildTargets(buildTargets, err, visuals = {}) {
           if (!result.ok || !Object.hasOwn(result.catalog.profiles, target.cameraProfileId)) {
             err("buildTargets", targetId, fieldPath, `Build target references missing camera profile "${target.cameraProfileId}".`);
           }
+        }
+      }
+      if (target.hudProfileId !== undefined) {
+        const fieldPath = `targets.${targetId}.hudProfileId`;
+        if (typeof target.hudProfileId !== "string" || target.hudProfileId.length === 0 || target.hudProfileId.length > 128) {
+          err("buildTargets", targetId, fieldPath, "hudProfileId must be a non-empty bounded HUD profile ID.");
+        } else if (!hudCatalog || !Object.hasOwn(hudCatalog.profiles, target.hudProfileId)) {
+          err("buildTargets", targetId, fieldPath, `Build target references missing HUD profile "${target.hudProfileId}".`);
+        } else if (!["desktop", "responsive"].includes(target.formFactor)) {
+          err("buildTargets", targetId, fieldPath, "Custom HUD profiles require desktop or responsive formFactor.");
         }
       }
       const viewportPath = `targets.${targetId}.viewport`;
