@@ -4657,3 +4657,18 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - Because the exact candidate commit changes, the previous freeze and both sign-offs are treated as
   invalid. The full R21 gate matrix, independent Code Verifier sign-off and independent Constructor
   Integration Verifier sign-off must be repeated on the replacement commit before merge.
+
+## 2026-08-04 — v0.8.0 release candidate
+
+- R21 PR #37 merged as `8ed8dab` from exact verified head
+  `561f7550e8be91e8b47159e389d8a90597d81d60`. The replacement candidate passed clean `npm ci`,
+  all required local gates, `456/456` Vitest files with `4381/4381` tests, `163/163` Playwright
+  tests, cross-platform generated-game CI and fresh independent Code Verifier plus Constructor
+  Integration Verifier sign-offs.
+- R18 PR #34, R19 PR #35, R20 PR #36 and R21 PR #37 are now merged into `main`. Release domains are
+  synchronized to `0.8.0` for the root app, Studio desktop package, Tauri/Cargo, MCP server and Codex
+  plugin. Documentation treats `v0.6.1` as the current verified public baseline until publication.
+- Before `v0.8.0` may be tagged, the release branch must pass ordinary CI and release-specific local
+  gates, then the exact merged commit must pass the manual six-platform `Unsigned Desktop Builds`
+  candidate workflow. The annotated tag must publish exactly six installers plus `SHA256SUMS`; all
+  downloaded hashes and the macOS app/DMG must be independently verified after publication.

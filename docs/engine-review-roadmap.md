@@ -1,6 +1,6 @@
 # TowerForge Engine Review And Production Roadmap
 
-Last reviewed: 2026-08-01
+Last reviewed: 2026-08-04
 
 This document is the compact engineering review. Product sequencing and live PR state are canonical
 in [ROADMAP.md](ROADMAP.md); release and production gaps are canonical in
@@ -26,6 +26,14 @@ TowerForge now has:
 - accepted R16 checksummed Replay Archive, detached Ghost/What-If Lab and isolated reference relay;
 - accepted R17 reproducible publish manifests, explicit-confirm provider adapters, licensed Remix
   provenance and host-only monetization placements;
+- accepted R18 large-screen web targets with shared viewport transforms, action registry, recovery,
+  localization, accessibility and PWA quality controls;
+- accepted R19 first-class native desktop targets, confined Tauri persistence/lifecycle, six-format
+  release workflows and an opt-in signed updater contract;
+- accepted R20 renderer-owned top-down/isometric/dimetric camera projections with shared inverse
+  hit testing, depth ordering and guarded view-specific assets;
+- accepted R21 data-only responsive HUD catalogs, screen graphs, build-menu presets and one semantic
+  DOM shell shared by Canvas, Phaser, Studio, web, native and `.tdpack` outputs;
 - local-first Studio, guarded MCP/AI authoring, Tauri desktop, PWA/single-file builds, `.tdpack`,
   Codex plugin packaging, and mobile/desktop game scaffolds.
 
@@ -35,12 +43,11 @@ tools remain out of scope.
 
 ## Immediate Gate
 
-R0–R17 are accepted, merged and published in unsigned pre-release
-[`v0.6.1`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.6.1) from exact commit
-`db1dd07`. The immutable `v0.6.0` tag exposed a Windows CRLF package-pruning defect before
-publication and has no public Release. The replacement passed exact-commit CI, two fresh independent
-sign-offs, a manual native cross-platform candidate, tagged native rebuilds, six-installer assembly,
-published checksum verification and downloaded DMG verification.
+R0–R21 are accepted and merged. [`v0.6.1`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.6.1)
+remains the verified public R0–R17 baseline from exact commit `db1dd07`; `v0.8.0` is the active
+release candidate for R18–R21. Its remaining gate is distribution-only: exact merged release commit,
+manual native cross-platform candidate, annotated tag, six-installer assembly, published checksum
+verification and downloaded DMG verification.
 
 ## Post-Roadmap Hardening
 
