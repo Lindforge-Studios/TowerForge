@@ -21,6 +21,19 @@ export const HUD_AUTHORING_SCHEMA_V1 = deepFreeze({
   buildTargetsSchemaVersion: 2,
   hudCatalogSchemaVersion: 1,
   revisionSources: REVISION_SOURCES,
+  assetMetadata: {
+    field: "profile.assetMetadata",
+    optional: true,
+    roleReferences: "profile.assetRoles",
+    schemaVersion: 1,
+    kinds: ["image", "atlas_frame", "nine_slice"],
+    atlasFrame: { requiredFor: "atlas_frame", type: "bounded_id" },
+    nineSlice: {
+      requiredFor: "nine_slice",
+      fields: ["top", "right", "bottom", "left"],
+      values: "bounded_non_negative_numbers"
+    }
+  },
   authoringTransaction: {
     read: "get_hud_profiles",
     recipe: "get_hud_profile_recipe",
