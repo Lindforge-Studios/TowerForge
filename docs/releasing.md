@@ -15,7 +15,7 @@ contains Tauri update payloads, detached `.sig` files and `latest.json`. See
 
 ## Published Baseline
 
-The current public release is `v0.6.1`, an unsigned pre-release containing accepted R0–R17 and the cross-platform Windows package-pruning repair. Tagged workflow `30703649784` published all six installers plus `SHA256SUMS` from exact commit `db1dd07`; the downloaded hashes and macOS bundle/DMG were independently verified. The `v0.6.0` tag is retained as immutable failed-pipeline evidence and has no public release. A local build or GitHub Actions artifact MUST NOT be described as a release until the matching tag, public release page, installers, notes, and `SHA256SUMS` exist and have been verified.
+The current public release is `v0.6.1`, an unsigned pre-release containing accepted R0–R17 and the cross-platform Windows package-pruning repair. Tagged workflow `30703649784` published all six installers plus `SHA256SUMS` from exact commit `db1dd07`; the downloaded hashes and macOS bundle/DMG were independently verified. The source tree prepares `v0.8.0` with accepted R18–R21, but it is not public until the exact merged commit passes the manual candidate workflow, the tag workflow publishes all six installers and the downloaded assets are re-verified. The `v0.6.0` tag is retained as immutable failed-pipeline evidence and has no public release.
 
 ## Release Invariants
 

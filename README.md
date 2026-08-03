@@ -21,7 +21,7 @@ Desktop-сборки публикуются в [GitHub Releases](https://github.
 
 ## Текущий статус
 
-Актуальная desktop-линия — `v0.6.1` (неподписанный pre-release): она объединяет всю принятую дорожную карту R0–R17 и кросс-платформенное исправление сборки Windows. Помимо gameplay-механик R9–R14 в неё входят opt-in Macro-Economy, Ghost Replay Lab с What-If-ветками и provider-neutral Web Distribution Hub с лицензированным Remix. Gameplay-расширения остаются выключенными по умолчанию. Точный статус и границы ведутся в [ROADMAP](docs/ROADMAP.md).
+Исходники готовят неподписанную desktop-линию `v0.8.0`: к опубликованному R0–R17 baseline добавлены Large-Screen Web Player, first-class native desktop distribution, изометрические/диметрические camera profiles и data-only HUD Studio. Все presentation и gameplay расширения остаются opt-in; legacy targets не меняются. До завершения tag workflow публичной версией остаётся [`v0.6.1`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.6.1). Точный статус и границы ведутся в [ROADMAP](docs/ROADMAP.md).
 
 ## Состав продукта
 

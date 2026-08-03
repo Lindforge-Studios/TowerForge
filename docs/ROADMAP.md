@@ -1,6 +1,6 @@
 # TowerForge — Roadmap расширяемых механик
 
-Последняя проверка: 2026-08-02
+Последняя проверка: 2026-08-04
 
 Цель программы — расширить TowerForge от классического TD до набора совместимых жанровых механик,
 не меняя поведение существующих проектов. Gameplay-модули являются opt-in: разработчик добавляет
@@ -65,9 +65,9 @@ service. Нет соответствующего выбора или локал�
 | R16 — Ghost Replay Lab | Завершён; full gates green; code + constructor sign-off; ADR Accepted | Checksummed ReplayArchiveV1, detached bounded ghost с реальным Studio overlay, immutable What-If branches, read-only Studio/MCP surfaces и отдельный gameplay-free reference relay |
 | R17 — Web Publish, Remix & Monetization | Завершён; full gates; code + constructor sign-off; ADR Accepted | Opt-in Distribution v1/project v4, reproducible publish manifest, explicit-confirm provider adapters, licensed Remix provenance и host-only monetization hooks |
 | R18 — Large-Screen Web Player | Завершён и слит; exact-commit CI green; code + constructor sign-off; ADR Accepted | PR #34: project-v5/BuildTargets-v2 large-screen web target, shared viewport, desktop shell, IndexedDB recovery, localized accessible PWA и unchanged legacy targets |
-| R19 — Native Desktop Distribution | Реализован; exact-commit gates и два независимых sign-off; ADR Accepted; PR #35 | First-class desktop target, native storage/lifecycle, cross-platform installers и optional signed updater |
-| R20 — Camera Projection Studio | R20.1–R20.4 реализованы; focused GREEN; exact gates/sign-off ожидаются | Proposed ADR 0061: visuals v4/CameraProfileV1, renderer-owned top-down/isometric/dimetric projection, shared hit testing/depth и guarded view assets |
-| R21 — Player Shell & HUD Constructor | Implemented candidate: R21.1–R21.6 focused GREEN; exact-commit gates и два независимых sign-off ожидаются | Proposed ADR 0062: opt-in `HudCatalogV1`, one DOM shell, responsive layouts/screen graph, action registry, семь presets, guarded Studio/MCP и conditional package parity |
+| R19 — Native Desktop Distribution | Завершён и слит; exact-commit gates и два независимых sign-off; ADR Accepted | PR #35: first-class desktop target, native storage/lifecycle, cross-platform installers и optional signed updater |
+| R20 — Camera Projection Studio | Завершён и слит; exact-commit gates и два независимых sign-off; ADR Accepted | PR #36: visuals v4/CameraProfileV1, renderer-owned top-down/isometric/dimetric projection, shared hit testing/depth и guarded view assets |
+| R21 — Player Shell & HUD Constructor | Завершён и слит; full gates, CI и два sign-off; ADR Accepted | PR #37: opt-in `HudCatalogV1`, one DOM shell, responsive layouts/screen graph, action registry, семь presets, guarded Studio/MCP и conditional package parity |
 
 ### Delivery snapshot на 2026-08-04
 
@@ -75,10 +75,13 @@ service. Нет соответствующего выбора или локал�
 - R15 PR #28, R16 PR #29 и R17 PR #30 слиты в `main`; R17 exact-commit CI run `30698019009` завершился SUCCESS.
 - R15–R17 прошли раздельные RED/GREEN-циклы, полные gates и по два независимых sign-off; после финального CI repair в R17 P0–P3 findings отсутствуют.
 - Тег `v0.6.0` сохранён как неизменяемое свидетельство падения Windows release job и не имеет публичного GitHub Release. [`v0.6.1`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.6.1) опубликован как неподписанный pre-release с R0–R17 и CRLF-safe package pruning; exact tag, шесть installers, `SHA256SUMS` и скачанный DMG проверены.
-- R21.1–R21.6 реализованы как candidate и прошли focused GREEN по catalog/authoring, layout,
-  screen graph, семи build-menu presets, Studio, MCP/AI и conditional player/package parity.
-  R21 ещё не принят: exact-commit full gates и независимые Code Verifier/Constructor Integration
-  Verifier sign-off не выполнялись.
+- R18 PR #34, R19 PR #35, R20 PR #36 и R21 PR #37 слиты в `main`. Каждый R прошёл
+  собственные RED/GREEN-срезы, exact-commit gates и два независимых sign-off.
+- R21 merge `8ed8dab` опирается на exact head `561f755`: `456/456` unit files,
+  `4381/4381` tests, `163/163` E2E и зелёные CI/Windows/Linux/macOS generated-game jobs.
+- Release candidate `v0.8.0` объединяет опубликованный R0–R17 baseline и принятые R18–R21.
+  Публикация считается завершённой только после exact-tag workflow, шести installers,
+  `SHA256SUMS` и пост-публикационной проверки.
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Сейчас исполнимыми являются только
 версии, перечисленные в [ARCHITECTURE.md](../ARCHITECTURE.md): наличие planned descriptor или
@@ -108,10 +111,10 @@ R20 остаётся presentation-only и не добавляет mechanics capa
 Renderer применяет один projector до `ViewportTransformV1`, а Canvas, Phaser, Studio preview и все
 package targets не содержат собственную projection-математику. Gameplay coordinates, LoS,
 pathfinding, ballistics, snapshots, checkpoints, commands и replay digest не меняются. Контракт,
-лимиты и четыре отдельные RED/GREEN-поставки зафиксированы в Proposed
+лимиты и четыре отдельные RED/GREEN-поставки зафиксированы в
 [ADR 0061](adr/0061-r20-camera-projection-studio.md).
 
-R21 implemented candidate добавляет независимый data-only `content/hud.json` (`HudCatalogV1`) и
+R21 добавляет независимый data-only `content/hud.json` (`HudCatalogV1`) и
 optional `BuildTargets-v2 target.hudProfileId`, не создавая mechanics capability. Custom shell
 активируется только для project-v5 desktop/responsive target с явной валидной ссылкой. Large-screen
 target без ссылки использует встроенный R18 shell, а BuildTargets v1 не читает и не включает HUD
