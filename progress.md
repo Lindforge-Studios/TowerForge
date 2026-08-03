@@ -4586,3 +4586,13 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   GREEN. The actual generated Canvas/hex and Phaser/square browser acceptance is `2/2` GREEN with
   gamepad activation of the static resume control. `node --check` and `git diff --check` are GREEN.
 - Full exact-commit gates, plugin refresh and both new independent sign-offs remain pending.
+
+## 2026-08-04 — R21 second exact-candidate freeze
+
+- The commit containing this entry is the new frozen R21 candidate after the independent verifier
+  repair cycle. It includes the RED evidence, semantic Studio/model repair, generated static-control
+  gamepad parity, validated asset metadata, AI discovery parity, updated architecture/runbook and
+  refreshed source-to-plugin runtime.
+- No production, test, generated runtime or documentation bytes may change after this freeze without
+  invalidating the complete gate evidence and both forthcoming independent sign-offs. Full gates run
+  on this exact commit; verifier reports and PR evidence remain external to the frozen tree.
