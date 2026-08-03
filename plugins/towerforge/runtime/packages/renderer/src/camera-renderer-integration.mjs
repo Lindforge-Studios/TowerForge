@@ -37,9 +37,9 @@ function ownRecord(value, keys, field) {
   return Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value]));
 }
 
-function denseArray(value, field, limit) {
-  if (!Array.isArray(value) || value.length === 0 || value.length > limit) {
-    throw new TypeError(`${field} must contain 1 to ${limit} entries.`);
+function denseArray(value, field, limit, minimum = 1) {
+  if (!Array.isArray(value) || value.length < minimum || value.length > limit) {
+    throw new TypeError(`${field} must contain ${minimum} to ${limit} entries.`);
   }
   const descriptors = Object.getOwnPropertyDescriptors(value);
   for (let index = 0; index < value.length; index += 1) {
@@ -125,7 +125,7 @@ export function projectCameraRenderItemsV1(space, unsafeItems) {
   if (!space || space.schemaVersion !== 1 || typeof space.worldToScreen !== "function" || !space.projector) {
     throw new TypeError("space must be a CameraRenderSpaceV1 instance.");
   }
-  const items = denseArray(unsafeItems, "cameraRenderItems", 262_144).map((value, index) => {
+  const items = denseArray(unsafeItems, "cameraRenderItems", 262_144, 0).map((value, index) => {
     const row = ownRecord(value, ["id", "kind", "x", "y", "elevation"], `cameraRenderItems[${index}]`);
     if (typeof row.id !== "string" || row.id.length === 0 || row.id.length > 256) {
       throw new TypeError(`cameraRenderItems[${index}].id must be a bounded non-empty string.`);

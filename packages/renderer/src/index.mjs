@@ -1084,7 +1084,12 @@ export class TowerForgeCanvasRenderer {
           },
           worldPoints,
           viewport: { width: this.canvas.width, height: this.canvas.height },
-          viewportProfile: { ...this.viewportProfile, padding: (Number(this.viewportProfile.padding) || 0) * backingScale }
+          viewportProfile: {
+            padding: (Number(this.viewportProfile.padding) || 0) * backingScale,
+            minZoom: this.viewportProfile.minZoom,
+            maxZoom: this.viewportProfile.maxZoom,
+            initialZoom: this.viewportProfile.initialZoom
+          }
         });
         this.viewportController = this.cameraRenderSpace.viewportTransform;
         this.viewportSignature = signature;

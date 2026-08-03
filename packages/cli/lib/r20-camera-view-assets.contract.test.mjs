@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -181,6 +181,51 @@ describe("R20.3 visuals v4 view-variant asset contract (RED)", () => {
     ]));
   });
 
+  it.skipIf(process.platform === "win32")("rejects a camera asset symlink escape before copying external bytes", () => {
+    const projectDir = temporaryProject("symlink-copy");
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "towerforge-r20-camera-outside-"));
+    roots.push(outsideDir);
+    writeViewAssetBytes(projectDir);
+    const outsideAsset = path.join(outsideDir, "outside.png");
+    fs.writeFileSync(outsideAsset, PNG);
+    const linkedAsset = path.join(projectDir, "assets/camera/tower.png");
+    fs.rmSync(linkedAsset);
+    fs.symlinkSync(outsideAsset, linkedAsset, "file");
+
+    const outDir = path.join(projectDir, "dist-symlink");
+    const copied = copyVisualAssets(projectDir, outDir, validVisuals(), {
+      cameraView: { projection: "isometric_2_1", orientation: "north" }
+    });
+
+    expect(copied.invalid).toContainEqual(expect.objectContaining({
+      id: `tower_base@${VIEW_KEY}`,
+      reason: expect.stringMatching(/symlink|symbolic|escape|outside/i)
+    }));
+    expect(fs.existsSync(path.join(outDir, "assets/camera/tower.png"))).toBe(false);
+  });
+
+  it("fails the build when a referenced camera asset is invalid instead of returning ok:true", () => {
+    const projectDir = copyStarter("invalid-build");
+    configureCameraBuild(projectDir, "dist-camera-invalid");
+    writeViewAssetBytes(projectDir);
+    fs.writeFileSync(path.join(projectDir, "assets/camera/tower.png"), Buffer.from("not a png"));
+
+    const result = spawnSync(process.execPath, [
+      path.join(repoRoot, "packages/cli/build.mjs"), "--project", projectDir,
+      "--target", "camera-web", "--json"
+    ], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: { ...process.env, TOWERFORGE_BUNDLED_RUNTIME: "1" }
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/invalid|camera|asset|signature|MIME/i)
+    });
+  }, 60_000);
+
   it("packages every active variant into PWA and single-file output", () => {
     const projectDir = copyStarter("package");
     const visualsPath = path.join(projectDir, "content", "visuals.json");
@@ -317,6 +362,36 @@ function writeViewAssetBytes(projectDir) {
   fs.writeFileSync(path.join(projectDir, "assets/base/tower.png"), PNG);
   fs.writeFileSync(path.join(projectDir, "assets/base/enemy.png"), PNG);
   fs.writeFileSync(path.join(projectDir, "assets/base/tiles.png"), PNG);
+}
+
+function configureCameraBuild(projectDir, webDir) {
+  const visualsPath = path.join(projectDir, "content/visuals.json");
+  const starterVisuals = readJson(visualsPath);
+  const cameraVisuals = validVisuals();
+  writeJson(visualsPath, {
+    ...starterVisuals,
+    ...cameraVisuals,
+    atlases: { ...starterVisuals.atlases, ...cameraVisuals.atlases },
+    sprites: { ...starterVisuals.sprites, ...cameraVisuals.sprites },
+    bindings: { ...starterVisuals.bindings, ...cameraVisuals.bindings },
+    tileSets: { ...starterVisuals.tileSets, ...cameraVisuals.tileSets }
+  });
+  writeJson(path.join(projectDir, "project.json"), {
+    ...readJson(path.join(projectDir, "project.json")),
+    schemaVersion: 5
+  });
+  writeJson(path.join(projectDir, "build-targets.json"), {
+    schemaVersion: 2,
+    defaults: { web: "camera-web" },
+    targets: {
+      "camera-web": {
+        id: "camera-web", platform: "web", renderer: "canvas", webDir,
+        formFactor: "desktop",
+        viewport: { fit: "contain", padding: 32, minZoom: 0.5, maxZoom: 3, initialZoom: 1 },
+        quality: "high", locale: "en", inputProfile: "keyboard_mouse", cameraProfileId: "iso"
+      }
+    }
+  });
 }
 
 function readJson(filePath) {

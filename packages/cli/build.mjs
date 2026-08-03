@@ -190,6 +190,10 @@ try {
     fs.copyFileSync(phaserSrc, path.join(outDir, "vendor", "phaser.min.js"));
   }
   const assetCopy = copyVisualAssets(PROJECT_DIR, outDir, files.visuals);
+  if (assetCopy.invalid.length > 0) {
+    const first = assetCopy.invalid[0];
+    throw new Error(`Invalid visual asset "${first.id}": ${first.reason}`);
+  }
   writeJsonModule(path.join(outDir, "project-data.js"), {
     manifest: files.manifest,
     balance: files.balance,
@@ -1186,7 +1190,12 @@ function phaserViewportMethodsTemplate(enabled, cameraProjectionActive = false) 
         cameraProfile,
         worldPoints,
         viewport: { width: W, height: H },
-        viewportProfile: project.buildTarget.viewport
+        viewportProfile: {
+          padding: project.buildTarget.viewport.padding,
+          minZoom: project.buildTarget.viewport.minZoom,
+          maxZoom: project.buildTarget.viewport.maxZoom,
+          initialZoom: project.buildTarget.viewport.initialZoom
+        }
       });
       this.viewportController = this.cameraRenderSpace.viewportTransform;` : `let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const tile of tiles) {

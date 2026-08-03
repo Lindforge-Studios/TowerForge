@@ -19,9 +19,11 @@ export function planProjectAssetImport(projectDir, visuals, request) {
   if (targetIssue) throw new Error(targetIssue);
 
   const sourcePath = resolveInsideProject(projectDir, sourceRel);
-  if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+  const sourceFile = inspectConfinedSourceFile(projectDir, sourcePath, sourceRel);
+  if (sourceFile.missing) {
     throw new Error(`Asset source not found: ${sourceRel}`);
   }
+  if (sourceFile.reason) throw new Error(sourceFile.reason);
 
   const assetRelPath = path.posix.join(assetsRoot, toPosix(targetRel));
   const destPath = resolveInsideProject(projectDir, assetRelPath);
@@ -135,12 +137,17 @@ export function copyVisualAssets(projectDir, outDir, visuals, _options = {}) {
       continue;
     }
     const sourcePath = resolveInsideProject(projectDir, item.path);
-    if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+    const sourceFile = inspectConfinedSourceFile(projectDir, sourcePath, item.path);
+    if (sourceFile.missing) {
       missing.push(item);
       continue;
     }
+    if (sourceFile.reason) {
+      invalid.push({ ...item, reason: sourceFile.reason });
+      continue;
+    }
     if (item.mimeType) {
-      const size = fs.statSync(sourcePath).size;
+      const size = sourceFile.stat.size;
       if (size < 1 || size > MAX_CAMERA_ASSET_BYTES) {
         invalid.push({ ...item, reason: `Camera asset size must be from 1 byte through ${MAX_CAMERA_ASSET_BYTES} bytes (32 MiB).` });
         continue;
@@ -165,6 +172,53 @@ function imageSignatureMime(bytes) {
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
   if (bytes.length >= 12 && bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP") return "image/webp";
   return undefined;
+}
+
+/**
+ * Validate an existing asset source without following symbolic links. Checking every
+ * path component is intentional: lstat on the leaf alone would still allow an
+ * `assets/linked-dir/file.png` escape through a symlinked parent directory.
+ */
+function inspectConfinedSourceFile(projectDir, sourcePath, relPath) {
+  const projectRoot = path.resolve(projectDir);
+  const relative = path.relative(projectRoot, sourcePath);
+  const parts = relative.split(path.sep).filter(Boolean);
+  let current = projectRoot;
+
+  for (const part of parts) {
+    current = path.join(current, part);
+    let stat;
+    try {
+      stat = fs.lstatSync(current);
+    } catch (error) {
+      if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return { missing: true };
+      return { reason: `Asset source could not be inspected: ${relPath}` };
+    }
+    if (stat.isSymbolicLink()) {
+      return { reason: `Asset source must not contain symbolic links: ${relPath}` };
+    }
+    if (current !== sourcePath && !stat.isDirectory()) {
+      return { reason: `Asset source parent must be a directory: ${relPath}` };
+    }
+    if (current === sourcePath && !stat.isFile()) {
+      return { reason: `Asset source must be a regular file: ${relPath}` };
+    }
+  }
+
+  let realProjectRoot;
+  let realSourcePath;
+  try {
+    realProjectRoot = fs.realpathSync(projectRoot);
+    realSourcePath = fs.realpathSync(sourcePath);
+  } catch {
+    return { missing: true };
+  }
+  const realRelative = path.relative(realProjectRoot, realSourcePath);
+  if (!realRelative || realRelative === "." || realRelative.startsWith("..") || path.isAbsolute(realRelative)) {
+    return { reason: `Asset source resolves outside the project directory: ${relPath}` };
+  }
+
+  return { stat: fs.lstatSync(sourcePath) };
 }
 
 function resolveInsideProject(projectDir, relPath) {

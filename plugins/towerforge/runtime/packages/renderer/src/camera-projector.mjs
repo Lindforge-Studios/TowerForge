@@ -33,7 +33,20 @@ function ownDescriptors(value, allowedKeys, field) {
 }
 
 function ownValue(descriptors, key) {
-  return descriptors[key]?.value;
+  return Object.hasOwn(descriptors, key) ? descriptors[key].value : undefined;
+}
+
+function defineOwn(target, key, value) {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: false,
+    writable: false
+  });
+}
+
+function ownRecordValue(record, key) {
+  return Object.hasOwn(record, key) ? record[key] : undefined;
 }
 
 function finite(value, field, min = -Infinity, max = Infinity) {
@@ -199,12 +212,12 @@ function catalogEntries(value, field, limit) {
 function compileBindings(value, profileIds) {
   const descriptors = ownDescriptors(value, ["maps", "missions"], "cameraProfiles.bindings");
   const compileMap = (key) => {
-    const result = {};
+    const result = Object.create(null);
     const raw = ownValue(descriptors, key) ?? {};
     for (const [id, profileId] of catalogEntries(raw, `cameraProfiles.bindings.${key}`, 1024)) {
       identifier(profileId, `cameraProfiles.bindings.${key}.${id}`);
       if (!profileIds.has(profileId)) throw new TypeError(`cameraProfiles.bindings.${key}.${id} references unknown profile "${profileId}".`);
-      result[id] = profileId;
+      defineOwn(result, id, profileId);
     }
     return Object.freeze(result);
   };
@@ -219,9 +232,9 @@ function compileCatalog(unsafeCatalog) {
   if (ownValue(descriptors, "schemaVersion") !== 1) {
     throw new TypeError("cameraProfiles.schemaVersion must be supported version 1.");
   }
-  const profiles = {};
+  const profiles = Object.create(null);
   for (const [id, value] of catalogEntries(ownValue(descriptors, "profiles"), "cameraProfiles.profiles", 32)) {
-    profiles[id] = compileProfile(value, `cameraProfiles.profiles.${id}`);
+    defineOwn(profiles, id, compileProfile(value, `cameraProfiles.profiles.${id}`));
   }
   const profileIds = new Set(Object.keys(profiles));
   const bindings = compileBindings(ownValue(descriptors, "bindings"), profileIds);
@@ -260,15 +273,17 @@ export function resolveCameraProfileV1(unsafeCatalog, context = {}) {
   const missionId = contextValue(context, "missionId");
   const mapId = contextValue(context, "mapId");
   const buildTargetProfileId = contextValue(context, "buildTargetCameraProfileId");
-  const selected = missionId && catalog.bindings.missions[missionId]
-    ? { profileId: catalog.bindings.missions[missionId], source: "mission" }
-    : mapId && catalog.bindings.maps[mapId]
-      ? { profileId: catalog.bindings.maps[mapId], source: "map" }
+  const missionProfileId = missionId === undefined ? undefined : ownRecordValue(catalog.bindings.missions, missionId);
+  const mapProfileId = mapId === undefined ? undefined : ownRecordValue(catalog.bindings.maps, mapId);
+  const selected = missionProfileId !== undefined
+    ? { profileId: missionProfileId, source: "mission" }
+    : mapProfileId !== undefined
+      ? { profileId: mapProfileId, source: "map" }
       : buildTargetProfileId
         ? { profileId: buildTargetProfileId, source: "build_target" }
         : null;
   if (!selected) return Object.freeze({ profileId: null, source: "top_down_fallback", profile: FALLBACK_PROFILE });
-  const profile = catalog.profiles[selected.profileId];
+  const profile = ownRecordValue(catalog.profiles, selected.profileId);
   if (!profile) throw new TypeError(`Camera ${selected.source} references unknown profile "${selected.profileId}".`);
   return Object.freeze({ ...selected, profile });
 }

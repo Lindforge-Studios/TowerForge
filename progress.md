@@ -3971,3 +3971,45 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - This entry is the only change after the exact production/test candidate. The production tree is
   frozen; fresh independent Code Verifier and Constructor Integration Verifier sign-offs must
   review the docs-only child commit before PR creation or merge.
+
+## 2026-08-03 — R20 final verifier security/runtime RED
+
+- The next independent review rejected docs candidate `b605f60` on four release boundaries. The
+  Contract/Test Designer changed tests and this chronological evidence only; production and plugin
+  sources remained untouched. The freeze and the preceding full-gate evidence are invalidated.
+- Exact focused unit command:
+  `npx vitest run packages/cli/lib/r20-camera-view-assets.contract.test.mjs packages/renderer/src/r20-camera-prototype-safety.regression.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`, `5` expected RED and `16` passing tests. A camera-variant symlink was followed
+  and copied from outside the project; a signature-invalid camera asset still produced build exit
+  `0`/`ok:true`; own `__proto__`/`constructor`/`prototype` profile and binding IDs were dropped or
+  resolved through mutated/inherited prototypes; and the equivalent sprite/tileset ID contract did
+  not remain closed own-data.
+- Actual generated-player command:
+  `npx playwright test tests/e2e/r20-camera-generated-boot.regression.spec.mjs --workers=1 --reporter=line`.
+  The sandboxed attempt reached the expected loopback restriction (`listen EPERM`); the approved
+  loopback rerun exited `1` with `2/2` expected RED browser cases. The built Canvas target emitted
+  one and the built Phaser target emitted three page errors, all exactly
+  `cameraRenderSpace.viewportProfile.fit is not supported.` This proves both generated paths passed
+  the complete BuildTargets viewport object into the closed camera render-space contract.
+
+## 2026-08-03 — R20 final verifier repairs focused GREEN
+
+- Asset import and build copying now inspect every source path component without following
+  symlinks, require a confined regular file and preserve the previous missing-file result. A
+  signature/size/symlink-invalid referenced camera asset aborts the build before project data,
+  service worker or single-file output can claim success.
+- Camera profile, binding and view-variant catalogs preserve all valid JSON identifiers, including
+  `__proto__`, `constructor` and `prototype`, as own records without prototype mutation. Runtime
+  selection and exact/fallback/material resolution use own-property lookup and never observe
+  inherited values.
+- Generated Canvas and Phaser normalize the BuildTargets viewport into the closed render-space
+  subset instead of forwarding `fit`. The first actual browser rerun then exposed a second
+  expected runtime boundary: a valid pre-placement frame has no depth-sorted actors. The existing
+  actual-boot RED therefore remained red with `cameraRenderItems must contain 1...`; the shared
+  projector now accepts a dense empty actor list while world bounds remain non-empty and bounded.
+- Focused unit command covering asset IO, projector/view catalogs and render integration is GREEN
+  at `7/7` files and `58/58` tests. The actual generated-player Playwright regression is GREEN at
+  `2/2`, with no page errors for either Canvas or Phaser. The complete R20-focused unit matrix is
+  GREEN at `15/15` files and `109/109` tests; combined Camera Studio plus generated-player browser
+  coverage is GREEN at `4/4`. `git diff --check` is GREEN. Plugin parity, full gates and both fresh
+  independent sign-offs remain required after the repair commit.

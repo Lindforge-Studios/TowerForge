@@ -110,6 +110,13 @@ describe("R20.2 shared camera renderer integration (RED)", () => {
     }
   });
 
+  it("accepts an empty first-frame actor list while retaining non-empty world bounds", async () => {
+    const { projectCameraRenderItemsV1 } = await integrationApi();
+    const space = await renderSpace();
+
+    expect(projectCameraRenderItemsV1(space, [])).toEqual([]);
+  });
+
   it("routes Canvas center, bounds, hit testing and draw ordering through the shared module", () => {
     expect(rendererSource).toMatch(/from\s+["']\.\/camera-renderer-integration\.mjs["']/);
     expect(rendererSource).toMatch(/createCameraRenderSpaceV1\s*\(/);

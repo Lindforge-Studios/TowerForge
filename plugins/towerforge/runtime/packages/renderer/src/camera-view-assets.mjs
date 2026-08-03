@@ -41,12 +41,27 @@ function ownDescriptors(value, field) {
 
 function ownValue(value, key, field) {
   const descriptors = ownDescriptors(value, field);
-  const descriptor = descriptors[key];
+  const descriptor = Object.hasOwn(descriptors, key) ? descriptors[key] : undefined;
   if (!descriptor) return undefined;
   if (!descriptor.enumerable || !("value" in descriptor)) {
     throw new TypeError(`${field}.${key} must be an enumerable own-data property; accessors are not allowed.`);
   }
   return descriptor.value;
+}
+
+function defineOwn(target, key, value) {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true
+  });
+}
+
+function ownRecordValue(record, key) {
+  return record !== null && typeof record === "object" && Object.hasOwn(record, key)
+    ? record[key]
+    : undefined;
 }
 
 function cloneOwnData(value, field, state = undefined, depth = 0) {
@@ -101,7 +116,7 @@ function cloneOwnData(value, field, state = undefined, depth = 0) {
       if (!descriptor.enumerable || !("value" in descriptor)) {
         throw new TypeError(`${field}.${key} must be an enumerable own-data property; accessors are not allowed.`);
       }
-      output[key] = cloneOwnData(descriptor.value, `${field}.${key}`, tracker, depth + 1);
+      defineOwn(output, key, cloneOwnData(descriptor.value, `${field}.${key}`, tracker, depth + 1));
     }
     return output;
   } finally {
@@ -120,9 +135,9 @@ function compileViewVariants(visuals) {
   if (unsafeCatalog === undefined) return { sprites: {}, tileSets: {} };
   const catalog = cloneOwnData(unsafeCatalog, "viewVariants");
   assertClosed(catalog, "viewVariants", new Set(["schemaVersion", "sprites", "tileSets"]));
-  if (catalog.schemaVersion !== 1) throw new TypeError("viewVariants.schemaVersion must be supported version 1.");
-  const sprites = catalog.sprites;
-  const tileSets = catalog.tileSets;
+  if (ownRecordValue(catalog, "schemaVersion") !== 1) throw new TypeError("viewVariants.schemaVersion must be supported version 1.");
+  const sprites = ownRecordValue(catalog, "sprites");
+  const tileSets = ownRecordValue(catalog, "tileSets");
   if (!sprites || typeof sprites !== "object" || Array.isArray(sprites)) throw new TypeError("viewVariants.sprites must be a plain own-data catalog.");
   if (!tileSets || typeof tileSets !== "object" || Array.isArray(tileSets)) throw new TypeError("viewVariants.tileSets must be a plain own-data catalog.");
 
@@ -167,10 +182,11 @@ function resolveCompiledCameraViewVariantV1(input, compiled, key) {
   const kind = input.kind;
   const id = input.id;
   const group = kind === "sprite" ? compiled.sprites : compiled.tileSets;
-  const exact = group[id]?.[key];
+  const variants = ownRecordValue(group, id);
+  const exact = ownRecordValue(variants, key);
   if (exact !== undefined) {
     const asset = cloneOwnData(exact, `viewVariants.${kind === "sprite" ? "sprites" : "tileSets"}.${id}.${key}`);
-    if (kind === "sprite" && asset.anchor === undefined) asset.anchor = { x: 0.5, y: 1 };
+    if (kind === "sprite" && ownRecordValue(asset, "anchor") === undefined) defineOwn(asset, "anchor", { x: 0.5, y: 1 });
     return frozen({ status: "exact", key, kind, id, asset });
   }
   if (kind === "sprite") {
@@ -178,7 +194,7 @@ function resolveCompiledCameraViewVariantV1(input, compiled, key) {
     const fallback = unsafeSprites === undefined ? undefined : ownValue(unsafeSprites, id, "visuals.sprites");
     if (fallback !== undefined) {
       const asset = cloneOwnData(fallback, `visuals.sprites.${id}`);
-      if (asset.anchor === undefined) asset.anchor = { x: 0.5, y: 1 };
+      if (ownRecordValue(asset, "anchor") === undefined) defineOwn(asset, "anchor", { x: 0.5, y: 1 });
       return frozen({ status: "fallback", key, kind, id, asset });
     }
   }
@@ -216,8 +232,10 @@ export function projectCameraViewAssetCoverageV1(input) {
   materialRows.sort((a, b) => binaryCompare(`${a.tileSetId}:${a.materialId}`, `${b.tileSetId}:${b.materialId}`));
   for (const { tileSetId, materialId } of materialRows) {
     const resolved = resolveCompiledCameraViewVariantV1({ visuals: input.visuals, kind: "tileSet", id: tileSetId }, compiled, key);
-    const materials = resolved.asset && typeof resolved.asset === "object" ? resolved.asset.materials : undefined;
-    const material = materials && typeof materials === "object" ? materials[materialId] : undefined;
+    const materials = resolved.asset && typeof resolved.asset === "object"
+      ? ownRecordValue(resolved.asset, "materials")
+      : undefined;
+    const material = ownRecordValue(materials, materialId);
     entries.push(frozen({
       kind: "tileSetMaterial",
       id: `${tileSetId}:${materialId}`,
