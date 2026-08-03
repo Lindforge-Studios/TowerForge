@@ -3625,3 +3625,50 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - The exact RED command is now GREEN: `2/2` files and `32/32` tests pass. Focused affected-layer
   regressions for R11 schema/authoring/presentation, R18/R19 build targets and the Canvas renderer
   pass `6/6` files and `72/72` tests. R20.2 renderer integration remains a separate RED/GREEN slice.
+
+## 2026-08-03 — R20.2 shared renderer/generated-player integration RED
+
+- Contract freeze after the R20.1 pure projector baseline `230b9cc`: Canvas and Phaser must use one
+  renderer-owned `camera-renderer-integration.mjs` render-space composition. It projects authored
+  world points before constructing the R18 `ViewportTransform`, reverses viewport before projector
+  for hit tests, derives bounds/signatures from projected coordinates and applies the same
+  elevation/depth ordering to tiles, entities and projectiles. Engine coordinates remain untouched.
+- Two focused RED files were added before R20.2 production changes:
+  `packages/renderer/src/r20-camera-renderer-integration.contract.test.mjs` and
+  `packages/cli/build.r20-camera-projection-package.contract.test.mjs`. The generated package
+  matrix covers Canvas/Phaser x hex/square, project data, PWA cache, single-file embedding and an
+  untouched legacy/top-down output. Browser interaction acceptance is deliberately deferred to a
+  separate R20.2b slice.
+- Exact RED command:
+  `npx vitest run packages/renderer/src/r20-camera-renderer-integration.contract.test.mjs packages/cli/build.r20-camera-projection-package.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+- Expected RED: the shared integration module/import does not exist; Canvas still composes only raw
+  grid coordinates with `ViewportTransform`; generated active builds do not contain the shared
+  camera module; and legacy builds currently copy `camera-projector.mjs` despite the feature being
+  absent. Result: exit `1`, both files failed and all `8/8` tests failed for those exact reasons.
+  No production file was changed by the Contract/Test Designer.
+
+## 2026-08-03 — R20.2 visuals-v4 Juice renderer coexistence RED
+
+- A focused regression was added before changing the R11 renderer compiler: the same valid
+  Procedural Juice v1 catalog must produce byte-equivalent presentation instructions when visuals
+  v4 adds an independent camera catalog. Exact command:
+  `npx vitest run packages/renderer/src/procedural-juice-presentation.contract.test.mjs --reporter=verbose --maxWorkers=1 -t "preserves the exact Procedural Juice projection"`.
+- Result: exit `1`, the new test failed because the renderer still accepted exactly visuals v3 and
+  returned the inert projection for v4. The expected v3 projection remained active. This RED is
+  limited to coexistence; it does not change Juice effects or camera-profile semantics.
+
+## 2026-08-03 — R20.2 shared renderer/generated-player focused GREEN
+
+- Added one browser-safe `camera-renderer-integration.mjs` that composes the R20 projector before
+  the R18 viewport transform, reverses that order for hit testing, derives projected bounds and a
+  stable render-space signature, and applies the shared depth comparator to detached render items.
+  The Canvas renderer now uses that contract for map bounds, centers, pointer selection and tower
+  ordering. Active generated Canvas and Phaser players import the exact same module for hex and
+  square targets; PWA and single-file outputs contain it, while inactive legacy outputs exclude
+  both R20 modules and camera-profile reads.
+- Visuals v4 now preserves the exact existing Procedural Juice projection instead of treating the
+  independent camera catalog as an incompatible future catalog. This coexistence repair changes no
+  Juice cue, entropy or gameplay semantics.
+- The combined focused command passes `3/3` files and `22/22` tests. Renderer/build regressions pass
+  `4/4` files and `43/43` tests; syntax checks, `git diff --check` and `npm run build` are GREEN.
+  R20.3 asset variants and R20.4 Camera Studio/MCP remain separate contract-first slices.
