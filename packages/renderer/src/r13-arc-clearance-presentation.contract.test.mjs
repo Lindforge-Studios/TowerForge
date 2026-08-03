@@ -86,7 +86,9 @@ describe("R13.2 shared blocked-projectile presentation (RED)", () => {
     const phaser = buildSource.slice(buildSource.indexOf("function phaserPlayerTemplate"));
     expect(phaser).toMatch(/projectBallisticsEventPresentation\(presentationSnapshot\)/);
     for (const source of [presentationSource, canvasSource, phaser]) {
-      expect(source).not.toMatch(/topology|lineOfSight|elevationAt|terrainBlockerHeights/);
+      // Presentation may resolve authored tile elevation for a renderer-owned 2.5D camera, but it
+      // must never recompute gameplay topology, LoS, blocker heights or arc clearance.
+      expect(source).not.toMatch(/topology|lineOfSight|terrainBlockerHeights/);
       expect(source).not.toMatch(/4\s*\*[^\n;]*maxAltitude[^\n;]*progress|obstacleTop\s*=|projectileAltitude\s*=/);
     }
   });

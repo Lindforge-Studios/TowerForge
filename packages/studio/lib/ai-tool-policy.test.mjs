@@ -57,6 +57,20 @@ describe("Studio AI tool policy", () => {
     expect(isAiToolName("package_desktop")).toBe(false);
   });
 
+  it("exposes the complete narrow R20 camera workflow to embedded Studio AI", () => {
+    const cameraTools = [
+      { name: "get_camera_profiles", riskClass: "read_only", inputSchema: { type: "object", properties: { projectDir: { type: "string" } } } },
+      { name: "get_camera_profile_recipe", riskClass: "read_only", inputSchema: { type: "object", properties: { projectDir: { type: "string" }, recipeId: { type: "string" } }, required: ["projectDir", "recipeId"] } },
+      { name: "preview_camera_profile", riskClass: "compute_only", inputSchema: { type: "object", properties: { projectDir: { type: "string" }, profileId: { type: "string" } }, required: ["projectDir", "profileId"] } },
+      { name: "apply_camera_profile", riskClass: "write_local", inputSchema: { type: "object", properties: { projectDir: { type: "string" }, profileId: { type: "string" }, ifRevision: { type: "string" } }, required: ["projectDir", "profileId", "ifRevision"] } }
+    ];
+
+    expect(cameraTools.map((tool) => tool.name).every((name) => AI_TOOL_NAMES.includes(name))).toBe(true);
+    expect(selectAiTools(cameraTools).map((tool) => tool.name)).toEqual(cameraTools.map((tool) => tool.name));
+    expect(selectAiTools(cameraTools).every((tool) => !Object.hasOwn(tool.inputSchema.properties, "projectDir"))).toBe(true);
+    expect([...aiWriteToolNames(cameraTools)]).toEqual(["apply_camera_profile"]);
+  });
+
   it("derives write detection from MCP risk metadata", () => {
     expect([...aiWriteToolNames(tools)].sort()).toEqual([
       "apply_map_elevations", "apply_mechanics_module", "apply_theme_pack", "upsert_entity", "write_map"

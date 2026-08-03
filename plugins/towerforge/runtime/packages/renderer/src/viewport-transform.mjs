@@ -42,6 +42,10 @@ export function createViewportTransformV1(options) {
   if (padding < 0 || padding * 2 >= viewport.width || padding * 2 >= viewport.height) {
     throw new RangeError("padding must leave a positive viewport area.");
   }
+  const panPadding = finiteNumber(options.panPadding ?? padding, "panPadding");
+  if (panPadding < 0) throw new RangeError("panPadding must be non-negative.");
+  const boundedPanPaddingX = Math.min(panPadding, Math.max(0, viewport.width / 2 - 0.5));
+  const boundedPanPaddingY = Math.min(panPadding, Math.max(0, viewport.height / 2 - 0.5));
   const minZoom = positiveNumber(options.minZoom ?? 0.5, "minZoom");
   const maxZoom = positiveNumber(options.maxZoom ?? 4, "maxZoom");
   if (minZoom > maxZoom) throw new RangeError("minZoom must not exceed maxZoom.");
@@ -65,10 +69,10 @@ export function createViewportTransformV1(options) {
   const panLimits = (zoom) => {
     const scaledWidth = worldWidth * zoom;
     const scaledHeight = worldHeight * zoom;
-    const minOffsetX = viewport.width - padding - worldBounds.maxX * zoom;
-    const maxOffsetX = padding - worldBounds.minX * zoom;
-    const minOffsetY = viewport.height - padding - worldBounds.maxY * zoom;
-    const maxOffsetY = padding - worldBounds.minY * zoom;
+    const minOffsetX = boundedPanPaddingX - worldBounds.maxX * zoom;
+    const maxOffsetX = viewport.width - boundedPanPaddingX - worldBounds.minX * zoom;
+    const minOffsetY = boundedPanPaddingY - worldBounds.maxY * zoom;
+    const maxOffsetY = viewport.height - boundedPanPaddingY - worldBounds.minY * zoom;
     return {
       minOffsetX: scaledWidth <= viewport.width - padding * 2 ? (viewport.width - scaledWidth) / 2 - worldBounds.minX * zoom : minOffsetX,
       maxOffsetX: scaledWidth <= viewport.width - padding * 2 ? (viewport.width - scaledWidth) / 2 - worldBounds.minX * zoom : maxOffsetX,

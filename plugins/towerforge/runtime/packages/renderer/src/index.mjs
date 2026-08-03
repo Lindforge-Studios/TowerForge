@@ -1,4 +1,4 @@
-import { expandAutotileInvalidations, resolveAutotile } from "./autotile.mjs";
+import { expandAutotileInvalidations, resolveAutotile, resolveTileSetBinding } from "./autotile.mjs";
 import { projectTerraformingPresentation } from "./terraforming-presentation.mjs";
 import {
   projectLegacyPresentationEvents,
@@ -35,6 +35,8 @@ import {
   createProceduralJuicePresentationRuntime,
   createProceduralJuiceWorldSnapshotBuffer
 } from "./procedural-juice-runtime.mjs";
+import { createCameraRenderSpaceV1, projectCameraRenderItemsV1, resolveCameraProfileV1 } from "./camera-renderer-integration.mjs";
+import { resolveCameraViewVariantV1 } from "./camera-view-assets.mjs";
 export * from "./autotile.mjs";
 export * from "./combat-presentation.mjs";
 export * from "./navigation-presentation.mjs";
@@ -57,6 +59,9 @@ export * from "./ballistics-presentation.mjs";
 export * from "./destructible-environment-presentation.mjs";
 export * from "./weather-presentation.mjs";
 export * from "./ghost-replay-presentation.mjs";
+export * from "./camera-projector.mjs";
+export * from "./camera-renderer-integration.mjs";
+export * from "./camera-view-assets.mjs";
 export { projectLogisticsPresentation } from "./logistics-power-presentation.mjs";
 
 function ownDataValue(record, key) {
@@ -88,7 +93,20 @@ export class TowerForgeCanvasRenderer {
     this.viewportController = null;
     this.viewportSignature = "";
     const authoredVisuals = ownDataValue(this.content, "visuals");
-    this.proceduralJuiceConfigured = ownDataValue(authoredVisuals, "schemaVersion") === 3
+    /* towerforge-optional:cameraProjection:constructor:start */
+    const cameraCatalog = ownDataValue(authoredVisuals, "schemaVersion") === 4
+      ? ownDataValue(authoredVisuals, "cameraProfiles")
+      : null;
+    const cameraBindings = ownDataValue(cameraCatalog, "bindings");
+    const hasCameraBinding = Object.keys(ownDataValue(cameraBindings, "missions") ?? {}).length > 0
+      || Object.keys(ownDataValue(cameraBindings, "maps") ?? {}).length > 0;
+    this.cameraCatalog = typeof options.cameraProfileId === "string" || hasCameraBinding ? cameraCatalog : null;
+    /* towerforge-optional:cameraProjection:constructor:end */
+    this.buildTargetCameraProfileId = typeof options.cameraProfileId === "string" ? options.cameraProfileId : undefined;
+    this.cameraProfile = null;
+    this.cameraProfileSignature = "legacy";
+    this.cameraRenderSpace = null;
+    this.proceduralJuiceConfigured = [3, 4].includes(ownDataValue(authoredVisuals, "schemaVersion"))
       && ownDataValue(authoredVisuals, "proceduralJuice") !== undefined;
     this.assetBase = options.assetBase ?? "";
     this.maxDevicePixelRatio = Number.isFinite(options.maxDevicePixelRatio) && options.maxDevicePixelRatio > 0
@@ -150,6 +168,7 @@ export class TowerForgeCanvasRenderer {
     this.canvas.height = Math.floor(cssH * scale);
     this.viewportController = null;
     this.viewportSignature = "";
+    this.cameraRenderSpace = null;
     this.tileLayerDirtyAll = true;
   }
 
@@ -222,6 +241,7 @@ export class TowerForgeCanvasRenderer {
     const ballisticsRicochetEvents = projectBallisticsRicochetEventPresentation(presentationSnapshot);
 
     this.lastGrid = snapshot.grid ?? this.lastGrid;
+    this.selectCameraProfile(snapshot);
     const geom = this.geometry(snapshot.tiles ?? [], this.lastGrid);
     const mapModel = { id: snapshot.mapId ?? snapshot.missionId ?? "map", grid: this.lastGrid, tiles: snapshot.tiles ?? [], pathRoutes: snapshot.pathRoutes ?? [] };
     const positions = new Map();
@@ -266,17 +286,19 @@ export class TowerForgeCanvasRenderer {
     this.drawElevationPresentation(terraformingPresentation?.elevationPresentation ?? projectElevationCues(snapshot.elevation), geom);
     this.drawNavigationOverlay(geom);
     if (this.focusCoord) this.drawFocusCell(this.focusCoord, geom);
-    if (destructibleEnvironmentPresentation.active) {
-      this.drawDestructibleEnvironmentPresentation(destructibleEnvironmentPresentation, geom);
-    }
-    for (const tower of snapshot.towers ?? []) this.drawTower(tower, snapshot, geom);
     const heroPresentation = projectHeroesPresentation(snapshot);
     for (const hero of heroPresentation.units) {
       this.drawPassiveHeroAura(hero, towerPositions, geom);
-      this.drawHero(hero, geom);
     }
-    for (const enemy of snapshot.enemies ?? []) this.drawEnemy(enemy, snapshot, geom);
-    if (ballisticsPresentation.active) this.drawBallisticsPresentation(ballisticsPresentation, geom);
+    if (geom.cameraRenderSpace) {
+      this.drawCameraOrderedWorldActors({ snapshot, geom, destructibleEnvironmentPresentation, heroPresentation, ballisticsPresentation, positions });
+    } else {
+      if (destructibleEnvironmentPresentation.active) this.drawDestructibleEnvironmentPresentation(destructibleEnvironmentPresentation, geom);
+      for (const tower of snapshot.towers ?? []) this.drawTower(tower, snapshot, geom);
+      for (const hero of heroPresentation.units) this.drawHero(hero, geom);
+      for (const enemy of snapshot.enemies ?? []) this.drawEnemy(enemy, snapshot, geom);
+      if (ballisticsPresentation.active) this.drawBallisticsPresentation(ballisticsPresentation, geom);
+    }
     this.drawBallisticsEvents(ballisticsEvents, geom);
     this.drawBallisticsRicochetEvents(ballisticsRicochetEvents, geom);
     for (const hero of heroPresentation.units) this.drawHeroBlocking(hero, positions, geom);
@@ -297,24 +319,73 @@ export class TowerForgeCanvasRenderer {
     this.ctx.fillStyle = "#ffd27a";
     this.ctx.strokeStyle = "rgba(255, 244, 196, .72)";
     this.ctx.lineWidth = Math.max(1, geom.r * 0.08);
-    for (const projectile of ballisticsPresentation.projectiles) {
-      const point = projectBallisticsPresentationPoint(
-        projectile,
-        (coord) => this.center(coord, geom),
-        Math.max(1, geom.r * 0.18)
-      );
-      if (!point) continue;
-      this.ctx.beginPath();
-      this.ctx.arc(point.x, point.y, Math.max(2, geom.r * 0.13), 0, Math.PI * 2);
-      this.ctx.fill();
-      this.ctx.stroke();
+    for (const projectile of ballisticsPresentation.projectiles) this.drawBallisticsProjectile(projectile, geom);
+    this.ctx.restore();
+  }
+
+  drawBallisticsProjectile(projectile, geom) {
+    const point = projectBallisticsPresentationPoint(projectile, (coord) => this.center(coord, geom), Math.max(1, geom.r * 0.18));
+    if (!point) return;
+    this.ctx.beginPath();
+    this.ctx.arc(point.x, point.y, Math.max(2, geom.r * 0.13), 0, Math.PI * 2);
+    this.ctx.fill();
+    this.ctx.stroke();
+  }
+
+  drawCameraOrderedWorldActors({ snapshot, geom, destructibleEnvironmentPresentation, heroPresentation, ballisticsPresentation, positions }) {
+    const rows = [];
+    const actors = new Map();
+    const addWorld = (id, kind, value, world) => {
+      const key = `${kind}:${id}`;
+      rows.push({ id: key, kind, ...world });
+      actors.set(key, value);
+    };
+    for (const row of destructibleEnvironmentPresentation.active ? destructibleEnvironmentPresentation.rows : []) {
+      addWorld(row.id ?? row.objectId ?? `${row.coord.q},${row.coord.r}`, "destructible", row, { ...this.worldCenter(row.coord, geom), elevation: this.elevationAtCoord(row.coord, geom) });
+    }
+    for (const tower of snapshot.towers ?? []) addWorld(tower.id, "tower", tower, { ...this.worldCenter(tower.coord, geom), elevation: this.elevationAtCoord(tower.coord, geom) });
+    for (const hero of heroPresentation.units) {
+      const screen = projectHeroPresentationPoint(hero, (coord) => this.center(coord, geom));
+      if (screen) {
+        const elevation = this.elevationAtCoord(hero.coord ?? hero.targetCoord, geom);
+        addWorld(hero.id, "hero", hero, { ...geom.cameraRenderSpace.screenToWorld(screen, elevation), elevation });
+      }
+    }
+    for (const enemy of snapshot.enemies ?? []) {
+      const screen = positions.get(enemy.id);
+      if (screen) addWorld(enemy.id, "enemy", enemy, { ...geom.cameraRenderSpace.screenToWorld(screen, 0), elevation: 0 });
+    }
+    for (const projectile of ballisticsPresentation.active ? ballisticsPresentation.projectiles : []) {
+      const screen = projectBallisticsPresentationPoint(projectile, (coord) => this.center(coord, geom), Math.max(1, geom.r * 0.18));
+      if (screen) {
+        const coord = projectile.elapsedUnits >= projectile.travelTimeUnits ? projectile.targetCoord : projectile.sourceCoord;
+        const elevation = this.elevationAtCoord(coord, geom);
+        addWorld(projectile.id, "projectile", projectile, { ...geom.cameraRenderSpace.screenToWorld(screen, elevation), elevation });
+      }
+    }
+    const ordered = projectCameraRenderItemsV1(geom.cameraRenderSpace, rows);
+    this.ctx.save();
+    this.ctx.fillStyle = "#ffd27a";
+    this.ctx.strokeStyle = "rgba(255, 244, 196, .72)";
+    this.ctx.lineWidth = Math.max(1, geom.r * 0.08);
+    for (const row of ordered) {
+      const value = actors.get(row.id);
+      if (row.kind === "destructible") this.drawDestructibleEnvironmentRow(value, geom);
+      else if (row.kind === "tower") this.drawTower(value, snapshot, geom);
+      else if (row.kind === "hero") this.drawHero(value, geom);
+      else if (row.kind === "enemy") this.drawEnemy(value, snapshot, geom);
+      else if (row.kind === "projectile") this.drawBallisticsProjectile(value, geom);
     }
     this.ctx.restore();
   }
 
   drawDestructibleEnvironmentPresentation(presentation, geom) {
     this.ctx.save();
-    for (const row of presentation.rows) {
+    for (const row of presentation.rows) this.drawDestructibleEnvironmentRow(row, geom);
+    this.ctx.restore();
+  }
+
+  drawDestructibleEnvironmentRow(row, geom) {
       const point = this.center(row.coord, geom);
       const radius = Math.max(3, geom.r * 0.38);
       this.ctx.globalAlpha = row.destroyed ? 0.42 : 0.95;
@@ -339,8 +410,6 @@ export class TowerForgeCanvasRenderer {
         this.ctx.fillStyle = row.hpRatio > 0.35 ? "#d7b06f" : "#df6a59";
         this.ctx.fillRect(point.x - radius, top, width * row.hpRatio, Math.max(2, geom.r * 0.08));
       }
-    }
-    this.ctx.restore();
   }
 
   drawWeatherPresentation(presentation, mapTiles, geom) {
@@ -837,7 +906,17 @@ export class TowerForgeCanvasRenderer {
 
   spriteById(spriteId) {
     const visuals = this.content.visuals;
-    const sprite = spriteId ? ownDataValue(ownDataValue(visuals, "sprites"), spriteId) : null;
+    let sprite = spriteId ? ownDataValue(ownDataValue(visuals, "sprites"), spriteId) : null;
+    if (sprite && this.cameraProfile && ownDataValue(visuals, "viewVariants")) {
+      const resolved = resolveCameraViewVariantV1({
+        visuals,
+        kind: "sprite",
+        id: spriteId,
+        projection: this.cameraProfile.projection,
+        orientation: this.cameraProfile.orientation
+      });
+      if (resolved.status === "exact") sprite = resolved.asset;
+    }
     if (!sprite || typeof sprite !== "object") return null;
     if (sprite.atlas && sprite.frame) {
       const atlas = ownDataValue(ownDataValue(visuals, "atlases"), sprite.atlas);
@@ -847,10 +926,49 @@ export class TowerForgeCanvasRenderer {
       // Reject degenerate/negative frames so a malformed catalog draws nothing rather than
       // feeding a negative or non-finite source rect into drawImage (NaN >= 0 is false).
       if (!(f.w > 0) || !(f.h > 0) || !(f.x >= 0) || !(f.y >= 0)) return null;
-      return { img, sx: f.x, sy: f.y, sw: f.w, sh: f.h };
+      return { img, sx: f.x, sy: f.y, sw: f.w, sh: f.h, anchor: { x: 0.5, y: 0.5 } };
     }
     const img = this.loadImage(sprite.src);
-    return img ? { img, sx: 0, sy: 0, sw: img.naturalWidth, sh: img.naturalHeight } : null;
+    return img ? { img, sx: 0, sy: 0, sw: img.naturalWidth, sh: img.naturalHeight, anchor: sprite.anchor ?? { x: 0.5, y: 0.5 } } : null;
+  }
+
+  cameraTileSetVariant(map) {
+    if (!this.cameraProfile || !map) return null;
+    const tileSetId = resolveTileSetBinding(this.content.visuals, map);
+    if (!tileSetId) return null;
+    const resolved = resolveCameraViewVariantV1({
+      visuals: this.content.visuals,
+      kind: "tileSet",
+      id: tileSetId,
+      projection: this.cameraProfile.projection,
+      orientation: this.cameraProfile.orientation
+    });
+    return resolved.status === "exact" ? { tileSetId, ...resolved } : null;
+  }
+
+  cameraAutotileVisuals(map, variant = this.cameraTileSetVariant(map)) {
+    if (!variant) return this.content.visuals;
+    const visuals = this.content.visuals;
+    const base = visuals.tileSets?.[variant.tileSetId];
+    return {
+      ...visuals,
+      tileSets: { ...visuals.tileSets, [variant.tileSetId]: { ...base, materials: variant.asset.materials } }
+    };
+  }
+
+  cameraTileSpriteById(spriteId, variant) {
+    if (!variant) return this.spriteById(spriteId);
+    const sprite = this.content.visuals?.sprites?.[spriteId];
+    const image = this.loadImage(variant.asset?.atlas?.src);
+    if (!sprite?.frame || !image) return null;
+    const frame = sprite.frame;
+    return { img: image, sx: frame.x, sy: frame.y, sw: frame.w, sh: frame.h, anchor: { x: 0.5, y: 0.5 } };
+  }
+
+  drawAnchoredSprite(sprite, point, width, height = width) {
+    const anchorX = Number.isFinite(sprite.anchor?.x) ? sprite.anchor.x : 0.5;
+    const anchorY = Number.isFinite(sprite.anchor?.y) ? sprite.anchor.y : 0.5;
+    this.ctx.drawImage(sprite.img, sprite.sx, sprite.sy, sprite.sw, sprite.sh, point.x - width * anchorX, point.y - height * anchorY, width, height);
   }
 
   loadImage(src) {
@@ -877,6 +995,7 @@ export class TowerForgeCanvasRenderer {
       }
     }
     this.lastGrid = map.grid ?? (map.orientation === "orthogonal" ? { kind: "square", adjacency: "cardinal" } : { kind: "hex", layout: "odd-r" });
+    this.selectCameraProfile({ mapId: map.id });
     const geom = this.geometry(tiles, this.lastGrid);
     const mapModel = { ...map, grid: this.lastGrid, tiles };
     this.clear();
@@ -896,14 +1015,14 @@ export class TowerForgeCanvasRenderer {
     const scaleX = rect.width > 0 ? this.canvas.width / rect.width : 1;
     const scaleY = rect.height > 0 ? this.canvas.height / rect.height : 1;
     const screenPoint = { x: (event.clientX - rect.left) * scaleX, y: (event.clientY - rect.top) * scaleY };
-    const hitPoint = geom.viewportTransform ? geom.viewportTransform.screenToWorld(screenPoint) : screenPoint;
     let best = null;
     let bestDist = Infinity;
     for (const tile of tiles ?? []) {
       const radius = geom.worldR ?? geom.r;
-      const p = geom.grid.kind === "square"
-        ? { x: geom.ox + tile.q * radius * 2, y: geom.oy + tile.r * radius * 2 }
-        : { x: geom.ox + tile.q * radius * 1.48 + (tile.r % 2) * radius * 0.74, y: geom.oy + tile.r * radius * 1.28 };
+      const hitPoint = geom.cameraRenderSpace
+        ? geom.cameraRenderSpace.screenToWorld(screenPoint, Number(tile.elevation) || 0)
+        : geom.viewportTransform ? geom.viewportTransform.screenToWorld(screenPoint) : screenPoint;
+      const p = this.worldCenter(tile, geom);
       const d = Math.hypot(p.x - hitPoint.x, p.y - hitPoint.y);
       if (d < bestDist) {
         bestDist = d;
@@ -928,9 +1047,15 @@ export class TowerForgeCanvasRenderer {
     // tile-count arrays 60x/second.
     let maxQ = 1;
     let maxR = 1;
+    let elevationSignature = 0;
+    const tileElevations = new Map();
     for (const tile of tiles) {
       if (tile.q > maxQ) maxQ = tile.q;
       if (tile.r > maxR) maxR = tile.r;
+      const elevation = Number(tile.elevation) || 0;
+      tileElevations.set(`${tile.q},${tile.r}`, elevation);
+      const coordHash = (Math.imul((tile.q + 1) | 0, 73_856_093) ^ Math.imul((tile.r + 1) | 0, 19_349_663)) >>> 0;
+      elevationSignature = (elevationSignature + (coordHash ^ Math.imul((elevation * 1_000) | 0, 83_492_791))) >>> 0;
     }
     let base;
     if (grid?.kind === "square") {
@@ -940,8 +1065,48 @@ export class TowerForgeCanvasRenderer {
       const r = Math.min(this.canvas.width / ((maxQ + 2) * 1.65), this.canvas.height / ((maxR + 2) * 1.45));
       base = { r, ox: r * 1.5, oy: r * 1.5, grid: grid ?? { kind: "hex", layout: "odd-r" } };
     }
+    if (this.cameraProfile && this.viewportProfile && tiles.length > 0) {
+      const rect = this.canvas.getBoundingClientRect();
+      const backingScale = rect.width > 0 && rect.height > 0
+        ? Math.min(this.canvas.width / rect.width, this.canvas.height / rect.height)
+        : 1;
+      const signature = `${this.canvas.width}x${this.canvas.height}|${base.grid.kind}|${maxQ},${maxR}|${elevationSignature}|${backingScale}|${this.cameraProfileSignature}`;
+      if (!this.cameraRenderSpace || this.viewportSignature !== signature) {
+        const worldPoints = tiles.map((tile) => {
+          const center = this.worldCenter(tile, base);
+          return { ...center, elevation: Number(tile.elevation) || 0 };
+        });
+        this.cameraRenderSpace = createCameraRenderSpaceV1({
+          cameraProfile: {
+            ...this.cameraProfile,
+            fitPadding: this.cameraProfile.fitPadding * backingScale,
+            panPadding: this.cameraProfile.panPadding * backingScale
+          },
+          worldPoints,
+          viewport: { width: this.canvas.width, height: this.canvas.height },
+          viewportProfile: {
+            padding: (Number(this.viewportProfile.padding) || 0) * backingScale,
+            minZoom: this.viewportProfile.minZoom,
+            maxZoom: this.viewportProfile.maxZoom,
+            initialZoom: this.viewportProfile.initialZoom
+          }
+        });
+        this.viewportController = this.cameraRenderSpace.viewportTransform;
+        this.viewportSignature = signature;
+        this.tileLayerDirtyAll = true;
+      }
+      const view = this.viewportController.getSnapshot();
+      return {
+        ...base,
+        worldR: base.r,
+        r: base.r * view.zoom,
+        viewportTransform: this.viewportController,
+        cameraRenderSpace: this.cameraRenderSpace,
+        tileElevations
+      };
+    }
     if (!this.viewportFactory || !this.viewportProfile || tiles.length === 0) return base;
-    const signature = `${this.canvas.width}x${this.canvas.height}|${base.grid.kind}|${maxQ},${maxR}`;
+    const signature = `${this.canvas.width}x${this.canvas.height}|${base.grid.kind}|${maxQ},${maxR}|legacy`;
     if (!this.viewportController || this.viewportSignature !== signature) {
       const baseCenter = (coord) => base.grid.kind === "square"
         ? { x: base.ox + coord.q * base.r * 2, y: base.oy + coord.r * base.r * 2 }
@@ -981,17 +1146,57 @@ export class TowerForgeCanvasRenderer {
   }
 
   center(coord, geom) {
-    const radius = geom.worldR ?? geom.r;
-    let point;
-    if (geom.grid.kind === "square") {
-      point = { x: geom.ox + coord.q * radius * 2, y: geom.oy + coord.r * radius * 2 };
-    } else {
-      point = {
-        x: geom.ox + coord.q * radius * 1.48 + (coord.r % 2) * radius * 0.74,
-        y: geom.oy + coord.r * radius * 1.28
-      };
+    const point = this.worldCenter(coord, geom);
+    if (geom.cameraRenderSpace) {
+      return geom.cameraRenderSpace.worldToScreen({ ...point, elevation: this.elevationAtCoord(coord, geom) });
     }
     return geom.viewportTransform ? geom.viewportTransform.worldToScreen(point) : point;
+  }
+
+  elevationAtCoord(coord, geom) {
+    if (Number.isFinite(coord?.elevation)) return Number(coord.elevation);
+    return geom?.tileElevations?.get(`${coord?.q},${coord?.r}`) ?? 0;
+  }
+
+  worldCenter(coord, geom) {
+    const radius = geom.worldR ?? geom.r;
+    if (geom.grid.kind === "square") {
+      return { x: geom.ox + coord.q * radius * 2, y: geom.oy + coord.r * radius * 2 };
+    }
+    return {
+      x: geom.ox + coord.q * radius * 1.48 + (coord.r % 2) * radius * 0.74,
+      y: geom.oy + coord.r * radius * 1.28
+    };
+  }
+
+  /* towerforge-optional:cameraProjection:selector:start */
+  selectCameraProfile(context) {
+    if (!this.cameraCatalog) {
+      this.cameraProfile = null;
+      this.cameraProfileSignature = "legacy";
+      this.cameraRenderSpace = null;
+      return;
+    }
+    const resolution = resolveCameraProfileV1(this.cameraCatalog, {
+      missionId: typeof context?.missionId === "string" ? context.missionId : undefined,
+      mapId: typeof context?.mapId === "string" ? context.mapId : undefined,
+      buildTargetCameraProfileId: this.buildTargetCameraProfileId
+    });
+    const signature = `${resolution.source}|${resolution.profileId ?? "fallback"}|${JSON.stringify(resolution.profile)}`;
+    if (signature !== this.cameraProfileSignature) this.cameraRenderSpace = null;
+    this.cameraProfile = resolution.profile;
+    this.cameraProfileSignature = signature;
+  }
+  /* towerforge-optional:cameraProjection:selector:end */
+
+  cameraOrderedTowers(towers, geom) {
+    if (!geom.cameraRenderSpace || towers.length < 2) return towers;
+    const byId = new Map(towers.map((tower) => [tower.id, tower]));
+    const items = towers.map((tower) => {
+      const point = this.worldCenter(tower.coord, geom);
+      return { id: tower.id, kind: "tower", ...point, elevation: this.elevationAtCoord(tower.coord, geom) };
+    });
+    return projectCameraRenderItemsV1(geom.cameraRenderSpace, items).map((item) => byId.get(item.id));
   }
 
   drawTower(tower, snapshot, geom) {
@@ -1002,7 +1207,7 @@ export class TowerForgeCanvasRenderer {
     if (disabled) this.ctx.globalAlpha = 0.4;
     if (sprite) {
       const s = geom.r * 1.4;
-      this.ctx.drawImage(sprite.img, sprite.sx, sprite.sy, sprite.sw, sprite.sh, p.x - s / 2, p.y - s / 2, s, s);
+      this.drawAnchoredSprite(sprite, p, s);
     } else {
       this.ctx.beginPath();
       this.ctx.arc(p.x, p.y, geom.r * 0.52, 0, Math.PI * 2);
@@ -1049,7 +1254,7 @@ export class TowerForgeCanvasRenderer {
     if (hero.durability?.defeated) this.ctx.globalAlpha = 0.38;
     if (sprite) {
       const size = geom.r * 1.35;
-      this.ctx.drawImage(sprite.img, sprite.sx, sprite.sy, sprite.sw, sprite.sh, p.x - size / 2, p.y - size / 2, size, size);
+      this.drawAnchoredSprite(sprite, p, size);
     } else {
       this.ctx.beginPath();
       this.ctx.arc(p.x, p.y, geom.r * 0.5, 0, Math.PI * 2);
@@ -1155,7 +1360,7 @@ export class TowerForgeCanvasRenderer {
     const sprite = this.spriteFor("enemies", enemy.typeId);
     if (sprite) {
       const s = geom.r * 0.95;
-      this.ctx.drawImage(sprite.img, sprite.sx, sprite.sy, sprite.sw, sprite.sh, p.x - s / 2, p.y - s / 2, s, s);
+      this.drawAnchoredSprite(sprite, p, s);
     } else {
       this.ctx.beginPath();
       this.ctx.arc(p.x, p.y, geom.r * 0.38, 0, Math.PI * 2);
@@ -1414,17 +1619,18 @@ export class TowerForgeCanvasRenderer {
 
   drawTile(tile, geom, map) {
     const p = this.center(tile, geom);
-    const resolved = resolveAutotile({ map, visuals: this.content.visuals, coord: tile, terrain: tile.terrain, seed: this.content.visuals?.tileSeed ?? 0 });
+    const cameraVariant = this.cameraTileSetVariant(map);
+    const resolved = resolveAutotile({ map, visuals: this.cameraAutotileVisuals(map, cameraVariant), coord: tile, terrain: tile.terrain, seed: this.content.visuals?.tileSeed ?? 0 });
     if (resolved.sectors?.length) {
-      const complete = resolved.sectors.every((sector) => this.spriteById(sector.selected?.spriteId));
+      const complete = resolved.sectors.every((sector) => this.cameraTileSpriteById(sector.selected?.spriteId, cameraVariant));
       if (!complete) {
         this.drawCell(p.x, p.y, geom.r * 0.86, this.tileColor(tile.terrain), geom);
         return;
       }
-      for (const sector of resolved.sectors) this.drawTileSector(p, geom, sector);
+      for (const sector of resolved.sectors) this.drawTileSector(p, geom, sector, cameraVariant);
       return;
     }
-    const sprite = this.spriteById(resolved.selected?.spriteId);
+    const sprite = this.cameraTileSpriteById(resolved.selected?.spriteId, cameraVariant);
     if (!sprite) {
       this.drawCell(p.x, p.y, geom.r * 0.86, this.tileColor(tile.terrain), geom);
       return;
@@ -1439,8 +1645,8 @@ export class TowerForgeCanvasRenderer {
     this.ctx.restore();
   }
 
-  drawTileSector(center, geom, sector) {
-    const sprite = this.spriteById(sector.selected?.spriteId);
+  drawTileSector(center, geom, sector, cameraVariant = null) {
+    const sprite = this.cameraTileSpriteById(sector.selected?.spriteId, cameraVariant);
     if (!sprite) return;
     const size = geom.r * 1.72;
     this.ctx.save();

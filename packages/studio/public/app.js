@@ -12017,6 +12017,275 @@ $("btn-script-delete")?.addEventListener("click", async () => {
   } catch (error) { toast(error.message, "err"); }
 });
 
+const CameraStudioUI = { loaded: false, loading: false, revision: null, recipes: [], cameraProfiles: null, selectedProfileId: null, needsHydrate: false, skipHydrateOnce: false, preview: null, viewVariantPreview: null, error: null, previewTimer: null };
+
+async function loadCameraStudio() {
+  if (CameraStudioUI.loading) return;
+  CameraStudioUI.loading = true;
+  renderCameraStudio();
+  try {
+    const current = await apiGet("/api/camera/read");
+    const recipeCatalog = await apiGet("/api/camera/recipes");
+    CameraStudioUI.revision = current.revision;
+    CameraStudioUI.cameraProfiles = current.cameraProfiles ?? { schemaVersion: 1, profiles: {}, bindings: { maps: {}, missions: {} } };
+    if (S.project?.visuals) S.project.visuals.cameraProfiles = deep(CameraStudioUI.cameraProfiles);
+    const profileIds = Object.keys(CameraStudioUI.cameraProfiles.profiles ?? {}).sort();
+    if (!profileIds.includes(CameraStudioUI.selectedProfileId)) CameraStudioUI.selectedProfileId = profileIds[0] ?? null;
+    CameraStudioUI.needsHydrate = CameraStudioUI.skipHydrateOnce !== true;
+    CameraStudioUI.skipHydrateOnce = false;
+    CameraStudioUI.recipes = recipeCatalog.recipes ?? [];
+    CameraStudioUI.loaded = true;
+    CameraStudioUI.error = null;
+  } catch (error) { CameraStudioUI.error = error; }
+  finally { CameraStudioUI.loading = false; renderCameraStudio(); }
+}
+
+function cameraStudioCandidate() {
+  const projection = $("camera-projection")?.value ?? "top_down";
+  const orientation = $("camera-orientation")?.value ?? "north";
+  const profileId = $("camera-profile-id")?.value.trim();
+  const recipe = CameraStudioUI.recipes.find((entry) => entry.recipeId === projection && entry.profile?.orientation === orientation);
+  if (!profileId || !recipe?.profile) throw new Error("Select a valid camera profile ID, projection and orientation.");
+  const scope = $("camera-binding-scope")?.value;
+  const bindingId = $("camera-binding-id")?.value.trim();
+  return {
+    profileId,
+    profile: {
+      ...deep(recipe.profile),
+      orientation,
+      fitPadding: cameraStudioNumber("camera-fit-padding"),
+      elevationScale: cameraStudioNumber("camera-elevation-scale"),
+      minZoom: cameraStudioNumber("camera-min-zoom"),
+      initialZoom: cameraStudioNumber("camera-initial-zoom"),
+      maxZoom: cameraStudioNumber("camera-max-zoom"),
+      panPadding: cameraStudioNumber("camera-pan-padding")
+    },
+    ...(scope ? { binding: { scope, id: bindingId } } : {})
+  };
+}
+
+function cameraStudioNumber(id) {
+  const value = Number($(id)?.value);
+  if (!Number.isFinite(value)) throw new Error(`${id} must be a finite number.`);
+  return value;
+}
+
+function cameraStudioViewport() {
+  const [width, height] = ($("camera-viewport-preset")?.value ?? "1440x900").split("x").map(Number);
+  return { width, height };
+}
+
+function cameraViewVariantCandidate() {
+  const asset = $("camera-view-variant-asset")?.value.trim();
+  const projection = $("camera-projection")?.value ?? "top_down";
+  const orientation = $("camera-orientation")?.value ?? "north";
+  const kind = $("camera-view-variant-kind")?.value;
+  const resourceId = $("camera-view-variant-resource")?.value.trim();
+  if (!asset || !resourceId || !["sprite", "tileSet"].includes(kind)) throw new Error("Choose a resource and a project-local image asset.");
+  const extension = asset.slice(asset.lastIndexOf(".")).toLowerCase();
+  const mimeType = extension === ".png" ? "image/png" : [".jpg", ".jpeg"].includes(extension) ? "image/jpeg" : extension === ".webp" ? "image/webp" : null;
+  if (!mimeType) throw new Error("Camera variants support PNG, JPEG and WebP assets.");
+  const variant = kind === "sprite"
+    ? {
+        src: asset,
+        mimeType,
+        anchor: { x: cameraStudioNumber("camera-view-variant-anchor-x"), y: cameraStudioNumber("camera-view-variant-anchor-y") }
+      }
+    : {
+        atlas: { src: asset, mimeType },
+        materials: parseOptionalJsonEditor("camera-view-variant-materials", "Tileset materials") ?? {}
+      };
+  return { kind, resourceId, projection, orientation, variant };
+}
+
+function renderCameraViewVariantBinder() {
+  const coverage = $("camera-view-variant-coverage");
+  if (!coverage) return;
+  coverage.textContent = CameraStudioUI.viewVariantPreview
+    ? JSON.stringify({ candidate: CameraStudioUI.viewVariantPreview.candidate, coverage: CameraStudioUI.viewVariantPreview.coverage, validation: CameraStudioUI.viewVariantPreview.validation }, null, 2)
+    : "Preview one exact projection:orientation binding before applying it.";
+  $("btn-camera-view-variant-apply").disabled = CameraStudioUI.viewVariantPreview?.ok !== true;
+  $("btn-camera-view-variant-preview").onclick = async () => {
+    if (S.dirty) { toast("Save or discard other project changes before previewing a camera asset binding.", "warn"); return; }
+    try {
+      const result = await apiPost("/api/camera/view-variant/preview", cameraViewVariantCandidate());
+      CameraStudioUI.viewVariantPreview = result;
+      CameraStudioUI.revision = result.revision;
+      renderCameraViewVariantBinder();
+    } catch (error) { CameraStudioUI.viewVariantPreview = null; toast(error.message, "err"); renderCameraViewVariantBinder(); }
+  };
+  $("btn-camera-view-variant-apply").onclick = async () => {
+    if (!CameraStudioUI.viewVariantPreview?.ok) return;
+    if (S.dirty) { toast("Save or discard other project changes before applying a camera asset binding.", "warn"); return; }
+    try {
+      const result = await apiPost("/api/camera/view-variant/apply", { ...cameraViewVariantCandidate(), ifRevision: CameraStudioUI.viewVariantPreview.revision });
+      if (result.newHash) S.contentHash = result.newHash;
+      CameraStudioUI.viewVariantPreview = null;
+      CameraStudioUI.loaded = false;
+      await load();
+      await loadCameraStudio();
+      toast("Camera view variant applied.", "ok");
+    } catch (error) { toast(error.message, "err"); }
+  };
+  for (const id of ["camera-view-variant-kind", "camera-view-variant-resource", "camera-view-variant-asset", "camera-view-variant-anchor-x", "camera-view-variant-anchor-y", "camera-view-variant-materials"]) {
+    $(id).oninput = () => { CameraStudioUI.viewVariantPreview = null; renderCameraViewVariantBinder(); };
+  }
+}
+
+async function previewCameraStudio() {
+  try {
+    const candidate = cameraStudioCandidate();
+    const missionId = S.selectedMissionEdId ?? Object.keys(S.project?.missions ?? {})[0];
+    const mapId = S.project?.missions?.[missionId]?.mapId;
+    CameraStudioUI.preview = await apiPost("/api/camera/preview", {
+      ...candidate,
+      context: { missionId, mapId, buildTargetId: S.project?.buildTargets?.defaults?.web, viewport: cameraStudioViewport() }
+    });
+    CameraStudioUI.revision = CameraStudioUI.preview.revision;
+    renderCameraStudio();
+  } catch (error) { CameraStudioUI.preview = null; toast(error.message, "err"); renderCameraStudio(); }
+}
+
+async function applyCameraStudio() {
+  if (!CameraStudioUI.preview?.ok) return;
+  try {
+    const candidate = cameraStudioCandidate();
+    const result = await apiPost("/api/camera/apply", { ...candidate, ifRevision: CameraStudioUI.revision });
+    if (result.newHash) S.contentHash = result.newHash;
+    CameraStudioUI.selectedProfileId = candidate.profileId;
+    CameraStudioUI.preview = null;
+    CameraStudioUI.loaded = false;
+    await loadCameraStudio();
+    toast("Camera profile applied.", "ok");
+  } catch (error) { toast(error.message, "err"); }
+}
+
+async function disableCameraStudioBinding() {
+  try {
+    const candidate = cameraStudioCandidate();
+    if (!candidate.binding) throw new Error("Choose a mission or map binding to disable.");
+    const disabledCandidate = { ...candidate, binding: { ...candidate.binding, enabled: false } };
+    const missionId = S.selectedMissionEdId ?? Object.keys(S.project?.missions ?? {})[0];
+    const mapId = S.project?.missions?.[missionId]?.mapId;
+    const preview = await apiPost("/api/camera/preview", {
+      ...disabledCandidate,
+      context: { missionId, mapId, buildTargetId: S.project?.buildTargets?.defaults?.web, viewport: cameraStudioViewport() }
+    });
+    if (!preview.ok) throw new Error("Camera binding disable preview failed.");
+    const result = await apiPost("/api/camera/apply", { ...disabledCandidate, ifRevision: preview.revision });
+    if (result.newHash) S.contentHash = result.newHash;
+    CameraStudioUI.selectedProfileId = candidate.profileId;
+    CameraStudioUI.skipHydrateOnce = true;
+    CameraStudioUI.preview = null;
+    CameraStudioUI.loaded = false;
+    await loadCameraStudio();
+    toast("Camera binding disabled; top-down fallback restored when no lower-priority binding exists.", "ok");
+  } catch (error) { toast(error.message, "err"); }
+}
+
+function renderCameraStudio() {
+  if (!$("camera-studio")) return;
+  if (!CameraStudioUI.loaded && !CameraStudioUI.loading && !CameraStudioUI.error) void loadCameraStudio();
+  $("camera-studio-state").textContent = CameraStudioUI.loading ? "Loading…" : CameraStudioUI.error ? "Unavailable" : "visuals v4 · opt-in";
+  const picker = $("camera-profile-picker");
+  if (picker) {
+    const profileIds = Object.keys(CameraStudioUI.cameraProfiles?.profiles ?? {}).sort();
+    picker.innerHTML = `<option value="">New profile…</option>${profileIds.map((id) => `<option value="${esc(id)}">${esc(id)}</option>`).join("")}`;
+    picker.value = CameraStudioUI.selectedProfileId ?? "";
+    picker.onchange = () => {
+      CameraStudioUI.selectedProfileId = picker.value || null;
+      CameraStudioUI.needsHydrate = true;
+      CameraStudioUI.preview = null;
+      renderCameraStudio();
+    };
+  }
+  if (CameraStudioUI.needsHydrate) hydrateCameraStudioProfile();
+  $("btn-camera-preview").disabled = CameraStudioUI.loading;
+  $("btn-camera-apply").disabled = CameraStudioUI.preview?.ok !== true;
+  const result = $("camera-preview-result");
+  if (CameraStudioUI.preview?.preview) {
+    const { projectedBounds, diagnostics: { clipping, depth, assetCoverage } } = CameraStudioUI.preview.preview;
+    result.textContent = JSON.stringify({ resolution: CameraStudioUI.preview.resolution, projectedBounds, clipping, depth, assetCoverage }, null, 2);
+    drawCameraStudioPreview(CameraStudioUI.preview);
+  } else result.textContent = CameraStudioUI.error?.message ?? `Camera revision: ${CameraStudioUI.revision ?? "pending"}`;
+  $("btn-camera-preview").onclick = previewCameraStudio;
+  $("btn-camera-apply").onclick = applyCameraStudio;
+  $("btn-camera-disable").onclick = disableCameraStudioBinding;
+  $("btn-camera-disable").disabled = CameraStudioUI.loading || !$("camera-binding-scope")?.value || !$("camera-binding-id")?.value.trim();
+  for (const id of ["camera-profile-id", "camera-projection", "camera-orientation", "camera-binding-scope", "camera-binding-id", "camera-viewport-preset", "camera-fit-padding", "camera-min-zoom", "camera-initial-zoom", "camera-max-zoom", "camera-pan-padding", "camera-elevation-scale"]) {
+    $(id).oninput = () => {
+      CameraStudioUI.preview = null;
+      $("btn-camera-apply").disabled = true;
+      queueCameraStudioPreview();
+    };
+  }
+  renderCameraViewVariantBinder();
+}
+
+function hydrateCameraStudioProfile() {
+  CameraStudioUI.needsHydrate = false;
+  const profileId = CameraStudioUI.selectedProfileId;
+  const cameraProfiles = CameraStudioUI.cameraProfiles;
+  const profile = profileId ? cameraProfiles?.profiles?.[profileId] : null;
+  if (!profile) return;
+  $("camera-profile-id").value = profileId;
+  $("camera-projection").value = profile.projection;
+  $("camera-orientation").value = profile.orientation;
+  $("camera-fit-padding").value = profile.fitPadding;
+  $("camera-elevation-scale").value = profile.elevationScale;
+  $("camera-min-zoom").value = profile.minZoom;
+  $("camera-initial-zoom").value = profile.initialZoom;
+  $("camera-max-zoom").value = profile.maxZoom;
+  $("camera-pan-padding").value = profile.panPadding ?? 0;
+  const mission = Object.entries(cameraProfiles.bindings?.missions ?? {}).find(([, id]) => id === profileId);
+  const map = Object.entries(cameraProfiles.bindings?.maps ?? {}).find(([, id]) => id === profileId);
+  $("camera-binding-scope").value = mission ? "mission" : map ? "map" : "";
+  $("camera-binding-id").value = mission?.[0] ?? map?.[0] ?? "";
+}
+
+function queueCameraStudioPreview() {
+  clearTimeout(CameraStudioUI.previewTimer);
+  if (!CameraStudioUI.loaded || !$("camera-profile-id")?.value.trim()) return;
+  CameraStudioUI.previewTimer = setTimeout(() => void previewCameraStudio(), 250);
+}
+
+function drawCameraStudioPreview(preview) {
+  const viewportPreset = $("camera-viewport-preset")?.value;
+  const canvas = $("camera-preview-canvas");
+  const projectedBounds = preview?.preview?.projectedBounds;
+  const points = preview?.preview?.projectedPoints;
+  if (!canvas || !projectedBounds || !Array.isArray(points) || points.length === 0) return;
+  const context = canvas.getContext("2d");
+  if (!context) return;
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  const padding = 36;
+  const extentWidth = Math.max(projectedBounds.width, 1);
+  const extentHeight = Math.max(projectedBounds.height, 1);
+  const scale = Math.min((canvas.width - padding * 2) / extentWidth, (canvas.height - padding * 2) / extentHeight);
+  const offsetX = (canvas.width - extentWidth * scale) / 2 - projectedBounds.minX * scale;
+  const offsetY = (canvas.height - extentHeight * scale) / 2 - projectedBounds.minY * scale;
+  const screen = (point) => ({ x: point.x * scale + offsetX, y: point.y * scale + offsetY });
+  const corners = points.slice(0, 4).map(screen);
+  context.fillStyle = "rgba(95, 152, 255, 0.13)";
+  context.strokeStyle = "rgba(117, 168, 255, 0.9)";
+  context.lineWidth = 2;
+  if (corners.length === 4) {
+    context.beginPath();
+    context.moveTo(corners[0].x, corners[0].y);
+    for (const index of [1, 3, 2]) context.lineTo(corners[index].x, corners[index].y);
+    context.closePath();
+    context.fill();
+    context.stroke();
+  }
+  context.fillStyle = "rgba(236, 241, 255, 0.75)";
+  for (const point of points.slice(4, 516).map(screen)) {
+    context.beginPath(); context.arc(point.x, point.y, 1.6, 0, Math.PI * 2); context.fill();
+  }
+  context.font = "14px system-ui, sans-serif";
+  context.fillStyle = "rgba(236, 241, 255, 0.92)";
+  context.fillText(`${preview.resolution.profile.projection} · ${preview.resolution.profile.orientation} · ${viewportPreset}`, 16, 24);
+}
+
 const ProceduralJuiceUI = {
   loaded: false,
   loading: false,
@@ -12054,7 +12323,7 @@ async function loadProceduralJuiceLab() {
     ]);
     ProceduralJuiceUI.visualsRevision = current.revision;
     ProceduralJuiceUI.authored = current.authored === true;
-    ProceduralJuiceUI.supported = current.visualsSchemaVersion == null || current.visualsSchemaVersion <= 3;
+    ProceduralJuiceUI.supported = current.visualsSchemaVersion == null || current.visualsSchemaVersion <= 4;
     ProceduralJuiceUI.readOnly = !ProceduralJuiceUI.supported
       || (current.authored === true && current.proceduralJuice?.schemaVersion !== 1);
     ProceduralJuiceUI.draft = current.proceduralJuice ?? emptyProceduralJuiceDraft();
@@ -12209,6 +12478,7 @@ function renderAssetsTab() {
   renderMusicBindings();
   renderAtlasFrames();
   bindTilesetWorkbench();
+  renderCameraStudio();
   renderProceduralJuiceLab();
 }
 
@@ -12954,6 +13224,7 @@ function rewriteBuildTargetDefaults(buildTargets, oldId, newId) {
 
 function renderBuildTargetsTab() {
   const bt   = S.project.buildTargets ?? { schemaVersion: 1, targets: {} };
+  const cameraProfiles = S.project.visuals?.cameraProfiles?.profiles ?? {};
   const body = $("buildtargets-body");
   if (!body) return;
   body.innerHTML = "";
@@ -12964,6 +13235,7 @@ function renderBuildTargetsTab() {
     const nativeDesktop = target.platform === "desktop";
     const desktopFields = bt.schemaVersion === 2 ? `
       <div class="form-row">
+        <div class="field"><label>cameraProfileId</label><select class="bt-field" data-tid="${esc(tid)}" data-f="cameraProfileId"><option value="">Legacy top-down</option>${Object.keys(cameraProfiles).sort().map(value => `<option value="${esc(value)}"${target.cameraProfileId===value?" selected":""}>${esc(value)}</option>`).join("")}</select></div>
         <div class="field"><label>formFactor</label><select class="bt-field" data-tid="${esc(tid)}" data-f="formFactor">
           ${["legacy", "desktop", "responsive"].map(value => `<option value="${value}"${target.formFactor===value?" selected":""}>${value}</option>`).join("")}
         </select></div>
@@ -13084,6 +13356,9 @@ function renderBuildTargetsTab() {
       } else if (f === "updater.publicKey") {
         t.updater ??= { enabled: true, endpoints: [], publicKey: "" };
         t.updater.publicKey = inp.value;
+      } else if (f === "cameraProfileId") {
+        if (inp.value) t.cameraProfileId = inp.value;
+        else delete t.cameraProfileId;
       } else { t[f] = inp.value; }
       markDirty(true);
     });

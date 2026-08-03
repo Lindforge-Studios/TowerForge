@@ -166,6 +166,25 @@ describe("R11 guarded procedural juice CLI authoring contract (RED)", () => {
     expect(visuals).not.toHaveProperty("proceduralJuice");
   });
 
+  it("preserves visuals v4 camera catalogs when Procedural Juice is edited", async () => {
+    const projectDir = fixture();
+    const projectPath = path.join(projectDir, "project.json");
+    const visualsPath = path.join(projectDir, "content", "visuals.json");
+    const project = JSON.parse(fs.readFileSync(projectPath, "utf8"));
+    const visuals = JSON.parse(fs.readFileSync(visualsPath, "utf8"));
+    const cameraProfiles = { schemaVersion: 1, profiles: {}, bindings: { maps: {}, missions: {} } };
+    const viewVariants = { schemaVersion: 1, sprites: {}, tileSets: {} };
+    fs.writeFileSync(projectPath, `${JSON.stringify({ ...project, schemaVersion: 5 }, null, 2)}\n`);
+    fs.writeFileSync(visualsPath, `${JSON.stringify({ ...visuals, schemaVersion: 4, cameraProfiles, viewVariants }, null, 2)}\n`);
+
+    const preview = await previewProceduralJuiceAuthoring(projectDir, { proceduralJuice: candidate() });
+    expect(preview).toMatchObject({ ok: true, candidate: { visuals: { schemaVersion: 4, cameraProfiles, viewVariants } } });
+    const applied = await applyProceduralJuiceAuthoring(projectDir, { proceduralJuice: candidate(), ifRevision: preview.revision });
+    expect(applied).toMatchObject({ ok: true, written: true });
+    const after = JSON.parse(fs.readFileSync(visualsPath, "utf8"));
+    expect(after).toMatchObject({ schemaVersion: 4, cameraProfiles, viewVariants, proceduralJuice: { schemaVersion: 1 } });
+  });
+
   it("rolls both owned sources back when post-write validation fails", async () => {
     const projectDir = fixture();
     const before = sourceBytes(projectDir);

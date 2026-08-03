@@ -178,6 +178,19 @@ describe("R11 shared procedural juice projection", () => {
     expect(Object.isFrozen(first.particleBursts[0])).toBe(true);
   });
 
+  it("preserves the exact Procedural Juice projection when visuals v4 adds camera profiles", () => {
+    const legacy = visuals();
+    const cameraVisuals = structuredClone(legacy);
+    cameraVisuals.schemaVersion = 4;
+    cameraVisuals.cameraProfiles = {
+      schemaVersion: 1,
+      profiles: {},
+      bindings: { maps: {}, missions: {} }
+    };
+    expect(projector()(projectOptions({ visuals: cameraVisuals })))
+      .toEqual(projector()(projectOptions({ visuals: legacy })));
+  });
+
   it("derives entropy only from canonical event data and missionElapsed, not catalog record order or Math.random", () => {
     const project = projector();
     const canonical = project(projectOptions());

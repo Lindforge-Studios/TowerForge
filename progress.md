@@ -3586,3 +3586,493 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   isolation, Studio create/edit/rename/reload/collision/rebinding, native storage/lifecycle,
   disabled/legacy paths, MCP/AI/plugin parity and all six installer formats. No actionable findings
   remain. ADR 0060 is Accepted; R19 is ready for PR #35 merge.
+
+## 2026-08-03 — R20.1 CameraProfile/projector contract RED
+
+- Contract freeze before production changes: `CameraProfileV1` is a closed own-data renderer
+  contract with `top_down`, `isometric_2_1` and `dimetric_oblique` projections, four fixed authored
+  orientations, scalar presentation elevation, bounded fit/zoom settings and deterministic depth
+  ordering by projected Y, elevation and stable entity ID. The pure projector owns projection,
+  inverse hit coordinates and depth keys; engine coordinates and gameplay are unchanged.
+- Resolution precedence is frozen as mission binding -> map binding -> BuildTargets v2
+  `cameraProfileId` -> visuals default -> bundled top-down fallback. `content/visuals.json` v4 can
+  contain `cameraProfiles` schema v1 together with existing Procedural Juice v1. Visuals v3 and a
+  BuildTargets v2 target without `cameraProfileId` retain their prior normalized shapes.
+- Focused RED tests were added without production changes in
+  `packages/renderer/src/r20-camera-projector.contract.test.mjs` and
+  `packages/cli/lib/r20-camera-project-schema.contract.test.mjs`. They cover golden projection
+  vectors, four orientations, inverse/elevation round trips, stable depth, precedence, input-order
+  invariance, detached results, future/unknown/non-finite/over-budget inputs, accessor/proxy/cycle
+  confinement, visuals v4 validation, v3 compatibility, Procedural Juice coexistence and
+  BuildTargets camera references.
+- Exact RED command:
+  `npx vitest run packages/renderer/src/r20-camera-projector.contract.test.mjs packages/cli/lib/r20-camera-project-schema.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+- Expected RED: renderer import fails because `camera-projector.mjs` does not exist; BuildTargets v2
+  rejects `cameraProfileId` as unknown; visuals has no v4/CameraProfile validation; Procedural Juice
+  still requires exactly visuals v3. Result: exit `1`, both files failed, `15/16` tests failed and
+  the sole passing test proved the camera-absent visuals v3/BuildTargets compatibility baseline.
+  R20.3 view-specific asset variants are explicitly outside this R20.1 slice.
+
+## 2026-08-03 — R20.1 CameraProfile/projector focused GREEN
+
+- Added one browser-safe pure projector in `packages/renderer/src/camera-projector.mjs`. It compiles
+  closed `CameraProfileV1` own data, applies the frozen three projection bases and four rotations,
+  provides the elevation-aware inverse, emits stable depth keys and resolves mission -> map ->
+  build target -> visuals default -> bundled top-down without reading or mutating engine state.
+- `content/visuals.json` validation now accepts schema v4 camera catalogs and preserves inner
+  Procedural Juice v1. BuildTargets v2 accepts one optional bounded `cameraProfileId` and rejects an
+  unknown reference. Visuals v2/v3 defaults and camera-absent v1/v2 build targets remain unchanged.
+- The exact RED command is now GREEN: `2/2` files and `32/32` tests pass. Focused affected-layer
+  regressions for R11 schema/authoring/presentation, R18/R19 build targets and the Canvas renderer
+  pass `6/6` files and `72/72` tests. R20.2 renderer integration remains a separate RED/GREEN slice.
+
+## 2026-08-03 — R20.2 shared renderer/generated-player integration RED
+
+- Contract freeze after the R20.1 pure projector baseline `230b9cc`: Canvas and Phaser must use one
+  renderer-owned `camera-renderer-integration.mjs` render-space composition. It projects authored
+  world points before constructing the R18 `ViewportTransform`, reverses viewport before projector
+  for hit tests, derives bounds/signatures from projected coordinates and applies the same
+  elevation/depth ordering to tiles, entities and projectiles. Engine coordinates remain untouched.
+- Two focused RED files were added before R20.2 production changes:
+  `packages/renderer/src/r20-camera-renderer-integration.contract.test.mjs` and
+  `packages/cli/build.r20-camera-projection-package.contract.test.mjs`. The generated package
+  matrix covers Canvas/Phaser x hex/square, project data, PWA cache, single-file embedding and an
+  untouched legacy/top-down output. Browser interaction acceptance is deliberately deferred to a
+  separate R20.2b slice.
+- Exact RED command:
+  `npx vitest run packages/renderer/src/r20-camera-renderer-integration.contract.test.mjs packages/cli/build.r20-camera-projection-package.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+- Expected RED: the shared integration module/import does not exist; Canvas still composes only raw
+  grid coordinates with `ViewportTransform`; generated active builds do not contain the shared
+  camera module; and legacy builds currently copy `camera-projector.mjs` despite the feature being
+  absent. Result: exit `1`, both files failed and all `8/8` tests failed for those exact reasons.
+  No production file was changed by the Contract/Test Designer.
+
+## 2026-08-03 — R20.2 visuals-v4 Juice renderer coexistence RED
+
+- A focused regression was added before changing the R11 renderer compiler: the same valid
+  Procedural Juice v1 catalog must produce byte-equivalent presentation instructions when visuals
+  v4 adds an independent camera catalog. Exact command:
+  `npx vitest run packages/renderer/src/procedural-juice-presentation.contract.test.mjs --reporter=verbose --maxWorkers=1 -t "preserves the exact Procedural Juice projection"`.
+- Result: exit `1`, the new test failed because the renderer still accepted exactly visuals v3 and
+  returned the inert projection for v4. The expected v3 projection remained active. This RED is
+  limited to coexistence; it does not change Juice effects or camera-profile semantics.
+
+## 2026-08-03 — R20.2 shared renderer/generated-player focused GREEN
+
+- Added one browser-safe `camera-renderer-integration.mjs` that composes the R20 projector before
+  the R18 viewport transform, reverses that order for hit testing, derives projected bounds and a
+  stable render-space signature, and applies the shared depth comparator to detached render items.
+  The Canvas renderer now uses that contract for map bounds, centers, pointer selection and tower
+  ordering. Active generated Canvas and Phaser players import the exact same module for hex and
+  square targets; PWA and single-file outputs contain it, while inactive legacy outputs exclude
+  both R20 modules and camera-profile reads.
+- Visuals v4 now preserves the exact existing Procedural Juice projection instead of treating the
+  independent camera catalog as an incompatible future catalog. This coexistence repair changes no
+  Juice cue, entropy or gameplay semantics.
+- The combined focused command passes `3/3` files and `22/22` tests. Renderer/build regressions pass
+  `4/4` files and `43/43` tests; syntax checks, `git diff --check` and `npm run build` are GREEN.
+  R20.3 asset variants and R20.4 Camera Studio/MCP remain separate contract-first slices.
+
+## 2026-08-03 — R20.3 view-specific assets RED
+
+- Contract/Test Designer added focused pure-renderer and CLI/package contracts before production
+  changes. The frozen v1 shape is `visuals.viewVariants` with an exact
+  `projection:orientation` key, optional sprite billboard fallback, mandatory tileset-material
+  coverage, bounded anchors and project-local PNG/JPEG/WebP assets. Coverage rows must be detached
+  and binary-stable; another authored view is never an implicit fallback.
+- The CLI contract also requires deterministic asset enumeration/copying, signature and declared
+  size verification, PWA/single-file inclusion, WebP support in the existing guarded staging
+  pipeline, and preservation of visuals v4/view variants through ordinary asset and tileset
+  imports. The known tileset write that forced `schemaVersion = 2` is captured as a regression.
+- Exact RED command:
+  `npx vitest run packages/renderer/src/r20-camera-view-assets.contract.test.mjs packages/cli/lib/r20-camera-view-assets.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`, `2/2` files and all `17/17` tests failed for the expected missing resolver,
+  missing schema/path/copy validation, missing WebP signature support and visuals-v4 downgrade.
+  No production file was changed by the Contract/Test Designer.
+
+## 2026-08-03 — R20.3 view-specific assets focused GREEN
+
+- Added the shared `camera-view-assets.mjs` resolver and coverage projector. Exact variants are
+  keyed only by projection plus orientation; standalone sprites use the authored billboard as a
+  warning-producing fallback, while missing tileset materials are blocking coverage errors.
+  Results are detached, deeply frozen and binary-stable.
+- Visuals v4 now validates a closed `viewVariants` v1 catalog with bounded anchors, mandatory
+  authored tileset materials and project-local PNG/JPEG/WebP declarations. Build asset enumeration
+  and copying include the variant files and verify their signatures and 32 MiB size ceiling.
+  Single-file builds embed the same assets, and WebP is accepted by the existing guarded staging
+  pipeline. Asset and MCP tileset imports preserve visuals v4 instead of downgrading it to v2.
+- Canvas resolves camera-specific standalone sprites and anchors at presentation time; generated
+  Phaser players preload and resolve the same catalog. Legacy projects remain on their base
+  sprites, and inactive packages exclude the R20 view-asset module.
+- The exact RED command is now GREEN at `2/2` files and `17/17` tests. Focused schema, assets,
+  generated-asset, renderer and generative-MCP regressions pass `6/6` files and `78/78` tests;
+  MCP asset/tileset selection passes `5/5`. Syntax checks and `git diff --check` are GREEN.
+
+## 2026-08-03 — R20.4 Camera Studio/MCP authoring RED
+
+- Contract review corrected an R20.1 drift: the approved selection order is exactly mission -> map
+  -> build-target -> built-in top-down. `cameraProfiles.bindings.defaultProfileId` is not part of
+  the public plan or ADR 0061 and must be rejected rather than creating a fifth implicit default.
+- A focused MCP/AI contract was added before production changes. It requires the `camera` schema
+  domain, narrow read/recipe/compute-preview/guarded-upsert tools, detached recipes for all three
+  projections and four orientations, resolution/bounds/clipping/depth/asset-coverage diagnostics,
+  adjacent Procedural Juice/view-variant preservation, stale-revision rejection, backup/rollback
+  metadata, updated agent instructions and no broad camera-section replacement tool.
+- Exact RED command:
+  `npx vitest run packages/mcp/r20-camera-authoring.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`, one file and all `5/5` tests failed: unknown `camera` domain/tools and guide v52.
+  No production file was changed by the Contract/Test Designer.
+
+## 2026-08-03 — R20.4 Procedural Juice/camera coexistence RED
+
+- Before changing the existing visuals authoring transaction, a regression promoted a fixture to
+  project v5/visuals v4 with empty `cameraProfiles` and `viewVariants`, then previewed a normal
+  Procedural Juice edit. Exact command:
+  `npx vitest run packages/cli/lib/procedural-juice-authoring.contract.test.mjs --reporter=verbose --maxWorkers=1 -t "preserves visuals v4 camera"`.
+- Result: exit `1`; the focused test failed because the R11 authoring guard supported visuals only
+  through v3 and would have downgraded a valid camera catalog. The expected repair accepts v4 and
+  preserves both adjacent R20 catalogs byte-for-data through preview/apply.
+
+## 2026-08-03 — R20.4 Camera Studio surface RED
+
+- Before Studio production changes, a focused source contract required projection/orientation,
+  profile and map/mission binding controls, preview/apply actions, diagnostics output and the exact
+  narrow MCP-backed read/recipe/preview/apply server routes.
+- Exact RED command:
+  `npx vitest run packages/studio/r20-camera-studio.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`; both `2/2` tests failed because Camera Studio controls, client workflow and
+  server routes did not exist.
+
+## 2026-08-03 — R20.4 pre-freeze hardening RED
+
+- After the first Camera Studio lifecycle E2E reached GREEN, two missing acceptance boundaries were
+  captured before hardening production code: owned camera sources must reject symlink traversal,
+  and Camera Studio must expose the full bounded profile/viewport surface plus an actual preview
+  canvas rather than only projection/orientation and textual JSON.
+- Exact command:
+  `npx vitest run packages/mcp/r20-camera-authoring.contract.test.mjs packages/studio/r20-camera-studio.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+- Result: exit `1`; `2/2` focused tests failed for the expected reasons. The authoring transaction
+  followed a symlinked `content` directory and wrote an outside temporary fixture, while the Studio
+  lacked viewport preset, fit/pan/elevation/zoom controls and `camera-preview-canvas`. The remaining
+  six tests stayed GREEN. All writes were confined to temporary test directories.
+
+## 2026-08-03 — R20.4 binding disable/re-enable RED
+
+- A final opt-in lifecycle contract was added before production changes: disabling one authored
+  mission/map binding must restore the built-in top-down fallback without deleting the reusable
+  profile, and applying the same binding again must re-enable it. Studio must expose the guarded
+  disable action beside preview/apply.
+- Exact command:
+  `npx vitest run packages/mcp/r20-camera-authoring.contract.test.mjs packages/studio/r20-camera-studio.contract.test.mjs --reporter=dot --maxWorkers=1`.
+- Result: exit `1`; the focused binding test still resolved the mission profile because
+  `binding.enabled=false` was ignored, and the Studio contract lacked `btn-camera-disable`.
+
+## 2026-08-03 — R20.4 Camera Studio lifecycle/security focused GREEN
+
+- The narrow camera authoring transaction now rejects symlink traversal through the project root,
+  owned JSON parents and backup directories before it reads or writes. It rechecks the composite
+  revision immediately before commit, preserves adjacent visuals-v4 catalogs and keeps backups
+  project-confined. Camera preview derives bounded map geometry, reports actual padded clipping and
+  returns detached projected points for the Studio canvas.
+- Camera Studio now exposes all CameraProfileV1 bounds, six desktop viewport presets, a live
+  projection canvas, map/mission binding, guarded preview/apply and guarded binding disable. A
+  disabled binding leaves the reusable profile intact and restores the lower-precedence selection;
+  the same profile can be re-enabled without reauthoring it.
+- Focused MCP/Studio/Juice coexistence tests pass `4/4` files and `24/24` tests. The real browser
+  lifecycle `tests/e2e/r20-camera-studio.spec.mjs` passes enable -> save -> disable -> top-down
+  restoration -> re-enable -> reload plus stale-revision rejection. This is not the R20 freeze:
+  renderer/package and saved-profile/AI authoring gaps identified by pre-freeze audit remain open.
+
+## 2026-08-03 — R20 pre-freeze authoring/AI/default-anchor RED
+
+- Independent pre-freeze review added behavioral regressions for mandatory tileset coverage,
+  accessor/proxy/cycle/profile-budget inputs, injected two-file commit failure, the shared optional
+  sprite-anchor default and embedded Studio AI access to all four narrow camera tools.
+- Exact command:
+  `npx vitest run packages/mcp/r20-camera-authoring-hardening.contract.test.mjs packages/studio/lib/ai-tool-policy.test.mjs packages/cli/lib/r20-camera-view-assets.contract.test.mjs packages/renderer/src/r20-camera-view-assets.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+- Result: exit `1`, `4/4` files with six expected failures: missing required view coverage did not
+  make preview/apply fail; an accessor executed twice; the second-rename fault left a staged file;
+  omitted anchors were rejected/not normalized; and embedded AI filtered out the camera tools.
+  Revoked proxies, cycles and the 33rd profile already failed closed and remained GREEN.
+
+## 2026-08-03 — R20 pre-freeze renderer/package P0 RED
+
+- An independent Contract/Test Designer added two behavioral regression files after the audit;
+  production and `progress.md` were untouched by that role.
+- Renderer command:
+  `npx vitest run packages/renderer/src/r20-camera-p0-runtime.regression.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`, `3/3` RED: Canvas mixed-kind actors were category ordered, the active tileset
+  variant still loaded the base atlas, and schema-valid `fitPadding=512` crashed 1024×720.
+- Package command:
+  `npx vitest run packages/cli/build.r20-camera-p0-runtime-isolation.regression.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`, `5/5` RED: a plain target in a mixed project still bundled camera runtime;
+  Phaser only imported but did not invoke shared depth projection; picking skipped shared inverse
+  conversion; tileset variants had no runtime texture path; and authored anchors never reached
+  `setOrigin`.
+
+## 2026-08-03 — R20 saved-profile/build-target Studio RED
+
+- Camera Studio source and browser contracts now require a saved-profile picker that restores all
+  editable values and its mission/map binding after reload, plus a Build Targets
+  `cameraProfileId` selector populated from the same catalog.
+- Before production changes the combined authoring command reported `8/39` RED across the complete
+  hardening set, and `tests/e2e/r20-camera-studio.spec.mjs` failed `1/1` because
+  `#camera-profile-picker` did not exist. After the independent hardening fixes, the same source
+  set narrowed to exactly the picker/reload and build-target UI failures; their GREEN evidence is
+  recorded only after the browser lifecycle passes.
+
+## 2026-08-03 — R20 pre-freeze authoring and runtime GREEN
+
+- Camera Studio now reloads saved profiles and bindings, exposes the same catalog to the
+  BuildTargets-v2 `cameraProfileId` selector, and keeps guarded disable/re-enable semantics. The
+  complete focused authoring/hardening matrix is GREEN at `6/6` files and `39/39` tests; the real
+  browser lifecycle is GREEN at `2/2` tests, including persisted build-target selection.
+- Canvas now depth-orders mixed camera actors through the shared projector, consumes exact
+  camera tileset variants and accepts the schema-valid maximum fit padding without crashing. The
+  exact renderer RED command is GREEN at `3/3` tests.
+- Generated Phaser players now invoke the shared depth projector for tiles and actors, route
+  pointer selection through the inverse camera transform, preload and consume exact tileset
+  atlases, and apply authored sprite anchors. A non-camera target in the same project excludes all
+  camera modules and profile reads. The exact package RED command is GREEN at `5/5` tests.
+- This remains pre-freeze evidence. The exact candidate commit, full gates and two independent
+  sign-offs are recorded separately after the focused matrix and generated package smoke pass.
+
+## 2026-08-03 — R20 first full-gate parity repair
+
+- The first frozen candidate `96afd13f8d2415f5a6dfc6d4062d0dffcfc2c373` passed typecheck and
+  engine build, then the complete unit gate correctly failed `16` tests. The failures were confined
+  to the generated Codex plugin runtime still carrying the pre-R20 renderer/MCP/guide bytes and
+  legacy contracts pinning agent guide v52 after the intentional camera authoring bump to v53.
+- No camera runtime or constructor behavior failed. `npm run plugin:build` regenerated the owned
+  mirror from source, and the nine exact guide-version assertions were promoted to v53. The focused
+  set covering all 16 prior failures is GREEN at `14/14` files and `73/73` tests.
+- Because this repair changes tracked test/mirror files, the first freeze and its partial gate
+  evidence are invalid. A new exact candidate commit receives the complete gate set from the start.
+
+## 2026-08-03 — R20 independent-verifier regression RED
+
+- The first independent Code and Constructor Integration reviews rejected candidate `a5a0c20`.
+  Contract/Test Designer changes were limited to five regression files and captured four distinct
+  release blockers before production repair: generated Phaser did not place projectiles and
+  destructibles into its real mixed-actor depth order; Canvas/Phaser actor projection ignored
+  authoritative tile elevation; a catalog selected only through mission/map bindings was omitted
+  from a target bundle; and CSS-authored fit/pan padding was not scaled for a DPR-2 Canvas.
+- Exact renderer/package RED command:
+  `npx vitest run packages/renderer/src/r20-camera-elevation-dpr.regression.test.mjs packages/cli/build.r20-camera-p0-runtime-isolation.regression.test.mjs --reporter=verbose --maxWorkers=1`.
+  Initial result: exit `1`, five expected RED assertions covering the real Phaser layers,
+  elevation, binding-only activation and DPR padding.
+- A separate fail-closed command
+  `npx vitest run packages/renderer/src/r20-camera-view-assets-hardening.regression.test.mjs packages/cli/lib/r20-camera-view-assets.contract.test.mjs --reporter=verbose --maxWorkers=1`
+  produced five expected RED assertions: accessor fallback, cyclic stack overflow, absent schema
+  budgets and runtime acceptance above 4096 sprite/256 tileset variant records.
+- The topology-aware preview regression in
+  `packages/mcp/r20-camera-authoring.contract.test.mjs` also failed because preview used raw q/r
+  bounds rather than the shared square/hex world centers and viewport render space. No production
+  code was changed by the Contract/Test Designer.
+
+## 2026-08-03 — R20 independent-verifier regression focused GREEN
+
+- View-variant schema, resolver and coverage now validate closed own-data without invoking
+  accessors, contain proxy/cycle failures and enforce the shared 4096/256 budgets. Camera preview
+  now uses the same square/hex centers, projector, target viewport and clipping calculation as the
+  player runtime.
+- Canvas resolves entity elevation from authoritative snapshot tiles, invalidates cached camera
+  bounds when elevation changes and scales authored fit/pan padding into backing pixels. Generated
+  Phaser uses the same elevation lookup for tiles, towers, destructibles and projectile endpoints;
+  inverse hit testing is performed at each candidate tile elevation.
+- Phaser camera builds now allocate one real Graphics layer per stable actor key and assign all
+  towers, enemies, heroes, projectiles and destructibles from one
+  `projectCameraRenderItemsV1` order. Mission/map bindings activate the camera runtime even without
+  a target default, while a genuinely unbound target still excludes all camera modules.
+- Exact combined focused command covering the five independent regression files plus shared
+  projector integration is GREEN: `5/5` executed files and `38/38` tests. Syntax checks and
+  `git diff --check` are GREEN. This repair invalidates the previous freeze and both prior review
+  outcomes; the next commit must run the full gates and receive fresh independent sign-offs.
+
+## 2026-08-03 — R20 second full-gate legacy-contract repair
+
+- Candidate `0359fd9` passed typecheck, validation and the tutorial simulation. The complete
+  one-worker unit gate then ran `441` files and found one test-contract conflict after `4211`
+  passing tests: an R13 source-regex prohibited every renderer identifier containing
+  `elevationAt`, although R20 legitimately resolves authoritative tile elevation solely for
+  presentation projection.
+- The R13 boundary still forbids topology, LoS, blocker-height and arc-clearance recomputation; its
+  assertion was narrowed to those gameplay concepts. Focused R13 plus R20 elevation verification
+  is GREEN at `2/2` files and `5/5` tests. Because a tracked test changed, `0359fd9` is no longer
+  the frozen candidate and the complete gate sequence restarts on the next commit.
+
+## 2026-08-03 — R20 final candidate gate evidence
+
+- Production/test candidate `7be82f407481ee9880c27c737daaa433e8ba96eb` is clean. Full unit gate
+  passed `441/441` files and `4212/4212` tests with the repository/CI one-worker setting. Full
+  Playwright E2E passed `159/159` scenarios in the same one-worker setting, including the Camera
+  Studio lifecycle and both generated player paths.
+- `npm run typecheck`, `npm run build:engine`, `npm run validate`,
+  `npm run sim tutorial_01 60` and `npm run build` are GREEN. The generated web PWA is valid.
+- `npm run plugin:build`, `npm run plugin:validate` and `npm run plugin:smoke` are GREEN with no
+  mirror diff. Mobile and desktop scaffold packaging both succeed for `examples/starter.tdproj`;
+  desktop Rust tests pass `9/9` and the working tree remains clean.
+- The full gates ran after the R13 contract correction and on the exact production/test tree above.
+  Independent Code Verifier and Constructor Integration Verifier reviews are still required before
+  R20 acceptance or merge.
+
+## 2026-08-03 — R20 second independent-verifier rejection and RED evidence
+
+- Independent review rejected candidate `6837d1c` and invalidated its freeze/sign-offs. Four
+  release blockers were separated from the previous focused matrix: BuildTargets v1 could activate
+  the camera runtime through visuals-only mission/map bindings; camera preview retained a duplicate
+  zero-elevation point over an authored elevated coordinate; a newly authored but still unbound
+  camera profile previewed the built-in top-down fallback; and no narrow guarded Studio/MCP path
+  could bind an already imported/staged view-specific asset. Constructor review also found that
+  generated Phaser used camera variants for heroes and tiles but not towers or enemies.
+- An independent Contract/Test Designer captured the failures before the production repair in
+  `build.r20-camera-p0-runtime-isolation.regression.test.mjs`,
+  `r20-camera-authoring.contract.test.mjs`,
+  `r20-camera-view-variant-authoring.regression.test.mjs`, and
+  `r20-camera-studio.contract.test.mjs`. The isolated RED assertions failed for the expected
+  missing legacy gate, authoritative coordinate merge, candidate preview, one-variant lifecycle,
+  Studio binder and Phaser sprite/anchor paths. Production and this progress log were not changed
+  by the test-designer role.
+
+## 2026-08-03 — R20 verifier repairs focused GREEN
+
+- Camera projection activation is now gated by BuildTargets v2 large-screen targets; legacy v1
+  bundles strip camera imports, exports, constructor catalog resolution and selector code even when
+  visuals v4 contains reusable bindings. Preview coordinates are merged by q/r with elevation
+  overrides authoritative, and an unbound candidate profile is rendered directly for pre-save live
+  inspection without changing persisted selection precedence.
+- Added narrow `preview_camera_view_variant` and `apply_camera_view_variant` operations. They accept
+  one sprite or tileset variant, enforce closed bounded own-data, project-local real files,
+  PNG/JPEG/WebP signature and size validation, canonical schema/coverage validation, revision
+  recheck, confined backup and rollback. Camera Studio exposes the same guarded one-variant binder
+  for existing or staged assets; the embedded AI policy and instructions advertise this granular
+  workflow rather than a broad visuals writer.
+- Generated camera-enabled Phaser players now resolve tower and enemy bindings through the same
+  exact view-variant catalog as Canvas, apply authored anchors, participate in the stable mixed-actor
+  depth order and clean up despawned images. The legacy generated source remains byte-structurally
+  free of those image maps and camera branches.
+- Exact focused unit command covering all R20 contract/regression files is GREEN at `14/14` files
+  and `103/103` tests. The real Camera Studio Playwright lifecycle is GREEN at `2/2`; its first
+  sandboxed attempt failed only because binding `127.0.0.1` was denied, and the approved local-port
+  rerun passed. `git diff --check` is GREEN. This is pre-freeze evidence: the full gates and both
+  independent reviews must run again on the next exact committed candidate.
+
+## 2026-08-03 — R20 repaired candidate full gates
+
+- Production/test candidate `65c7e530d2e05ce63fa98ee55745952695395796` was clean before and
+  after the complete gate run. `npm run typecheck`, `npm run build:engine`, `npm run validate`,
+  `npm run sim tutorial_01 60` and `npm run build` are GREEN.
+- Full one-worker unit gate passed `442/442` files and `4219/4219` tests. Full one-worker
+  Playwright E2E passed `159/159`, including R20 Camera Studio, Canvas/Phaser, hex/square,
+  legacy paths and all R18 large-screen viewport scenarios.
+- `npm run plugin:build`, `npm run plugin:validate` and `npm run plugin:smoke` are GREEN and leave
+  the generated mirror unchanged. Starter mobile and desktop package commands are GREEN; desktop
+  Rust lifecycle tests pass `9/9`. `git diff --exit-code` is GREEN after all generators and gates.
+- This entry is the only change after the exact production/test candidate. The production tree is
+  frozen; fresh independent Code Verifier and Constructor Integration Verifier sign-offs must
+  review the docs-only child commit before PR creation or merge.
+
+## 2026-08-03 — R20 final verifier security/runtime RED
+
+- The next independent review rejected docs candidate `b605f60` on four release boundaries. The
+  Contract/Test Designer changed tests and this chronological evidence only; production and plugin
+  sources remained untouched. The freeze and the preceding full-gate evidence are invalidated.
+- Exact focused unit command:
+  `npx vitest run packages/cli/lib/r20-camera-view-assets.contract.test.mjs packages/renderer/src/r20-camera-prototype-safety.regression.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`, `5` expected RED and `16` passing tests. A camera-variant symlink was followed
+  and copied from outside the project; a signature-invalid camera asset still produced build exit
+  `0`/`ok:true`; own `__proto__`/`constructor`/`prototype` profile and binding IDs were dropped or
+  resolved through mutated/inherited prototypes; and the equivalent sprite/tileset ID contract did
+  not remain closed own-data.
+- Actual generated-player command:
+  `npx playwright test tests/e2e/r20-camera-generated-boot.regression.spec.mjs --workers=1 --reporter=line`.
+  The sandboxed attempt reached the expected loopback restriction (`listen EPERM`); the approved
+  loopback rerun exited `1` with `2/2` expected RED browser cases. The built Canvas target emitted
+  one and the built Phaser target emitted three page errors, all exactly
+  `cameraRenderSpace.viewportProfile.fit is not supported.` This proves both generated paths passed
+  the complete BuildTargets viewport object into the closed camera render-space contract.
+
+## 2026-08-03 — R20 final verifier repairs focused GREEN
+
+- Asset import and build copying now inspect every source path component without following
+  symlinks, require a confined regular file and preserve the previous missing-file result. A
+  signature/size/symlink-invalid referenced camera asset aborts the build before project data,
+  service worker or single-file output can claim success.
+- Camera profile, binding and view-variant catalogs preserve all valid JSON identifiers, including
+  `__proto__`, `constructor` and `prototype`, as own records without prototype mutation. Runtime
+  selection and exact/fallback/material resolution use own-property lookup and never observe
+  inherited values.
+- Generated Canvas and Phaser normalize the BuildTargets viewport into the closed render-space
+  subset instead of forwarding `fit`. The first actual browser rerun then exposed a second
+  expected runtime boundary: a valid pre-placement frame has no depth-sorted actors. The existing
+  actual-boot RED therefore remained red with `cameraRenderItems must contain 1...`; the shared
+  projector now accepts a dense empty actor list while world bounds remain non-empty and bounded.
+- Focused unit command covering asset IO, projector/view catalogs and render integration is GREEN
+  at `7/7` files and `58/58` tests. The actual generated-player Playwright regression is GREEN at
+  `2/2`, with no page errors for either Canvas or Phaser. The complete R20-focused unit matrix is
+  GREEN at `15/15` files and `109/109` tests; combined Camera Studio plus generated-player browser
+  coverage is GREEN at `4/4`. `git diff --check` is GREEN. Plugin parity, full gates and both fresh
+  independent sign-offs remain required after the repair commit.
+
+## 2026-08-03 — R20 repaired exact-candidate gates
+
+- Production and regression candidate `eba06721c81e6fbd12d57c80e2dd9b09ef9df499` is clean and
+  frozen after the security and generated-player boot repairs. `npm run typecheck`,
+  `npm run build:engine`, `npm run validate`, `npm run sim tutorial_01 60` and `npm run build`
+  are GREEN.
+- The complete one-worker unit gate passed `443/443` files and `4225/4225` tests. The complete
+  one-worker Playwright gate passed `161/161`, including the actual generated Canvas and Phaser
+  camera-player boot regressions with no browser page errors.
+- `npm run plugin:build`, `npm run plugin:validate` and `npm run plugin:smoke` are GREEN. Starter
+  mobile and desktop package commands are GREEN, and desktop Rust lifecycle tests pass `9/9`.
+  Generators and gates leave the candidate unchanged: `git diff --exit-code` is GREEN.
+- This evidence-only entry is the sole change after the production/test candidate. Two fresh,
+  independent reviewers must sign off the resulting docs-only child before R20 PR creation and
+  merge; either source change invalidates both reviews.
+
+## 2026-08-03 — R20 hidden-key verifier RED evidence
+
+- Independent verification rejected exact docs candidate `e4531a6` because the closed projector
+  and render-space own-data contracts ignored symbol keys, while ordinary-object cloning and
+  lookup could hide or reinterpret valid JSON identifiers `__proto__`, `constructor` and
+  `prototype`. The Contract/Test Designer changed regression tests and this evidence only;
+  production and generated plugin runtime remain untouched, and all previous freeze/sign-off
+  evidence is invalidated.
+- Exact focused command:
+  `npx vitest run packages/renderer/src/r20-camera-symbol-keys.regression.test.mjs packages/cli/lib/r20-camera-view-assets.contract.test.mjs packages/mcp/r20-camera-view-variant-authoring.regression.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`, `7` expected RED and `27` passing tests across `3/3` red files.
+- The three renderer RED groups prove symbol-bearing profiles/catalogs/contexts/points,
+  render-space options/viewport/world arrays and projected item arrays/records are currently
+  accepted instead of rejected. Project-schema RED proves a malformed camera variant under the
+  own JSON ID `__proto__` disappears from validation. Public MCP/AI RED proves `__proto__` and
+  `constructor` cannot complete the one-variant preview/apply workflow, and a hidden
+  `__proto__` variant field is not reported at its authored field path. The equivalent valid
+  `prototype` flow and the visible `constructor`/`prototype` malformed-field checks remain GREEN,
+  keeping the repair boundary narrow.
+
+## 2026-08-03 — R20 hidden-key repair focused GREEN
+
+- Closed camera projector and render-space inputs now reject symbol-keyed own data, including
+  nested records and dense arrays. Project-schema validation uses prototype-neutral records, while
+  camera authoring uses own-property lookup and definition so valid JSON identifiers `__proto__`,
+  `constructor` and `prototype` cannot mutate or inherit from a catalog prototype.
+- The exact former RED command is GREEN at `3/3` files and `34/34` tests. The complete focused R20
+  camera matrix is GREEN at `16/16` files and `122/122` tests. `npm run plugin:build`,
+  `npm run plugin:validate`, `npm run plugin:smoke` and `git diff --check` are GREEN; the plugin
+  runtime mirrors all four repaired source files.
+- This is pre-freeze evidence. Because production changed after the rejected candidate, the full
+  exact-candidate gates and both independent sign-offs must run again before PR creation or merge.
+
+## 2026-08-03 — R20 hidden-key repaired exact-candidate gates
+
+- Production/test candidate `7fbbf1b2131654ff2330d6e242d76c773157d75e` was clean before and
+  after the complete gate run. `npm run typecheck`, `npm run build:engine`, `npm run validate`,
+  `npm run sim tutorial_01 60` and `npm run build` are GREEN.
+- Full unit passed `444/444` files and `4238/4238` tests. Full Playwright E2E passed `161/161`,
+  including Camera Studio and actual generated Canvas/Phaser camera-player boot coverage.
+- `npm run plugin:build`, `npm run plugin:validate` and `npm run plugin:smoke` are GREEN. Starter
+  mobile and desktop package commands are GREEN, and desktop Rust lifecycle tests pass `9/9`.
+  `git diff --exit-code` and `git diff --cached --exit-code` are GREEN after all generators and
+  gates.
+- This evidence-only entry is the sole change after the exact production/test candidate. R20 is
+  frozen again for two fresh independent sign-offs; any source change invalidates both.

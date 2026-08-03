@@ -224,7 +224,7 @@ function compileBinding(id, value, catalogs) {
 }
 
 function compileCatalog(visuals) {
-  if (ownData(visuals, "schemaVersion") !== 3) return undefined;
+  if (![3, 4].includes(ownData(visuals, "schemaVersion"))) return undefined;
   const juice = ownData(visuals, "proceduralJuice");
   if (juice === INVALID || !recordEntries(juice, 5, ["schemaVersion", "particleEmitters", "audioCues", "cameraCues", "eventBindings"])
     || ownData(juice, "schemaVersion") !== 1) return undefined;
@@ -377,14 +377,14 @@ function audioInstruction(bindingId, cue, seed, event, snapshot, previousSnapsho
 }
 
 /**
- * Convert a supported visuals v3 catalog plus one authoritative render snapshot into detached,
+ * Convert a supported visuals v3/v4 catalog plus one authoritative render snapshot into detached,
  * deterministic presentation instructions. Any malformed/future/hostile input returns the one
  * frozen inactive sentinel; a valid but filtered catalog returns active empty arrays.
  */
 export function projectProceduralJuicePresentation(options) {
   const visuals = ownData(options, "visuals");
   const snapshot = ownData(options, "snapshot");
-  if (ownData(visuals, "schemaVersion") !== 3 || ownData(visuals, "proceduralJuice") === undefined) {
+  if (![3, 4].includes(ownData(visuals, "schemaVersion")) || ownData(visuals, "proceduralJuice") === undefined) {
     return INACTIVE_PROCEDURAL_JUICE_PRESENTATION;
   }
   const catalog = compileCatalog(visuals);
