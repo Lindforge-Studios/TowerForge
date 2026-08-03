@@ -13058,6 +13058,9 @@ function renderBuildTargetsTab() {
           bt.targets[newId] = { ...t, id: newId };
           rewriteBuildTargetDefaults(bt, tid, newId);
           delete bt.targets[tid];
+          markDirty(true);
+          renderBuildTargetsTab();
+          return;
         }
       } else if (f.startsWith("viewport.")) {
         t.viewport ??= { fit: "contain" };

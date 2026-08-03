@@ -221,4 +221,28 @@ describe("R19 verifier packaging boundaries", () => {
     expect(fs.readFileSync(sentinel, "utf8")).toBe("unchanged");
     expect(fs.readdirSync(outsidePackage)).toEqual(["sentinel.txt"]);
   }, 60_000);
+
+  it.skipIf(process.platform === "win32")("rejects an existing generated file symlink before repack can overwrite its external target", async () => {
+    const { projectDir } = fixture();
+    const first = await packageDesktop(projectDir, { targetId: "native-desktop", outDir: "native" });
+    expect(first.ok, first.error).toBe(true);
+
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "towerforge-r19-scaffold-file-outside-"));
+    roots.push(outside);
+    const sentinel = path.join(outside, "Cargo.toml");
+    fs.writeFileSync(sentinel, "external sentinel\n", "utf8");
+    const generatedCargo = path.join(projectDir, "native", "src-tauri", "Cargo.toml");
+    fs.unlinkSync(generatedCargo);
+    fs.symlinkSync(sentinel, generatedCargo, "file");
+
+    const second = await captured(() => packageDesktop(projectDir, {
+      targetId: "native-desktop",
+      outDir: "native"
+    }));
+
+    expect(second.ok).toBe(false);
+    expect(second.error).toMatch(/outside|symlink|project/i);
+    expect(fs.readFileSync(sentinel, "utf8")).toBe("external sentinel\n");
+    expect(fs.lstatSync(generatedCargo).isSymbolicLink()).toBe(true);
+  }, 60_000);
 });

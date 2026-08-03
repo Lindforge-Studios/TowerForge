@@ -168,6 +168,35 @@ describe("R19.4 optional updater target and carrier (RED)", () => {
     );
   }, 60_000);
 
+  it.skipIf(process.platform === "win32")("rejects an internal src-tauri symlink before disabled-updater cleanup can delete external build state", async () => {
+    const projectDir = fixture(ENABLED);
+    const first = await packageDesktop(projectDir, { targetId: "native-desktop", outDir: "native" });
+    expect(first.ok, first.error).toBe(true);
+    const nativeDir = path.join(projectDir, "native");
+    fs.rmSync(path.join(nativeDir, "src-tauri"), { recursive: true, force: true });
+
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "towerforge-r19-updater-cleanup-outside-"));
+    roots.push(outside);
+    fs.writeFileSync(path.join(outside, "Cargo.toml"), "tauri-plugin-updater = \"2\"\n", "utf8");
+    fs.writeFileSync(path.join(outside, "Cargo.lock"), "external lock sentinel\n", "utf8");
+    fs.mkdirSync(path.join(outside, "target"), { recursive: true });
+    fs.writeFileSync(path.join(outside, "target", "sentinel.txt"), "external target sentinel\n", "utf8");
+    fs.symlinkSync(outside, path.join(nativeDir, "src-tauri"), "dir");
+
+    fs.writeFileSync(path.join(projectDir, "build-targets.json"), `${JSON.stringify(buildTargets({ enabled: false }), null, 2)}\n`);
+    let second;
+    try {
+      second = await packageDesktop(projectDir, { targetId: "native-desktop", outDir: "native" });
+    } catch (error) {
+      second = { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+
+    expect(second.ok).toBe(false);
+    expect(second.error).toMatch(/outside|symlink|project/i);
+    expect(fs.readFileSync(path.join(outside, "Cargo.lock"), "utf8")).toBe("external lock sentinel\n");
+    expect(fs.readFileSync(path.join(outside, "target", "sentinel.txt"), "utf8")).toBe("external target sentinel\n");
+  }, 60_000);
+
   it("emits only the signed updater plugin/config/capability and preflight-first runtime when enabled", async () => {
     const projectDir = fixture(ENABLED);
     const result = await packageDesktop(projectDir, { targetId: "native-desktop", outDir: "native" });

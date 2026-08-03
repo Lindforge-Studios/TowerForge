@@ -33,9 +33,13 @@ Window and bundle records are closed own-data contracts. Output paths and the pr
 1024×1024 PNG icon remain confined to the project. Every native target owns an isolated
 `desktop-<target-id>` output by default; authored outputs cannot be equal, ancestors or descendants
 of another web/native output, so packaging one target cannot mix or overwrite another carrier.
+Every generated scaffold read, write and bounded cleanup validates its exact destination again;
+pre-existing file or directory symlinks that could redirect a repack outside the active project are
+rejected before mutation. This applies to icon variants, Tauri/Capacitor manifests, release scripts,
+updater sources, build caches and lockfiles rather than only to the carrier's top-level output path.
 Studio rewrites a platform default when its selected target is renamed and removes that default
 when the target is deleted. A rename to an existing target ID is rejected before either record is
-mutated. Generated configuration uses a restrictive CSP,
+mutated; a successful rename rerenders the card so later edits bind the new stable ID. Generated configuration uses a restrictive CSP,
 does not enable global Tauri APIs, and grants only the narrow commands required by the game.
 
 R19.2 reuses `PlayerSessionSaveV1` and `createRotatingPlayerSessionStore` behind

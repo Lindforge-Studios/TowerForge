@@ -3517,3 +3517,28 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - Minimal repairs made the same combined command GREEN: `2/2` files and `10/10` tests passed.
 - The complete focused R19 set then passed sequentially: `14/14` files and `86/86` tests. Full
   exact-commit gates and fresh verifier sign-offs remain mandatory after the next commit.
+
+## 2026-08-03 — R19 exact-candidate symlink confinement and rename-rebind RED
+
+- Both independent verifiers rejected frozen production commit `0aea94b` after its local and GitHub
+  gates passed. Code verification found that disabled-updater cleanup followed an existing internal
+  `src-tauri` symlink and that Studio retained old target-card handlers after a successful rename.
+  Constructor integration verification additionally reproduced an external-file overwrite by
+  replacing generated `src-tauri/Cargo.toml` with a symlink before repack.
+- Before production repair, three regressions were added: successful rename must rerender/rebind;
+  repack must reject an exact generated-file symlink without changing its outside sentinel; and
+  disabled-updater cleanup must reject a symlinked `src-tauri` without deleting outside `target` or
+  `Cargo.lock` sentinels.
+- Exact RED command:
+  `npx vitest run packages/studio/r19-native-desktop-target-surface.contract.test.mjs packages/cli/lib/r19-verifier-packaging-boundaries.regression.test.mjs packages/cli/lib/r19-optional-updater.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+- Expected RED is the missing Studio rerender plus unsafe successful/throwing native repacks that
+  mutate external sentinels. Candidate `0aea94b`, CI runs `30785188932`/`30785188939`, its gate
+  evidence and both rejected verifier reports are not reusable for acceptance.
+- Result: exit `1`; exactly `3/32` tests failed and `29/32` passed. The failures were the missing
+  rename rerender, a successful repack through a generated-file symlink, and successful cleanup
+  through a symlinked `src-tauri`; both external mutation paths reproduced the verifier findings.
+- Minimal GREEN routes every generated package scaffold read/write/cleanup through the shared
+  project-confined writer and rerenders the Studio card after the ID transaction. The exact RED
+  command now passes `32/32`; the complete focused R19 suite passes `14/14` files and `89/89`
+  tests. The source/plugin runtime mirror was regenerated. Full gates and both independent
+  sign-offs still require a new exact committed candidate.

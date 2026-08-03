@@ -52,4 +52,10 @@ describe("R19.1 Studio first-class native desktop target surface", () => {
   it("rejects a rename collision before mutating either build target", () => {
     expect(app).toMatch(/Object\.hasOwn\(bt\.targets, newId\)[\s\S]{0,260}inp\.value = tid[\s\S]{0,100}return;[\s\S]{0,160}bt\.targets\[newId\]/);
   });
+
+  it("rerenders after a successful rename so every target-card handler binds the new id", () => {
+    expect(app).toMatch(
+      /bt\.targets\[newId\][\s\S]{0,220}delete bt\.targets\[tid\];[\s\S]{0,120}markDirty\(true\);[\s\S]{0,80}renderBuildTargetsTab\(\);[\s\S]{0,60}return;/
+    );
+  });
 });
