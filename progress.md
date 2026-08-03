@@ -4013,3 +4013,19 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   GREEN at `15/15` files and `109/109` tests; combined Camera Studio plus generated-player browser
   coverage is GREEN at `4/4`. `git diff --check` is GREEN. Plugin parity, full gates and both fresh
   independent sign-offs remain required after the repair commit.
+
+## 2026-08-03 — R20 repaired exact-candidate gates
+
+- Production and regression candidate `eba06721c81e6fbd12d57c80e2dd9b09ef9df499` is clean and
+  frozen after the security and generated-player boot repairs. `npm run typecheck`,
+  `npm run build:engine`, `npm run validate`, `npm run sim tutorial_01 60` and `npm run build`
+  are GREEN.
+- The complete one-worker unit gate passed `443/443` files and `4225/4225` tests. The complete
+  one-worker Playwright gate passed `161/161`, including the actual generated Canvas and Phaser
+  camera-player boot regressions with no browser page errors.
+- `npm run plugin:build`, `npm run plugin:validate` and `npm run plugin:smoke` are GREEN. Starter
+  mobile and desktop package commands are GREEN, and desktop Rust lifecycle tests pass `9/9`.
+  Generators and gates leave the candidate unchanged: `git diff --exit-code` is GREEN.
+- This evidence-only entry is the sole change after the production/test candidate. Two fresh,
+  independent reviewers must sign off the resulting docs-only child before R20 PR creation and
+  merge; either source change invalidates both reviews.
