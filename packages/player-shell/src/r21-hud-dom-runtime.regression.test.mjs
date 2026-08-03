@@ -16,14 +16,14 @@ function variant(rootNodeIds, layouts) {
   return { schemaVersion: 1, designViewport: { width: 1920, height: 1080 }, rootNodeIds, layouts };
 }
 
-function node(id, type, properties = {}, actions = []) {
+function node(id, type, properties = {}, actions = [], data = []) {
   return {
     schemaVersion: 1,
     id,
     type,
     childIds: [],
     properties,
-    bindings: { data: [], actions },
+    bindings: { data, actions },
     states: { normal: { visible: true, enabled: true } }
   };
 }
@@ -104,7 +104,7 @@ function createRuntime(profileValue, runtime = {}) {
 }
 
 describe("R21 verifier regression: semantic HUD DOM and input bridge (RED)", () => {
-  it("dispatches a screen event with the initial selector state when the state override is omitted", () => {
+  it("dispatches a screen event with the initial or most recently rendered selector state when the override is omitted", () => {
     const hud = profile(
       [node("pause_button", "button", { labelKey: "hud.pause" })],
       ["pause_button"],
@@ -116,16 +116,20 @@ describe("R21 verifier regression: semantic HUD DOM and input bridge (RED)", () 
         conditions: [{ selectorId: "canPause", operator: "equals", value: true }]
       }]
     );
-    const { instance, root } = createRuntime(hud, {
-      selectorDescriptors: [{ schemaVersion: 1, id: "canPause", valueType: "boolean", cardinality: "one" }],
-      state: { selectors: { canPause: true }, nodeStates: {} }
-    });
-    expect(instance.render().ok).toBe(true);
+    for (const updateBeforeDispatch of [false, true]) {
+      const { instance, root } = createRuntime(hud, {
+        selectorDescriptors: [{ schemaVersion: 1, id: "canPause", valueType: "boolean", cardinality: "one" }],
+        state: { selectors: { canPause: !updateBeforeDispatch }, nodeStates: {} }
+      });
+      expect(instance.render(updateBeforeDispatch ? {
+        state: { selectors: { canPause: true }, nodeStates: {} }
+      } : undefined).ok).toBe(true);
 
-    const result = instance.dispatch("pauseRequested");
+      const result = instance.dispatch("pauseRequested");
 
-    expect(result).toMatchObject({ ok: true, transitioned: true, currentScreenId: "pause" });
-    expect(root.dataset.towerforgeHudScreen).toBe("pause");
+      expect(result).toMatchObject({ ok: true, transitioned: true, currentScreenId: "pause" });
+      expect(root.dataset.towerforgeHudScreen).toBe("pause");
+    }
   });
 
   it("materializes build-menu collections and exposes one input-family-neutral activation path", () => {
@@ -163,5 +167,32 @@ describe("R21 verifier regression: semantic HUD DOM and input bridge (RED)", () 
       actionId: "selectBuildSlot",
       payload: { slotId: "frost", index: 1 }
     })));
+  });
+
+  it("projects scalar data, progress values and visibility state into semantic elements", () => {
+    const gold = node("gold", "counter", {}, [], [{ slot: "value", selectorId: "gold" }]);
+    const wave = node("wave", "progress_bar", { min: 0, max: 10 }, [], [{ slot: "value", selectorId: "wave" }]);
+    const command = node("command", "button", { labelKey: "hud.command" }, [], [
+      { slot: "visible", selectorId: "visible" },
+      { slot: "enabled", selectorId: "enabled" }
+    ]);
+    const hud = profile([gold, wave, command], ["gold", "wave", "command"]);
+    const { instance, root } = createRuntime(hud, {
+      selectorDescriptors: [
+        { schemaVersion: 1, id: "gold", valueType: "number", cardinality: "one" },
+        { schemaVersion: 1, id: "wave", valueType: "number", cardinality: "one" },
+        { schemaVersion: 1, id: "visible", valueType: "boolean", cardinality: "one" },
+        { schemaVersion: 1, id: "enabled", valueType: "boolean", cardinality: "one" }
+      ],
+      state: {
+        selectors: { gold: 275, wave: 6, visible: false, enabled: false },
+        nodeStates: {}
+      }
+    });
+
+    expect(instance.render().ok).toBe(true);
+    expect(root.find("gold")?.textContent).toBe("275");
+    expect(root.find("wave")).toMatchObject({ min: 0, max: 10, value: 6 });
+    expect(root.find("command")).toMatchObject({ hidden: true, disabled: true });
   });
 });

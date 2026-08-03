@@ -8,6 +8,8 @@ const TAG_BY_TYPE = Object.freeze({
   image: "img", icon: "img", progress_bar: "progress", drawer: "section",
   modal: "section", panel: "section", nine_slice: "section"
 });
+const INPUT_FAMILIES = new Set(["pointer", "keyboard", "gamepad", "touch"]);
+const COLLECTION_ACTION_EVENTS = new Set(["select", "activate"]);
 
 /** Browser-only semantic adapter. Layout, navigation and action validation stay in player-runtime. */
 export function createHudDomRuntimeV1(options) {
@@ -21,12 +23,37 @@ export function createHudDomRuntimeV1(options) {
     state: { selectors: options.state?.selectors ?? {} }
   });
   let disposed = false;
+  let currentState = options.state ?? { selectors: {}, nodeStates: {} };
+  let currentPlan = null;
+
+  function activateCollectionItem(request) {
+    if (disposed) return Object.freeze({ ok: false, code: "hud_disposed" });
+    if (!request || typeof request !== "object" || !INPUT_FAMILIES.has(request.inputFamily)) {
+      return Object.freeze({ ok: false, code: "hud_input_family_not_allowed" });
+    }
+    const node = currentPlan?.nodes.find((entry) => entry.id === request.nodeId);
+    if (!node || !Array.isArray(node.collection)) {
+      return Object.freeze({ ok: false, code: "hud_collection_not_found" });
+    }
+    const index = node.collection.findIndex((item) => item?.id === request.itemId);
+    if (index < 0) return Object.freeze({ ok: false, code: "hud_collection_item_not_found" });
+    const item = node.collection[index];
+    if (item?.enabled === false || item?.visible === false || node.stateConfig.enabled === false || node.stateConfig.visible === false) {
+      return Object.freeze({ ok: false, code: "hud_collection_item_unavailable" });
+    }
+    const binding = node.actions.find((entry) => COLLECTION_ACTION_EVENTS.has(entry.event));
+    if (!binding) return Object.freeze({ ok: false, code: "hud_collection_action_unavailable" });
+    const payload = Object.freeze({ ...binding.payload, slotId: request.itemId, index });
+    options.actionRegistry?.invoke(binding.actionId, payload);
+    return Object.freeze({ ok: true, actionId: binding.actionId, payload });
+  }
 
   function render(next = {}) {
     if (disposed) return Object.freeze({ ok: false, code: "hud_disposed" });
     const viewportWidth = next.viewportWidth ?? options.viewportWidth ?? root.clientWidth ?? 1920;
     const viewportHeight = next.viewportHeight ?? options.viewportHeight ?? root.clientHeight ?? 1080;
-    const state = next.state ?? options.state ?? { selectors: {}, nodeStates: {} };
+    if (Object.hasOwn(next, "state")) currentState = next.state;
+    const state = currentState;
     const compiled = compileHudLayoutV1(profile, {
       viewportWidth,
       viewportHeight,
@@ -39,15 +66,17 @@ export function createHudDomRuntimeV1(options) {
     root.dataset.towerforgeHudProfile = profileId;
     root.dataset.towerforgeHudScreen = graph.snapshot().currentScreenId;
     if (!compiled.ok) {
+      currentPlan = null;
       renderRecovery(document, root, compiled.error);
       return Object.freeze({ ok: false, error: compiled.error });
     }
+    currentPlan = compiled.plan;
     const screenId = graph.snapshot().currentScreenId;
     const screen = profile.screens?.[screenId];
     const visible = new Set(screen?.rootNodeIds ?? compiled.plan.rootNodeIds);
     const byId = new Map();
     for (const node of compiled.plan.nodes) {
-      const element = createNode(document, node, options);
+      const element = createNode(document, node, options, activateCollectionItem);
       byId.set(node.id, element);
       if (!node.parentId && !visible.has(node.id)) element.hidden = true;
       if (node.parentId && byId.has(node.parentId)) byId.get(node.parentId).append(element);
@@ -59,17 +88,22 @@ export function createHudDomRuntimeV1(options) {
   return Object.freeze({
     schemaVersion: HUD_DOM_RUNTIME_SCHEMA_VERSION,
     render,
-    dispatch(event, selectorState = {}) {
-      const result = graph.dispatch(event, selectorState);
-      render({ state: options.state });
+    dispatch(event, selectorState = undefined) {
+      const selectors = selectorState ?? currentState.selectors;
+      const result = graph.dispatch(event, { selectors });
+      if (result.ok) {
+        currentState = { ...currentState, selectors };
+      }
+      render();
       return result;
     },
+    activateCollectionItem,
     snapshot: graph.snapshot,
     dispose() { disposed = true; root.replaceChildren(); }
   });
 }
 
-function createNode(document, node, options) {
+function createNode(document, node, options, activateCollectionItem) {
   const tag = TAG_BY_TYPE[node.type] ?? (node.type === "text" || node.type === "localized_text" ? "span" : "div");
   const element = document.createElement(tag);
   element.dataset.hudNodeId = node.id;
@@ -91,13 +125,64 @@ function createNode(document, node, options) {
   } else {
     element.textContent = String(options.localize?.(label) ?? label);
   }
-  element.hidden = node.stateConfig.visible === false;
-  if ("disabled" in element) element.disabled = node.stateConfig.enabled === false;
+  applyBoundData(element, node, options);
+  element.hidden = node.stateConfig.visible === false || node.data.visible === false;
+  if ("disabled" in element) element.disabled = node.stateConfig.enabled === false || node.data.enabled === false;
   for (const binding of node.actions) {
     const eventName = binding.event === "activate" ? "click" : "change";
     element.addEventListener(eventName, () => options.actionRegistry?.invoke(binding.actionId, binding.payload));
   }
+  materializeCollection(document, element, node, options, activateCollectionItem);
   return element;
+}
+
+function applyBoundData(element, node, options) {
+  const value = node.data.value;
+  if (node.type === "progress_bar") {
+    element.min = finiteOr(node.data.min, finiteOr(node.properties.min, 0));
+    element.max = finiteOr(node.data.max, finiteOr(node.properties.max, 1));
+    element.value = finiteOr(value, element.min);
+    return;
+  }
+  if (node.type === "slider") {
+    element.min = finiteOr(node.data.min, finiteOr(node.properties.min, 0));
+    element.max = finiteOr(node.data.max, finiteOr(node.properties.max, 100));
+    element.value = finiteOr(value, element.min);
+    return;
+  }
+  if (node.type === "toggle" && typeof value === "boolean") {
+    element.setAttribute("aria-pressed", String(value));
+  }
+  const displayValue = node.data.text ?? node.data.label ?? value;
+  if (["string", "number", "boolean"].includes(typeof displayValue)) {
+    element.textContent = String(options.localize?.(displayValue) ?? displayValue);
+  }
+}
+
+function finiteOr(value, fallback) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function materializeCollection(document, parent, node, options, activateCollectionItem) {
+  if (!Array.isArray(node.collection)) return;
+  node.collection.forEach((item, index) => {
+    const control = document.createElement("button");
+    const itemId = typeof item?.id === "string" ? item.id : String(index);
+    control.type = "button";
+    control.dataset.hudCollectionNodeId = node.id;
+    control.dataset.hudCollectionItemId = itemId;
+    control.dataset.hudCollectionIndex = String(index);
+    const label = item?.labelKey ?? item?.label ?? item?.name ?? itemId;
+    control.textContent = String(options.localize?.(label) ?? label);
+    control.hidden = item?.visible === false;
+    control.disabled = item?.enabled === false;
+    control.addEventListener("click", () => activateCollectionItem({
+      nodeId: node.id,
+      itemId,
+      inputFamily: "pointer"
+    }));
+    parent.append(control);
+  });
 }
 
 function renderRecovery(document, root, error) {
