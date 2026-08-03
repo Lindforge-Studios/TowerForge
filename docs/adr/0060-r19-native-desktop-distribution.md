@@ -30,7 +30,9 @@ order or borrows `defaults.web`.
 The first-class target never searches for a sibling web target. The CLI compiles the selected
 desktop target through the common generated-player builder, then emits a separate Tauri v2 carrier.
 Window and bundle records are closed own-data contracts. Output paths and the project-bound
-1024×1024 PNG icon remain confined to the project. Generated configuration uses a restrictive CSP,
+1024×1024 PNG icon remain confined to the project. Every native target owns an isolated
+`desktop-<target-id>` output by default; authored outputs are unique across web and native targets,
+so packaging one target cannot mix or overwrite another carrier. Generated configuration uses a restrictive CSP,
 does not enable global Tauri APIs, and grants only the narrow commands required by the game.
 
 R19.2 reuses `PlayerSessionSaveV1` and `createRotatingPlayerSessionStore` behind
@@ -39,7 +41,8 @@ general filesystem/shell command. Slot and head updates use cross-platform repla
 without deleting the committed destination first. Ordinary close is prevented until the WebView
 flushes and explicitly completes the close handshake. On desktop, WebView focus loss is the
 supported suspend/save boundary, while focus gain and Tauri's event-loop resume signal restoration;
-fullscreen and single-instance behavior use separate bounded events/commands. Browser and native
+fullscreen reads the authoritative Tauri window state before toggling or updating ARIA/preferences,
+and single-instance behavior uses separate bounded events/commands. Browser and native
 restore must produce the same simulation digest.
 
 R19.3 emits a project-owned release workflow for `.dmg`, `.exe`, `.msi`, `.AppImage`, `.deb` and
@@ -47,9 +50,11 @@ R19.3 emits a project-owned release workflow for `.dmg`, `.exe`, `.msi`, `.AppIm
 contains intent only; secret values stay in OS/CI storage. If signing is not configured, the release
 is labelled `Unsigned build` and published only as a pre-release. Generated Actions are pinned by
 immutable commit, Node/Rust toolchains and direct native dependencies are fixed, artifact assembly
-is recursive and requires exactly six installers before checksums/publication. The macOS job imports
-the author certificate and uses the standard Apple signing/notarization environment; the Windows
-job imports the authored PFX and binds its thumbprint to the Tauri build. The repository-owned R19
+is recursive and requires exactly six installers before checksums/publication. Jobs call the Tauri
+CLI directly with a quoted bundle list so PowerShell/npm cannot split a multi-format request. The
+macOS job imports the author certificate, then verifies the built app signature and stapled
+notarization ticket from the DMG; the Windows job imports the authored PFX and accepts `signed`
+status only after Authenticode validation against the imported thumbprint. The repository-owned R19
 acceptance workflow generates a carrier from current source and builds all six formats on native
 macOS, Windows and Linux runners before accepting the delivery contract.
 
@@ -59,7 +64,9 @@ platform/architecture and manifest validation are owned by the native Tauri upda
 complete before installation begins. The WebView cannot supply a `signatureStatus`, updater
 resource ID or arbitrary candidate and receives no direct updater plugin permission. The enabled
 release workflow stages the Tauri-produced update payload and adjacent detached `.sig`, then emits
-the signed static `latest.json` platform map beside installers and checksums. Disabled carriers omit
+the signed static `latest.json` platform map beside installers and checksums. Platform keys derive
+from the actual bounded runner OS/architecture, including Intel and Apple Silicon macOS runners.
+Disabled carriers omit
 the updater scripts, secrets, payload paths and metadata bytes entirely.
 
 The engine, GameCommand v8, checkpoint, journal, profile, campaign, multiplayer,

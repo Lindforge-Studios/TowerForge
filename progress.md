@@ -3367,3 +3367,85 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   generated URL-normalization regular expression; both defects received focused failing evidence
   before repair. The final executable updater/release pair passes `14/14` focused audit tests,
   including six-installers enforcement and `payload + .sig -> latest.json -> SHA256SUMS`.
+
+## 2026-08-03 — R19 native-runner bundle invocation and updater architecture RED
+
+- Exact candidate `1cb56e0f78073eb5cdce758176e3fb41e195a499` passed local full unit/E2E/plugin/package/Cargo
+  gates and produced a launchable verified macOS DMG, but repository acceptance run `30776923330`
+  failed on native Windows job `91574138880`. The exact log shows
+  `npm run tauri:build -- --bundles nsis,msi` becoming `tauri build nsis msi` under npm/PowerShell;
+  Tauri forwarded those invalid positional arguments to Cargo and the job exited before compilation.
+- Independent Code Verifier also identified that an updater-enabled workflow hard-coded
+  `darwin-aarch64` while `macos-latest` may run a different architecture. Static updater metadata
+  must therefore derive its platform key from the actual native runner architecture rather than a
+  moving-runner assumption.
+- Before production repair, the regression requires direct quoted Tauri CLI invocation in both the
+  generated project workflow and repository acceptance workflow, prohibits the npm wrapper, makes
+  the updater collector derive a bounded platform key from family plus runner architecture, and
+  executes the changed collector/assembler contract. Exact RED command:
+  `npx vitest run packages/cli/lib/r19-frozen-workflow-audit.regression.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`; `3/11` tests failed and `8/11` passed. Failures were the executable collector's
+  old argument shape, the missing direct quoted CLI command, and absent `${{ runner.arch }}` metadata.
+
+## 2026-08-03 — R19 final verifier isolation/fullscreen/signature RED
+
+- The rejected `1cb56e0` audit found three additional native-distribution boundaries. First-class
+  targets without an explicit `outputDir` all resolve to `<project>/desktop`, so packaging a second
+  target overwrites/mixes the first carrier; explicitly duplicated desktop outputs were not rejected
+  by schema validation. A generated native player also inferred fullscreen from browser
+  `document.fullscreenElement` and toggled a stored preference rather than querying the Tauri window,
+  which makes an authored `window.fullscreen: true` first toggle and ARIA state incorrect. Finally,
+  signing status was set after certificate import instead of verifying the built macOS/Windows
+  artifact before publication.
+- RED contracts require a recipe-owned deterministic `desktop-<target-id>` output, isolated fallback
+  for older first-class targets, duplicate-output validation, bounded `player_get_fullscreen`, native
+  UI synchronization without the browser Fullscreen API, and post-build `codesign`/notarization plus
+  Authenticode verification before `signed` status.
+- Exact RED command:
+  `npx vitest run packages/cli/lib/r19-frozen-workflow-audit.regression.test.mjs packages/cli/lib/r19-native-desktop-target.contract.test.mjs packages/cli/lib/r19-native-persistence-lifecycle.contract.test.mjs packages/cli/lib/r19-verifier-native-contracts.regression.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`; `10/31` tests failed and `21/31` passed. Failures match the five workflow/updater
+  boundaries plus default-output collision, duplicate-output acceptance, missing recipe output,
+  absent Rust fullscreen read command and absent lifecycle/player state synchronization. No
+  production file changed before either RED run.
+
+## 2026-08-03 — R19 signed macOS workflow portability RED
+
+- A pre-freeze review of the new post-build signing verification found a GNU-only `find -maxdepth`
+  assumption in the generated macOS job. The signed path is not exercised by the unsigned carrier
+  acceptance matrix, so it could fail after producing a valid DMG on a native BSD runner.
+- Before repairing the generator, the signing workflow regression was extended to prohibit
+  `-maxdepth`. Exact RED command:
+  `npx vitest run packages/cli/lib/r19-frozen-workflow-audit.regression.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`; `1/13` failed and `12/13` passed. The post-build signature test saw the
+  unsupported flag in generated YAML exactly as expected.
+
+## 2026-08-03 — R19 verifier repairs focused GREEN
+
+- Direct quoted Tauri invocation now survives PowerShell, updater platform metadata derives from a
+  bounded runner family/architecture pair, native targets default to isolated
+  `desktop-<target-id>` outputs, and duplicate web/native outputs are rejected before mutation.
+- The native lifecycle now reads the actual Tauri window fullscreen state before toggling or
+  updating preferences/ARIA. Signed release status is written only after validating the produced
+  macOS app signature and stapled ticket or Windows Authenticode signer. The macOS verifier avoids
+  GNU-only `find` flags.
+- Focused R19 command:
+  `npx vitest run packages/cli/lib/r19-*.test.mjs packages/mcp/r19-*.test.mjs packages/player-runtime/src/r19-*.test.mjs packages/studio/r19-*.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `0`; `14/14` files and `81/81` tests passed. `npm run plugin:build` regenerated the
+  source-owned plugin runtime. Exact-commit full gates, native matrix CI and independent sign-offs
+  remain pending until the repaired candidate is committed.
+
+## 2026-08-03 — R19 cross-platform recipe output allocator RED
+
+- A read-only pre-freeze audit found that schema v2 validates web `webDir` and native `outputDir`
+  in one shared namespace, but each recipe allocator inspected only targets of its own platform.
+  A valid existing web target could therefore make the native recipe fail its own preview, and the
+  reverse collision was equally possible.
+- Before changing the allocator, a bidirectional regression was added. Exact RED command:
+  `npx vitest run packages/cli/lib/r19-native-desktop-target.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`; `1/10` failed and `9/10` passed. The native allocator selected the existing
+  web-owned `desktop-native-new`; the first assertion stopped the test before the symmetric check.
+- GREEN: both recipes now collect effective web and native output directories through one bounded
+  canonical helper. The focused contract passes `10/10`; the plugin mirror was regenerated before
+  the next complete R19 regression pass.
+- Pre-freeze R19 regression rerun: `14/14` files and `82/82` tests passed. This is focused evidence;
+  acceptance still requires the full gate set on the committed SHA.

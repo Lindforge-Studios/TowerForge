@@ -62,7 +62,10 @@ export async function packageProject(projectDir, opts = {}) {
   const buildTargetId = nativeDesktopTarget ? selectedId : webTargetId;
 
   const app = appMeta(files.manifest, selected);
-  const outDir = path.resolve(projectDir, opts.outDir ?? (nativeDesktopTarget ? selected.outputDir : null) ?? kind);
+  const defaultOutputDir = nativeDesktopTarget
+    ? (selected.outputDir ?? `desktop-${selectedId}`)
+    : kind;
+  const outDir = path.resolve(projectDir, opts.outDir ?? defaultOutputDir);
   assertUnderProject(projectDir, outDir);
   // Do NOT wipe the whole outDir: on a re-package it would destroy the user's native projects
   // (android/, ios/ from `npx cap add`, src-tauri/target/), their signing config, and node_modules.
@@ -452,7 +455,8 @@ Generated games are unsigned unless the author explicitly configures signing in 
 belong to the operating system or GitHub Actions secrets and must never be written into this
 project. The reference unsigned workflow always publishes a pre-release labelled **Unsigned
 build**. When every required platform secret is configured, the workflow imports the native
-certificate and can publish the verified signed candidate as a normal release.
+certificate, verifies the produced macOS signature/notarization ticket or Windows Authenticode
+signer, and only then can publish the verified signed candidate as a normal release.
 
 Documented macOS secret names:
 
@@ -566,6 +570,11 @@ fn player_set_pending_write(pending: bool, window: WebviewWindow, state: State<P
 }
 
 #[tauri::command]
+fn player_get_fullscreen(window: WebviewWindow) -> Result<bool, String> {
+  window.is_fullscreen().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn player_set_fullscreen(fullscreen: bool, window: WebviewWindow) -> Result<(), String> {
   window.set_fullscreen(fullscreen).map_err(|error| error.to_string())
 }
@@ -603,7 +612,7 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       player_session_read_head, player_session_read_slot, player_session_write_slot,
       player_session_write_head, player_session_remove_slot, player_session_remove_head,
-      player_set_pending_write, player_set_fullscreen, player_finish_close${updaterActive ? ",\n      player_check_and_install_update" : ""}
+      player_set_pending_write, player_get_fullscreen, player_set_fullscreen, player_finish_close${updaterActive ? ",\n      player_check_and_install_update" : ""}
     ])
     .on_window_event(|window, event| {
       match event {

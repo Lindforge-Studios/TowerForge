@@ -1195,19 +1195,23 @@ function validateBuildTargets(buildTargets, err) {
     }
   }
   for (const [targetId, target] of Object.entries(buildTargets.targets ?? {})) {
-    if (target.platform !== "web") continue;
-    const dir = target.webDir ?? "dist";
-    const safeIssue = validateSafeAssetPath(dir, `targets.${targetId}.webDir`);
+    const platform = target.platform ?? target.type ?? "web";
+    if (platform !== "web" && platform !== "desktop") continue;
+    const field = platform === "desktop" ? "outputDir" : "webDir";
+    const dir = platform === "desktop" ? (target.outputDir ?? `desktop-${targetId}`) : (target.webDir ?? "dist");
+    const safeIssue = validateSafeAssetPath(dir, `targets.${targetId}.${field}`);
     if (safeIssue || dir === "." || dir === "") {
-      err("buildTargets", targetId, `targets.${targetId}.webDir`, safeIssue ?? "webDir must name an output directory.");
+      err("buildTargets", targetId, `targets.${targetId}.${field}`, safeIssue ?? `${field} must name an output directory.`);
     }
   }
   if (schemaVersion === 2) {
     const outputOwners = new Map();
     for (const [targetId, target] of Object.entries(buildTargets.targets ?? {})) {
-      if (target?.platform !== "web") continue;
-      const dir = target.webDir ?? target.outputDir ?? "dist";
-      if (validateSafeAssetPath(dir, `targets.${targetId}.webDir`) || dir === "." || dir === "") continue;
+      const platform = target?.platform ?? target?.type ?? "web";
+      if (platform !== "web" && platform !== "desktop") continue;
+      const field = platform === "desktop" ? "outputDir" : "webDir";
+      const dir = platform === "desktop" ? (target.outputDir ?? `desktop-${targetId}`) : (target.webDir ?? "dist");
+      if (validateSafeAssetPath(dir, `targets.${targetId}.${field}`) || dir === "." || dir === "") continue;
       const canonicalDir = String(dir)
         .split(/[\\/]+/)
         .filter((part) => part && part !== ".")
@@ -1219,8 +1223,8 @@ function validateBuildTargets(buildTargets, err) {
         err(
           "buildTargets",
           targetId,
-          `targets.${targetId}.webDir`,
-          `webDir is already used by build target "${existingOwner}"; output directories must be unique.`
+          `targets.${targetId}.${field}`,
+          `${field} is already used by build target "${existingOwner}"; output directories must be unique.`
         );
       } else {
         outputOwners.set(canonicalDir, targetId);

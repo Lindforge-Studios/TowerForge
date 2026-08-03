@@ -38,6 +38,7 @@ export function getPlayerTargetRecipe(projectDir, recipeId, targetId) {
         id: targetId,
         platform: "desktop",
         renderer: "canvas",
+        outputDir: allocateNativeDesktopOutputDir(read.targets, targetId),
         appId: "com.example.nativegame",
         appName: "Native Game",
         appTitle: "Native Game",
@@ -85,11 +86,7 @@ export function getPlayerTargetRecipe(projectDir, recipeId, targetId) {
 }
 
 function allocateDesktopWebDir(targets, targetId) {
-  const occupied = new Set();
-  for (const [existingId, target] of Object.entries(targets)) {
-    if (existingId === targetId || target?.platform !== "web") continue;
-    occupied.add(canonicalOutputDirectory(target.webDir ?? target.outputDir ?? "dist"));
-  }
+  const occupied = collectOccupiedOutputDirectories(targets, targetId);
   for (let suffix = 1; suffix <= 256; suffix += 1) {
     const candidate = suffix === 1 ? "dist-desktop" : `dist-desktop-${suffix}`;
     if (!occupied.has(canonicalOutputDirectory(candidate))) return candidate;
@@ -97,6 +94,32 @@ function allocateDesktopWebDir(targets, targetId) {
   const error = new Error("No free desktop output directory remains in the bounded allocation range.");
   error.code = "desktop_output_budget_exceeded";
   throw error;
+}
+
+function allocateNativeDesktopOutputDir(targets, targetId) {
+  const occupied = collectOccupiedOutputDirectories(targets, targetId);
+  const base = `desktop-${targetId}`;
+  for (let suffix = 1; suffix <= 256; suffix += 1) {
+    const candidate = suffix === 1 ? base : `${base}-${suffix}`;
+    if (!occupied.has(canonicalOutputDirectory(candidate))) return candidate;
+  }
+  const error = new Error("No free native desktop output directory remains in the bounded allocation range.");
+  error.code = "native_desktop_output_budget_exceeded";
+  throw error;
+}
+
+function collectOccupiedOutputDirectories(targets, targetId) {
+  const occupied = new Set();
+  for (const [existingId, target] of Object.entries(targets)) {
+    if (existingId === targetId || !target || typeof target !== "object") continue;
+    const platform = target.platform ?? target.type ?? "web";
+    if (platform === "web") {
+      occupied.add(canonicalOutputDirectory(target.webDir ?? target.outputDir ?? "dist"));
+    } else if (platform === "desktop") {
+      occupied.add(canonicalOutputDirectory(target.outputDir ?? `desktop-${existingId}`));
+    }
+  }
+  return occupied;
 }
 
 function canonicalOutputDirectory(value) {

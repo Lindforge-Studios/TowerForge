@@ -21,7 +21,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
-function fixture() {
+function fixture(fullscreen = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "towerforge-r19-native-lifecycle-"));
   roots.push(root);
   execFileSync(process.execPath, [path.join(repoRoot, "packages/cli/create.mjs"), "game", "--dir", root, "--template", "classic"], { stdio: "ignore" });
@@ -51,7 +51,7 @@ function fixture() {
         quality: "balanced",
         locale: "auto",
         inputProfile: "keyboard_mouse",
-        window: { width: 1280, height: 720, minWidth: 1024, minHeight: 720, fullscreen: false, resizable: true },
+        window: { width: 1280, height: 720, minWidth: 1024, minHeight: 720, fullscreen, resizable: true },
         bundle: { iconSource: "assets/app-icon.png", targets: ["dmg"] }
       }
     }
@@ -76,6 +76,7 @@ describe("R19.2 generated native persistence and lifecycle (RED)", () => {
       "player_session_remove_slot",
       "player_session_remove_head",
       "player_set_pending_write",
+      "player_get_fullscreen",
       "player_set_fullscreen",
       "player_finish_close"
     ]) {
@@ -87,6 +88,17 @@ describe("R19.2 generated native persistence and lifecycle (RED)", () => {
     expect(capability.permissions).not.toEqual(expect.arrayContaining([
       expect.stringMatching(/(?:^|:)(?:default|fs|shell|opener|process|http)(?::|$)|\*/i)
     ]));
+  }, 60_000);
+
+  it("queries authoritative native fullscreen state and does not infer it from document.fullscreenElement", async () => {
+    const projectDir = fixture(true);
+    const result = await packageDesktop(projectDir, { targetId: "native-desktop", outDir: "native-fullscreen" });
+    expect(result.ok, result.error).toBe(true);
+    const player = fs.readFileSync(path.join(projectDir, "native-fullscreen", "dist", "player.mjs"), "utf8");
+
+    expect(player).toMatch(/nativePlayerLifecycle\.getFullscreen\(\)/);
+    expect(player).not.toMatch(/playerPreferences\.fullscreen\s*&&\s*!document\.fullscreenElement/);
+    expect(player).not.toMatch(/document\.addEventListener\(["']fullscreenchange/);
   }, 60_000);
 
   it("guards close while a write is pending, flushes across suspend/resume, and focuses the existing single instance", async () => {

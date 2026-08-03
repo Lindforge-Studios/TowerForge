@@ -22,6 +22,7 @@ function nativeDesktopTarget() {
     id: "native-desktop",
     platform: "desktop",
     renderer: "canvas",
+    outputDir: "desktop-native-desktop",
     appId: "com.example.nativegame",
     appName: "Native Game",
     appTitle: "Native Game",
@@ -111,6 +112,14 @@ describe("R19.1 first-class native desktop target (RED)", () => {
     ["unknown bundle field", (value) => { value.targets["native-desktop"].bundle.rogue = true; }, "targets.native-desktop.bundle.rogue"],
     ["unconfined icon source", (value) => { value.targets["native-desktop"].bundle.iconSource = "../app-icon.png"; }, "targets.native-desktop.bundle.iconSource"],
     ["unsupported bundle target", (value) => { value.targets["native-desktop"].bundle.targets.push("pkg"); }, "targets.native-desktop.bundle.targets.6"],
+    ["duplicate native output directory", (value) => {
+      value.targets["native-desktop"].outputDir = "desktop-shared";
+      value.targets["native-second"] = {
+        ...structuredClone(value.targets["native-desktop"]),
+        id: "native-second",
+        appId: "com.example.nativesecond"
+      };
+    }, "targets.native-second.outputDir"],
     ["desktop default pointing at web", (value) => {
       value.targets.web = { ...nativeDesktopTarget(), id: "web", platform: "web" };
       value.defaults.desktop = "web";
@@ -155,5 +164,33 @@ describe("R19.1 first-class native desktop target (RED)", () => {
     });
     expect(fs.readFileSync(path.join(projectDir, "project.json"), "utf8")).toBe(beforeProject);
     expect(fs.readFileSync(path.join(projectDir, "build-targets.json"), "utf8")).toBe(beforeTargets);
+  });
+
+  it("allocates recipe outputs across the shared web and native namespace", () => {
+    const projectDir = fixture();
+    const buildTargetsPath = path.join(projectDir, "build-targets.json");
+    fs.writeFileSync(buildTargetsPath, `${JSON.stringify({
+      schemaVersion: 2,
+      defaults: { web: "web-pwa", desktop: "native-existing" },
+      targets: {
+        "web-pwa": {
+          id: "web-pwa",
+          platform: "web",
+          renderer: "canvas",
+          webDir: "desktop-native-new"
+        },
+        "native-existing": {
+          ...nativeDesktopTarget(),
+          id: "native-existing",
+          outputDir: "dist-desktop"
+        }
+      }
+    }, null, 2)}\n`);
+
+    const nativeRecipe = getPlayerTargetRecipe(projectDir, "native_desktop_game", "native-new");
+    expect(nativeRecipe.target.outputDir).toBe("desktop-native-new-2");
+
+    const webRecipe = getPlayerTargetRecipe(projectDir, "desktop_large_screen", "desktop-web-new");
+    expect(webRecipe.target.webDir).toBe("dist-desktop-2");
   });
 });

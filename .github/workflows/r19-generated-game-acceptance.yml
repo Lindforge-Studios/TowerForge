@@ -50,7 +50,7 @@ jobs:
       - run: npm install --ignore-scripts --no-package-lock
         working-directory: carrier
       - name: Build macos dmg
-        run: npm run tauri:build -- --bundles dmg
+        run: npx tauri build --bundles "dmg"
         working-directory: carrier
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with: { name: r19-macos-dmg, path: "carrier/src-tauri/target/**/bundle/**/*.dmg", if-no-files-found: error }
@@ -69,7 +69,7 @@ jobs:
       - run: npm install --ignore-scripts --no-package-lock
         working-directory: carrier
       - name: Build windows nsis and msi
-        run: npm run tauri:build -- --bundles nsis,msi
+        run: npx tauri build --bundles "nsis,msi"
         working-directory: carrier
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -94,7 +94,7 @@ jobs:
       - run: npm install --ignore-scripts --no-package-lock
         working-directory: carrier
       - name: Build ubuntu appimage deb and rpm
-        run: npm run tauri:build -- --bundles appimage,deb,rpm
+        run: npx tauri build --bundles "appimage,deb,rpm"
         working-directory: carrier
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

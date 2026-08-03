@@ -13024,7 +13024,7 @@ function renderBuildTargetsTab() {
           <div class="field"><label>${f}</label><input class="bt-field" data-tid="${esc(tid)}" data-f="${f}" value="${esc(target[f]??"")}"></div>`).join("")}
       </div>
       <div class="form-row">
-        ${["webDir","backgroundColor","appVersion"].map(f => `
+        ${[nativeDesktop ? "outputDir" : "webDir","backgroundColor","appVersion"].map(f => `
           <div class="field"><label>${f}</label><input class="bt-field" data-tid="${esc(tid)}" data-f="${f}" value="${esc(target[f]??"")}"></div>`).join("")}
       </div>${desktopFields}${nativeDesktopFields}`;
     body.appendChild(card);

@@ -2,8 +2,16 @@ export function generatedUpdaterEntryScript() {
   return `import fs from "node:fs";
 import path from "node:path";
 
-const [root, platform, baseUrl, outputDir] = process.argv.slice(2);
-if (!root || !platform || !baseUrl || !outputDir) throw new Error("Updater entry arguments are incomplete.");
+const [root, platformFamily, runnerArch, baseUrl, outputDir] = process.argv.slice(2);
+if (!root || !platformFamily || !runnerArch || !baseUrl || !outputDir) throw new Error("Updater entry arguments are incomplete.");
+const architecture = ({ X64: "x86_64", ARM64: "aarch64" })[runnerArch.toUpperCase()];
+const supportedArchitectures = platformFamily === "darwin"
+  ? new Set(["x86_64", "aarch64"])
+  : new Set(["x86_64"]);
+if (!["darwin", "windows", "linux"].includes(platformFamily) || !architecture || !supportedArchitectures.has(architecture)) {
+  throw new Error("Updater platform family/runner architecture is unsupported.");
+}
+const platform = platformFamily + "-" + architecture;
 const files = [];
 function walk(directory) {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -61,7 +69,7 @@ if (installers.length !== 6) throw new Error("Expected exactly six desktop insta
 fs.mkdirSync(releaseDir, { recursive: true });
 for (const installer of installers) fs.copyFileSync(installer, path.join(releaseDir, path.basename(installer)));
 
-${updaterActive ? `const entryFiles = files.filter((file) => /updater-entry-(?:darwin-aarch64|windows-x86_64|linux-x86_64)\\.json$/.test(file)).sort();
+${updaterActive ? `const entryFiles = files.filter((file) => /updater-entry-(?:darwin-(?:aarch64|x86_64)|windows-x86_64|linux-x86_64)\\.json$/.test(file)).sort();
 if (entryFiles.length !== 3) throw new Error("Expected exactly three updater metadata entries.");
 const platforms = {};
 for (const entryFile of entryFiles) {
@@ -97,19 +105,19 @@ export function generatedDesktopReleaseWorkflow(updaterActive = false) {
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: \${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}` : "";
   const updaterMatrix = updaterActive ? `
             updater: true
-            updaterPlatform: darwin-aarch64` : "";
+            updaterFamily: darwin` : "";
   const updaterWindows = updaterActive ? `
             updater: true
-            updaterPlatform: windows-x86_64` : "";
+            updaterFamily: windows` : "";
   const updaterLinux = updaterActive ? `
             updater: true
-            updaterPlatform: linux-x86_64` : "";
+            updaterFamily: linux` : "";
   const updaterFalse = updaterActive ? `
             updater: false` : "";
   const updaterStage = updaterActive ? `
       - name: Stage updater payload, .sig and latest.json metadata entry
         if: matrix.updater == true
-        run: node scripts/collect-updater-entry.mjs src-tauri/target "\${{ matrix.updaterPlatform }}" "\${{ github.server_url }}/\${{ github.repository }}/releases/download/\${{ github.ref_name }}" updater-release
+        run: node scripts/collect-updater-entry.mjs src-tauri/target "\${{ matrix.updaterFamily }}" "\${{ runner.arch }}" "\${{ github.server_url }}/\${{ github.repository }}/releases/download/\${{ github.ref_name }}" updater-release
         # Payloads are .app.tar.gz, .AppImage.tar.gz or .nsis.zip with adjacent .sig signatures.
         # The assembler writes latest.json { version, platforms: { target: { signature, url } } }.
 ` : "";
@@ -198,7 +206,6 @@ jobs:
           security import "$certificate" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$APPLE_CERTIFICATE_PASSWORD" "$keychain"
           security list-keychain -d user -s "$keychain"
-          echo 'TOWERFORGE_PLATFORM_SIGNED=true' >> "$GITHUB_ENV"
       - name: Import Windows signing certificate
         if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE != '' && env.WINDOWS_CERTIFICATE_PASSWORD != ''
         shell: pwsh
@@ -212,10 +219,38 @@ jobs:
           $windows = [ordered]@{ certificateThumbprint = $certificate.Thumbprint; digestAlgorithm = 'sha256'; timestampUrl = 'http://timestamp.digicert.com' }
           $config.bundle | Add-Member -NotePropertyName windows -NotePropertyValue $windows -Force
           $config | ConvertTo-Json -Depth 100 | Set-Content $configPath -Encoding utf8
-          'TOWERFORGE_PLATFORM_SIGNED=true' | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TOWERFORGE_WINDOWS_THUMBPRINT=$($certificate.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - run: npm install --ignore-scripts --no-package-lock
       - name: Build \${{ matrix.format }} installer
-        run: npm run tauri:build -- --bundles \${{ matrix.bundles }}
+        run: npx tauri build --bundles "\${{ matrix.bundles }}"
+      - name: Verify macOS application signature and notarization ticket
+        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != '' && env.APPLE_SIGNING_IDENTITY != '' && env.APPLE_ID != '' && env.APPLE_PASSWORD != '' && env.APPLE_TEAM_ID != ''
+        shell: bash
+        run: |
+          dmg="$(find src-tauri/target -type f -name '*.dmg' -print -quit)"
+          mount="$RUNNER_TEMP/towerforge-signature-check"
+          test -n "$dmg"
+          mkdir -p "$mount"
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount" "$dmg"
+          trap 'hdiutil detach "$mount"' EXIT
+          app=""
+          for candidate in "$mount"/*.app; do
+            if [ -d "$candidate" ]; then app="$candidate"; break; fi
+          done
+          test -n "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          xcrun stapler validate "$app"
+          echo 'TOWERFORGE_PLATFORM_SIGNED=true' >> "$GITHUB_ENV"
+      - name: Verify Windows Authenticode signature
+        if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE != '' && env.WINDOWS_CERTIFICATE_PASSWORD != ''
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem src-tauri/target -Recurse -File | Where-Object { $_.Extension -eq '\${{ matrix.extension }}' })
+          if ($installers.Count -ne 1) { throw "Expected exactly one Windows installer for signature verification." }
+          $signature = Get-AuthenticodeSignature -FilePath $installers[0].FullName
+          if ($signature.Status -ne 'Valid') { throw "Windows installer Authenticode signature is not valid." }
+          if ($signature.SignerCertificate.Thumbprint -ne $env:TOWERFORGE_WINDOWS_THUMBPRINT) { throw "Windows installer signer does not match the imported certificate." }
+          'TOWERFORGE_PLATFORM_SIGNED=true' | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 ${updaterStage}      - name: Record signing policy evidence
         run: node scripts/write-signing-status.mjs "\${{ matrix.name }}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

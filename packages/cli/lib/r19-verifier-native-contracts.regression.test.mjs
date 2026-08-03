@@ -125,6 +125,23 @@ describe("R19 verifier native persistence/lifecycle contract", () => {
     lifecycle.dispose();
   });
 
+  it("reads native fullscreen state instead of trusting a stale browser preference", async () => {
+    const calls = [];
+    const lifecycle = installNativePlayerLifecycleV1({
+      window: new EventTarget(),
+      document: new EventTarget(),
+      async invoke(command, args) {
+        calls.push([command, args]);
+        if (command === "player_get_fullscreen") return true;
+      },
+      async save() { return { code: "saved" }; }
+    });
+
+    await expect(lifecycle.getFullscreen()).resolves.toBe(true);
+    expect(calls).toEqual([["player_get_fullscreen", undefined]]);
+    lifecycle.dispose();
+  });
+
   it("makes Rust prevent ordinary close until the WebView handshake finishes and maps desktop focus loss to suspend", () => {
     const rust = fs.readFileSync(path.join(nativeDir, "src-tauri", "src", "lib.rs"), "utf8");
 

@@ -110,6 +110,7 @@ export function installNativePlayerLifecycleV1(options) {
   }
   return Object.freeze({
     flush,
+    getFullscreen: () => invoke("player_get_fullscreen"),
     setFullscreen: (fullscreen) => invoke("player_set_fullscreen", { fullscreen: Boolean(fullscreen) }),
     requestClose: closeRequested,
     dispose() {

@@ -1263,9 +1263,9 @@ try {
   const playerPreferencesRaw = localStorage.getItem(playerPreferencesKey);
   if (playerPreferencesRaw) playerPreferences = parsePlayerPreferencesV1(playerPreferencesRaw);
 } catch {}
-if (playerPreferences.fullscreen && !document.fullscreenElement) {
+${nativeDesktopPlayer ? "" : `if (playerPreferences.fullscreen && !document.fullscreenElement) {
   playerPreferences = parsePlayerPreferencesV1(serializePlayerPreferencesV1({ ...playerPreferences, fullscreen: false }));
-}
+}`}
 const playerStrings = createPlayerStrings({
   locale: project.buildTarget.locale && project.buildTarget.locale !== "auto"
     ? project.buildTarget.locale
@@ -1313,7 +1313,7 @@ function syncDesktopPreferenceControls() {
   for (const input of document.querySelectorAll("[data-key-binding]")) {
     input.value = playerKeyCode(input.dataset.keyBinding);
   }
-  $("desktop-fullscreen")?.setAttribute("aria-pressed", String(Boolean(document.fullscreenElement)));
+  $("desktop-fullscreen")?.setAttribute("aria-pressed", String(${nativeDesktopPlayer ? "Boolean(playerPreferences.fullscreen)" : "Boolean(document.fullscreenElement)"}));
   syncAudioSettings();
 }
 
@@ -1391,7 +1391,11 @@ ${nativeDesktopPlayer ? `nativePlayerLifecycle = installNativePlayerLifecycleV1(
   onResume: resetPlayerSimulationClock,
   document,
   window
-});` : `document.addEventListener("visibilitychange", () => { if (document.hidden) void saveDesktopSession(); });
+});
+void nativePlayerLifecycle.getFullscreen().then((fullscreen) => {
+  storePlayerPreferences({ ...playerPreferences, fullscreen: Boolean(fullscreen) });
+  $("desktop-fullscreen")?.setAttribute("aria-pressed", String(Boolean(fullscreen)));
+}).catch(() => {});` : `document.addEventListener("visibilitychange", () => { if (document.hidden) void saveDesktopSession(); });
 window.addEventListener("pagehide", () => { void saveDesktopSession(); });`}
 
 const desktopSettingsDialog = $("desktop-settings-dialog");
@@ -1499,7 +1503,7 @@ const playerActionRegistry = createPlayerActionRegistry({
     "fullscreen": async () => {
       try {
         ${nativeDesktopPlayer
-          ? "await nativePlayerLifecycle.setFullscreen(!playerPreferences.fullscreen); storePlayerPreferences({ ...playerPreferences, fullscreen: !playerPreferences.fullscreen });"
+          ? "const currentFullscreen = await nativePlayerLifecycle.getFullscreen(); const nextFullscreen = !currentFullscreen; await nativePlayerLifecycle.setFullscreen(nextFullscreen); storePlayerPreferences({ ...playerPreferences, fullscreen: nextFullscreen }); $(\"desktop-fullscreen\")?.setAttribute(\"aria-pressed\", String(nextFullscreen));"
           : "if (document.fullscreenElement) await document.exitFullscreen();\n        else await document.documentElement.requestFullscreen();"}
         return Object.freeze({ ok: true });
       } catch { return Object.freeze({ ok: false, code: "fullscreen_failed" }); }
@@ -1536,10 +1540,10 @@ $("desktop-reset-view")?.addEventListener("click", () => playerActionRegistry.in
 $("desktop-fullscreen")?.addEventListener("click", () => playerActionRegistry.invoke("fullscreen"));
 $("desktop-settings")?.addEventListener("click", () => playerActionRegistry.invoke("openSettings"));
 $("desktop-settings-close")?.addEventListener("click", closeDesktopSettings);
-document.addEventListener("fullscreenchange", () => {
+${nativeDesktopPlayer ? "" : `document.addEventListener("fullscreenchange", () => {
   storePlayerPreferences({ ...playerPreferences, fullscreen: Boolean(document.fullscreenElement) });
   $("desktop-fullscreen")?.setAttribute("aria-pressed", String(Boolean(document.fullscreenElement)));
-});
+});`}
 for (const id of ["desktop-ui-scale", "desktop-quality", "desktop-reduced-motion"]) $(id)?.addEventListener("change", () => persistPlayerPreferences({
   ...playerPreferences,
   uiScale: Number($("desktop-ui-scale").value),

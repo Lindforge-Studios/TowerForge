@@ -145,6 +145,26 @@ describe("R19 frozen audit: implicit desktop packaging selection", () => {
     expect(result.error).toMatch(/explicit|targetId|defaults\.desktop|desktop target/i);
     expect(fs.existsSync(path.join(fixture.projectDir, "implicit-native"))).toBe(false);
   }, 60_000);
+
+  it("keeps default output directories isolated for multiple first-class desktop targets", async () => {
+    const fixture = createProject({
+      defaults: { desktop: "native-a" },
+      targets: {
+        "native-a": nativeTarget("native-a"),
+        "native-b": nativeTarget("native-b")
+      }
+    });
+
+    const first = await packageDesktop(fixture.projectDir, { targetId: "native-a" });
+    const second = await packageDesktop(fixture.projectDir, { targetId: "native-b" });
+    expect(first.ok, first.error).toBe(true);
+    expect(second.ok, second.error).toBe(true);
+    expect(first.outDir).not.toBe(second.outDir);
+    expect(path.basename(first.outDir)).toBe("desktop-native-a");
+    expect(path.basename(second.outDir)).toBe("desktop-native-b");
+    expect(JSON.parse(fs.readFileSync(path.join(first.outDir, "src-tauri", "tauri.conf.json"), "utf8")).productName).toBe("native-a");
+    expect(JSON.parse(fs.readFileSync(path.join(second.outDir, "src-tauri", "tauri.conf.json"), "utf8")).productName).toBe("native-b");
+  }, 60_000);
 });
 
 describe("R19 frozen audit: updater release artifacts", () => {
@@ -195,7 +215,9 @@ describe("R19 frozen audit: updater release artifacts", () => {
       fs.mkdirSync(input, { recursive: true });
       fs.writeFileSync(path.join(input, payloadName), `payload:${platform}`);
       fs.writeFileSync(path.join(input, `${payloadName}.sig`), `signature:${platform}`);
-      execFileSync(process.execPath, [collectScript, input, platform, "https://example.test/release", staged]);
+      const runnerArch = platform.endsWith("aarch64") ? "ARM64" : "X64";
+      const platformFamily = platform.split("-")[0];
+      execFileSync(process.execPath, [collectScript, input, platformFamily, runnerArch, "https://example.test/release", staged]);
       for (const name of fs.readdirSync(staged)) fs.copyFileSync(path.join(staged, name), path.join(artifacts, name));
     }
 
@@ -217,6 +239,24 @@ describe("R19 frozen audit: updater release artifacts", () => {
 });
 
 describe("R19 frozen audit: signing-configured generated workflow", () => {
+  it("passes bundle lists directly to the Tauri CLI without npm or PowerShell consuming --bundles", () => {
+    const generated = generatedWorkflow(disabledDir);
+    const acceptance = fs.readFileSync(path.join(repoRoot, ".github", "workflows", "r19-generated-game-acceptance.yml"), "utf8");
+
+    expect(generated).toContain('npx tauri build --bundles "${{ matrix.bundles }}"');
+    expect(generated).not.toMatch(/npm run tauri:build -- --bundles/);
+    expect(acceptance).toContain('npx tauri build --bundles "nsis,msi"');
+    expect(acceptance).not.toMatch(/npm run tauri:build -- --bundles/);
+  });
+
+  it("derives updater platform metadata from the actual native runner architecture", () => {
+    const workflow = generatedWorkflow(enabledDir);
+
+    expect(workflow).toContain("${{ runner.arch }}");
+    expect(workflow).toMatch(/updaterFamily:\s*darwin/);
+    expect(workflow).not.toMatch(/updaterPlatform:\s*darwin-aarch64/);
+  });
+
   it("connects every documented macOS signing and notarization secret to the macOS build", () => {
     const workflow = generatedWorkflow(disabledDir);
     for (const name of [
@@ -247,6 +287,22 @@ describe("R19 frozen audit: signing-configured generated workflow", () => {
 
     expect(workflow).toMatch(/Unsigned build/i);
     expect(workflow).toMatch(/prerelease:\s*true/i);
+  });
+
+  it("verifies native signatures after build and before marking a candidate signed", () => {
+    const workflow = generatedWorkflow(disabledDir);
+    const build = workflow.indexOf("Build ${{ matrix.format }} installer");
+    const macVerify = workflow.indexOf("codesign --verify");
+    const notarizationVerify = workflow.indexOf("stapler validate");
+    const windowsVerify = workflow.indexOf("Get-AuthenticodeSignature");
+    const status = workflow.indexOf("Record signing policy evidence");
+
+    expect(build).toBeGreaterThanOrEqual(0);
+    expect(macVerify).toBeGreaterThan(build);
+    expect(notarizationVerify).toBeGreaterThan(macVerify);
+    expect(windowsVerify).toBeGreaterThan(build);
+    expect(status).toBeGreaterThan(Math.max(notarizationVerify, windowsVerify));
+    expect(workflow).not.toContain("-maxdepth");
   });
 });
 

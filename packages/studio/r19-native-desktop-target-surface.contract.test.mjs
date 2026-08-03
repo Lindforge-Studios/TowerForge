@@ -28,6 +28,7 @@ describe("R19.1 Studio first-class native desktop target surface", () => {
     expect(app).toContain('data-f="window.${field}"');
     expect(app).toContain("bundle.iconSource");
     expect(app).toContain("bundle.targets");
+    expect(app).toMatch(/nativeDesktop\s*\?\s*["']outputDir["']\s*:\s*["']webDir["']/);
     expect(app).toMatch(/f\.startsWith\("window\."\)[\s\S]*inp\.type === "checkbox"[\s\S]*Number\(inp\.value\)/);
     expect(app).toMatch(/f === "bundle\.targets"[\s\S]*split\(","\)[\s\S]*filter\(Boolean\)/);
     for (const field of ["padding", "minZoom", "maxZoom", "initialZoom", "quality", "locale", "inputProfile"]) {
