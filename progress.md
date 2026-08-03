@@ -4076,3 +4076,21 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   gates.
 - This evidence-only entry is the sole change after the exact production/test candidate. R20 is
   frozen again for two fresh independent sign-offs; any source change invalidates both.
+
+## 2026-08-03 — R21 contract freeze
+
+- R21 is isolated on `codex/r21-hud-studio` and begins only after the R20 merge. ADR 0062 freezes
+  optional `content/hud.json` as `HudCatalogV1`, optional BuildTargets-v2 `hudProfileId`, reuse of
+  `PlayerActionDescriptorV1`, and one browser DOM shell over a pure renderer-neutral HUD runtime.
+  Project v5, BuildTargets v2, visuals v4, GameCommand/journal v8, checkpoint, profile, campaign,
+  TowerScript and multiplayer versions remain unchanged.
+- Runtime activation requires project v5 + BuildTargets v2 + a desktop/responsive selected target +
+  an explicit valid HUD profile binding. An unbound large-screen target keeps the built-in R18
+  shell. BuildTargets v1 does not read or bundle HUD code even if a reusable catalog exists.
+- R21.1 through R21.6 stay independent RED/GREEN slices: catalog/project transport; pure layout,
+  components and bindings; screen graph/recovery; menu/input presets; Studio/assets; MCP/AI and
+  package parity. Each slice must record its own expected RED before production changes. Full gates
+  and both independent sign-offs are reserved for the exact frozen R21 candidate.
+- Forbidden scope is fixed: no engine or command changes, arbitrary JavaScript/CSS/HTML, executable
+  object paths, renderer-owned HUD, HUD-owned world projection, host/native APIs, external network
+  access, broad write tools, unsafe media, automatic asset commit or removable recovery overlay.

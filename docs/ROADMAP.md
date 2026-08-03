@@ -67,7 +67,7 @@ service. Нет соответствующего выбора или локал�
 | R18 — Large-Screen Web Player | Завершён и слит; exact-commit CI green; code + constructor sign-off; ADR Accepted | PR #34: project-v5/BuildTargets-v2 large-screen web target, shared viewport, desktop shell, IndexedDB recovery, localized accessible PWA и unchanged legacy targets |
 | R19 — Native Desktop Distribution | Реализован; exact-commit gates и два независимых sign-off; ADR Accepted; PR #35 | First-class desktop target, native storage/lifecycle, cross-platform installers и optional signed updater |
 | R20 — Camera Projection Studio | R20.1–R20.4 реализованы; focused GREEN; exact gates/sign-off ожидаются | Proposed ADR 0061: visuals v4/CameraProfileV1, renderer-owned top-down/isometric/dimetric projection, shared hit testing/depth и guarded view assets |
-| R21 — Player Shell & HUD Constructor | Запланирован после R20 | Data-only responsive HUD/screen graph, action registry, presets, guarded Studio/MCP и package parity |
+| R21 — Player Shell & HUD Constructor | В работе: contract freeze / R21.1 RED | Proposed ADR 0062: opt-in `HudCatalogV1`, one DOM shell, responsive layouts/screen graph, action registry, presets, guarded Studio/MCP и package parity |
 
 ### Delivery snapshot на 2026-08-01
 
@@ -106,6 +106,18 @@ package targets не содержат собственную projection-мате
 pathfinding, ballistics, snapshots, checkpoints, commands и replay digest не меняются. Контракт,
 лимиты и четыре отдельные RED/GREEN-поставки зафиксированы в Proposed
 [ADR 0061](adr/0061-r20-camera-projection-studio.md).
+
+R21 добавляет независимый data-only `content/hud.json` (`HudCatalogV1`) и optional
+`BuildTargets-v2 target.hudProfileId`, не создавая mechanics capability. Custom shell активируется
+только для project-v5 desktop/responsive target с явной валидной ссылкой. Large-screen target без
+ссылки использует встроенный R18 shell, а BuildTargets v1 не читает и не включает HUD runtime даже
+при наличии переиспользуемого каталога. Pure validation/layout/selector/graph contracts остаются в
+`packages/player-runtime`; один browser-only `packages/player-shell` владеет semantic DOM,
+focus/input и применяется Canvas, Phaser и Studio preview. Мир по-прежнему рисуется renderer-ом и
+проходит R20 projection независимо от screen-space HUD. Authoring использует общий revision
+`project + build-targets + hud + visuals`, guarded apply, backup и rollback. Контракт, лимиты и шесть
+раздельных RED/GREEN-поставок зафиксированы в Proposed
+[ADR 0062](adr/0062-r21-player-shell-hud-constructor.md).
 
 Для R18–R21 действует поуровневый TDD gate. Каждый небольшой срез фиксирует focused RED, затем
 проходит focused GREEN и регрессии только затронутых слоёв. Полный unit/E2E/plugin/package набор
