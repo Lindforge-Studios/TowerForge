@@ -4304,3 +4304,52 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   authoring controls, diagnostics, narrow `/api/hud/*` routes and asset-role UI do not exist yet.
   The pre-existing Camera Studio and generic asset import paths are not accepted as substitute HUD
   surfaces.
+
+## 2026-08-04 — R21.6 AI discovery and conditional packaging parity RED evidence
+
+- The independent Contract/Test Designer added only
+  `packages/mcp/r21-hud-ai-authoring.contract.test.mjs`,
+  `packages/cli/build.r21-hud-package-parity.contract.test.mjs` and this chronological evidence.
+  No MCP registry, agent policy/instructions, build template, DOM shell, packaging or plugin runtime
+  production source was changed.
+- The MCP contract freezes a `hud` schema domain that describes components, selectors, actions,
+  screen events, limits and presets, plus the narrow
+  `get_hud_profiles -> get_hud_profile_recipe -> preview_hud_profile -> apply_hud_profile -> render_hud_preview`
+  workflow. Read/recipe/render/preview are non-writing, apply is the sole revision-guarded local
+  write with validation/backup/rollback, and neither external nor embedded agents receive broad
+  catalog/HTML/script writers.
+- The package contract selects the same `main` HUD profile on one Canvas desktop and one Phaser
+  responsive BuildTargets-v2 target. Both must ship the byte-identical common DOM shell and pure
+  HUD runtime through PWA and single-file outputs; portable web and native desktop wrappers must
+  preserve the same selected profile; the source `.tdpack` must carry `content/hud.json`.
+- Strict pruning is tested as a read boundary rather than only an output-name assertion. A
+  BuildTargets-v1 project and an unbound BuildTargets-v2 large-screen target each contain
+  deliberately invalid `content/hud.json` bytes: both builds must still succeed without parsing
+  the file, copying HUD modules, exposing `hudProfileId`, or changing the legacy generated player.
+- Exact RED commands:
+  - `npx vitest run packages/mcp/r21-hud-ai-authoring.contract.test.mjs --reporter=verbose --maxWorkers=1`:
+    exit `1`, `1/1` file RED, `5/5` expected failures. The `hud` schema domain, all five narrow
+    tools, embedded policy entries and HUD agent guidance are absent.
+  - `npx vitest run packages/cli/build.r21-hud-package-parity.contract.test.mjs --reporter=verbose --maxWorkers=1`:
+    exit `1`, `1/1` file RED, `5/5` expected failures. Active builds stop at the missing packaged
+    HUD runtime, web/native packaging cannot complete, and both inactive fixtures incorrectly parse
+    the deliberately invalid HUD file instead of pruning it before project-content loading.
+
+## 2026-08-04 — R21.4 pure build menus/input parity focused GREEN
+
+- Added the DOM-free `hud-build-menu-presets.mjs` runtime and public player-runtime export. It
+  publishes exactly seven frozen recipes composed from the existing HUD primitives, validates
+  closed own-data menu/availability/action/selector contracts, preserves authored menu and item
+  order, and returns detached frozen plans without importing renderer, browser or gameplay code.
+- Availability is evaluated independently for pointer/keyboard/gamepad/touch, desktop/tablet/mobile,
+  setup/live/between-wave phase and the complete required-capability set. Radial menus expose at
+  most 12 items with deterministic overflow evidence; all presets resolve device activation to the
+  existing `selectBuildSlot` `PlayerActionDescriptorV1` intent.
+- Future, unknown, sparse, accessor, symbol, revoked-proxy, cyclic and over-budget inputs fail
+  closed without invoking authored code. Exact focused command:
+  `npx vitest run packages/player-runtime/src/r21-hud-build-menu-presets.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: `1/1` file and `15/15` tests GREEN. The complete `packages/player-runtime/src` matrix is
+  GREEN at `14/14` files and `161/161` tests. Source and plugin modules pass `node --check`;
+  `npm run plugin:build`, `npm run plugin:validate`, `npm run plugin:smoke`, source-to-plugin byte
+  parity and `git diff --check` are GREEN. Browser focus/device event wiring remains outside this
+  pure runtime slice.
