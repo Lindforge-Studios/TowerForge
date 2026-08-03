@@ -3542,3 +3542,22 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   command now passes `32/32`; the complete focused R19 suite passes `14/14` files and `89/89`
   tests. The source/plugin runtime mirror was regenerated. Full gates and both independent
   sign-offs still require a new exact committed candidate.
+
+## 2026-08-03 — R19 dangling generated-file symlink RED
+
+- Code verification rejected exact candidate `ecc86e8` after every local/GitHub gate passed. The
+  confined writer rejected an exact symlink only when its target already existed because the shared
+  path helper used `existsSync`. A dangling generated-file symlink therefore looked absent and
+  `writeFileSync` followed it to create a new external target.
+- Before production repair, a separate regression packages a carrier, replaces generated
+  `src-tauri/Cargo.toml` with a symlink to a nonexistent outside file, repackages, and requires a
+  closed failure while both the missing target and link remain untouched.
+- Exact RED command:
+  `npx vitest run packages/cli/lib/r19-verifier-packaging-boundaries.regression.test.mjs --reporter=verbose --maxWorkers=1`.
+- Expected RED is a successful second package and newly created outside TOML. Candidate `ecc86e8`,
+  its CI runs `30786379326`/`30786379344`, complete gate evidence, rejected Code Verifier report and
+  now-invalid Constructor Integration sign-off cannot be reused for final acceptance.
+- Result: exit `1`; exactly `1/21` failed and `20/21` passed. The second package returned success,
+  proving the dangling link escaped the exact-path check. GREEN changes the shared nearest-ancestor
+  and exact-path discovery to `lstat`, rejects unresolved symlinks before mutation, and makes the
+  same command pass `21/21` while preserving the existing symlink and output-isolation cases.

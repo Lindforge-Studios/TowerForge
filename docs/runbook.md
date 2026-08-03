@@ -997,8 +997,9 @@ AI Chat accepts up to eight JPEG/PNG/GIF/WebP images per turn, at most 4 MB each
   it must remain project-relative and isolated across all web/native targets: equal paths and
   ancestor/descendant overlaps are rejected. Renaming or deleting a target in Studio also rewrites
   or clears the matching platform default, while a rename collision is rejected before mutation.
-  Repack also validates each generated scaffold destination. If a generated file, `src-tauri`,
-  icon directory, updater cache or lockfile was replaced with a symlink, packaging fails closed;
+  Repack also validates each generated scaffold destination with `lstat`. If a generated file,
+  `src-tauri`, icon directory, updater cache or lockfile was replaced with a symlink (including a
+  dangling link whose target does not exist yet), packaging fails closed;
   remove the unexpected symlink and inspect the project before retrying. It never follows such a
   link for overwrite or cleanup.
   Native fullscreen UI
