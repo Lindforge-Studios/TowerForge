@@ -480,7 +480,8 @@ The carrier includes a current-OS build command and a project-local six-format G
 Without author-provided signing configuration that workflow publishes only an `Unsigned build`
 pre-release. Optional updater bytes, generated sources, signing-guide metadata and permissions are
 absent unless the desktop target enables an HTTPS/public-key updater, including after repackaging an
-existing carrier. Native/web output directories must be mutually non-overlapping, including
+existing carrier; disabling after a native build clears the disposable target cache and generated
+Cargo lock while preserving unrelated carrier files. Native/web output directories must be mutually non-overlapping, including
 ancestor and descendant paths. The legacy web-target wrapper remains available as a compatibility
 path.
 See [ADR 0060](adr/0060-r19-native-desktop-distribution.md).

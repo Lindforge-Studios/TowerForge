@@ -322,6 +322,17 @@ function writeNativeTauri(projectDir, outDir, app, target) {
   const crate = app.crate;
   const window = target.window;
   const updaterActive = target.updater?.enabled === true;
+  const updaterEntryPath = path.join(outDir, "scripts", "collect-updater-entry.mjs");
+  const existingCargoPath = path.join(outDir, "src-tauri", "Cargo.toml");
+  const hadUpdaterSources = fs.existsSync(updaterEntryPath)
+    || (fs.existsSync(existingCargoPath) && fs.readFileSync(existingCargoPath, "utf8").includes("tauri-plugin-updater"));
+  if (!updaterActive && hadUpdaterSources) {
+    // A generated target and lock can retain updater code/payloads after an enabled native build.
+    // They are disposable build state, while all other carrier files and author notes are preserved.
+    fs.rmSync(path.join(outDir, "src-tauri", "target"), { recursive: true, force: true });
+    const cargoLockPath = path.join(outDir, "src-tauri", "Cargo.lock");
+    if (fs.existsSync(cargoLockPath)) fs.unlinkSync(cargoLockPath);
+  }
   generateDesktopIcons(projectDir, target.bundle.iconSource, path.join(outDir, "src-tauri", "icons"));
   writeJson(path.join(outDir, "package.json"), {
     name: app.slug,
@@ -407,7 +418,6 @@ fn main() {
   writeText(path.join(outDir, "scripts", "build-current-platform.mjs"), currentPlatformBuildTemplate(target.bundle.targets));
   writeText(path.join(outDir, "scripts", "assemble-release.mjs"), generatedReleaseAssemblerScript(updaterActive));
   writeText(path.join(outDir, "scripts", "write-signing-status.mjs"), generatedSigningStatusScript());
-  const updaterEntryPath = path.join(outDir, "scripts", "collect-updater-entry.mjs");
   if (updaterActive) writeText(updaterEntryPath, generatedUpdaterEntryScript());
   else if (fs.existsSync(updaterEntryPath)) fs.unlinkSync(updaterEntryPath);
   writeText(path.join(outDir, ".github", "workflows", "towerforge-desktop-release.yml"), generatedDesktopReleaseWorkflow(updaterActive));

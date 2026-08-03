@@ -148,11 +148,21 @@ describe("R19.4 optional updater target and carrier (RED)", () => {
     expect(first.ok, first.error).toBe(true);
     const nativeDir = path.join(projectDir, "native");
     expect(fs.existsSync(path.join(nativeDir, "scripts", "collect-updater-entry.mjs"))).toBe(true);
+    const targetDir = path.join(nativeDir, "src-tauri", "target", "release", "bundle", "updater");
+    fs.mkdirSync(targetDir, { recursive: true });
+    fs.writeFileSync(path.join(targetDir, "game.app.tar.gz"), "stale updater payload");
+    fs.writeFileSync(path.join(targetDir, "game.app.tar.gz.sig"), "stale updater signature");
+    fs.writeFileSync(path.join(nativeDir, "src-tauri", "Cargo.lock"), "name = \"tauri-plugin-updater\"\n");
+    const authorNote = path.join(nativeDir, "AUTHOR-NOTE.txt");
+    fs.writeFileSync(authorNote, "keep this unrelated carrier note\n");
 
     fs.writeFileSync(path.join(projectDir, "build-targets.json"), `${JSON.stringify(buildTargets({ enabled: false }), null, 2)}\n`);
     const second = await packageDesktop(projectDir, { targetId: "native-desktop", outDir: "native" });
     expect(second.ok, second.error).toBe(true);
     expect(fs.existsSync(path.join(nativeDir, "scripts", "collect-updater-entry.mjs"))).toBe(false);
+    expect(fs.existsSync(path.join(nativeDir, "src-tauri", "target"))).toBe(false);
+    expect(fs.existsSync(path.join(nativeDir, "src-tauri", "Cargo.lock"))).toBe(false);
+    expect(fs.readFileSync(authorNote, "utf8")).toBe("keep this unrelated carrier note\n");
     expect(carrierUpdaterText(nativeDir)).not.toMatch(
       /tauri-plugin-updater|TAURI_SIGNING_PRIVATE_KEY|latest\.json|updater payload/i
     );

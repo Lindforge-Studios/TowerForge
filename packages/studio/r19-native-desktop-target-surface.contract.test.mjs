@@ -48,4 +48,8 @@ describe("R19.1 Studio first-class native desktop target surface", () => {
     expect(app).toMatch(/bt\.targets\[newId\][\s\S]{0,220}rewriteBuildTargetDefaults\(bt, tid, newId\)[\s\S]{0,120}delete bt\.targets\[tid\]/);
     expect(app).toMatch(/rewriteBuildTargetDefaults\(bt, btn\.dataset\.tid\)[\s\S]{0,120}delete bt\.targets\[btn\.dataset\.tid\]/);
   });
+
+  it("rejects a rename collision before mutating either build target", () => {
+    expect(app).toMatch(/Object\.hasOwn\(bt\.targets, newId\)[\s\S]{0,260}inp\.value = tid[\s\S]{0,100}return;[\s\S]{0,160}bt\.targets\[newId\]/);
+  });
 });

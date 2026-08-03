@@ -34,7 +34,8 @@ Window and bundle records are closed own-data contracts. Output paths and the pr
 `desktop-<target-id>` output by default; authored outputs cannot be equal, ancestors or descendants
 of another web/native output, so packaging one target cannot mix or overwrite another carrier.
 Studio rewrites a platform default when its selected target is renamed and removes that default
-when the target is deleted. Generated configuration uses a restrictive CSP,
+when the target is deleted. A rename to an existing target ID is rejected before either record is
+mutated. Generated configuration uses a restrictive CSP,
 does not enable global Tauri APIs, and grants only the narrow commands required by the game.
 
 R19.2 reuses `PlayerSessionSaveV1` and `createRotatingPlayerSessionStore` behind
@@ -72,7 +73,8 @@ the signed static `latest.json` platform map beside installers and checksums. Pl
 from the actual bounded runner OS/architecture, including Intel and Apple Silicon macOS runners.
 Disabled carriers omit the updater scripts, signing-guide secret names, payload paths and metadata
 bytes entirely. Repackaging an existing enabled carrier as disabled removes generated updater-only
-sources before returning the output.
+sources plus the disposable native build directory and generated Cargo lock that could retain
+compiled updater code or signed payloads. Unrelated carrier files remain untouched.
 
 The engine, GameCommand v8, checkpoint, journal, profile, campaign, multiplayer,
 `PlayerSessionSaveV1` and `PlayerPreferencesV1` version domains do not change.

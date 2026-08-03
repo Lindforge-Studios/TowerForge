@@ -13050,6 +13050,11 @@ function renderBuildTargetsTab() {
         // Rename key
         const newId = inp.value.trim();
         if (newId && newId !== tid) {
+          if (Object.hasOwn(bt.targets, newId)) {
+            toast(`Build target "${newId}" already exists.`, "err");
+            inp.value = tid;
+            return;
+          }
           bt.targets[newId] = { ...t, id: newId };
           rewriteBuildTargetDefaults(bt, tid, newId);
           delete bt.targets[tid];

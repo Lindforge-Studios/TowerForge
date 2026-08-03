@@ -3493,3 +3493,27 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - This is accepted as the compatibility RED for the verifier-driven diagnostic repair. The minimal
   fix preserves the new ancestor/descendant rejection and restores the word `unique`. Candidate
   `9ae9591` and all of its partial gate evidence are invalidated.
+
+## 2026-08-03 — R19 final Studio rename-collision RED
+
+- Constructor Integration Verification of frozen commit `c2500cd` found that renaming a build
+  target to an existing target ID silently overwrote the existing record, rewrote platform defaults,
+  and could then pass ordinary schema validation. This bypassed the explicit Remove confirmation.
+- Before production repair, a focused Studio contract now requires an own-property collision guard,
+  restoration of the edited input to the original ID, and an early return before target assignment.
+  Exact RED command:
+  `npx vitest run packages/studio/r19-native-desktop-target-surface.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+- Result: exit `1`; `1/5` tests failed and `4/5` passed for the expected missing collision guard.
+- The same integration audit found that a real updater-enabled native build can leave updater
+  payloads/signatures under `src-tauri/target` and updater dependency bytes in generated
+  `Cargo.lock`. The earlier enabled -> disabled test had not seeded build outputs. Before production
+  repair it now seeds those bounded generated artifacts, requires their removal, and proves an
+  unrelated carrier note survives. Combined RED command:
+  `npx vitest run packages/studio/r19-native-desktop-target-surface.contract.test.mjs packages/cli/lib/r19-optional-updater.contract.test.mjs --reporter=verbose --maxWorkers=1`.
+- Result: exit `1`; `2/10` tests failed and `8/10` passed. The failures were exactly the missing
+  pre-mutation rename collision guard and the retained updater-enabled native build directory.
+  Candidate `c2500cd`, its CI runs, and both rejected verifier reports are not reusable as final
+  acceptance evidence.
+- Minimal repairs made the same combined command GREEN: `2/2` files and `10/10` tests passed.
+- The complete focused R19 set then passed sequentially: `14/14` files and `86/86` tests. Full
+  exact-commit gates and fresh verifier sign-offs remain mandatory after the next commit.

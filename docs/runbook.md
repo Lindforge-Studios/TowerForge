@@ -996,7 +996,8 @@ AI Chat accepts up to eight JPEG/PNG/GIF/WebP images per turn, at most 4 MB each
   Each native target defaults to its own `desktop-<target-id>` output. If `outputDir` is authored,
   it must remain project-relative and isolated across all web/native targets: equal paths and
   ancestor/descendant overlaps are rejected. Renaming or deleting a target in Studio also rewrites
-  or clears the matching platform default. Native fullscreen UI
+  or clears the matching platform default, while a rename collision is rejected before mutation.
+  Native fullscreen UI
   is synchronized from the Tauri window state; browser `document.fullscreenElement` is not the
   source of truth.
   If updater is enabled, only HTTPS endpoints and the public verification key belong in the target;
@@ -1004,7 +1005,8 @@ AI Chat accepts up to eight JPEG/PNG/GIF/WebP images per turn, at most 4 MB each
   `SIGNING.md` and workflow. An enabled tagged build publishes the Tauri updater payloads, adjacent
   detached signatures and `latest.json`; a disabled carrier contains none of those paths or updater
   secret names in its generated guide. Repackaging enabled -> disabled removes updater-only source
-  files. The
+  files, the disposable `src-tauri/target` build cache and generated `Cargo.lock`, because all three
+  can retain compiled updater bytes or signed payloads; unrelated carrier files are preserved. The
   repository workflow `.github/workflows/r19-generated-game-acceptance.yml` is the constructor gate
   that generates a current carrier and builds DMG, NSIS, MSI, AppImage, DEB and RPM on native
   runners. Generated release jobs call `npx tauri build --bundles "<formats>"` directly. A configured
