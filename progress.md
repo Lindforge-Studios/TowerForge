@@ -4644,3 +4644,16 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - This source-test commit invalidates the `90a7f1c` freeze, its full-gate evidence and both verifier
   sign-offs until production repair, focused GREEN, a new exact freeze and two fresh independent
   verifications complete.
+
+## 2026-08-04 — R21 clean-install CI RED → GREEN
+
+- GitHub Actions run `30836135928` rejected exact candidate
+  `63d984a506bab4b230cf10826db483262504aa5a` before tests. All three jobs failed at `npm ci` with
+  `EUSAGE`: `@towerforge/player-shell@0.1.0` was missing from `package-lock.json` even though the
+  workspace was present in the root package manifest.
+- The repair is lockfile-only: `npm install --package-lock-only --ignore-scripts` records the new
+  workspace link and synchronizes stale workspace metadata with the current package manifests.
+  A subsequent `npm ci --ignore-scripts` completes successfully from the repaired lock.
+- Because the exact candidate commit changes, the previous freeze and both sign-offs are treated as
+  invalid. The full R21 gate matrix, independent Code Verifier sign-off and independent Constructor
+  Integration Verifier sign-off must be repeated on the replacement commit before merge.
