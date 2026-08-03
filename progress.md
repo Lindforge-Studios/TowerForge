@@ -4616,6 +4616,14 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   `git diff --check` is GREEN. A fresh plugin mirror, exact-candidate freeze, full gates and both
   independent sign-offs are still required.
 
+## 2026-08-04 — R21 final candidate re-freeze after code verification
+
+- The commit containing this entry is the replacement frozen candidate after resolving every
+  finding from both independent verification rounds. It includes the 512-record asset budgets,
+  resolvable HUD frame import, refreshed plugin mirror and all prior R21 functionality/evidence.
+- The complete gate matrix and both independent sign-offs restart from zero on this exact commit.
+  Any subsequent source, generated-runtime, test or documentation change invalidates them.
+
 ## 2026-08-04 — R21 Code Verifier atlas-import and asset-budget RED evidence
 
 - Code verification reopened exact candidate `90a7f1c6ddb00121dba646470a2694d138ed77b3`
