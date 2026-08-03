@@ -41,6 +41,7 @@ const LAYER_SET = new Set(HUD_LAYOUT_LAYERS);
 const PROFILE_KEYS = [
   "schemaVersion", "label", "breakpoints", "commonNodes", "variants", "screens", "screenGraph", "assetRoles"
 ];
+const HUD_ASSET_METADATA_KINDS = new Set(["image", "atlas_frame", "nine_slice"]);
 const NODE_KEYS = ["schemaVersion", "id", "type", "childIds", "properties", "bindings", "states"];
 const VARIANT_IDS = ["desktop", "tablet", "mobile"];
 const SURFACES = new Set([
@@ -435,6 +436,52 @@ function normalizeAssetRoles(value, path) {
   return freezeRecord(entries);
 }
 
+function normalizeAssetMetadata(value, path, assetRoles) {
+  const record = inspectRecord(value, path);
+  const entries = [];
+  for (const roleId of Object.keys(record).sort()) {
+    boundedId(roleId, `${path}.${roleId}`);
+    if (!Object.hasOwn(assetRoles, roleId)) {
+      fail(`${path}.${roleId}`, `references missing asset role "${roleId}".`);
+    }
+    const metadataPath = `${path}.${roleId}`;
+    const probe = inspectRecord(record[roleId], metadataPath);
+    const kind = probe.kind;
+    if (!HUD_ASSET_METADATA_KINDS.has(kind)) {
+      fail(`${metadataPath}.kind`, `unsupported HUD asset metadata kind "${String(kind)}".`);
+    }
+    if (kind === "image") {
+      const metadata = inspectRecord(record[roleId], metadataPath, ["schemaVersion", "kind"]);
+      entries.push([roleId, freezeRecord([
+        ["schemaVersion", schemaV1(metadata.schemaVersion, `${metadataPath}.schemaVersion`)],
+        ["kind", kind]
+      ])]);
+      continue;
+    }
+    if (kind === "atlas_frame") {
+      const metadata = inspectRecord(record[roleId], metadataPath, ["schemaVersion", "kind", "atlasFrame"]);
+      entries.push([roleId, freezeRecord([
+        ["schemaVersion", schemaV1(metadata.schemaVersion, `${metadataPath}.schemaVersion`)],
+        ["kind", kind],
+        ["atlasFrame", descriptorId(metadata.atlasFrame, `${metadataPath}.atlasFrame`)]
+      ])]);
+      continue;
+    }
+    const metadata = inspectRecord(record[roleId], metadataPath, ["schemaVersion", "kind", "nineSlice"]);
+    const borders = inspectRecord(metadata.nineSlice, `${metadataPath}.nineSlice`, ["top", "right", "bottom", "left"]);
+    const normalizedBorders = ["bottom", "left", "right", "top"].map((side) => [
+      side,
+      boundedLayoutNumber(borders[side], `${metadataPath}.nineSlice.${side}`, { positive: true })
+    ]);
+    entries.push([roleId, freezeRecord([
+      ["schemaVersion", schemaV1(metadata.schemaVersion, `${metadataPath}.schemaVersion`)],
+      ["kind", kind],
+      ["nineSlice", freezeRecord(normalizedBorders)]
+    ])]);
+  }
+  return freezeRecord(entries);
+}
+
 function validateNodeReferences(nodes, variants, screens, path) {
   const nodeMap = new Map(nodes.map((node) => [node.id, node]));
   const referencedRoots = [
@@ -471,7 +518,9 @@ function validateNodeReferences(nodes, variants, screens, path) {
 }
 
 function normalizeProfile(value, path) {
-  const record = inspectRecord(value, path, PROFILE_KEYS);
+  const probe = inspectRecord(value, path);
+  const hasAssetMetadata = Object.hasOwn(probe, "assetMetadata");
+  const record = inspectRecord(value, path, hasAssetMetadata ? [...PROFILE_KEYS, "assetMetadata"] : PROFILE_KEYS);
   schemaV1(record.schemaVersion, `${path}.schemaVersion`);
   if (typeof record.label !== "string" || record.label.length < 1 || record.label.length > 256) {
     fail(`${path}.label`, "must be a non-empty string no longer than 256 characters.");
@@ -509,12 +558,17 @@ function normalizeProfile(value, path) {
     + screenIds.reduce((sum, id) => sum + screens[id].rootNodeIds.length, 0);
   if (layoutRecords > HUD_CATALOG_LIMITS.layoutRecordsPerProfile) fail(path, `layout records exceed the limit of ${HUD_CATALOG_LIMITS.layoutRecordsPerProfile}.`);
 
-  return freezeRecord([
+  const assetRoles = normalizeAssetRoles(record.assetRoles, `${path}.assetRoles`);
+  const entries = [
     ["schemaVersion", HUD_CATALOG_SCHEMA_VERSION], ["label", record.label],
     ["breakpoints", freezeRecord([["mobileMax", breakpoints.mobileMax], ["tabletMax", breakpoints.tabletMax]])],
     ["commonNodes", Object.freeze(nodes)], ["variants", variants], ["screens", screens],
-    ["screenGraph", graph], ["assetRoles", normalizeAssetRoles(record.assetRoles, `${path}.assetRoles`)]
-  ]);
+    ["screenGraph", graph], ["assetRoles", assetRoles]
+  ];
+  if (hasAssetMetadata) {
+    entries.push(["assetMetadata", normalizeAssetMetadata(record.assetMetadata, `${path}.assetMetadata`, assetRoles)]);
+  }
+  return freezeRecord(entries);
 }
 
 export function validateHudCatalogV1(value) {
