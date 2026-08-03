@@ -27,6 +27,9 @@ function ownRecord(value, keys, field) {
   } catch {
     throw new TypeError(`${field} must be an inspectable plain own-data object.`);
   }
+  if (Object.getOwnPropertySymbols(descriptors).length !== 0) {
+    throw new TypeError(`${field} contains unsupported symbol own-data.`);
+  }
   const allowed = new Set(keys);
   for (const [key, descriptor] of Object.entries(descriptors)) {
     if (!allowed.has(key)) throw new TypeError(`${field}.${key} is not supported.`);
@@ -42,6 +45,13 @@ function denseArray(value, field, limit, minimum = 1) {
     throw new TypeError(`${field} must contain ${minimum} to ${limit} entries.`);
   }
   const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (Object.getOwnPropertySymbols(descriptors).length !== 0) {
+    throw new TypeError(`${field} contains unsupported symbol own-data.`);
+  }
+  const stringKeys = Object.keys(descriptors);
+  if (stringKeys.some((key) => key !== "length" && !/^(?:0|[1-9]\d*)$/.test(key))) {
+    throw new TypeError(`${field} contains unsupported array own-data.`);
+  }
   for (let index = 0; index < value.length; index += 1) {
     const descriptor = descriptors[String(index)];
     if (!descriptor?.enumerable || !("value" in descriptor)) {

@@ -841,14 +841,19 @@ function cameraViewRecord(value, fieldPath, allowedKeys, err) {
     err("visuals", "content/visuals.json", fieldPath, `${fieldPath} must be a plain own-data object.`);
     return null;
   }
-  const output = {};
+  const output = Object.create(null);
   for (const [key, descriptor] of Object.entries(descriptors)) {
     if (!("value" in descriptor) || !descriptor.enumerable) {
       err("visuals", "content/visuals.json", `${fieldPath}.${key}`, `${fieldPath}.${key} must be an enumerable data property.`);
     } else if (allowedKeys && !allowedKeys.has(key)) {
       err("visuals", "content/visuals.json", `${fieldPath}.${key}`, `${fieldPath}.${key} is not supported.`);
     } else {
-      output[key] = descriptor.value;
+      Object.defineProperty(output, key, {
+        value: descriptor.value,
+        enumerable: true,
+        configurable: true,
+        writable: true
+      });
     }
   }
   return output;

@@ -13,6 +13,7 @@ const VIEW_KEY = "isometric_2_1:north";
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x00, 0xff, 0xd9]);
 const WEBP = Buffer.concat([Buffer.from("RIFF"), Buffer.from([4, 0, 0, 0]), Buffer.from("WEBP"), Buffer.from("VP8 ")]);
+const SPECIAL_JSON_IDS = Object.freeze(["__proto__", "constructor", "prototype"]);
 const roots = [];
 
 afterEach(() => {
@@ -155,6 +156,43 @@ describe("R20.3 visuals v4 view-variant asset contract (RED)", () => {
     const visuals = validVisuals();
     delete visuals.viewVariants.sprites.tower_base[VIEW_KEY].anchor;
     expect(viewIssues(visuals)).toEqual([]);
+  });
+
+  it("preserves valid special JSON camera IDs as own project-schema records", () => {
+    const visuals = validVisuals();
+    visuals.cameraProfiles.profiles = JSON.parse(JSON.stringify(Object.fromEntries(
+      SPECIAL_JSON_IDS.map((id) => [id, cameraProfiles().profiles.iso])
+    )));
+    visuals.viewVariants.sprites = JSON.parse(JSON.stringify(Object.fromEntries(
+      SPECIAL_JSON_IDS.map((id) => [id, {
+        [VIEW_KEY]: { src: `assets/camera/${id}.png`, mimeType: "image/png", anchor: { x: 0.5, y: 1 } }
+      }])
+    )));
+
+    expect(viewIssues(visuals).filter((issue) => issue.severity === "error")).toEqual([]);
+    const cameraPaths = listVisualAssetPaths(visuals).filter((entry) => entry.kind === "cameraSpriteVariant");
+    for (const id of SPECIAL_JSON_IDS) {
+      expect(Object.hasOwn(visuals.cameraProfiles.profiles, id), id).toBe(true);
+      expect(Object.hasOwn(visuals.viewVariants.sprites, id), id).toBe(true);
+      expect(cameraPaths).toContainEqual(expect.objectContaining({
+        id: `${id}@${VIEW_KEY}`,
+        path: `assets/camera/${id}.png`
+      }));
+    }
+  });
+
+  it.each(SPECIAL_JSON_IDS)("cannot hide a malformed camera variant behind JSON ID %j", (id) => {
+    const visuals = validVisuals();
+    visuals.viewVariants.sprites = JSON.parse(JSON.stringify({
+      [id]: {
+        [VIEW_KEY]: { src: "../outside-project.png", mimeType: "image/png", anchor: { x: 0.5, y: 1 } }
+      }
+    }));
+
+    expect(viewIssues(visuals)).toContainEqual(expect.objectContaining({
+      severity: "error",
+      fieldPath: `viewVariants.sprites.${id}.${VIEW_KEY}.src`
+    }));
   });
 
   it("copies active PNG/JPEG/WebP variants and rejects signature or size mismatches", () => {

@@ -4029,3 +4029,36 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - This evidence-only entry is the sole change after the production/test candidate. Two fresh,
   independent reviewers must sign off the resulting docs-only child before R20 PR creation and
   merge; either source change invalidates both reviews.
+
+## 2026-08-03 — R20 hidden-key verifier RED evidence
+
+- Independent verification rejected exact docs candidate `e4531a6` because the closed projector
+  and render-space own-data contracts ignored symbol keys, while ordinary-object cloning and
+  lookup could hide or reinterpret valid JSON identifiers `__proto__`, `constructor` and
+  `prototype`. The Contract/Test Designer changed regression tests and this evidence only;
+  production and generated plugin runtime remain untouched, and all previous freeze/sign-off
+  evidence is invalidated.
+- Exact focused command:
+  `npx vitest run packages/renderer/src/r20-camera-symbol-keys.regression.test.mjs packages/cli/lib/r20-camera-view-assets.contract.test.mjs packages/mcp/r20-camera-view-variant-authoring.regression.test.mjs --reporter=verbose --maxWorkers=1`.
+  Result: exit `1`, `7` expected RED and `27` passing tests across `3/3` red files.
+- The three renderer RED groups prove symbol-bearing profiles/catalogs/contexts/points,
+  render-space options/viewport/world arrays and projected item arrays/records are currently
+  accepted instead of rejected. Project-schema RED proves a malformed camera variant under the
+  own JSON ID `__proto__` disappears from validation. Public MCP/AI RED proves `__proto__` and
+  `constructor` cannot complete the one-variant preview/apply workflow, and a hidden
+  `__proto__` variant field is not reported at its authored field path. The equivalent valid
+  `prototype` flow and the visible `constructor`/`prototype` malformed-field checks remain GREEN,
+  keeping the repair boundary narrow.
+
+## 2026-08-03 — R20 hidden-key repair focused GREEN
+
+- Closed camera projector and render-space inputs now reject symbol-keyed own data, including
+  nested records and dense arrays. Project-schema validation uses prototype-neutral records, while
+  camera authoring uses own-property lookup and definition so valid JSON identifiers `__proto__`,
+  `constructor` and `prototype` cannot mutate or inherit from a catalog prototype.
+- The exact former RED command is GREEN at `3/3` files and `34/34` tests. The complete focused R20
+  camera matrix is GREEN at `16/16` files and `122/122` tests. `npm run plugin:build`,
+  `npm run plugin:validate`, `npm run plugin:smoke` and `git diff --check` are GREEN; the plugin
+  runtime mirrors all four repaired source files.
+- This is pre-freeze evidence. Because production changed after the rejected candidate, the full
+  exact-candidate gates and both independent sign-offs must run again before PR creation or merge.

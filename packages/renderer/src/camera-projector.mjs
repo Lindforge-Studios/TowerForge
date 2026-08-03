@@ -19,6 +19,9 @@ function ownDescriptors(value, allowedKeys, field) {
   } catch {
     throw new TypeError(`${field} must be an inspectable own-data object.`);
   }
+  if (Object.getOwnPropertySymbols(descriptors).length !== 0) {
+    throw new TypeError(`${field} contains unsupported symbol own-data.`);
+  }
   if (prototype !== Object.prototype && prototype !== null) {
     throw new TypeError(`${field} must be a plain own-data object.`);
   }
@@ -196,6 +199,9 @@ function catalogEntries(value, field, limit) {
     prototype = Object.getPrototypeOf(value);
   } catch {
     throw new TypeError(`${field} must be an inspectable own-data catalog.`);
+  }
+  if (Object.getOwnPropertySymbols(descriptors).length !== 0) {
+    throw new TypeError(`${field} contains unsupported symbol own-data.`);
   }
   if (prototype !== Object.prototype && prototype !== null) throw new TypeError(`${field} must be a plain own-data catalog.`);
   const entries = Object.entries(descriptors);

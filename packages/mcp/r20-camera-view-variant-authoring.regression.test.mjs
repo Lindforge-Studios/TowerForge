@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { callTool, TOOLS } from "./tools.mjs";
 
 const roots = [];
+const SPECIAL_JSON_IDS = Object.freeze(["__proto__", "constructor", "prototype"]);
 
 afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
@@ -99,6 +100,69 @@ describe("R20 verifier: guarded view-specific asset authoring lifecycle (RED)", 
       candidate: { kind: "tileSet", resourceId: "camera_ground", viewKey: "isometric_2_1:north" },
       coverage: { status: "exact", missingRequired: [] }
     });
+  });
+
+  it.each(SPECIAL_JSON_IDS)("round-trips special JSON resource ID %j through public preview/apply", async (resourceId) => {
+    const projectDir = fixture();
+    const request = {
+      projectDir,
+      kind: "sprite",
+      resourceId,
+      projection: "isometric_2_1",
+      orientation: "north",
+      variant: {
+        src: "assets/backgrounds/frontier-before-battle.png",
+        mimeType: "image/png",
+        anchor: { x: 0.5, y: 1 }
+      }
+    };
+    const preview = await callTool("preview_camera_view_variant", request, {});
+    expect(preview).toMatchObject({
+      ok: true,
+      dryRun: true,
+      written: false,
+      candidate: { resourceId, viewKey: "isometric_2_1:north" },
+      coverage: { status: "exact" }
+    });
+
+    const applied = await callTool("apply_camera_view_variant", {
+      ...request,
+      ifRevision: preview.revision
+    }, {});
+    expect(applied).toMatchObject({ ok: true, written: true, rolledBack: false });
+
+    const persisted = readJson(path.join(projectDir, "content", "visuals.json"));
+    expect(Object.hasOwn(persisted.viewVariants.sprites, resourceId), resourceId).toBe(true);
+    expect(persisted.viewVariants.sprites[resourceId]["isometric_2_1:north"]).toEqual(request.variant);
+    expect(Object.getPrototypeOf(persisted.viewVariants.sprites)).toBe(Object.prototype);
+  });
+
+  it.each(SPECIAL_JSON_IDS)("rejects a variant whose extra own field is special JSON key %j", async (hiddenKey) => {
+    const projectDir = fixture();
+    const visualsPath = path.join(projectDir, "content", "visuals.json");
+    const before = fs.readFileSync(visualsPath, "utf8");
+    const variant = JSON.parse(JSON.stringify({
+      src: "assets/backgrounds/frontier-before-battle.png",
+      mimeType: "image/png",
+      [hiddenKey]: { malformed: true }
+    }));
+
+    const preview = await callTool("preview_camera_view_variant", {
+      projectDir,
+      kind: "sprite",
+      resourceId: "safe_resource",
+      projection: "isometric_2_1",
+      orientation: "north",
+      variant
+    }, {});
+
+    expect(preview).toMatchObject({ ok: false, dryRun: true, written: false });
+    expect(preview.validation.issues).toContainEqual(expect.objectContaining({
+      severity: "error",
+      fieldPath: expect.stringContaining(hiddenKey)
+    }));
+    expect(fs.readFileSync(visualsPath, "utf8")).toBe(before);
+    expect(Object.prototype).not.toHaveProperty("malformed");
   });
 });
 

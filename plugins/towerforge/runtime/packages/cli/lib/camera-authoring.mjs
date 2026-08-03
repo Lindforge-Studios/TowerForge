@@ -286,10 +286,11 @@ function cameraViewVariantCandidate(raw, args) {
     sprites: clone(existing.sprites ?? {}),
     tileSets: clone(existing.tileSets ?? {})
   };
-  visuals.viewVariants[groupName][args.resourceId] = {
-    ...(clone(visuals.viewVariants[groupName][args.resourceId] ?? {})),
-    [viewKey]: variant
-  };
+  const group = visuals.viewVariants[groupName];
+  const currentVariants = ownRecordValue(group, args.resourceId) ?? {};
+  const variants = clone(currentVariants);
+  defineOwn(variants, viewKey, variant);
+  defineOwn(group, args.resourceId, variants);
   return {
     kind,
     resourceId: args.resourceId,
@@ -349,7 +350,7 @@ function cameraCandidate(raw, args) {
     assertId(binding.id, "binding.id");
     const bindings = catalog.bindings[binding.scope === "map" ? "maps" : "missions"];
     if (binding.enabled === false) delete bindings[binding.id];
-    else bindings[binding.id] = args.profileId;
+    else defineOwn(bindings, binding.id, args.profileId);
   }
   const catalogValidation = validateCameraProfileCatalogV1(catalog);
   if (!catalogValidation.ok) throw catalogValidation.error;
@@ -430,6 +431,19 @@ function cameraPresentationPreview(files, resolution, context) {
 function emptyCatalog() { return { schemaVersion: 1, profiles: {}, bindings: { maps: {}, missions: {} } }; }
 function assertId(value, field) { if (typeof value !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(value)) throw new Error(`${field} must be a bounded ID.`); }
 function clone(value) { return value === undefined ? undefined : structuredClone(value); }
+function defineOwn(target, key, value) {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true
+  });
+}
+function ownRecordValue(record, key) {
+  return record !== null && typeof record === "object" && Object.hasOwn(record, key)
+    ? record[key]
+    : undefined;
+}
 function safeOwnClone(value, field, state = { active: new WeakSet(), nodes: 0, depth: 0 }) {
   if (value === null || typeof value !== "object") {
     if (["string", "number", "boolean", "undefined"].includes(typeof value) && (typeof value !== "number" || Number.isFinite(value))) return value;
@@ -445,7 +459,7 @@ function safeOwnClone(value, field, state = { active: new WeakSet(), nodes: 0, d
   } catch {
     throw new Error(`${field} must be an inspectable own-data object.`);
   }
-  if (symbols.length !== 0 || (Array.isArray(value) ? prototype !== Array.prototype : prototype !== Object.prototype)) throw new Error(`${field} must be a plain own-data object.`);
+  if (symbols.length !== 0 || (Array.isArray(value) ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null)) throw new Error(`${field} must be a plain own-data object.`);
   state.active.add(value);
   const next = { ...state, depth: state.depth + 1 };
   try {
@@ -464,7 +478,7 @@ function safeOwnClone(value, field, state = { active: new WeakSet(), nodes: 0, d
     for (const key of Object.keys(descriptors).sort()) {
       const descriptor = descriptors[key];
       if (!descriptor.enumerable || !("value" in descriptor)) throw new Error(`${field}.${key} must be an enumerable own-data value; accessors are forbidden.`);
-      output[key] = safeOwnClone(descriptor.value, `${field}.${key}`, next);
+      defineOwn(output, key, safeOwnClone(descriptor.value, `${field}.${key}`, next));
     }
     return output;
   } finally {
