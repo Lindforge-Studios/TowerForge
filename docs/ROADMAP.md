@@ -79,9 +79,10 @@ service. Нет соответствующего выбора или локал�
   собственные RED/GREEN-срезы, exact-commit gates и два независимых sign-off.
 - R21 merge `8ed8dab` опирается на exact head `561f755`: `456/456` unit files,
   `4381/4381` tests, `163/163` E2E и зелёные CI/Windows/Linux/macOS generated-game jobs.
-- Release candidate `v0.8.0` объединяет опубликованный R0–R17 baseline и принятые R18–R21.
-  Публикация считается завершённой только после exact-tag workflow, шести installers,
-  `SHA256SUMS` и пост-публикационной проверки.
+- [`v0.8.0`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.8.0) опубликован как
+  неподписанный pre-release с принятыми R0–R21. Exact commit `7e4cba9`, manual candidate workflow
+  `30839934975` и tag workflow `30846092399` прошли; опубликованы шесть installers и
+  `SHA256SUMS`, публичные hashes и скачанный macOS app/DMG проверены.
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Сейчас исполнимыми являются только
 версии, перечисленные в [ARCHITECTURE.md](../ARCHITECTURE.md): наличие planned descriptor или

@@ -56,13 +56,13 @@ gh pr view <number> --json state,baseRefName,headRefOid,mergeStateStatus,statusC
 gh pr checks <number>
 ```
 
-Public unsigned pre-release `v0.6.1` remains the verified R0–R17 baseline. The `v0.8.0` candidate
-adds accepted R18–R21: a large-screen web player, first-class native game targets, deterministic
-top-down/isometric/dimetric camera projection and the data-only HUD constructor. Each R passed its
-own contract-first RED/GREEN increments, exact-commit gates, remote CI and independent Code Verifier
-plus Constructor Integration Verifier review. Do not describe `v0.8.0` as public until the manual
-cross-platform candidate, annotated tag workflow, six installers, `SHA256SUMS` and downloaded DMG
-verification all complete.
+Public unsigned pre-release [`v0.8.0`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.8.0)
+is the verified R0–R21 baseline: a large-screen web player, first-class native game targets,
+deterministic top-down/isometric/dimetric camera projection and the data-only HUD constructor are
+included alongside R0–R17. Each R passed its own contract-first RED/GREEN increments, exact-commit
+gates, remote CI and independent Code Verifier plus Constructor Integration Verifier review. Manual
+candidate workflow `30839934975` and tagged workflow `30846092399` built exact commit `7e4cba9`; the
+six public installers, `SHA256SUMS` and downloaded macOS app/DMG were verified after publication.
 
 ## Opt-In Mechanics
 
@@ -1110,7 +1110,7 @@ CI is configured in `.github/workflows/ci.yml` for local-alpha quality gates. `.
 
 Public desktop releases follow [the desktop release policy](releasing.md). Until signing is configured, they remain GitHub pre-releases with `Unsigned build` in the title. To inspect a cross-platform candidate without publishing, run **Actions > Unsigned Desktop Builds > Run workflow** against the intended commit. To publish, merge the release commit, then create and push an annotated tag whose version matches all desktop manifests:
 
-The v0.8.0 candidate line includes accepted R0–R21. Never describe `main` or an open PR as released merely because local installers or Actions artifacts exist; the GitHub tag and published installer assets remain authoritative.
+The v0.8.0 public line includes accepted R0–R21. Never describe `main` or an open PR as released merely because local installers or Actions artifacts exist; the GitHub tag and published installer assets remain authoritative.
 
 ```bash
 git tag -a vX.Y.Z -m "TowerForge vX.Y.Z"

@@ -4672,3 +4672,28 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   gates, then the exact merged commit must pass the manual six-platform `Unsigned Desktop Builds`
   candidate workflow. The annotated tag must publish exactly six installers plus `SHA256SUMS`; all
   downloaded hashes and the macOS app/DMG must be independently verified after publication.
+
+## 2026-08-04 — v0.8.0 published and independently verified
+
+- Release PR #38 merged as exact `main` commit
+  `7e4cba99bb23b43f0118fb97b756e388001fd7d1`. Manual candidate workflow `30839934975`
+  completed successfully before tagging; annotated tag `v0.8.0` dereferences the same commit.
+- Tagged workflow `30846092399` completed successfully across macOS, Windows and Linux, then
+  published [`TowerForge v0.8.0 - Unsigned build`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.8.0)
+  as a pre-release with exactly six installers plus `SHA256SUMS`. Release notes retain the unsigned
+  warning, installation-safety guidance, exact tag/source/commit links and every installer hash.
+- All public release assets were downloaded again through GitHub Releases. `shasum -a 256 -c
+  SHA256SUMS` reports all six files `OK`, and an automated comparison confirms that every release-note
+  hash equals the downloaded checksum record:
+  - `151c36da7cac6b71dc1d8862af343ef86d268b23a3c323183c345c75ba741165` — macOS DMG;
+  - `910e1c6b0d59ab4b18113b87423f758966bbaf6f3d2cdec4044459cdd54bdef8` — Linux AppImage;
+  - `211274142c2756314a55ba5d8b0525e1f5ba9f2267739f47f35c246c6a9766f2` — Debian package;
+  - `5dc93d17c74042923d1e2c357112954825d5ae51250e834fbb811c82f816fd80` — Windows MSI;
+  - `92d809716a48e4eb037133ace6d382a7709259300dc2055f20bafd47eb92715a` — Windows NSIS;
+  - `e2ea93790e64ee85128098f23a9a883452ebfb3b3853157d6a81af722bdebf23` — RPM.
+- The verifier mounted the downloaded public `TowerForge_0.8.0_aarch64.dmg`, validated the complete
+  ad-hoc app-bundle signature and checked the DMG container successfully. No Gatekeeper bypass or
+  reduction of operating-system security is required or documented.
+- Codex plugin mirror workflow `30851769278` completed successfully. Mirror commit `9c8ee75` records
+  source commit `7e4cba99bb23b43f0118fb97b756e388001fd7d1`, and its manifest reports TowerForge,
+  plugin and MCP server version `0.8.0`.
