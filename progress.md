@@ -3915,3 +3915,44 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - The full gates ran after the R13 contract correction and on the exact production/test tree above.
   Independent Code Verifier and Constructor Integration Verifier reviews are still required before
   R20 acceptance or merge.
+
+## 2026-08-03 — R20 second independent-verifier rejection and RED evidence
+
+- Independent review rejected candidate `6837d1c` and invalidated its freeze/sign-offs. Four
+  release blockers were separated from the previous focused matrix: BuildTargets v1 could activate
+  the camera runtime through visuals-only mission/map bindings; camera preview retained a duplicate
+  zero-elevation point over an authored elevated coordinate; a newly authored but still unbound
+  camera profile previewed the built-in top-down fallback; and no narrow guarded Studio/MCP path
+  could bind an already imported/staged view-specific asset. Constructor review also found that
+  generated Phaser used camera variants for heroes and tiles but not towers or enemies.
+- An independent Contract/Test Designer captured the failures before the production repair in
+  `build.r20-camera-p0-runtime-isolation.regression.test.mjs`,
+  `r20-camera-authoring.contract.test.mjs`,
+  `r20-camera-view-variant-authoring.regression.test.mjs`, and
+  `r20-camera-studio.contract.test.mjs`. The isolated RED assertions failed for the expected
+  missing legacy gate, authoritative coordinate merge, candidate preview, one-variant lifecycle,
+  Studio binder and Phaser sprite/anchor paths. Production and this progress log were not changed
+  by the test-designer role.
+
+## 2026-08-03 — R20 verifier repairs focused GREEN
+
+- Camera projection activation is now gated by BuildTargets v2 large-screen targets; legacy v1
+  bundles strip camera imports, exports, constructor catalog resolution and selector code even when
+  visuals v4 contains reusable bindings. Preview coordinates are merged by q/r with elevation
+  overrides authoritative, and an unbound candidate profile is rendered directly for pre-save live
+  inspection without changing persisted selection precedence.
+- Added narrow `preview_camera_view_variant` and `apply_camera_view_variant` operations. They accept
+  one sprite or tileset variant, enforce closed bounded own-data, project-local real files,
+  PNG/JPEG/WebP signature and size validation, canonical schema/coverage validation, revision
+  recheck, confined backup and rollback. Camera Studio exposes the same guarded one-variant binder
+  for existing or staged assets; the embedded AI policy and instructions advertise this granular
+  workflow rather than a broad visuals writer.
+- Generated camera-enabled Phaser players now resolve tower and enemy bindings through the same
+  exact view-variant catalog as Canvas, apply authored anchors, participate in the stable mixed-actor
+  depth order and clean up despawned images. The legacy generated source remains byte-structurally
+  free of those image maps and camera branches.
+- Exact focused unit command covering all R20 contract/regression files is GREEN at `14/14` files
+  and `103/103` tests. The real Camera Studio Playwright lifecycle is GREEN at `2/2`; its first
+  sandboxed attempt failed only because binding `127.0.0.1` was denied, and the approved local-port
+  rerun passed. `git diff --check` is GREEN. This is pre-freeze evidence: the full gates and both
+  independent reviews must run again on the next exact committed candidate.

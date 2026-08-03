@@ -102,9 +102,11 @@ import {
 } from "../cli/lib/procedural-juice-authoring.mjs";
 import {
   CAMERA_AUTHORING_SCHEMA_V1,
+  applyCameraViewVariant,
   applyCameraProfile,
   getCameraProfileRecipe,
   getCameraProfiles,
+  previewCameraViewVariant,
   previewCameraProfile
 } from "../cli/lib/camera-authoring.mjs";
 import { projectProceduralJuicePresentation } from "../renderer/src/procedural-juice-presentation.mjs";
@@ -650,6 +652,39 @@ const CAMERA_CONTEXT_INPUT_SCHEMA = Object.freeze({
   }),
   additionalProperties: false
 });
+const CAMERA_IMAGE_INPUT_SCHEMA = Object.freeze({
+  type: "object",
+  properties: Object.freeze({
+    src: Object.freeze({ type: "string", minLength: 1, maxLength: 1024 }),
+    mimeType: Object.freeze({ type: "string", enum: ["image/png", "image/jpeg", "image/webp"] })
+  }),
+  required: Object.freeze(["src", "mimeType"]),
+  additionalProperties: false
+});
+const CAMERA_VIEW_VARIANT_INPUT_SCHEMA = Object.freeze({
+  type: "object",
+  properties: Object.freeze({
+    src: Object.freeze({ type: "string", minLength: 1, maxLength: 1024 }),
+    mimeType: Object.freeze({ type: "string", enum: ["image/png", "image/jpeg", "image/webp"] }),
+    anchor: Object.freeze({
+      type: "object",
+      properties: Object.freeze({ x: Object.freeze({ type: "number", minimum: 0, maximum: 1 }), y: Object.freeze({ type: "number", minimum: 0, maximum: 1 }) }),
+      required: Object.freeze(["x", "y"]),
+      additionalProperties: false
+    }),
+    atlas: CAMERA_IMAGE_INPUT_SCHEMA,
+    materials: Object.freeze({ type: "object", maxProperties: 4096 })
+  }),
+  additionalProperties: false
+});
+const CAMERA_VIEW_VARIANT_PROPERTIES = Object.freeze({
+  projectDir: Object.freeze({ type: "string" }),
+  kind: Object.freeze({ type: "string", enum: ["sprite", "tileSet"] }),
+  resourceId: Object.freeze({ type: "string", minLength: 1, maxLength: 128 }),
+  projection: Object.freeze({ type: "string", enum: CAMERA_AUTHORING_SCHEMA_V1.projections }),
+  orientation: Object.freeze({ type: "string", enum: CAMERA_AUTHORING_SCHEMA_V1.orientations }),
+  variant: CAMERA_VIEW_VARIANT_INPUT_SCHEMA
+});
 /** Tool definitions advertised over `tools/list`. */
 export const TOOLS = [
   {
@@ -699,6 +734,26 @@ export const TOOLS = [
       type: "object",
       properties: { projectDir: { type: "string" }, profileId: { type: "string", minLength: 1, maxLength: 128 }, profile: CAMERA_PROFILE_INPUT_SCHEMA, binding: CAMERA_BINDING_INPUT_SCHEMA, ifRevision: IF_REVISION_PROPERTY },
       required: ["projectDir", "profileId", "profile", "ifRevision"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "preview_camera_view_variant",
+    description: "Preview one safe PNG/JPEG/WebP sprite or tileset camera variant and its exact/fallback/material coverage without writing project files.",
+    inputSchema: {
+      type: "object",
+      properties: CAMERA_VIEW_VARIANT_PROPERTIES,
+      required: ["projectDir", "kind", "resourceId", "projection", "orientation", "variant"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "apply_camera_view_variant",
+    description: "Revision-guarded bind of one camera view variant with canonical project validation, backup, and rollback.",
+    inputSchema: {
+      type: "object",
+      properties: Object.freeze({ ...CAMERA_VIEW_VARIANT_PROPERTIES, ifRevision: IF_REVISION_PROPERTY }),
+      required: ["projectDir", "kind", "resourceId", "projection", "orientation", "variant", "ifRevision"],
       additionalProperties: false
     }
   },
@@ -2274,6 +2329,8 @@ const TOOL_RISK = {
   get_camera_profile_recipe: { riskClass: "read_only", sideEffect: "none" },
   preview_camera_profile: { riskClass: "compute_only", sideEffect: "writes no project files" },
   apply_camera_profile: { riskClass: "write_local", sideEffect: "writes project.json and content/visuals.json with revision guard, validation, backup, and rollback" },
+  preview_camera_view_variant: { riskClass: "compute_only", sideEffect: "writes no project files" },
+  apply_camera_view_variant: { riskClass: "write_local", sideEffect: "writes project.json and content/visuals.json with revision guard, validation, backup, and rollback" },
   get_procedural_juice: { riskClass: "read_only", sideEffect: "none" },
   get_procedural_juice_recipe: { riskClass: "read_only", sideEffect: "none" },
   preview_procedural_juice: { riskClass: "compute_only", sideEffect: "validates an in-memory candidate and writes no project files" },
@@ -2819,7 +2876,8 @@ export async function callTool(name, args = {}, ctx = {}) {
         key: "projection:orientation",
         imageMimeTypes: ["image/png", "image/jpeg", "image/webp"],
         optionalSpriteFallback: "billboard",
-        missingTileSetMaterial: "validation_error"
+        missingTileSetMaterial: "validation_error",
+        authoring: { preview: "preview_camera_view_variant", apply: "apply_camera_view_variant", granularity: "one_variant" }
       }
     };
     const multiplayer = {
@@ -3131,6 +3189,23 @@ export async function callTool(name, args = {}, ctx = {}) {
         profileId: ownDataValue(args, "profileId"),
         profile: ownDataValue(args, "profile"),
         binding: ownDataValue(args, "binding"),
+        ifRevision: ownDataValue(args, "ifRevision")
+      });
+    case "preview_camera_view_variant":
+      return previewCameraViewVariant(projectDir, {
+        kind: ownDataValue(args, "kind"),
+        resourceId: ownDataValue(args, "resourceId"),
+        projection: ownDataValue(args, "projection"),
+        orientation: ownDataValue(args, "orientation"),
+        variant: ownDataValue(args, "variant")
+      });
+    case "apply_camera_view_variant":
+      return applyCameraViewVariant(projectDir, {
+        kind: ownDataValue(args, "kind"),
+        resourceId: ownDataValue(args, "resourceId"),
+        projection: ownDataValue(args, "projection"),
+        orientation: ownDataValue(args, "orientation"),
+        variant: ownDataValue(args, "variant"),
         ifRevision: ownDataValue(args, "ifRevision")
       });
     case "get_procedural_juice":

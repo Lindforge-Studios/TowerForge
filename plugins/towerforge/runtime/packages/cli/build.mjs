@@ -116,7 +116,7 @@ try {
     && files.visuals?.cameraProfiles?.schemaVersion === 1
     ? files.visuals.cameraProfiles
     : null;
-  const cameraProjectionActive = cameraProfiles !== null && (
+  const cameraProjectionActive = largeScreenPlayer && cameraProfiles !== null && (
     typeof target.cameraProfileId === "string"
     || Object.keys(cameraProfiles.bindings?.missions ?? {}).length > 0
     || Object.keys(cameraProfiles.bindings?.maps ?? {}).length > 0
@@ -353,6 +353,18 @@ function pruneInactiveCameraProjectionRuntime(outDir) {
   source = pruneSingleModuleExport(source, "./camera-projector.mjs");
   source = pruneSingleModuleExport(source, "./camera-renderer-integration.mjs");
   source = pruneSingleModuleExport(source, "./camera-view-assets.mjs");
+  source = source.replace(
+    /\/\* towerforge-optional:cameraProjection:constructor:start \*\/[\s\S]*?\/\* towerforge-optional:cameraProjection:constructor:end \*\//,
+    "this.cameraCatalog = null;"
+  );
+  source = source.replace(
+    /\/\* towerforge-optional:cameraProjection:selector:start \*\/[\s\S]*?\/\* towerforge-optional:cameraProjection:selector:end \*\//,
+    `selectCameraProfile() {
+    this.cameraProfile = null;
+    this.cameraProfileSignature = "legacy";
+    this.cameraRenderSpace = null;
+  }`
+  );
   fs.writeFileSync(rendererIndex, source, "utf8");
 }
 
@@ -3465,6 +3477,7 @@ class PlayScene extends Phaser.Scene {
     this.entG = this.add.graphics();
     ${cameraProjectionActive ? "this.cameraActorGraphics = new Map();" : ""}
     this.towerLabels = new Map();
+    ${cameraProjectionActive ? "this.towerImages = new Map();\n    this.enemyImages = new Map();" : ""}
     this.heroImages = new Map();
     this.heroLabels = new Map();
     this.tileImages = new Map();
@@ -3710,6 +3723,8 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer, cameraProjectionActive)}
       if (!seen.has(key)) { graphics.destroy(); this.cameraActorGraphics.delete(key); }
     }
     for (const [id, label] of this.towerLabels) label.setDepth(depths.get("tower:" + id) ?? 10);
+    for (const [id, image] of this.towerImages) image.setDepth(depths.get("tower:" + id) ?? 9);
+    for (const [id, image] of this.enemyImages) image.setDepth(depths.get("enemy:" + id) ?? 9);
     for (const [id, image] of this.heroImages) image.setDepth(depths.get("hero:" + id) ?? 9);
     for (const [id, label] of this.heroLabels) label.setDepth(depths.get("hero:" + id) ?? 10);
     return depths;
@@ -4148,8 +4163,24 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer, cameraProjectionActive)}
       const actorG = ${cameraProjectionActive ? `g.cameraRenderSpace ? this.cameraActorGraphicsFor("tower", tw.id) : this.entG` : "this.entG"};
       const disabled = (tw.disabledFor ?? 0) > 0; // silenced by an enemy tower-disrupt pulse
       const alpha = disabled ? 0.4 : 1;
-      actorG.fillStyle(0x8ac783, alpha); actorG.fillCircle(p.x, p.y, g.r * 0.5);
-      actorG.lineStyle(2, disabled ? 0xdf6a59 : 0xe8f4db, alpha); actorG.strokeCircle(p.x, p.y, g.r * 0.5);
+      ${cameraProjectionActive ? `const towerBindings = ownDataValue(ownDataValue(content.visuals, "bindings"), "towers");
+      const towerSpriteId = ownDataValue(towerBindings, tw.typeId);
+      const texture = this.spriteTexture(towerSpriteId);
+      let image = this.towerImages.get(tw.id);
+      if (texture) {
+        if (!image) {
+          image = this.add.image(p.x, p.y, texture.key, texture.frame).setOrigin(texture.anchor.x, texture.anchor.y).setDepth(cameraActorDepth.get("tower:" + tw.id) ?? 9);
+          this.towerImages.set(tw.id, image);
+        }
+        image.setTexture(texture.key, texture.frame).setPosition(p.x, p.y)
+          .setOrigin(texture.anchor.x, texture.anchor.y).setDepth(cameraActorDepth.get("tower:" + tw.id) ?? 9)
+          .setDisplaySize(g.r * 1.4, g.r * 1.4).setAlpha(alpha).setVisible(true);
+      } else {
+        if (image) { image.destroy(); this.towerImages.delete(tw.id); image = null; }
+        actorG.fillStyle(0x8ac783, alpha); actorG.fillCircle(p.x, p.y, g.r * 0.5);
+        actorG.lineStyle(2, disabled ? 0xdf6a59 : 0xe8f4db, alpha); actorG.strokeCircle(p.x, p.y, g.r * 0.5);
+      }` : `actorG.fillStyle(0x8ac783, alpha); actorG.fillCircle(p.x, p.y, g.r * 0.5);
+      actorG.lineStyle(2, disabled ? 0xdf6a59 : 0xe8f4db, alpha); actorG.strokeCircle(p.x, p.y, g.r * 0.5);`}
       // Health bar for damaged destructible towers (hp defined and below the type's maxHp).
       const tMax = content.towers[tw.typeId]?.maxHp;
       if (typeof tw.hp === "number" && typeof tMax === "number" && tMax > 0 && tw.hp < tMax) {
@@ -4160,10 +4191,18 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer, cameraProjectionActive)}
       this.shieldRing(actorG, p.x, p.y, g.r * 0.66, resolveShieldPresentation(snap, "tower", tw.id));
       let label = this.towerLabels.get(tw.id);
       const text = (content.towers[tw.typeId]?.label || tw.typeId).slice(0, 2);
-      if (!label) { label = this.add.text(0, 0, text, { fontFamily: "sans-serif", color: "#101410" }).setOrigin(0.5).setDepth(${cameraProjectionActive ? "cameraActorDepth.get(\"tower:\" + tw.id) ?? 10" : "10"}); this.towerLabels.set(tw.id, label); }
-      label.setText(text).setFontSize(Math.max(10, Math.round(g.r * 0.42))).setPosition(p.x, p.y).setAlpha(alpha)${cameraProjectionActive ? ".setDepth(cameraActorDepth.get(\"tower:\" + tw.id) ?? 10)" : ""};
+      ${cameraProjectionActive ? `if (texture) {
+        if (label) { label.destroy(); this.towerLabels.delete(tw.id); label = null; }
+      } else {
+        if (!label) { label = this.add.text(0, 0, text, { fontFamily: "sans-serif", color: "#101410" }).setOrigin(0.5).setDepth(cameraActorDepth.get("tower:" + tw.id) ?? 10); this.towerLabels.set(tw.id, label); }
+        label.setText(text).setFontSize(Math.max(10, Math.round(g.r * 0.42))).setPosition(p.x, p.y).setAlpha(alpha).setDepth(cameraActorDepth.get("tower:" + tw.id) ?? 10);
+      }` : `if (!label) { label = this.add.text(0, 0, text, { fontFamily: "sans-serif", color: "#101410" }).setOrigin(0.5).setDepth(10); this.towerLabels.set(tw.id, label); }
+      label.setText(text).setFontSize(Math.max(10, Math.round(g.r * 0.42))).setPosition(p.x, p.y).setAlpha(alpha);`}
     }
     for (const [id, lbl] of this.towerLabels) { if (!seen.has(id)) { lbl.destroy(); this.towerLabels.delete(id); } }
+    ${cameraProjectionActive ? `for (const [id, image] of this.towerImages) {
+      if (!seen.has(id)) { image.destroy(); this.towerImages.delete(id); }
+    }` : ""}
 
     // Every supported heroes schema renders from the exact fail-closed engine snapshot. V1 remains
     // static; validated v2/v3 movement input dispatches GameCommandV4 while this scene only presents.
@@ -4254,13 +4293,31 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer, cameraProjectionActive)}
       cue.protectedEnemyId,
       cue.vanguardEnemyId
     ]));
+    ${cameraProjectionActive ? "const seenEnemies = new Set();" : ""}
     for (const en of snap.enemies) {
       const p = this.enemyPos(en, snap, g);
       if (!p) continue;
+      ${cameraProjectionActive ? "seenEnemies.add(en.id);" : ""}
       const actorG = ${cameraProjectionActive ? `g.cameraRenderSpace ? this.cameraActorGraphicsFor("enemy", en.id) : this.entG` : "this.entG"};
       const color = Number(content.enemies[en.typeId]?.color ?? 0xaaaaaa);
-      actorG.fillStyle(color, 1); actorG.fillCircle(p.x, p.y, g.r * 0.38);
-      actorG.lineStyle(2, 0x111111, 1); actorG.strokeCircle(p.x, p.y, g.r * 0.38);
+      ${cameraProjectionActive ? `const enemyBindings = ownDataValue(ownDataValue(content.visuals, "bindings"), "enemies");
+      const enemySpriteId = ownDataValue(enemyBindings, en.typeId);
+      const texture = this.spriteTexture(enemySpriteId);
+      let image = this.enemyImages.get(en.id);
+      if (texture) {
+        if (!image) {
+          image = this.add.image(p.x, p.y, texture.key, texture.frame).setOrigin(texture.anchor.x, texture.anchor.y).setDepth(cameraActorDepth.get("enemy:" + en.id) ?? 9);
+          this.enemyImages.set(en.id, image);
+        }
+        image.setTexture(texture.key, texture.frame).setPosition(p.x, p.y)
+          .setOrigin(texture.anchor.x, texture.anchor.y).setDepth(cameraActorDepth.get("enemy:" + en.id) ?? 9)
+          .setDisplaySize(g.r * 0.95, g.r * 0.95).setVisible(true);
+      } else {
+        if (image) { image.destroy(); this.enemyImages.delete(en.id); image = null; }
+        actorG.fillStyle(color, 1); actorG.fillCircle(p.x, p.y, g.r * 0.38);
+        actorG.lineStyle(2, 0x111111, 1); actorG.strokeCircle(p.x, p.y, g.r * 0.38);
+      }` : `actorG.fillStyle(color, 1); actorG.fillCircle(p.x, p.y, g.r * 0.38);
+      actorG.lineStyle(2, 0x111111, 1); actorG.strokeCircle(p.x, p.y, g.r * 0.38);`}
       const ratio = Math.max(0, en.hp / en.maxHp);
       actorG.fillStyle(0x1b1d18, 1); actorG.fillRect(p.x - g.r * 0.45, p.y - g.r * 0.62, g.r * 0.9, 4);
       actorG.fillStyle(ratio > 0.35 ? 0x8ac783 : 0xdf6a59, 1); actorG.fillRect(p.x - g.r * 0.45, p.y - g.r * 0.62, g.r * 0.9 * ratio, 4);
@@ -4325,6 +4382,9 @@ ${phaserViewportMethodsTemplate(largeScreenPlayer, cameraProjectionActive)}
         label.setText(badges[index].label).setFontSize(Math.max(7, Math.round(radius * 1.2))).setPosition(x, y).setVisible(true);
       }
     }
+    ${cameraProjectionActive ? `for (const [id, image] of this.enemyImages) {
+      if (!seenEnemies.has(id)) { image.destroy(); this.enemyImages.delete(id); }
+    }` : ""}
     for (const [key, label] of this.markLabels) {
       if (!seenMarkLabels.has(key)) { label.destroy(); this.markLabels.delete(key); }
     }

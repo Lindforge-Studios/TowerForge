@@ -27,4 +27,16 @@ describe("R20.4 Camera Studio surface (RED)", () => {
     expect(app).toMatch(/\/api\/camera\/read[\s\S]*\/api\/camera\/recipes[\s\S]*\/api\/camera\/preview[\s\S]*\/api\/camera\/apply/);
     expect(app).toMatch(/projectedBounds[\s\S]*clipping[\s\S]*depth[\s\S]*assetCoverage/);
   });
+
+  it("offers a narrow guarded view-variant binder for existing or staged safe assets", () => {
+    for (const id of [
+      "camera-view-variant-kind", "camera-view-variant-resource", "camera-view-variant-asset",
+      "camera-view-variant-anchor-x", "camera-view-variant-anchor-y", "camera-view-variant-materials",
+      "btn-camera-view-variant-preview", "btn-camera-view-variant-apply", "camera-view-variant-coverage"
+    ]) expect(html, id).toContain(`id="${id}"`);
+    for (const route of ["/api/camera/view-variant/preview", "/api/camera/view-variant/apply"]) expect(server).toContain(route);
+    expect(server).toMatch(/preview_camera_view_variant[\s\S]*apply_camera_view_variant/);
+    expect(app).toMatch(/camera-view-variant-asset[\s\S]*isometric_2_1:north|camera-view-variant-asset[\s\S]*projection[\s\S]*orientation/i);
+    expect(app).toMatch(/camera-view-variant-coverage[\s\S]*\/api\/camera\/view-variant\/preview[\s\S]*\/api\/camera\/view-variant\/apply/);
+  });
 });

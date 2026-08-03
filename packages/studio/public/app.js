@@ -12017,7 +12017,7 @@ $("btn-script-delete")?.addEventListener("click", async () => {
   } catch (error) { toast(error.message, "err"); }
 });
 
-const CameraStudioUI = { loaded: false, loading: false, revision: null, recipes: [], cameraProfiles: null, selectedProfileId: null, needsHydrate: false, skipHydrateOnce: false, preview: null, error: null, previewTimer: null };
+const CameraStudioUI = { loaded: false, loading: false, revision: null, recipes: [], cameraProfiles: null, selectedProfileId: null, needsHydrate: false, skipHydrateOnce: false, preview: null, viewVariantPreview: null, error: null, previewTimer: null };
 
 async function loadCameraStudio() {
   if (CameraStudioUI.loading) return;
@@ -12073,6 +12073,63 @@ function cameraStudioNumber(id) {
 function cameraStudioViewport() {
   const [width, height] = ($("camera-viewport-preset")?.value ?? "1440x900").split("x").map(Number);
   return { width, height };
+}
+
+function cameraViewVariantCandidate() {
+  const asset = $("camera-view-variant-asset")?.value.trim();
+  const projection = $("camera-projection")?.value ?? "top_down";
+  const orientation = $("camera-orientation")?.value ?? "north";
+  const kind = $("camera-view-variant-kind")?.value;
+  const resourceId = $("camera-view-variant-resource")?.value.trim();
+  if (!asset || !resourceId || !["sprite", "tileSet"].includes(kind)) throw new Error("Choose a resource and a project-local image asset.");
+  const extension = asset.slice(asset.lastIndexOf(".")).toLowerCase();
+  const mimeType = extension === ".png" ? "image/png" : [".jpg", ".jpeg"].includes(extension) ? "image/jpeg" : extension === ".webp" ? "image/webp" : null;
+  if (!mimeType) throw new Error("Camera variants support PNG, JPEG and WebP assets.");
+  const variant = kind === "sprite"
+    ? {
+        src: asset,
+        mimeType,
+        anchor: { x: cameraStudioNumber("camera-view-variant-anchor-x"), y: cameraStudioNumber("camera-view-variant-anchor-y") }
+      }
+    : {
+        atlas: { src: asset, mimeType },
+        materials: parseOptionalJsonEditor("camera-view-variant-materials", "Tileset materials") ?? {}
+      };
+  return { kind, resourceId, projection, orientation, variant };
+}
+
+function renderCameraViewVariantBinder() {
+  const coverage = $("camera-view-variant-coverage");
+  if (!coverage) return;
+  coverage.textContent = CameraStudioUI.viewVariantPreview
+    ? JSON.stringify({ candidate: CameraStudioUI.viewVariantPreview.candidate, coverage: CameraStudioUI.viewVariantPreview.coverage, validation: CameraStudioUI.viewVariantPreview.validation }, null, 2)
+    : "Preview one exact projection:orientation binding before applying it.";
+  $("btn-camera-view-variant-apply").disabled = CameraStudioUI.viewVariantPreview?.ok !== true;
+  $("btn-camera-view-variant-preview").onclick = async () => {
+    if (S.dirty) { toast("Save or discard other project changes before previewing a camera asset binding.", "warn"); return; }
+    try {
+      const result = await apiPost("/api/camera/view-variant/preview", cameraViewVariantCandidate());
+      CameraStudioUI.viewVariantPreview = result;
+      CameraStudioUI.revision = result.revision;
+      renderCameraViewVariantBinder();
+    } catch (error) { CameraStudioUI.viewVariantPreview = null; toast(error.message, "err"); renderCameraViewVariantBinder(); }
+  };
+  $("btn-camera-view-variant-apply").onclick = async () => {
+    if (!CameraStudioUI.viewVariantPreview?.ok) return;
+    if (S.dirty) { toast("Save or discard other project changes before applying a camera asset binding.", "warn"); return; }
+    try {
+      const result = await apiPost("/api/camera/view-variant/apply", { ...cameraViewVariantCandidate(), ifRevision: CameraStudioUI.viewVariantPreview.revision });
+      if (result.newHash) S.contentHash = result.newHash;
+      CameraStudioUI.viewVariantPreview = null;
+      CameraStudioUI.loaded = false;
+      await load();
+      await loadCameraStudio();
+      toast("Camera view variant applied.", "ok");
+    } catch (error) { toast(error.message, "err"); }
+  };
+  for (const id of ["camera-view-variant-kind", "camera-view-variant-resource", "camera-view-variant-asset", "camera-view-variant-anchor-x", "camera-view-variant-anchor-y", "camera-view-variant-materials"]) {
+    $(id).oninput = () => { CameraStudioUI.viewVariantPreview = null; renderCameraViewVariantBinder(); };
+  }
 }
 
 async function previewCameraStudio() {
@@ -12162,6 +12219,7 @@ function renderCameraStudio() {
       queueCameraStudioPreview();
     };
   }
+  renderCameraViewVariantBinder();
 }
 
 function hydrateCameraStudioProfile() {

@@ -1591,6 +1591,35 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // Narrow camera asset workflow: preview_camera_view_variant ->
+  // apply_camera_view_variant. Asset import/staging remains a separate guarded workflow.
+  if (req.method === "POST" && ["/api/camera/view-variant/preview", "/api/camera/view-variant/apply"].includes(pathname)) {
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { code: "malformed_request", error: "Invalid JSON body" }); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) return jsonResp(res, 400, { code: "invalid_request", error: "Camera view variant request must be a JSON object." });
+    try {
+      const isApply = pathname.endsWith("/apply");
+      const result = await callTool(isApply ? "apply_camera_view_variant" : "preview_camera_view_variant", {
+        projectDir: PROJECT_DIR,
+        kind: body.kind,
+        resourceId: body.resourceId,
+        projection: body.projection,
+        orientation: body.orientation,
+        variant: body.variant,
+        ...(isApply ? { ifRevision: body.ifRevision } : {})
+      }, { defaultProjectDir: PROJECT_DIR });
+      if (isApply && result?.written) writeRunTrace(PROJECT_DIR, { source: "studio", action: "camera:view-variant:apply", status: "ok" });
+      return jsonResp(res, result?.conflict ? 409 : result?.ok === false ? 422 : 200, {
+        ...sanitizeMechanicsResponse(result),
+        ...(isApply && result?.ok !== false ? { newHash: projectHash() } : {})
+      });
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
+    }
+  }
+
   if (req.method === "GET" && pathname === "/api/procedural-juice/recipes") {
     try {
       const recipeIds = ["impact_feedback", "boss_finisher"];

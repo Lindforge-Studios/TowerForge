@@ -93,6 +93,7 @@ export class TowerForgeCanvasRenderer {
     this.viewportController = null;
     this.viewportSignature = "";
     const authoredVisuals = ownDataValue(this.content, "visuals");
+    /* towerforge-optional:cameraProjection:constructor:start */
     const cameraCatalog = ownDataValue(authoredVisuals, "schemaVersion") === 4
       ? ownDataValue(authoredVisuals, "cameraProfiles")
       : null;
@@ -100,6 +101,7 @@ export class TowerForgeCanvasRenderer {
     const hasCameraBinding = Object.keys(ownDataValue(cameraBindings, "missions") ?? {}).length > 0
       || Object.keys(ownDataValue(cameraBindings, "maps") ?? {}).length > 0;
     this.cameraCatalog = typeof options.cameraProfileId === "string" || hasCameraBinding ? cameraCatalog : null;
+    /* towerforge-optional:cameraProjection:constructor:end */
     this.buildTargetCameraProfileId = typeof options.cameraProfileId === "string" ? options.cameraProfileId : undefined;
     this.cameraProfile = null;
     this.cameraProfileSignature = "legacy";
@@ -1162,6 +1164,7 @@ export class TowerForgeCanvasRenderer {
     };
   }
 
+  /* towerforge-optional:cameraProjection:selector:start */
   selectCameraProfile(context) {
     if (!this.cameraCatalog) {
       this.cameraProfile = null;
@@ -1179,6 +1182,7 @@ export class TowerForgeCanvasRenderer {
     this.cameraProfile = resolution.profile;
     this.cameraProfileSignature = signature;
   }
+  /* towerforge-optional:cameraProjection:selector:end */
 
   cameraOrderedTowers(towers, geom) {
     if (!geom.cameraRenderSpace || towers.length < 2) return towers;

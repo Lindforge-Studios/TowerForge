@@ -33,6 +33,20 @@ describe("R20 P0 generated runtime isolation and Phaser integration (RED)", () =
     expect(player).not.toMatch(/camera-projector|camera-renderer-integration|camera-view-assets|cameraProfileId|cameraProfiles/);
   });
 
+  it("keeps BuildTargets v1 isolated from visuals v4 mission and map camera bindings", () => {
+    const { projectDir: legacyProject } = createProject({ name: "legacy_bound", parentDir: root, templateName: "classic", gridKind: "square" });
+    const targetId = configureLegacyTargetWithBindings(legacyProject);
+    const built = build(legacyProject, targetId);
+    for (const relative of ["camera-projector.mjs", "camera-renderer-integration.mjs", "camera-view-assets.mjs"]) {
+      expect(fs.existsSync(path.join(built.outDir, "renderer", relative)), relative).toBe(false);
+    }
+    const bundledSource = [
+      fs.readFileSync(path.join(built.outDir, "player.mjs"), "utf8"),
+      fs.readFileSync(path.join(built.outDir, "renderer", "index.mjs"), "utf8")
+    ].join("\n");
+    expect(bundledSource).not.toMatch(/camera-projector|camera-renderer-integration|camera-view-assets|resolveCameraProfileV1|cameraProfiles/);
+  });
+
   it("invokes shared depth projection in the actual Phaser scene instead of merely importing it", () => {
     const player = cameraPlayer();
     expect((player.match(/projectCameraRenderItemsV1\s*\(/g) ?? []).length).toBeGreaterThanOrEqual(2);
@@ -54,6 +68,19 @@ describe("R20 P0 generated runtime isolation and Phaser integration (RED)", () =
   it("applies authored view-variant anchors as Phaser image origins", () => {
     const player = cameraPlayer();
     expect(player).toMatch(/add\.image\([^\n]+texture\.(?:key|frame)[\s\S]{0,240}setOrigin\(\s*texture\.anchor\.x\s*,\s*texture\.anchor\.y\s*\)/);
+  });
+
+  it("renders bound Phaser towers and enemies from exact sprite variants with authored anchors", () => {
+    const player = cameraPlayer();
+    const towerStart = player.indexOf("for (const tw of snap.towers)");
+    const towerBlock = player.slice(towerStart, player.indexOf("// Every supported heroes schema", towerStart));
+    expect(towerBlock).toMatch(/(?:bindings[^\n]*towers|tower[^\n]*sprite)[\s\S]{0,360}spriteTexture|spriteTexture[\s\S]{0,360}(?:bindings[^\n]*towers|tower[^\n]*sprite)/i);
+    expect(towerBlock).toMatch(/add\.image\([^\n]+texture\.(?:key|frame)[\s\S]{0,240}setOrigin\(\s*texture\.anchor\.x\s*,\s*texture\.anchor\.y\s*\)/);
+
+    const enemyStart = player.indexOf("for (const en of snap.enemies)");
+    const enemyBlock = player.slice(enemyStart, enemyStart + 16_000);
+    expect(enemyBlock).toMatch(/(?:bindings[^\n]*enemies|enemy[^\n]*sprite)[\s\S]{0,360}spriteTexture|spriteTexture[\s\S]{0,360}(?:bindings[^\n]*enemies|enemy[^\n]*sprite)/i);
+    expect(enemyBlock).toMatch(/add\.image\([^\n]+texture\.(?:key|frame)[\s\S]{0,240}setOrigin\(\s*texture\.anchor\.x\s*,\s*texture\.anchor\.y\s*\)/);
   });
 
   it("orders projectiles and destructibles together with real Phaser actor primitives", () => {
@@ -109,12 +136,24 @@ function configureMixedTargets(dir) {
     bindings: { maps: {}, missions: {} }
   };
   visuals.sprites.camera_probe = { src: "assets/base-probe.png" };
+  visuals.sprites.arrow_tower = { src: "assets/base-probe.png" };
+  visuals.sprites.basic_grunt = { src: "assets/base-probe.png" };
   visuals.viewVariants = {
     schemaVersion: 1,
     sprites: {
       camera_probe: {
         "isometric_2_1:north": {
           src: "assets/camera-probe.png", mimeType: "image/png", anchor: { x: 0.25, y: 0.9 }
+        }
+      },
+      arrow_tower: {
+        "isometric_2_1:north": {
+          src: "assets/camera-probe.png", mimeType: "image/png", anchor: { x: 0.2, y: 0.95 }
+        }
+      },
+      basic_grunt: {
+        "isometric_2_1:north": {
+          src: "assets/camera-probe.png", mimeType: "image/png", anchor: { x: 0.65, y: 0.8 }
         }
       }
     },
@@ -163,6 +202,31 @@ function configureBoundOnlyTarget(dir) {
     defaults: { web: "bound-only" },
     targets: { "bound-only": target("bound-only", "canvas", "dist-bound-only") }
   });
+}
+
+function configureLegacyTargetWithBindings(dir) {
+  const manifestPath = path.join(dir, "project.json");
+  writeJson(manifestPath, { ...readJson(manifestPath), schemaVersion: 5 });
+  const balance = readJson(path.join(dir, "content", "balance.json"));
+  const missionId = Object.keys(balance.missions)[0];
+  const mapId = balance.missions[missionId].mapId;
+  const visualsPath = path.join(dir, "content", "visuals.json");
+  const visuals = readJson(visualsPath);
+  visuals.schemaVersion = 4;
+  visuals.cameraProfiles = {
+    schemaVersion: 1,
+    profiles: {
+      legacy_ignored: {
+        schemaVersion: 1, projection: "isometric_2_1", orientation: "east", elevationScale: 1.5,
+        fitPadding: 32, minZoom: 0.5, maxZoom: 3, initialZoom: 1, panPadding: 0
+      }
+    },
+    bindings: { maps: { [mapId]: "legacy_ignored" }, missions: { [missionId]: "legacy_ignored" } }
+  };
+  writeJson(visualsPath, visuals);
+  const buildTargets = readJson(path.join(dir, "build-targets.json"));
+  expect(buildTargets.schemaVersion).toBe(1);
+  return buildTargets.defaults.web;
 }
 
 function target(id, renderer, webDir) {

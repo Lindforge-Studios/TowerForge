@@ -145,13 +145,17 @@ describe("R20.4 Camera Studio MCP/AI contract (RED)", () => {
     });
     expect(authoredBytes(projectDir)).toEqual(before);
 
-    const fallback = await callTool("preview_camera_profile", {
+    const unboundCandidate = await callTool("preview_camera_profile", {
       projectDir,
       profileId: recipe.profileId,
       profile: recipe.profile,
       context: { missionId: "tutorial_01", mapId: "tutorial_map", buildTargetId: "web-pwa", viewport: { width: 1440, height: 900 } }
     }, {});
-    expect(fallback.resolution).toMatchObject({ source: "top_down_fallback", profileId: null });
+    expect(unboundCandidate.resolution).toMatchObject({
+      profileId: recipe.profileId,
+      profile: { projection: "isometric_2_1", orientation: "east" }
+    });
+    expect(unboundCandidate.resolution.source).toMatch(/candidate/i);
   }, 30_000);
 
   it("previews starter hex geometry through topology centers and the shared viewport transform", async () => {
@@ -192,6 +196,39 @@ describe("R20.4 Camera Studio MCP/AI contract (RED)", () => {
       viewport,
       clipped: (bounds.maxX - bounds.minX) * profile.initialZoom + profile.fitPadding * 2 > viewport.width
         || (bounds.maxY - bounds.minY) * profile.initialZoom + profile.fitPadding * 2 > viewport.height
+    });
+  }, 30_000);
+
+  it("merges authoritative elevation by coordinate before computing preview bounds", async () => {
+    const projectDir = fixture();
+    const mapsPath = path.join(projectDir, "maps", "compiled", "maps.json");
+    const maps = JSON.parse(fs.readFileSync(mapsPath, "utf8"));
+    maps.tutorial_map.elevationOverrides = [{ q: maps.tutorial_map.width - 1, r: 0, elevation: 24 }];
+    fs.writeFileSync(mapsPath, `${JSON.stringify(maps, null, 2)}\n`);
+    const recipe = await callTool("get_camera_profile_recipe", {
+      recipeId: "isometric_2_1", orientation: "east", profileId: "elevated-corner"
+    }, {});
+    const viewport = { width: 1024, height: 720 };
+    const preview = await callTool("preview_camera_profile", {
+      projectDir,
+      profileId: recipe.profileId,
+      profile: recipe.profile,
+      binding: { scope: "mission", id: "tutorial_01" },
+      context: { missionId: "tutorial_01", mapId: "tutorial_map", buildTargetId: "web-pwa", viewport }
+    }, {});
+    const map = loadProjectFiles(projectDir).maps.tutorial_map;
+    const sampled = authoritativePreviewPoints(map);
+    expect(sampled.filter((point) => point.q === map.width - 1 && point.r === 0))
+      .toEqual([{ q: map.width - 1, r: 0, elevation: 24 }]);
+    const worldPoints = previewWorldPoints(sampled, map.grid, viewport);
+    const expected = createCameraRenderSpaceV1({
+      cameraProfile: recipe.profile,
+      worldPoints,
+      viewport,
+      viewportProfile: { padding: recipe.profile.fitPadding, minZoom: recipe.profile.minZoom, maxZoom: recipe.profile.maxZoom, initialZoom: recipe.profile.initialZoom }
+    }).projectedBounds;
+    expect(preview.preview.projectedBounds).toEqual({
+      ...expected, width: expected.maxX - expected.minX, height: expected.maxY - expected.minY
     });
   }, 30_000);
 
@@ -295,4 +332,40 @@ function previewPoints(map) {
     }
   }
   return points;
+}
+
+function authoritativePreviewPoints(map) {
+  const merged = new Map();
+  const set = (point) => {
+    const key = `${point.q},${point.r}`;
+    const previous = merged.get(key);
+    merged.set(key, {
+      q: point.q,
+      r: point.r,
+      elevation: Number.isFinite(point.elevation) ? point.elevation : previous?.elevation ?? 0
+    });
+  };
+  for (const point of [
+    { q: 0, r: 0 }, { q: map.width - 1, r: 0 },
+    { q: 0, r: map.height - 1 }, { q: map.width - 1, r: map.height - 1 }
+  ]) set(point);
+  for (const collection of [map.terrainOverrides, map.pathCenterline, map.elevationOverrides]) {
+    for (const point of Array.isArray(collection) ? collection.slice(0, 4096) : []) set(point);
+  }
+  return [...merged.values()];
+}
+
+function previewWorldPoints(points, grid, viewport) {
+  const maxQ = Math.max(1, ...points.map((point) => point.q));
+  const maxR = Math.max(1, ...points.map((point) => point.r));
+  if (grid?.kind === "square") {
+    const cell = Math.min(viewport.width / (maxQ + 2), viewport.height / (maxR + 2));
+    return points.map((point) => ({ x: cell + point.q * cell, y: cell + point.r * cell, elevation: point.elevation }));
+  }
+  const radius = Math.min(viewport.width / ((maxQ + 2) * 1.65), viewport.height / ((maxR + 2) * 1.45));
+  return points.map((point) => ({
+    x: radius * 1.5 + point.q * radius * 1.48 + (point.r % 2) * radius * 0.74,
+    y: radius * 1.5 + point.r * radius * 1.28,
+    elevation: point.elevation
+  }));
 }

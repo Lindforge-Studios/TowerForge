@@ -5,7 +5,7 @@ import { normalizeProjectFiles, readRawProjectFiles } from "./project-loader.mjs
 import { validateProjectSchemas } from "./project-schema.mjs";
 import { resolveCameraProfileV1, validateCameraProfileCatalogV1 } from "../../renderer/src/camera-projector.mjs";
 import { createCameraRenderSpaceV1 } from "../../renderer/src/camera-renderer-integration.mjs";
-import { projectCameraViewAssetCoverageV1 } from "../../renderer/src/camera-view-assets.mjs";
+import { projectCameraViewAssetCoverageV1, resolveCameraViewVariantV1 } from "../../renderer/src/camera-view-assets.mjs";
 
 export const CAMERA_AUTHORING_SCHEMA_V1 = Object.freeze({
   schemaVersion: 1,
@@ -21,7 +21,9 @@ export const CAMERA_AUTHORING_SCHEMA_V1 = Object.freeze({
     recipe: "get_camera_profile_recipe",
     preview: "preview_camera_profile",
     apply: "apply_camera_profile",
-    revisionGuard: "ifRevision"
+    revisionGuard: "ifRevision",
+    viewVariantPreview: "preview_camera_view_variant",
+    viewVariantApply: "apply_camera_view_variant"
   })
 });
 
@@ -78,7 +80,9 @@ export function previewCameraProfile(projectDir, args) {
   let presentation;
   try {
     context = previewContext(normalized, safeOwnClone(args?.context ?? {}, "context"));
-    resolution = resolveCameraProfileV1(candidate.catalog, context.resolution);
+    resolution = args?.binding === undefined
+      ? Object.freeze({ profileId: args.profileId, source: "candidate", profile: clone(args.profile) })
+      : resolveCameraProfileV1(candidate.catalog, context.resolution);
     presentation = cameraPresentationPreview(normalized, resolution, context);
   } catch (error) {
     return deepFreeze({ ok: false, dryRun: true, written: false, revision, validation: { ok: false, issues: [...validation.issues, { severity: "error", fieldPath: "cameraPreview", message: error.message }] } });
@@ -144,6 +148,188 @@ export function applyCameraProfile(projectDir, args) {
     if (confinedFile(projectRoot, "content/visuals.json") === visualsPath) fs.writeFileSync(visualsPath, beforeVisuals);
     return deepFreeze({ ok: false, written: false, rolledBack: true, error: error.message, validation: { ok: false } });
   }
+}
+
+export function previewCameraViewVariant(projectDir, args) {
+  const projectRoot = assertCameraOwnedSources(projectDir);
+  const raw = readRawProjectFiles(projectRoot);
+  const revision = cameraRevision(raw);
+  let request;
+  let candidate;
+  try {
+    request = cameraViewVariantRequest(args);
+    candidate = cameraViewVariantCandidate(raw, request);
+  } catch (error) {
+    return cameraVariantFailure(revision, error);
+  }
+  const normalized = normalizeProjectFiles(candidate.raw);
+  const validation = validateProjectSchemas(normalized);
+  if (!validation.ok) {
+    return deepFreeze({ ok: false, dryRun: true, written: false, revision, candidate: candidate.summary, validation });
+  }
+  try {
+    const asset = candidate.kind === "sprite" ? request.variant : request.variant.atlas;
+    const assetPath = confinedCameraAsset(projectRoot, asset?.src);
+    assertCameraAssetSignature(assetPath, asset?.mimeType);
+    const resolved = resolveCameraViewVariantV1({
+      visuals: normalized.visuals,
+      projection: candidate.projection,
+      orientation: candidate.orientation,
+      kind: candidate.kind,
+      id: candidate.resourceId
+    });
+    const materialIds = candidate.kind === "tileSet"
+      ? Object.keys(normalized.visuals?.tileSets?.[candidate.resourceId]?.materials ?? {})
+      : [];
+    const projected = projectCameraViewAssetCoverageV1({
+      visuals: normalized.visuals,
+      projection: candidate.projection,
+      orientation: candidate.orientation,
+      spriteIds: candidate.kind === "sprite" ? [candidate.resourceId] : [],
+      tileSets: candidate.kind === "tileSet" ? [{ tileSetId: candidate.resourceId, materialIds }] : []
+    });
+    return deepFreeze({
+      ok: projected.ok && resolved.status === "exact",
+      dryRun: true,
+      written: false,
+      revision,
+      candidate: candidate.summary,
+      validation,
+      coverage: {
+        status: resolved.status,
+        entries: projected.entries,
+        warnings: projected.warnings,
+        missingRequired: projected.errors
+      }
+    });
+  } catch (error) {
+    return cameraVariantFailure(revision, error, validation, candidate.summary);
+  }
+}
+
+export function applyCameraViewVariant(projectDir, args) {
+  const request = cameraViewVariantRequest(args, { apply: true });
+  if (typeof request.ifRevision !== "string" || !request.ifRevision) throw new Error("Camera view variant apply requires ifRevision from preview.");
+  const projectRoot = assertCameraOwnedSources(projectDir);
+  const beforeRaw = readRawProjectFiles(projectRoot);
+  const previousRevision = cameraRevision(beforeRaw);
+  if (previousRevision !== request.ifRevision) {
+    return deepFreeze({ ok: false, conflict: true, written: false, expectedRevision: request.ifRevision, actualRevision: previousRevision });
+  }
+  const { ifRevision: _ifRevision, ...previewRequest } = request;
+  const preview = previewCameraViewVariant(projectRoot, previewRequest);
+  if (!preview.ok) return deepFreeze({ ...preview, dryRun: false });
+  const currentRaw = readRawProjectFiles(projectRoot);
+  const currentRevision = cameraRevision(currentRaw);
+  if (currentRevision !== previousRevision) {
+    return deepFreeze({ ok: false, conflict: true, written: false, expectedRevision: previousRevision, actualRevision: currentRevision });
+  }
+  const candidate = cameraViewVariantCandidate(beforeRaw, request).raw;
+  const projectPath = confinedFile(projectRoot, "project.json");
+  const visualsPath = confinedFile(projectRoot, "content/visuals.json");
+  const beforeProject = fs.readFileSync(projectPath);
+  const beforeVisuals = fs.readFileSync(visualsPath);
+  const backupDir = confinedBackupDirectory(projectRoot);
+  fs.writeFileSync(path.join(backupDir, "project.json.bak"), beforeProject);
+  fs.writeFileSync(path.join(backupDir, "visuals.json.bak"), beforeVisuals);
+  try {
+    writeJsonAtomic(projectPath, candidate.manifest);
+    writeJsonAtomic(visualsPath, candidate.visuals);
+    const afterRaw = readRawProjectFiles(projectRoot);
+    const validation = validateProjectSchemas(normalizeProjectFiles(afterRaw));
+    if (!validation.ok) throw new Error("Post-write camera view variant validation failed.");
+    return deepFreeze({
+      ok: true,
+      written: true,
+      rolledBack: false,
+      previousRevision,
+      revision: cameraRevision(afterRaw),
+      validation,
+      candidate: preview.candidate,
+      coverage: preview.coverage,
+      backup: { directory: path.relative(projectRoot, backupDir).split(path.sep).join("/") }
+    });
+  } catch (error) {
+    fs.writeFileSync(projectPath, beforeProject);
+    fs.writeFileSync(visualsPath, beforeVisuals);
+    return deepFreeze({ ok: false, written: false, rolledBack: true, error: error.message, validation: { ok: false } });
+  }
+}
+
+function cameraViewVariantRequest(args, { apply = false } = {}) {
+  const request = safeOwnClone(args, "cameraViewVariantRequest");
+  if (!request || typeof request !== "object" || Array.isArray(request)) throw new Error("Camera view variant request must be a plain own-data object.");
+  const allowed = new Set(["kind", "resourceId", "projection", "orientation", "variant", ...(apply ? ["ifRevision"] : [])]);
+  for (const key of Object.keys(request)) if (!allowed.has(key)) throw new Error(`cameraViewVariantRequest.${key} is not supported.`);
+  return request;
+}
+
+function cameraViewVariantCandidate(raw, args) {
+  const kind = args?.kind;
+  if (kind !== "sprite" && kind !== "tileSet") throw new Error("kind must be sprite or tileSet.");
+  assertId(args?.resourceId, "resourceId");
+  if (!CAMERA_AUTHORING_SCHEMA_V1.projections.includes(args?.projection)) throw new Error("projection must be a supported camera projection.");
+  if (!CAMERA_AUTHORING_SCHEMA_V1.orientations.includes(args?.orientation)) throw new Error("orientation must be a supported camera orientation.");
+  const variant = safeOwnClone(args?.variant, "variant");
+  if (!variant || typeof variant !== "object" || Array.isArray(variant)) throw new Error("variant must be a plain own-data object.");
+  const viewKey = `${args.projection}:${args.orientation}`;
+  const visuals = clone(raw.visuals ?? {});
+  const manifest = { ...clone(raw.manifest ?? {}), schemaVersion: 5 };
+  const existing = visuals.viewVariants ?? { schemaVersion: 1, sprites: {}, tileSets: {} };
+  if (Number.isInteger(visuals.schemaVersion) && visuals.schemaVersion > 4) throw new Error("Future visuals schemas cannot be downgraded by camera authoring.");
+  if (existing.schemaVersion !== 1) throw new Error("Future or malformed viewVariants catalogs cannot be downgraded.");
+  if (kind === "tileSet" && !Object.hasOwn(visuals.tileSets ?? {}, args.resourceId)) throw new Error(`Unknown authored tileset "${args.resourceId}".`);
+  const groupName = kind === "sprite" ? "sprites" : "tileSets";
+  visuals.schemaVersion = 4;
+  visuals.viewVariants = {
+    schemaVersion: 1,
+    sprites: clone(existing.sprites ?? {}),
+    tileSets: clone(existing.tileSets ?? {})
+  };
+  visuals.viewVariants[groupName][args.resourceId] = {
+    ...(clone(visuals.viewVariants[groupName][args.resourceId] ?? {})),
+    [viewKey]: variant
+  };
+  return {
+    kind,
+    resourceId: args.resourceId,
+    projection: args.projection,
+    orientation: args.orientation,
+    summary: { kind, resourceId: args.resourceId, viewKey },
+    raw: { ...raw, manifest, visuals }
+  };
+}
+
+function cameraVariantFailure(revision, error, validation = { ok: false, issues: [] }, candidate = undefined) {
+  return deepFreeze({
+    ok: false,
+    dryRun: true,
+    written: false,
+    revision,
+    ...(candidate ? { candidate } : {}),
+    validation: {
+      ok: false,
+      issues: [...(validation.issues ?? []), { severity: "error", fieldPath: "viewVariants", message: error.message }]
+    }
+  });
+}
+
+function confinedCameraAsset(projectDir, relative) {
+  if (typeof relative !== "string" || !relative.startsWith("assets/")) throw new Error("Camera view variant must reference a project-local asset path.");
+  return confinedFile(projectDir, relative);
+}
+
+function assertCameraAssetSignature(filePath, mimeType) {
+  const stat = fs.lstatSync(filePath);
+  if (!stat.isFile() || stat.size < 4 || stat.size > 32 * 1024 * 1024) throw new Error("Camera view variant image must be a bounded regular file.");
+  const handle = fs.openSync(filePath, "r");
+  const header = Buffer.alloc(12);
+  try { fs.readSync(handle, header, 0, header.length, 0); }
+  finally { fs.closeSync(handle); }
+  const png = header.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  const jpeg = header[0] === 0xff && header[1] === 0xd8 && header[2] === 0xff;
+  const webp = header.subarray(0, 4).toString("ascii") === "RIFF" && header.subarray(8, 12).toString("ascii") === "WEBP";
+  if (!({ "image/png": png, "image/jpeg": jpeg, "image/webp": webp })[mimeType]) throw new Error("Camera view variant MIME does not match the image signature.");
 }
 
 function cameraCandidate(raw, args) {
@@ -289,15 +475,32 @@ function deepFreeze(value) { if (!value || typeof value !== "object" || Object.i
 function cameraRevision(raw) { return createHash("sha256").update(JSON.stringify({ manifest: raw.manifest, visuals: raw.visuals, buildTargets: raw.buildTargets })).digest("hex").slice(0, 12); }
 function previewMapPoints(map) {
   if (!map || typeof map !== "object") return [{ q: 0, r: 0, elevation: 0 }];
-  const points = [];
+  const points = new Map();
   const width = Number.isInteger(map.width) && map.width > 0 ? map.width : 1;
   const height = Number.isInteger(map.height) && map.height > 0 ? map.height : 1;
-  for (const [q, r] of [[0, 0], [width - 1, 0], [0, height - 1], [width - 1, height - 1]]) points.push({ q, r, elevation: 0 });
-  for (const collection of [map.terrainOverrides, map.pathCenterline, map.elevationOverrides]) {
+  const upsert = (point, authoritativeElevation = false) => {
+    if (!Number.isFinite(point?.q) || !Number.isFinite(point?.r)) return;
+    const q = Number(point.q), r = Number(point.r), key = `${q},${r}`;
+    const previous = points.get(key);
+    points.set(key, {
+      q,
+      r,
+      elevation: authoritativeElevation || previous === undefined
+        ? Number(point.elevation) || 0
+        : previous.elevation
+    });
+  };
+  for (const [q, r] of [[0, 0], [width - 1, 0], [0, height - 1], [width - 1, height - 1]]) upsert({ q, r, elevation: 0 });
+  for (const collection of [map.terrainOverrides, map.pathCenterline]) {
     if (!Array.isArray(collection)) continue;
-    for (const point of collection.slice(0, 4096)) if (Number.isFinite(point?.q) && Number.isFinite(point?.r)) points.push({ q: point.q, r: point.r, elevation: Number(point.elevation) || 0 });
+    for (const point of collection.slice(0, 4096)) upsert(point);
   }
-  return points;
+  if (Array.isArray(map.elevationOverrides)) {
+    for (const point of map.elevationOverrides.slice(0, 4096)) upsert(point, true);
+  }
+  return [...points.values()]
+    .sort((left, right) => left.q - right.q || left.r - right.r)
+    .slice(0, 4096);
 }
 function previewMapGeometry(points, grid, viewport) {
   let maxQ = 1;
