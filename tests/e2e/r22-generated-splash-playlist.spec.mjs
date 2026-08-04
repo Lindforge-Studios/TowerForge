@@ -79,6 +79,8 @@ test("TowerForge remains first, late skip advances one item, and the finished pl
     await expect(projectSplash).toHaveAttribute("data-item-id", "publisher");
     expect(await page.evaluate(() => globalThis.__r22GameplayInputs)).toEqual([]);
 
+    await page.waitForTimeout(320);
+    await projectSplash.click();
     await expect(projectSplash).toHaveAttribute("data-state", "waiting-runtime", { timeout: 2_000 });
     await expect(page.locator("#towerforge-project-splash-progress")).toBeVisible();
     expect(await page.evaluate(() => globalThis.__towerforgeBootOk === true)).toBe(false);
@@ -91,6 +93,41 @@ test("TowerForge remains first, late skip advances one item, and the finished pl
   await page.waitForFunction(() => globalThis.__towerforgeBootOk === true);
   await expect(projectSplash).toBeHidden();
   expect(await page.evaluate(() => globalThis.__towerforgeProjectSplashDismissed)).toBe(true);
+});
+
+test("Escape holds the last valid splash and gameplay input until a delayed runtime is ready", async ({ page }) => {
+  await installGameplayInputProbe(page);
+  let releasePlayer;
+  const playerGate = new Promise((resolve) => { releasePlayer = resolve; });
+  await page.route("**/player.mjs", async (route) => {
+    await playerGate;
+    await route.continue();
+  });
+
+  const navigation = page.goto(`${origin}/dist-canvas/`, { waitUntil: "load" });
+  const projectSplash = page.locator("#towerforge-project-splash");
+  try {
+    await expect(projectSplash).toBeVisible({ timeout: 4_000 });
+    await expect(projectSplash).toHaveAttribute("data-item-id", "studio");
+
+    await page.keyboard.press("Escape");
+
+    await expect(projectSplash).toBeVisible();
+    await expect(projectSplash).toHaveAttribute("data-state", "waiting-runtime");
+    await expect(page.locator("#towerforge-project-splash-progress")).toBeVisible();
+    expect(await page.evaluate(() => globalThis.__towerforgeProjectSplashDismissed === true)).toBe(false);
+    expect(await page.evaluate(() => globalThis.__towerforgeBootOk === true)).toBe(false);
+
+    await page.keyboard.press("KeyD");
+    await page.keyboard.press("Digit1");
+    expect(await page.evaluate(() => globalThis.__r22GameplayInputs)).toEqual([]);
+  } finally {
+    releasePlayer();
+  }
+
+  await navigation;
+  await page.waitForFunction(() => globalThis.__towerforgeBootOk === true);
+  await expect(projectSplash).toBeHidden();
 });
 
 test("Phaser skips a failed image, honors reduced motion, and Escape dismisses the remaining authored playlist", async ({ page }) => {
@@ -170,12 +207,12 @@ function configureActiveSplashProject(projectDir) {
           {
             id: "studio", spriteId: "studio_logo", accessibleLabel: "Example Studio logo",
             caption: "Example Studio", backgroundColor: "#111722", fit: "contain",
-            transition: "fade_scale", displayMs: 1800, minimumMs: 600, transitionMs: 120
+            transition: "fade_scale", displayMs: 10000, minimumMs: 600, transitionMs: 120
           },
           {
             id: "publisher", spriteId: "publisher_logo", accessibleLabel: "Example Publisher logo",
             backgroundColor: "#12110f", fit: "cover",
-            transition: "cut", displayMs: 700, minimumMs: 300, transitionMs: 0
+            transition: "cut", displayMs: 10000, minimumMs: 300, transitionMs: 0
           }
         ]
       }

@@ -5041,3 +5041,33 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   authoring preview assets to 32 MiB and reads only their 12-byte signature header; and consumes all
   keyboard events until the project splash is dismissed while retaining Escape/Space/Enter actions.
 - Focused unit contracts passed 15/15 and the keyboard browser regression passed 1/1.
+
+## R22 delayed-runtime skip verifier RED
+
+- Independent Code Verification rejected exact candidate `38e0ba1` because `Escape`/Skip called
+  `completeProjectSplash(true)`, and the transition-immediacy flag also bypassed the runtime-ready
+  invariant. A delayed player could therefore expose an unfinished menu, drop the last valid frame
+  and release gameplay keyboard input before runtime construction completed.
+- Constructor Integration Verification separately found the generated-player acceptance fixture
+  nondeterministic: authored 700 ms / 1,800 ms display timers could auto-advance under aggregate
+  browser load before the test issued its explicit click or Escape. The fixture now uses bounded
+  10-second display windows (20.12 seconds total authored playback) and advances only through the
+  actions under test; production defaults and limits are unchanged.
+- RED command:
+  `npx playwright test tests/e2e/r22-generated-splash-playlist.spec.mjs --grep "Escape holds the last valid splash" --workers=1`.
+- Expected RED: after Escape with `player.mjs` deliberately blocked, the selected custom frame must
+  remain visible in `waiting-runtime`, the loading indicator must remain visible,
+  `__towerforgeProjectSplashDismissed` and `__towerforgeBootOk` must remain false, and subsequent
+  gameplay keys must still be intercepted until the delayed runtime is released.
+- Observed RED: the selected frame immediately became `hidden`/`done`; Playwright failed the first
+  post-Escape visibility assertion while the delayed `page.goto` remained blocked on `player.mjs`.
+- GREEN removes readiness bypass from the visual-immediacy flag. Escape/Skip now marks authored
+  playback finished, cancels an in-flight system-splash departure when runtime is still pending,
+  holds the currently visible valid frame in `waiting-runtime`, and only performs final dismissal
+  after `__towerforgeCompleteBoot`. Keyboard and pointer interception now follows the full boot
+  invariant (or yields immediately to the mandatory recovery overlay on failure), not the custom
+  layer's intermediate visibility flag.
+- Focused GREEN: all R22 unit/contracts passed 8 files / 56 tests; generated Canvas/Phaser boot plus
+  Splash Studio browser acceptance passed 7/7 in one serial run; `typecheck`, `build:engine` and
+  source-to-plugin regeneration were GREEN. This is a new pre-freeze candidate and invalidates all
+  earlier exact-commit gates and sign-offs.

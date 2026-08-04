@@ -971,8 +971,16 @@ function projectSplashBootRecoveryTemplate(manifest = {}, target = {}, storyComi
     const minimumVisibleMs = immediate ? 0 : 700;
     const delay = Math.max(0, minimumVisibleMs - (Date.now() - splashStartedAt));
     splashTimer = setTimeout(() => {
+      if (playbackFinished && !runtimeReady && !bootFailed) {
+        splash.dataset.state = "waiting-runtime";
+        return;
+      }
       splash.dataset.state = "leaving";
-      setTimeout(() => {
+      splashTimer = setTimeout(() => {
+        if (playbackFinished && !runtimeReady && !bootFailed) {
+          splash.dataset.state = "waiting-runtime";
+          return;
+        }
         finishEngineSplash();
         after?.();
       }, immediate || reducedMotion() ? 0 : 220);
@@ -1000,12 +1008,17 @@ function projectSplashBootRecoveryTemplate(manifest = {}, target = {}, storyComi
     playbackFinished = true;
     advancing = false;
     if (projectTimer) clearTimeout(projectTimer);
-    if (!runtimeReady && !immediate) {
-      if (projectSplash) projectSplash.dataset.state = "waiting-runtime";
-      if (projectProgress) projectProgress.hidden = false;
+    if (!runtimeReady) {
+      if (projectSplash && !projectSplash.hidden) {
+        projectSplash.dataset.state = "waiting-runtime";
+        if (projectProgress) projectProgress.hidden = false;
+      }
       return;
     }
-    transitionCurrent(finishProjectSplash, immediate);
+    transitionCurrent(() => {
+      finishProjectSplash();
+      dismissEngineSplash(false);
+    }, immediate);
   };
   const preload = (item) => new Promise((resolve) => {
     const image = new Image();
@@ -1083,10 +1096,10 @@ function projectSplashBootRecoveryTemplate(manifest = {}, target = {}, storyComi
   };
   const skipAll = () => {
     authoredSkipped = true;
-    if (!window.__towerforgeSplashDismissed) {
-      window.__towerforgeProjectSplashDismissed = true;
-      if (runtimeReady) dismissEngineSplash(false);
-      return;
+    if (!runtimeReady && !window.__towerforgeSplashDismissed) {
+      if (splashTimer) clearTimeout(splashTimer);
+      splashTimer = 0;
+      if (splash) splash.dataset.state = "waiting-runtime";
     }
     completeProjectSplash(true);
   };
@@ -1097,13 +1110,14 @@ function projectSplashBootRecoveryTemplate(manifest = {}, target = {}, storyComi
     else void advance(false);
   }, true);
   const stopSplashPointerInput = (event) => {
-    if (window.__towerforgeProjectSplashDismissed || projectSplash.hidden) return;
+    if (bootFailed || window.__towerforgeBootOk) return;
+    event.preventDefault();
     event.stopImmediatePropagation();
   };
   window.addEventListener("pointerdown", stopSplashPointerInput, true);
   window.addEventListener("touchstart", stopSplashPointerInput, true);
   window.addEventListener("keydown", (event) => {
-    if (window.__towerforgeProjectSplashDismissed) return;
+    if (bootFailed || window.__towerforgeBootOk) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     if (event.key === "Escape") {
@@ -1127,8 +1141,8 @@ function projectSplashBootRecoveryTemplate(manifest = {}, target = {}, storyComi
   const beginProjectPlaylist = async () => {
     const first = await firstAvailable(0);
     if (authoredSkipped || !first) {
-      window.__towerforgeProjectSplashDismissed = true;
-      if (runtimeReady) dismissEngineSplash(false);
+      playbackFinished = true;
+      if (runtimeReady) completeProjectSplash(false);
       return;
     }
     dismissEngineSplash(false, () => showItem(first));
