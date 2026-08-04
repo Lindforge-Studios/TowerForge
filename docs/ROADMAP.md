@@ -68,9 +68,9 @@ service. Нет соответствующего выбора или локал�
 | R19 — Native Desktop Distribution | Завершён и слит; exact-commit gates и два независимых sign-off; ADR Accepted | PR #35: first-class desktop target, native storage/lifecycle, cross-platform installers и optional signed updater |
 | R20 — Camera Projection Studio | Завершён и слит; exact-commit gates и два независимых sign-off; ADR Accepted | PR #36: visuals v4/CameraProfileV1, renderer-owned top-down/isometric/dimetric projection, shared hit testing/depth и guarded view assets |
 | R21 — Player Shell & HUD Constructor | Завершён и слит; full gates, CI и два sign-off; ADR Accepted | PR #37: opt-in `HudCatalogV1`, one DOM shell, responsive layouts/screen graph, action registry, семь presets, guarded Studio/MCP и conditional package parity |
-| R22 — Project Splash Playlists | Release candidate: R22.1–R22.4 GREEN; ADR Candidate, exact-commit gates и независимые sign-off завершаются | Build-target opt-in `SplashCatalogV1`: обязательный TowerForge splash → 1–8 локальных заставок автора → меню, active-only packaging и guarded Studio/MCP |
+| R22 — Project Splash Playlists | Завершён и слит; exact-commit gates и два независимых sign-off; ADR Accepted | PR #40: build-target opt-in `SplashCatalogV1`, обязательный TowerForge splash → 1–8 локальных заставок автора → меню, active-only packaging и guarded Studio/MCP |
 
-### Delivery snapshot на 2026-08-04
+### Delivery snapshot на 2026-08-05
 
 - Предыдущий desktop pre-release — [`v0.5.2`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.5.2); он включает R0–R14.
 - R15 PR #28, R16 PR #29 и R17 PR #30 слиты в `main`; R17 exact-commit CI run `30698019009` завершился SUCCESS.
@@ -84,6 +84,10 @@ service. Нет соответствующего выбора или локал�
   неподписанный pre-release с принятыми R0–R21. Exact commit `7e4cba9`, manual candidate workflow
   `30839934975` и tag workflow `30846092399` прошли; опубликованы шесть installers и
   `SHA256SUMS`, публичные hashes и скачанный macOS app/DMG проверены.
+- R22 PR #40 слит merge-коммитом `aeadab0`; exact head `5136d99` прошёл 466/466 unit files,
+  4,444/4,444 tests, 171/171 E2E, plugin/native package gates и два независимых sign-off.
+  Исходники после R22 готовятся как `v0.9.0`; этот номер не считается опубликованным до появления
+  точного тега, шести installer-форматов и проверенного `SHA256SUMS`.
 
 R0A изначально ввёл только контракт и поверхности обнаружения. Сейчас исполнимыми являются только
 версии, перечисленные в [ARCHITECTURE.md](../ARCHITECTURE.md): наличие planned descriptor или

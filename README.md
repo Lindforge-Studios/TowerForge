@@ -21,7 +21,7 @@ Desktop-сборки публикуются в [GitHub Releases](https://github.
 
 ## Текущий статус
 
-Текущая публичная версия — [`v0.8.0`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.8.0), неподписанный pre-release. К R0–R17 добавлены Large-Screen Web Player, first-class native desktop distribution, изометрические/диметрические camera profiles и data-only HUD Studio. Все presentation и gameplay расширения остаются opt-in; legacy targets не меняются. Точный статус и границы ведутся в [ROADMAP](docs/ROADMAP.md).
+Текущая публичная версия — [`v0.8.0`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.8.0), неподписанный pre-release. Ветка `main` уже включает принятый R22 с opt-in плейлистами заставок и готовится как кандидат `v0.9.0`; публичной версия станет только после тега, сборки шести installers и проверки `SHA256SUMS`. Все presentation и gameplay расширения остаются opt-in; legacy targets не меняются. Точный статус и границы ведутся в [ROADMAP](docs/ROADMAP.md).
 
 ## Состав продукта
 

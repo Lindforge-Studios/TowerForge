@@ -21,7 +21,7 @@ Desktop builds are published on [GitHub Releases](https://github.com/Lindforge-S
 
 ## Current status
 
-The current public version is the unsigned [v0.8.0 pre-release](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.8.0). It adds the Large-Screen Web Player, first-class native desktop distribution, isometric/dimetric camera profiles, and the data-only HUD Studio to R0–R17. Presentation and gameplay extensions remain opt-in, and legacy targets are unchanged. The exact delivery status and boundaries live in the [roadmap](docs/ROADMAP.md).
+The current public version is the unsigned [v0.8.0 pre-release](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.8.0). `main` now includes accepted R22 opt-in project splash playlists and is being prepared as the `v0.9.0` candidate; it is not public until the tag, all six installers, and `SHA256SUMS` are verified. Presentation and gameplay extensions remain opt-in, and legacy targets are unchanged. The exact delivery status and boundaries live in the [roadmap](docs/ROADMAP.md).
 
 ## Product surface
 

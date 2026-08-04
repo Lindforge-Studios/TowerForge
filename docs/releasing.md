@@ -15,7 +15,7 @@ contains Tauri update payloads, detached `.sig` files and `latest.json`. See
 
 ## Published Baseline
 
-The current public release is [`v0.8.0`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.8.0), an unsigned pre-release containing accepted R0–R21. Manual candidate workflow `30839934975` and tagged workflow `30846092399` built exact commit `7e4cba99bb23b43f0118fb97b756e388001fd7d1`; the tag workflow published all six installers plus `SHA256SUMS`. The public asset digests, repeated release-note hashes, downloaded checksums and macOS app/DMG were independently verified. The `v0.6.0` tag is retained as immutable failed-pipeline evidence and has no public release; `v0.6.1` remains the previous verified R0–R17 baseline.
+The current public release is [`v0.8.0`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.8.0), an unsigned pre-release containing accepted R0–R21. Manual candidate workflow `30839934975` and tagged workflow `30846092399` built exact commit `7e4cba99bb23b43f0118fb97b756e388001fd7d1`; the tag workflow published all six installers plus `SHA256SUMS`. The public asset digests, repeated release-note hashes, downloaded checksums and macOS app/DMG were independently verified. Accepted R22 is merged and the source tree is preparing `v0.9.0`; it remains a candidate until the same manual-candidate, exact-tag, six-installer and downloaded-artifact verification completes. The `v0.6.0` tag is retained as immutable failed-pipeline evidence and has no public release; `v0.6.1` remains the previous verified R0–R17 baseline.
 
 ## Release Invariants
 

@@ -146,6 +146,10 @@ large-screen target keeps the built-in R18 shell. BuildTargets v1 resolves the t
 optional HUD loading, so it neither parses malformed reusable HUD bytes nor imports R21 runtime
 modules.
 
+R22 is accepted and merged in PR #40. Its build-target-selected project splash playlist is part of
+the `v0.9.0` source candidate; `v0.8.0` remains the public baseline until the exact release tag and
+installer verification complete.
+
 `packages/player-runtime` owns the closed own-data `HudCatalogV1` validator, responsive layout
 compiler, bounded declarative screen graph and seven build-menu planners: desktop horizontal
 quickbar, vertical edge dock, category catalog drawer, radial wheel, contextual tile popover,

@@ -1,6 +1,6 @@
 # TowerForge Engine Review And Production Roadmap
 
-Last reviewed: 2026-08-04
+Last reviewed: 2026-08-05
 
 This document is the compact engineering review. Product sequencing and live PR state are canonical
 in [ROADMAP.md](ROADMAP.md); release and production gaps are canonical in
@@ -34,6 +34,8 @@ TowerForge now has:
   hit testing, depth ordering and guarded view-specific assets;
 - accepted R21 data-only responsive HUD catalogs, screen graphs, build-menu presets and one semantic
   DOM shell shared by Canvas, Phaser, Studio, web, native and `.tdpack` outputs;
+- accepted R22 build-target-selected project splash playlists with immutable TowerForge-first boot,
+  bounded static frames, active-only packaging and guarded Studio/MCP authoring;
 - local-first Studio, guarded MCP/AI authoring, Tauri desktop, PWA/single-file builds, `.tdpack`,
   Codex plugin packaging, and mobile/desktop game scaffolds.
 
@@ -50,6 +52,10 @@ Manual candidate workflow `30839934975` and tagged workflow `30846092399` built 
 release-note hashes match the downloaded checksum file, and the downloaded macOS app/DMG passed
 signature and container verification. No roadmap delivery gate remains open; the items below are
 post-roadmap product hardening rather than unfinished R18–R21 acceptance.
+
+R22 is accepted and merged as PR #40. The resulting source is the basis of the unsigned `v0.9.0`
+candidate, but `v0.8.0` remains the published baseline until the exact tag and six public installer
+checks complete.
 
 ## Post-Roadmap Hardening
 

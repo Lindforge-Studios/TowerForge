@@ -1,6 +1,6 @@
 # ADR 0063: R22 Project Splash Playlists
 
-- Status: Candidate
+- Status: Accepted
 - Date: 2026-08-04
 
 ## Context
