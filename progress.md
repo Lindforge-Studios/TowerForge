@@ -5017,3 +5017,9 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - Final full browser gate after both test-only synchronization repairs: 170/170 GREEN in 7.6
   minutes with two workers. This includes the complete R22 boot/Studio paths, Canvas/Phaser,
   hex/square, single-file, legacy matrix and all existing mechanics/player browser regressions.
+- The first exact-commit browser rerun exposed one more legacy timing budget: the generated R21
+  Phaser HUD gamepad test held its synthetic button correctly but required the rAF-driven screen
+  transition within 1.5 seconds. The same path was green in the preceding full run. Its deadline is
+  now the normal 10-second browser interaction budget while preserving the held-input assertion;
+  no HUD/player production code changed. This source change invalidates the initial freeze and
+  requires a new exact candidate plus full browser rerun.
