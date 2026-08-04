@@ -63,6 +63,16 @@ describe("R22.2 generated project splash lifecycle (RED)", () => {
       expect(output).not.toContain("deliberately invalid splash catalog");
     }
   }, 60_000);
+
+  it("rejects a malformed splash selector on the selected target instead of treating it as unbound", () => {
+    const projectDir = activeProject("malformed-selector", "canvas");
+    const targetsPath = path.join(projectDir, "build-targets.json");
+    const targets = readJson(targetsPath);
+    targets.targets["intro-web"].splashPlaylistId = 42;
+    writeJson(targetsPath, targets);
+
+    expect(() => build(projectDir, "intro-web")).toThrow();
+  }, 60_000);
 });
 
 function activeProject(label, renderer) {

@@ -173,6 +173,44 @@ describe("R22.3 narrow guarded splash authoring transaction (RED)", () => {
     expect(ownedBytes(projectDir)).toEqual(before);
   });
 
+  it("previews an existing standalone image when visuals omits its optional MIME type", () => {
+    const projectDir = fixture();
+    const visualsPath = path.join(projectDir, "content", "visuals.json");
+    const visuals = readJson(visualsPath);
+    delete visuals.sprites.frontier_before_battle.mimeType;
+    writeJson(visualsPath, visuals);
+
+    expect(previewSplashPlaylist(projectDir, request())).toMatchObject({
+      ok: true,
+      timeline: { items: [{ spriteId: "frontier_before_battle", assetReady: true }] }
+    });
+  });
+
+  it("reads only a bounded image header and rejects splash assets larger than 32 MiB", () => {
+    const projectDir = fixture();
+    const visuals = readJson(path.join(projectDir, "content", "visuals.json"));
+    const assetPath = path.join(projectDir, visuals.sprites.frontier_before_battle.src);
+    const realReadFile = fs.readFileSync.bind(fs);
+    vi.spyOn(fs, "readFileSync").mockImplementation((filePath, ...args) => {
+      if (path.resolve(String(filePath)) === path.resolve(assetPath)) {
+        throw new Error("splash preview must not read the complete image");
+      }
+      return realReadFile(filePath, ...args);
+    });
+    expect(previewSplashPlaylist(projectDir, request())).toMatchObject({
+      ok: true,
+      timeline: { items: [{ assetReady: true }] }
+    });
+    vi.restoreAllMocks();
+
+    fs.truncateSync(assetPath, 32 * 1024 * 1024 + 1);
+    expect(previewSplashPlaylist(projectDir, request())).toMatchObject({
+      ok: false,
+      timeline: { items: [{ assetReady: false }] },
+      validation: { issues: [{ code: "SPLASH_ASSET_NOT_READY" }] }
+    });
+  });
+
   it("atomically promotes legacy project/targets, creates the optional catalog and preserves visuals", () => {
     const projectDir = fixture({ withCatalog: false, legacyVersions: true });
     const beforeVisuals = ownedBytes(projectDir).visuals;

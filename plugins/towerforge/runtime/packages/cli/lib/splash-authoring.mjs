@@ -32,6 +32,7 @@ export const SPLASH_AUTHORING_SCHEMA_V1 = deepFreeze({
 });
 
 export const SPLASH_PLAYLIST_RECIPE_IDS = Object.freeze(["single_brand_splash"]);
+const MAX_SPLASH_ASSET_BYTES = 32 * 1024 * 1024;
 
 export function getSplashPlaylistRecipe(recipeId, playlistId, options) {
   if (!SPLASH_PLAYLIST_RECIPE_IDS.includes(recipeId)) {
@@ -224,7 +225,7 @@ function createTimeline(projectRoot, normalized, playlistId) {
     let assetReady = false;
     try {
       const assetPath = confinedAsset(projectRoot, sprite?.src);
-      assetReady = matchesImageSignature(assetPath, sprite?.mimeType);
+      assetReady = matchesImageSignature(assetPath, splashImageMimeType(sprite));
     } catch {
       assetReady = false;
     }
@@ -374,15 +375,35 @@ function confinedAsset(projectRoot, relative) {
   const asset = confinedPath(projectRoot, relative);
   const stat = fs.lstatSync(asset);
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Splash asset must be a regular file.");
+  if (stat.size < 1 || stat.size > MAX_SPLASH_ASSET_BYTES) {
+    throw new Error(`Splash asset must be from 1 byte through ${MAX_SPLASH_ASSET_BYTES} bytes (32 MiB).`);
+  }
   return asset;
 }
 
 function matchesImageSignature(filePath, mimeType) {
-  const bytes = fs.readFileSync(filePath);
+  const file = fs.openSync(filePath, "r");
+  const buffer = Buffer.alloc(12);
+  let length = 0;
+  try {
+    length = fs.readSync(file, buffer, 0, buffer.length, 0);
+  } finally {
+    fs.closeSync(file);
+  }
+  const bytes = buffer.subarray(0, length);
   if (mimeType === "image/png") return bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
   if (mimeType === "image/jpeg") return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
   if (mimeType === "image/webp") return bytes.length >= 12 && bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP";
   return false;
+}
+
+function splashImageMimeType(sprite) {
+  if (typeof sprite?.mimeType === "string") return sprite.mimeType;
+  const extension = path.extname(typeof sprite?.src === "string" ? sprite.src : "").toLowerCase();
+  if (extension === ".png") return "image/png";
+  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
+  if (extension === ".webp") return "image/webp";
+  return undefined;
 }
 
 function createBackupDirectory(projectRoot) {

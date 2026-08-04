@@ -66,6 +66,10 @@ test("TowerForge remains first, late skip advances one item, and the finished pl
     await expect(page.locator("#towerforge-project-splash-image")).toHaveAttribute("alt", "Example Studio logo");
     await expect(page.locator("#towerforge-project-splash-caption")).toHaveText("Example Studio");
 
+    await page.keyboard.press("KeyD");
+    await page.keyboard.press("Digit1");
+    expect(await page.evaluate(() => globalThis.__r22GameplayInputs)).toEqual([]);
+
     await projectSplash.click();
     await page.waitForTimeout(100);
     await expect(projectSplash).toHaveAttribute("data-item-id", "studio");

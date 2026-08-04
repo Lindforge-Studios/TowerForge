@@ -79,7 +79,7 @@ try {
     && (authoredTarget.formFactor === "desktop" || authoredTarget.formFactor === "responsive")
     && typeof authoredTarget.hudProfileId === "string";
   const shouldReadSplashes = authoredBuildTargets.schemaVersion === 2
-    && typeof authoredTarget.splashPlaylistId === "string";
+    && Object.hasOwn(authoredTarget, "splashPlaylistId");
   const { result } = await validateProjectDir(PROJECT_DIR, { readHud: shouldReadHud, readSplashes: shouldReadSplashes });
   if (!result.ok) {
     if (!args.json) {
@@ -1104,13 +1104,11 @@ function projectSplashBootRecoveryTemplate(manifest = {}, target = {}, storyComi
   window.addEventListener("touchstart", stopSplashPointerInput, true);
   window.addEventListener("keydown", (event) => {
     if (window.__towerforgeProjectSplashDismissed) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
     if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopImmediatePropagation();
       skipAll();
     } else if (event.code === "Space" || event.key === "Enter") {
-      event.preventDefault();
-      event.stopImmediatePropagation();
       void advance(false);
     }
   }, true);

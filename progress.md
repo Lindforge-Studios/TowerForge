@@ -5023,3 +5023,21 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   now the normal 10-second browser interaction budget while preserving the held-input assertion;
   no HUD/player production code changed. This source change invalidates the initial freeze and
   requires a new exact candidate plus full browser rerun.
+
+## R22 verifier findings RED/GREEN
+
+- Independent review rejected exact candidate `9997b3d` with four findings, so neither sign-off was
+  accepted and the freeze was invalidated.
+- RED unit command:
+  `npx vitest run packages/cli/build.r22-splash-playlist.contract.test.mjs packages/cli/lib/r22-splash-authoring.contract.test.mjs`.
+  Observed 3/15 failures: a selected `splashPlaylistId: 42` built as if unbound; an existing valid
+  PNG without optional `mimeType` failed preview; and preview attempted a full synchronous asset
+  read while accepting a sparse file larger than 32 MiB.
+- RED browser command:
+  `npx playwright test tests/e2e/r22-generated-splash-playlist.spec.mjs --grep "TowerForge remains first" --workers=1`.
+  Observed gameplay probe events `["d", "1"]` while the custom splash was visible.
+- GREEN makes presence of a selected target selector activate splash validation even when its value
+  is malformed; infers the optional MIME from the already validated image extension; confines
+  authoring preview assets to 32 MiB and reads only their 12-byte signature header; and consumes all
+  keyboard events until the project splash is dismissed while retaining Escape/Space/Enter actions.
+- Focused unit contracts passed 15/15 and the keyboard browser regression passed 1/1.
