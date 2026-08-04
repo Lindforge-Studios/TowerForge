@@ -16,3 +16,4 @@ export * from "./hud-layout.mjs";
 export * from "./hud-screen-graph.mjs";
 export * from "./hud-build-menu-presets.mjs";
 export * from "./hud-selectors.mjs";
+export * from "./splash-catalog.mjs";

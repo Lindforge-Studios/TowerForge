@@ -84,7 +84,7 @@ test.describe.serial("R5.7A Studio Logistics power lifecycle", () => {
     await expect(page.locator("#mechanics-preview-result")).toContainText('"ok": true');
     expect(authoringBytes(projectDir)).toEqual(beforePreview);
 
-    await page.locator("#btn-mechanics-enable").click();
+    await clickMechanicsApplyAndWait(page, "#btn-mechanics-enable");
     await expect.poll(() => fs.existsSync(
       path.join(projectDir, "content", "mechanics.json")
     )).toBe(true);
@@ -100,19 +100,21 @@ test.describe.serial("R5.7A Studio Logistics power lifecycle", () => {
     await openLogisticsMechanics(page);
     await expect(generatorOutput(page)).toHaveValue("8");
     await generatorOutput(page).fill("9");
-    await page.locator("#btn-mechanics-save").click();
-    await expect.poll(() => readLogisticsState(projectDir).profile.power.generators.power_plant.output).toBe(9);
+    await clickMechanicsApplyAndWait(page, "#btn-mechanics-save");
+    await expect.poll(
+      () => readLogisticsState(projectDir).profile.power.generators.power_plant.output
+    ).toBe(9);
 
     await page.reload();
     await openLogisticsMechanics(page);
     await expect(generatorOutput(page)).toHaveValue("9");
     const preserved = structuredClone(readLogisticsState(projectDir).profile);
     page.once("dialog", (dialog) => dialog.accept());
-    await page.locator("#btn-mechanics-disable").click();
+    await clickMechanicsApplyAndWait(page, "#btn-mechanics-disable");
     await expect.poll(() => readLogisticsState(projectDir)).toMatchObject({
       enabled: false, selectedProfileId: "basic_power_grid", profile: preserved
     });
-    await page.locator("#btn-mechanics-enable").click();
+    await clickMechanicsApplyAndWait(page, "#btn-mechanics-enable");
     await expect.poll(() => readLogisticsState(projectDir)).toMatchObject({
       enabled: true, selectedProfileId: "basic_power_grid", profile: preserved
     });
@@ -123,7 +125,7 @@ test.describe.serial("R5.7A Studio Logistics power lifecycle", () => {
     await page.locator("#mechanics-logistics-power-enabled").uncheck();
     await expect(page.locator("#mechanics-logistics-power-enabled")).not.toBeChecked();
     await expect(page.locator("#mechanics-logistics-generator-rows")).toBeEmpty();
-    await page.locator("#btn-mechanics-save").click();
+    await clickMechanicsApplyAndWait(page, "#btn-mechanics-save");
     await expect.poll(() => readLogisticsState(projectDir).profile).toEqual({ power: null });
     await page.reload();
     await openLogisticsMechanics(page);
@@ -402,6 +404,16 @@ async function clickMechanicsPreviewAndWait(page) {
     "Preview changes before applying them.",
     { timeout: 45_000 }
   );
+}
+
+async function clickMechanicsApplyAndWait(page, selector) {
+  const responsePromise = page.waitForResponse((response) => (
+    response.request().method() === "POST"
+      && new URL(response.url()).pathname === "/api/mechanics/apply"
+  ), { timeout: 45_000 });
+  await page.locator(selector).click();
+  const response = await responsePromise;
+  expect(response.ok()).toBe(true);
 }
 
 async function placePlayerTower(page, towerTypeId, coord) {

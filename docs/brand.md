@@ -51,6 +51,22 @@ Green is the dominant accent. Blue communicates plans, simulation, and tooling. 
 
 Keep clear space around the mark equal to at least one quarter of its width. Do not recolor individual planes, rotate the mark, add effects, place it over noisy imagery, or use the multicolor mark below 24 px. Use the monochrome mark at very small sizes.
 
+## Generated-game engine credit
+
+Official TowerForge builds inline the canonical multicolor mark and the exact copy **Made with
+TowerForge** as a system boot splash. The engine credit appears before project/menu presentation in
+Canvas and Phaser across web, single-file, PWA, mobile and desktop carriers. Project themes,
+HudCatalog and MCP authoring cannot replace, restyle or suppress it. Game authors may add their own
+studio/logo screen separately, without obscuring or imitating the engine credit. Because TowerForge
+is MIT licensed, downstream source forks can modify their own compiler; they must not imply that a
+modified identity is an official TowerForge mark.
+
+Project-owned identities follow the engine credit through an opt-in `SplashCatalogV1` playlist.
+Each selected build target may show one to eight standalone local PNG/JPEG/WebP frames. Those frames
+may use the developer, publisher or game identity, but they must not copy the TowerForge mark,
+`Made with TowerForge` lockup or system loading treatment. The first TowerForge slot is never stored
+in project data and cannot be reordered, covered or disabled by Splash Studio, HUD or MCP.
+
 ## Rebuilding exports
 
 Run `npm run brand:build`. The script composites exact logo and copy over the checked-in hero artwork, then exports the README banner, GitHub social preview, and 1024 px application icon. Run `npm run brand:icons` after changing the application icon source to regenerate the native Windows, macOS, Linux, Android, and iOS icon files.

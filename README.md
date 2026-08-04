@@ -106,7 +106,8 @@ python3 -m http.server 5175 --bind 127.0.0.1 --directory examples/starter.tdproj
 - `maps/src/*.tmj` — редактируемые исходные карты.
 - `maps/compiled/maps.json` — runtime-описания карт, созданные компилятором.
 - `scripts/**/*.tower.json` — детерминированная пользовательская логика; TowerScript v7 опционально добавляет Behavior Trees и HFSM, а v1–v6 сохраняют прежний путь.
-- `build-targets.json` — цели сборки; v2 добавляет opt-in `desktop | responsive` form factors, first-class native desktop target и ссылки на camera/HUD profiles.
+- `build-targets.json` — цели сборки; v2 добавляет opt-in `desktop | responsive` form factors, first-class native desktop target и ссылки на camera/HUD/splash profiles.
+- `content/splashes.json` — optional `SplashCatalogV1` с 1–8 локальными PNG/JPEG/WebP-заставками после обязательного системного splash.
 - `.towerforge/` — локальное состояние редактора и резервные копии; каталог нельзя добавлять в git.
 
 Миссия выбирает профили каталога через `mission.mechanics`; само наличие профиля не включает механику. Реализованные независимые профили охватывают combat/reactions, navigation/elevation/physics/terraforming, roguelite, heroes, logistics, director, quests, multiplayer, enemy behaviors, ballistics и weather. Mechanics Hub и AI/MCP показывают prerequisites для recipes, но никогда не включают зависимые профили и не патчат terrain, map, tower или ability автоматически. Обычные starter-проекты не содержат `content/mechanics.json` и сохраняют legacy path. Точные версии, зависимости и checkpoint/snapshot contracts находятся в [ARCHITECTURE.md](ARCHITECTURE.md), а пользовательские последовательности — в [runbook](docs/runbook.md) и [reference examples](docs/examples/README.md).
@@ -116,6 +117,8 @@ python3 -m http.server 5175 --bind 127.0.0.1 --directory examples/starter.tdproj
 Канонические границы модулей и инварианты описаны в [ARCHITECTURE.md](ARCHITECTURE.md). Продуктовая архитектура и roadmap находятся в [docs/td-constructor-architecture.md](docs/td-constructor-architecture.md).
 
 Единый стильгайд Studio, player shell и HUD находится в [DESIGN.md](DESIGN.md). Бренд-ресурсы, палитра, правила нейминга и экспорта описаны в [docs/brand.md](docs/brand.md). Русский [social preview](assets/brand/towerforge-social-preview.png) подготовлен для настроек GitHub; рядом находится [английская версия](assets/brand/towerforge-social-preview-en.png).
+
+Все игры, собранные официальным компилятором TowerForge, показывают встроенный системный splash **Made with TowerForge** перед загрузкой игрового меню. Он одинаков для Canvas/Phaser и web/mobile/desktop carriers и не отключается через данные проекта или HUD. R22 позволяет отдельно для build target добавить после него 1–8 заставок разработчика/издателя; без явной привязки legacy-вывод не меняется.
 
 ## Отчёты симуляции и баланса
 

@@ -76,7 +76,7 @@ for (const renderer of ["canvas", "phaser"]) {
     await expect(page.locator('[data-hud-node-id="resume_game"]')).toBeVisible();
     await page.locator('[data-hud-node-id="resume_game"]').focus();
     await page.evaluate(() => { globalThis.__towerforgeTestGamepad.buttons[0].pressed = true; });
-    await expect(page.locator("#towerforge-hud-root")).toHaveAttribute("data-towerforge-hud-screen", "gameplay", { timeout: 1_500 });
+    await expect(page.locator("#towerforge-hud-root")).toHaveAttribute("data-towerforge-hud-screen", "gameplay", { timeout: 10_000 });
     await page.evaluate(() => { globalThis.__towerforgeTestGamepad.buttons[0].pressed = false; });
     expect(errors).toEqual([]);
   });

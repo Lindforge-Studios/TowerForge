@@ -106,7 +106,8 @@ A `.tdproj` directory is the source of a game:
 - `maps/src/*.tmj` stores editable hex/odd-r or square/cardinal map sources.
 - `maps/compiled/maps.json` stores runtime map definitions generated from source maps.
 - `scripts/**/*.tower.json` stores deterministic custom gameplay; TowerScript v7 optionally adds Behavior Trees and HFSM while v1–v6 keep their previous path.
-- `build-targets.json` stores output targets; v2 adds opt-in `desktop | responsive` form factors, a first-class native desktop target, and camera/HUD profile bindings.
+- `build-targets.json` stores output targets; v2 adds opt-in `desktop | responsive` form factors, a first-class native desktop target, and camera/HUD/splash profile bindings.
+- `content/splashes.json` optionally stores `SplashCatalogV1` with 1–8 local PNG/JPEG/WebP frames after the mandatory system splash.
 - `.towerforge/` stores local editor state and backups and MUST NOT be committed.
 
 A mission selects catalog profiles through `mission.mechanics`; defining a profile does not activate it. Implemented independent profiles cover combat/reactions, navigation/elevation/physics/terraforming, roguelite, heroes, logistics, director, quests, multiplayer, enemy behaviors, ballistics, and weather. Mechanics Hub and AI/MCP expose recipe prerequisites but never activate dependencies or auto-patch terrain, map, tower, or ability data. Ordinary starter projects do not contain `content/mechanics.json` and retain the legacy path. Exact versions, dependencies, and checkpoint/snapshot contracts live in [ARCHITECTURE.md](ARCHITECTURE.md); authoring workflows live in the [runbook](docs/runbook.md) and [reference examples](docs/examples/README.md).
@@ -116,6 +117,8 @@ A mission selects catalog profiles through `mission.mechanics`; defining a profi
 Canonical module boundaries and invariants live in [ARCHITECTURE.md](ARCHITECTURE.md). Product architecture and roadmap details live in [docs/td-constructor-architecture.md](docs/td-constructor-architecture.md).
 
 The shared Studio, player-shell, and HUD style guide lives in [DESIGN.md](DESIGN.md). Brand assets, palette, naming, and export instructions live in [docs/brand.md](docs/brand.md). The checked-in [English social preview](assets/brand/towerforge-social-preview-en.png) is ready for GitHub repository settings; a [Russian version](assets/brand/towerforge-social-preview.png) is included alongside it.
+
+Every game emitted by the official TowerForge compiler shows the built-in **Made with TowerForge** system splash before its game menu. It is shared by Canvas/Phaser and web/mobile/desktop carriers and cannot be disabled through project data or HUD authoring. R22 lets each build target add 1–8 developer/publisher frames after it; without an explicit binding, legacy output is unchanged.
 
 ## Simulation And Balance Reports
 

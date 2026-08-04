@@ -315,6 +315,19 @@ Integration Verifier sign-offs before merge and publication.
   native build cache and generated Cargo lock, including after enabled -> disabled repack. Studio
   rejects target-ID rename collisions before changing defaults or records. See
   [ADR 0060](docs/adr/0060-r19-native-desktop-distribution.md).
+- Generated-game boot identity: the official compiler inlines one system-owned `Made with
+  TowerForge` splash into every Canvas and Phaser player before project/menu presentation. The same
+  HTML/CSS/boot lifecycle flows unchanged into PWA, single-file, portable web, Capacitor and Tauri
+  carriers. It contains no external asset request, remains outside project schemas, HudCatalog,
+  snapshots and gameplay state, and cannot be disabled or replaced through project authoring or
+  MCP. BuildTargets v2 may opt one target into `SplashCatalogV1` through `splashPlaylistId`; one to
+  eight validated project-local PNG/JPEG/WebP frames then follow the locked engine surface while
+  runtime boot continues in parallel. Unbound targets do not read or ship `content/splashes.json`.
+  Boot failure dismisses both surfaces in favor of the mandatory recovery overlay, and `BootOk` is
+  published only after runtime readiness and complete presentation dismissal. See
+  [ADR 0063](docs/adr/0063-r22-project-splash-playlists.md). The repository remains MIT licensed, so
+  a source fork may modify its own compiler; the invariant applies to official TowerForge-generated
+  output.
 - Studio desktop packaging: `packages/desktop` builds installable TowerForge Studio apps with Tauri v2 and bundled Node, Codex, and Claude Code runtimes. The packaged runtime mirrors CLI, prebuilt engine, renderer, and player runtime and MUST NOT require user-installed Node, npm, TypeScript, Codex, or Claude Code after installation. macOS builds without Developer ID credentials use an explicit complete ad-hoc bundle signature, ARM64 target, narrowly scoped Node JIT entitlements, and verify the signature, architecture, Node/V8 startup, and DMG before acceptance. Tauri `setup` returns after showing the loading window; Studio boot is deferred, reports recoverable errors in that window, and the sidecar watches the desktop parent PID so a shell crash cannot leave orphan servers.
 - Desktop commands: Rust owns native menu/window/project-switch lifecycle; Studio owns the shared command registry, unsaved-change UX, and editor actions. `build.rs` generates app-manifest permissions for the exact seven custom invoke commands, and the external loopback WebView receives only those permissions plus event listening; it never gets raw filesystem or shell access.
 - Studio project workbench: the project tree and JSON/Graph/image surfaces are bounded independent scroll containers. Text outside `scripts/**/*.tower.json` is selectable read-only content, not a disabled editor. Raster previews are loaded only through the confined `assets/` route; traversal, sensitive paths, symlink escapes, and active SVG previews are rejected.

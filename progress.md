@@ -4747,3 +4747,327 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - `npm run plugin:build`, `npm run plugin:validate`, and `npm run plugin:smoke`: passed.
 - The public skill passed `quick_validate.py`; the complete TowerForge plugin passed
   `validate_plugin.py`. Source and bundled MCP runtimes remain in parity at 109 tools.
+
+# macOS DMG presentation refresh (2026-08-04)
+
+## Contract freeze and expected RED
+
+- Scope: improve only the TowerForge Studio macOS disk-image presentation. Signing, notarization,
+  app contents, updater, release formats and runtime behavior remain unchanged.
+- The Finder surface is fixed at `660×420`, with TowerForge at `(180,255)`, Applications at
+  `(480,255)`, and a checked-in PNG background of the exact authored size.
+- RED command: `npx vitest run packages/desktop/scripts/dmg-presentation.test.mjs`.
+- Expected RED: Tauri has no explicit `bundle.macOS.dmg` presentation contract and the branded
+  background does not exist.
+- RED evidence: both tests failed for the expected reasons: `bundle.macOS.dmg` was undefined and
+  `packages/desktop/src-tauri/dmg-background.png` did not exist.
+
+## GREEN implementation and verification
+
+- Added a deterministic Playwright generator and checked-in `660×420` PNG using TowerForge product
+  tokens, a compact brand header, install instruction, directional cue and unobstructed icon zones.
+- Added explicit Tauri DMG background, window and drop-target positions. The change does not alter
+  the app bundle, signing identity, entitlements, platform target or runtime.
+- Focused GREEN: 2 files / 10 tests passed, including the new presentation contract and existing
+  macOS bundle-verifier contracts. `cargo test` passed 9/9.
+- `npm run desktop:build:mac` produced `TowerForge_0.8.0_aarch64.dmg`; the macOS bundle verifier
+  passed `hdiutil`, strict deep signing, ARM64 and bundled-Node checks.
+- A read-only mount confirmed one `TowerForge.app`, the `/Applications` link, `.DS_Store`, volume
+  icon and the exact `660×420` `.background/dmg-background.png` inside the final image.
+
+# Mandatory generated-game engine splash (2026-08-04)
+
+## Contract freeze and expected RED
+
+- Official TowerForge builds must inline one non-project-authored `Made with TowerForge` system
+  splash before game/menu presentation in Canvas and Phaser, ordinary web and single-file output;
+  mobile/native carriers inherit the same generated player bytes.
+- The splash is DOM presentation only, contains no network dependency, is outside HudCatalog and
+  gameplay state, respects reduced motion, remains visible until boot completes, and yields to the
+  mandatory recovery overlay on failure.
+- Project data, HUD profiles and build-target fields cannot disable or replace the engine mark.
+  MIT-licensed source forks may still modify the compiler itself.
+- RED command: `npx vitest run packages/cli/build.engine-splash.contract.test.mjs`.
+- Expected RED: current generated HTML has no system splash, CSS lifecycle or boot completion hook.
+- Browser RED command: `npx playwright test tests/e2e/generated-engine-splash.spec.mjs --workers=1`;
+  it must initially fail because no pre-module splash exists to remain visible behind a delayed
+  player entrypoint.
+- RED evidence: both Canvas and Phaser package cases failed at the first missing splash assertion.
+  The approved loopback browser run independently failed because `#towerforge-engine-splash` did
+  not exist while `player.mjs` was deliberately held before execution.
+
+## GREEN implementation
+
+- Added one inline canonical mark/credit/progress surface to the generated HTML template and one
+  shared boot lifecycle. It stays through real module loading, has a bounded minimum display,
+  respects reduced motion, then fades and becomes hidden only after runtime readiness.
+- Canvas and Phaser call the same completion hook. Boot errors dismiss the splash immediately
+  before presenting the existing mandatory recovery controls.
+- No project schema, build-target option, asset copy, network request, gameplay state, snapshot,
+  checkpoint, journal, renderer or HUD contract was added.
+- Focused GREEN passed for Canvas/Phaser web and single-file output (2/2) and the delayed-module
+  Playwright lifecycle (1/1).
+
+## Integration regression RED
+
+- The 16-output template/grid/renderer matrix found that `BootOk` became true before the bounded
+  splash fade finished, so an immediate pointer action could still land on the system overlay.
+- Added a package regression that rejects the early unconditional `BootOk` assignment after the
+  completion hook. Before the repair both Canvas and Phaser cases fail that assertion.
+- GREEN repair makes the shared boot hook the owner of `BootOk`; it publishes readiness only after
+  the splash is hidden, while a missing legacy hook retains the direct fallback.
+
+## Final verification evidence
+
+- Focused contract suite passed: 6 files / 23 tests, covering the engine splash, R18/R21 package
+  parity, shared profile runtime, DMG presentation and macOS bundle verification contracts.
+- The splash lifecycle plus the complete template/grid/renderer browser matrix passed 2/2 after
+  the input-blocking regression repair.
+- `npm run test:e2e`: passed, 164/164 tests, including the new delayed-module splash acceptance.
+- `npm run test`: 4,387/4,390 tests passed in the parallel full run; the three failures were existing
+  five-second contract timeouts under aggregate load. The exact three files then passed in an
+  isolated single-worker rerun: 3 files / 32 tests.
+- `npm run build -- --single-file`: passed. Mobile and desktop starter packaging both passed and
+  carry the same generated splash bytes.
+- `npm run plugin:build`, `npm run plugin:validate` and `npm run plugin:smoke`: passed after the
+  final boot-lifecycle repair.
+
+# R22 — Project Splash Playlists (2026-08-04)
+
+## R22.1 SplashCatalog/project transport contract freeze and expected RED
+
+- `content/splashes.json` is optional and carries a closed own-data `SplashCatalogV1` with at most
+  16 reusable playlists. Each playlist has a stable ID and 1–8 ordered, uniquely identified static
+  image items; item defaults and the duration/transition/30-second budgets are normalized by one
+  pure player-runtime contract.
+- Each `spriteId` must resolve through `content/visuals.json` to a safe standalone PNG, JPEG or WebP
+  sprite. Missing sprites, atlas frames, unsupported image formats and unsafe paths are rejected at
+  the exact playlist item reference.
+- BuildTargets v2 accepts one optional bounded `splashPlaylistId` per target and cross-validates it
+  against the catalog. Missing/unbound projects remain inactive and do not synthesize splash data;
+  an authored future or malformed catalog fails closed, including while reusable but unbound.
+- RED command: `npx vitest run packages/player-runtime/src/r22-splash-catalog.contract.test.mjs packages/cli/lib/r22-splash-project-schema.contract.test.mjs --reporter=verbose`.
+- Expected RED: the pure splash-catalog module does not exist; the project loader does not transport
+  `content/splashes.json`; BuildTargets v2 rejects `splashPlaylistId` as unknown and has no catalog,
+  sprite or future-version cross-validation.
+- RED evidence: the focused command failed exactly at the missing R22 boundaries: the pure suite
+  could not import `splash-catalog.mjs`, and all 7 project transport/binding tests failed because
+  `splashes`/`splashesAuthored` were absent, `splashPlaylistId` remained an unknown target field,
+  and no catalog, asset-reference, malformed-data or future-version validation existed.
+
+## R22.2 Generated-player boot lifecycle contract freeze and expected RED
+
+- Active Canvas and Phaser targets must render `TowerForge -> authored playlist -> menu`; runtime
+  readiness and playlist completion are separate, and `BootOk` is published only after every boot
+  overlay is hidden. Unbound targets keep the mandatory engine-only splash bytes and do not read a
+  malformed reusable catalog.
+- The browser contract holds `player.mjs` to prove custom images preload while the runtime is
+  pending, verifies ordered display, minimum-time input blocking, one-item skip, skip-all, final
+  frame hold, reduced-motion behavior, recovery takeover and no pointer/key leakage into gameplay.
+- Package RED command: `npx vitest run packages/cli/build.r22-splash-playlist.contract.test.mjs --reporter=verbose`.
+- Browser RED command: `npx playwright test tests/e2e/r22-generated-splash-playlist.spec.mjs --workers=1`.
+- RED evidence: package RED ran 1 file / 3 tests; active Canvas and Phaser failed at the unsupported
+  splash target/catalog boundary while the unbound malformed-catalog path passed (2 failed,
+  1 passed). Browser setup failed on the same active build boundary (1 failed, 1 skipped). Both new
+  test files passed syntax checks.
+
+## R22.3 Splash authoring, MCP and Studio contract freeze and expected RED
+
+- CLI owns one narrow `get -> recipe -> preview -> guarded apply` transaction. Its revision covers
+  exact bytes of `project.json`, `build-targets.json`, optional `content/splashes.json` and
+  `content/visuals.json`; first apply promotes project v5/BuildTargets v2, disable removes only one
+  target binding, stale revisions write nothing, and partial writes restore all owned bytes.
+- MCP adds only domain `splashes` plus `get_splash_playlists`, `get_splash_playlist_recipe`,
+  `preview_splash_playlist` and `apply_splash_playlist`. Read/recipe/preview are available in
+  Ask/Plan; the revision-guarded apply is Act-only. Broad catalog/markup/script writers stay absent.
+- Splash Studio has a dedicated navigation hub, locked TowerForge slot, target/playlist pickers,
+  editable 1–8 item timeline, add/duplicate/delete/drag reorder, real timing/reduced-motion preview,
+  existing asset import/staging reuse, preview-before-apply and disable-preserves-catalog flow.
+- RED command: `npx vitest run packages/cli/lib/r22-splash-authoring.contract.test.mjs packages/mcp/r22-splash-ai-authoring.contract.test.mjs packages/studio/r22-splash-studio.contract.test.mjs --reporter=verbose`.
+- Expected RED: `splash-authoring.mjs` and all four MCP tools/domain are absent; embedded Studio AI
+  has no read/compute/Act allowlist entries; Studio has no splash navigation, controls or endpoints.
+- RED evidence: all three test files passed `node --check`; the focused Vitest command then failed
+  at exactly 10 missing boundaries. The CLI suite could not import the absent
+  `splash-authoring.mjs`; all 5 MCP tests failed on the unknown `splashes` domain/tools, absent AI
+  allowlist and guide v54; all 4 Studio tests failed on the absent hub, controls, lifecycle wiring
+  and `/api/splashes/*` endpoints. No production file was changed by this RED slice.
+
+## R22.4 Carrier/plugin packaging contract freeze and expected RED
+
+- Active playlists must survive portable web, Capacitor mobile and first-class generated Tauri
+  desktop carriers with the same offline project asset and boot lifecycle. Portable web must retain
+  the data-URI single-file carrier. An unbound target must omit custom markup, boot state and the
+  top-level `splashes` project-data section; an otherwise referenced visuals sprite may still be
+  copied because asset copying is visuals-owned and cannot infer exclusive use.
+- The public Codex plugin runtime must mirror the exact source compiler markers; packaging from the
+  plugin may not silently lose R22 even when the source repository build is correct.
+- RED command: `npx vitest run packages/cli/lib/r22-splash-packaging.contract.test.mjs --maxWorkers=1 --reporter=verbose`.
+- RED evidence: all three active carriers and the inactive runtime/data pruning assertions reached
+  their intended behavior, but the plugin parity assertion failed because its mirrored `build.mjs`
+  did not yet contain `projectSplashBootRecoveryTemplate` or the R22 lifecycle. The first draft also
+  made an invalid assumption that a visuals-owned asset must be pruned when unbound; the contract was
+  corrected before production changes to assert only R22 catalog/runtime pruning.
+
+## R22.2 Boot lifecycle regression RED/GREEN
+
+- RED commands:
+  - `npx vitest run packages/cli/build.r22-splash-playlist.contract.test.mjs`;
+  - `npx playwright test tests/e2e/r22-generated-splash-playlist.spec.mjs --workers=1`;
+  - focused isolation used `--grep 'stalled image|boot rejection'` and `--grep 'boot rejection'`.
+- Three regressions were reproduced before repair: splash clicks leaked twice to a gameplay-level
+  listener; an `Image` that emitted neither `load` nor `error` held the TowerForge layer beyond the
+  five-second bound; and an `unhandledrejection` after runtime readiness but before playlist
+  completion left recovery hidden. The package contract also rejected the missing bounded preload,
+  capture-phase input guard and runtime-ready watchdog distinction in both Canvas and Phaser builds.
+- GREEN adds a 2.5-second per-image preload timeout, capture-phase propagation guards for
+  click/pointer/touch and Space/Enter/Escape, and a boot-failure latch. Real errors still take over
+  after runtime readiness while the five-second no-runtime watchdog ignores a valid long playlist.
+- Final focused Vitest passed 3 files / 24 tests:
+  `npx vitest run packages/cli/build.r22-splash-playlist.contract.test.mjs packages/cli/build.engine-splash.contract.test.mjs packages/cli/lib/template-renderer-conformance.test.mjs`.
+- Final browser lifecycle passed 4/4:
+  `npx playwright test tests/e2e/r22-generated-splash-playlist.spec.mjs --workers=1`.
+
+## R22.1/R22.3 GREEN implementation
+
+- Added pure `SplashCatalogV1` validation/normalization and detached timeline compilation in
+  `packages/player-runtime`. Closed own-data handling rejects accessors, proxies, sparse arrays,
+  cycles, unknown/future records and budgets without invoking authored behavior. A follow-up RED
+  proved that playlist ID `__proto__` could be lost through an ordinary object; normalized catalogs
+  now use frozen prototype-neutral records and own-property definitions.
+- Loader/schema transport `content/splashes.json` only when requested, preserves explicit authored
+  state, validates standalone safe PNG/JPEG/WebP sprite references and accepts target-local
+  `splashPlaylistId` only in BuildTargets v2/project v5.
+- Added CLI `getSplashPlaylists`, single-brand recipe, detached preview and guarded apply. The exact
+  four-source revision, confined backups, atomic replacement, rollback, legacy promotion and
+  disable-preserves-catalog behavior are covered by contract tests.
+- Added MCP domain `splashes`, its four narrow tools and guide v55. Read/recipe/preview remain
+  read/compute-only in Ask/Plan; only `apply_splash_playlist` enters the Act guarded-write set.
+- Added Splash Studio with the locked system slot, target/playlist/item controls, bounded timeline,
+  add/duplicate/delete/drag reorder, safe sprite import, responsive real-time/reduced-motion preview,
+  preview-before-apply and disable/re-enable lifecycle. Server endpoints delegate to the same CLI
+  transaction.
+- Focused schema/CLI/MCP verification passed 5 files / 44 tests. Static Studio contract passed 4/4.
+- Real browser acceptance passed 2/2: legacy starter → safe PNG import → preview → guarded save →
+  schema v5/BuildTargets v2 → reload → second item/reorder/save → disable with catalog/asset
+  preservation → re-enable; the independent API case proved stale composite revision returns 409
+  with no source-byte, backup or temp-file mutation.
+- A pre-freeze authoring audit added a stronger disable regression: a caller supplied an edited
+  playlist draft together with `binding.enabled:false`. RED proved the transaction rewrote that
+  reusable record while removing the selector, violating the binding-only disable contract. GREEN
+  now ignores playlist candidate data for disable, requires the referenced saved playlist to exist,
+  removes only `splashPlaylistId` and preserves catalog/visual bytes.
+- A second pre-freeze contract audit interpreted the approved 30-second ceiling as total authored
+  playback, not display-only time. RED showed that three 9.8-second frames plus transitions could
+  exceed 30 seconds while validation still passed. GREEN now sums every `displayMs + transitionMs`,
+  publishes the explicit `totalPlaybackMs` limit/plan field and rejects 30,001 ms.
+
+## R22.4 GREEN implementation
+
+- `npm run plugin:build` synchronized the source compiler, player runtime, loader/schema, MCP tools
+  and Studio policy into the generated Codex plugin runtime.
+- The focused carrier/parity contract then passed 3/3. Portable web (including data-URI single-file),
+  Capacitor mobile and first-class generated Tauri desktop contain the same selected local playlist;
+  an unbound carrier contains neither custom markup/boot state nor a `splashes` project-data section.
+- Documentation now fixes the immutable TowerForge-first rule, the 1–8 static-image authoring
+  contract, build-target selection, guarded human/agent workflows, recovery semantics and offline
+  carrier parity in ADR 0063, architecture, style guide, brand guide, runbook and README files.
+
+## R22 public skill parity RED/GREEN
+
+- RED command: `npx vitest run packages/mcp/plugin-skill-parity.contract.test.mjs --maxWorkers=1 --reporter=verbose`.
+- Expected/observed RED: the source/public `towerforge-authoring` skill covered R12–R21 but did not
+  contain the R22 Project splash workflow or any of its four narrow tools, despite MCP and the shared
+  agent guide already exposing them. The existing human-only security-boundary test remained green.
+- GREEN added the immutable TowerForge-first, staged-asset and exact
+  `describe → read → recipe → preview → guarded apply → validate` workflow to the public skill;
+  focused skill parity passed 2/2 and `plugin:build` regenerated the runtime mirror.
+- The first full unit pass then found eight older contracts pinning the previous guide revision 54.
+  All failures were exact `55 !== 54` assertions; their domain-specific guide checks still passed.
+  Those test pins were promoted to guide v55 before rerunning the suite.
+
+## R22 recipe-label boundary RED/GREEN
+
+- RED command: `npx vitest run packages/cli/lib/r22-splash-authoring.contract.test.mjs`.
+- Expected/observed RED: `accessibleLabel` permits 512 characters, but the recipe copied the full
+  value into a playlist label whose independent limit is 256 characters, so a valid recipe input
+  failed catalog validation at `playlists.long_brand.label`.
+- GREEN preserves the complete accessible label on the frame and bounds only the generated display
+  label before appending its suffix. The focused authoring contract passed 9/9.
+
+## R22 pre-freeze full-gate evidence
+
+- `npm run typecheck`, `npm run build:engine`, `npm run validate`,
+  `npm run sim tutorial_01 60` and `npm run build`: GREEN.
+- Full unit gate: 466/466 files and 4,441/4,441 tests GREEN.
+- `npm run plugin:build`, `npm run plugin:validate`, `npm run plugin:smoke`: GREEN.
+- Starter mobile and desktop scaffold packaging: GREEN. Tauri `cargo test`: 9/9 GREEN.
+- First full browser gate reached 167 passed and the complete R22 paths GREEN, but the old R5.7A
+  Logistics Studio save assertion repeated its known five-second poll timeout under two-worker load;
+  the remaining two tests in that file were not scheduled. An immediate isolated one-worker rerun
+  passed all 5/5, including the same lifecycle in 3.9 seconds. A first test-only attempt to widen that
+  one filesystem poll exposed the same race at an earlier apply, proving the lifecycle clicked async
+  preview/apply controls without awaiting their guarded transaction. The test now waits for each
+  successful `/api/mechanics/apply` response before asserting persisted state; product code and the
+  persistence assertions remain unchanged. A clean full rerun is required before freeze.
+- That clean rerun proved the Logistics repair under the two-worker load, then exposed the same
+  missing-await pattern in the old Terraforming `materializeRecipe` helper: it clicked the async
+  recipe control and immediately required a generated transition within the default five seconds.
+  The helper now waits for the successful `/api/mechanics/recipe` response before inspecting the
+  detached draft. This remains test-only synchronization; no authoring or runtime behavior changed.
+- Final full browser gate after both test-only synchronization repairs: 170/170 GREEN in 7.6
+  minutes with two workers. This includes the complete R22 boot/Studio paths, Canvas/Phaser,
+  hex/square, single-file, legacy matrix and all existing mechanics/player browser regressions.
+- The first exact-commit browser rerun exposed one more legacy timing budget: the generated R21
+  Phaser HUD gamepad test held its synthetic button correctly but required the rAF-driven screen
+  transition within 1.5 seconds. The same path was green in the preceding full run. Its deadline is
+  now the normal 10-second browser interaction budget while preserving the held-input assertion;
+  no HUD/player production code changed. This source change invalidates the initial freeze and
+  requires a new exact candidate plus full browser rerun.
+
+## R22 verifier findings RED/GREEN
+
+- Independent review rejected exact candidate `9997b3d` with four findings, so neither sign-off was
+  accepted and the freeze was invalidated.
+- RED unit command:
+  `npx vitest run packages/cli/build.r22-splash-playlist.contract.test.mjs packages/cli/lib/r22-splash-authoring.contract.test.mjs`.
+  Observed 3/15 failures: a selected `splashPlaylistId: 42` built as if unbound; an existing valid
+  PNG without optional `mimeType` failed preview; and preview attempted a full synchronous asset
+  read while accepting a sparse file larger than 32 MiB.
+- RED browser command:
+  `npx playwright test tests/e2e/r22-generated-splash-playlist.spec.mjs --grep "TowerForge remains first" --workers=1`.
+  Observed gameplay probe events `["d", "1"]` while the custom splash was visible.
+- GREEN makes presence of a selected target selector activate splash validation even when its value
+  is malformed; infers the optional MIME from the already validated image extension; confines
+  authoring preview assets to 32 MiB and reads only their 12-byte signature header; and consumes all
+  keyboard events until the project splash is dismissed while retaining Escape/Space/Enter actions.
+- Focused unit contracts passed 15/15 and the keyboard browser regression passed 1/1.
+
+## R22 delayed-runtime skip verifier RED
+
+- Independent Code Verification rejected exact candidate `38e0ba1` because `Escape`/Skip called
+  `completeProjectSplash(true)`, and the transition-immediacy flag also bypassed the runtime-ready
+  invariant. A delayed player could therefore expose an unfinished menu, drop the last valid frame
+  and release gameplay keyboard input before runtime construction completed.
+- Constructor Integration Verification separately found the generated-player acceptance fixture
+  nondeterministic: authored 700 ms / 1,800 ms display timers could auto-advance under aggregate
+  browser load before the test issued its explicit click or Escape. The fixture now uses bounded
+  10-second display windows (20.12 seconds total authored playback) and advances only through the
+  actions under test; production defaults and limits are unchanged.
+- RED command:
+  `npx playwright test tests/e2e/r22-generated-splash-playlist.spec.mjs --grep "Escape holds the last valid splash" --workers=1`.
+- Expected RED: after Escape with `player.mjs` deliberately blocked, the selected custom frame must
+  remain visible in `waiting-runtime`, the loading indicator must remain visible,
+  `__towerforgeProjectSplashDismissed` and `__towerforgeBootOk` must remain false, and subsequent
+  gameplay keys must still be intercepted until the delayed runtime is released.
+- Observed RED: the selected frame immediately became `hidden`/`done`; Playwright failed the first
+  post-Escape visibility assertion while the delayed `page.goto` remained blocked on `player.mjs`.
+- GREEN removes readiness bypass from the visual-immediacy flag. Escape/Skip now marks authored
+  playback finished, cancels an in-flight system-splash departure when runtime is still pending,
+  holds the currently visible valid frame in `waiting-runtime`, and only performs final dismissal
+  after `__towerforgeCompleteBoot`. Keyboard and pointer interception now follows the full boot
+  invariant (or yields immediately to the mandatory recovery overlay on failure), not the custom
+  layer's intermediate visibility flag.
+- Focused GREEN: all R22 unit/contracts passed 8 files / 56 tests; generated Canvas/Phaser boot plus
+  Splash Studio browser acceptance passed 7/7 in one serial run; `typecheck`, `build:engine` and
+  source-to-plugin regeneration were GREEN. This is a new pre-freeze candidate and invalidates all
+  earlier exact-commit gates and sign-offs.

@@ -228,6 +228,15 @@ shared workspace roots. In a workspace-bound session, never supply or request an
   `render_hud_preview` -> `validate_project`. Use descriptor IDs and visuals sprite IDs only. Never
   add HTML, CSS, JavaScript, object-path evaluation, external URLs, native bridges, renderer-owned
   gameplay controls, or remove the built-in recovery overlay.
+- Project splash authoring is build-target-local presentation. The mandatory system-owned
+  `Made with TowerForge` splash is always first and cannot be removed, reordered, covered or
+  restyled. Use `describe_schema(domain: "splashes")` -> `get_splash_playlists` ->
+  `get_splash_playlist_recipe` -> `preview_splash_playlist` -> guarded
+  `apply_splash_playlist` with exactly the preview `ifRevision` -> `validate_project`. Each selected
+  playlist contains one to eight ordered standalone local PNG/JPEG/WebP sprites; disabling a target
+  binding preserves the reusable catalog and assets. Create or import an image through the existing
+  staged asset flow before referencing its sprite ID. Never add video, audio, SVG, external URLs,
+  HTML, CSS, JavaScript, a broad catalog writer, or a replacement TowerForge frame.
 - Embedded Studio Ask and Plan modes may use only read-only and compute-only tools. Guarded/staged
   local writes are available only in Act mode. `build_project`, `package_*`, project-pack export,
   external upload, relay startup, signing and secret handling remain explicit human workflows.

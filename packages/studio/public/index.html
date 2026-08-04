@@ -110,6 +110,10 @@
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 16h4M15 16h2"/></svg>
         <span>HUD Studio</span>
       </button>
+      <button class="nav-tab" data-tab="splashes" role="tab" type="button" title="Compose optional project and publisher splash screens.">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m8 14 2.5-3 2 2 3.5-4 3 5"/><circle cx="8" cy="8" r="1"/></svg>
+        <span>Splash Studio</span>
+      </button>
       <button class="nav-tab" data-tab="replaylab" role="tab" type="button" title="Inspect deterministic replay archives and What-If branches.">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/><path d="M12 7v5l3 2"/></svg>
         <span>Replay Lab</span>
@@ -730,6 +734,83 @@
             <button id="btn-hud-disable" class="btn btn-outline" type="button">Disable target binding</button>
           </div>
           <pre id="hud-preview-result" class="hud-studio-result mono" aria-live="polite"></pre>
+        </section>
+      </div>
+    </section>
+
+    <!-- ── PROJECT SPLASH STUDIO TAB ──────────────────────────────────────── -->
+    <section id="tab-splashes" class="tab-panel" role="tabpanel" aria-label="Splash Studio" data-project-write="guarded-splash-only">
+      <div class="panel-header">
+        <h2>Project Splash Studio</h2>
+        <span id="splash-studio-state" class="text-muted">Opt-in · TowerForge remains first</span>
+      </div>
+      <div id="splash-studio" class="splash-studio">
+        <section class="splash-studio-card">
+          <div class="form-section-title">Target and playlist</div>
+          <div class="splash-studio-fields">
+            <label>Build target<select id="splash-target-picker"></select></label>
+            <label>Saved playlist<select id="splash-playlist-picker"><option value="">New playlist…</option></select></label>
+            <label>Playlist ID<input id="splash-playlist-id" class="mono" value="studio-intro" maxlength="128"></label>
+          </div>
+          <article id="splash-engine-slot" class="splash-item splash-engine-slot" aria-label="Mandatory TowerForge splash">
+            <span class="splash-order">1</span>
+            <div><strong>Made with TowerForge</strong><p>System-owned, mandatory and locked.</p></div>
+            <span class="status-chip">Locked</span>
+          </article>
+        </section>
+
+        <section class="splash-studio-card">
+          <div class="form-section-title">Developer and publisher timeline</div>
+          <div id="splash-timeline" class="splash-timeline" role="list" aria-label="Authored splash timeline"></div>
+          <div class="splash-studio-actions">
+            <button id="btn-splash-item-add" class="btn btn-outline" type="button">Add slot</button>
+            <button id="btn-splash-item-duplicate" class="btn btn-outline" type="button">Duplicate</button>
+            <button id="btn-splash-item-remove" class="btn btn-outline" type="button">Delete</button>
+          </div>
+          <div class="splash-studio-fields">
+            <label>Selected slot<select id="splash-item-picker"></select></label>
+            <label>Stable item ID<input id="splash-item-id" class="mono" maxlength="128"></label>
+            <label>Standalone sprite<select id="splash-sprite-id"><option value="">Select image…</option></select></label>
+            <label>Accessible label<input id="splash-accessible-label" maxlength="256"></label>
+            <label>Caption<input id="splash-caption" maxlength="512"></label>
+            <label>Background<input id="splash-background-color" type="color" value="#0b0f0d"></label>
+            <label>Fit<select id="splash-fit"><option value="contain">contain</option><option value="cover">cover</option></select></label>
+            <label>Transition<select id="splash-transition"><option value="fade_scale">fade + scale</option><option value="fade">fade</option><option value="cut">cut</option></select></label>
+            <label>Display (ms)<input id="splash-display-ms" type="number" min="700" max="10000" value="1800"></label>
+            <label>Minimum (ms)<input id="splash-minimum-ms" type="number" min="300" max="2000" value="600"></label>
+            <label>Transition (ms)<input id="splash-transition-ms" type="number" min="0" max="600" value="220"></label>
+          </div>
+        </section>
+
+        <section class="splash-studio-card">
+          <div class="form-section-title">Import image</div>
+          <p class="text-muted">Imports reuse the confined project asset pipeline. AI-generated images continue through stage, inspect and commit.</p>
+          <div class="splash-studio-fields">
+            <label>Project source<input id="splash-import-source" class="mono" placeholder="imports/studio-logo.png"></label>
+            <label>Target under assets/<input id="splash-import-target" class="mono" placeholder="splashes/studio-logo.png"></label>
+            <label>Sprite ID<input id="splash-import-id" class="mono" value="studio_logo" maxlength="128"></label>
+          </div>
+          <div class="splash-studio-actions">
+            <button id="btn-splash-import-asset" class="btn btn-outline" type="button">Import through asset pipeline</button>
+          </div>
+        </section>
+
+        <section class="splash-studio-card">
+          <div class="form-section-title">Playback preview</div>
+          <div class="splash-studio-fields">
+            <label>Viewport<select id="splash-preview-viewport"><option value="1440x900">1440×900</option><option value="1920x1080">1920×1080</option><option value="390x844">390×844</option></select></label>
+            <label class="hud-check"><input id="splash-preview-reduced-motion" type="checkbox"> Reduced motion</label>
+          </div>
+          <div id="splash-preview-stage" class="splash-preview-stage" aria-live="polite">
+            <p>Select an image and preview the guarded candidate.</p>
+          </div>
+          <button id="splash-preview-skip" class="btn btn-outline" type="button" hidden>Skip splashes</button>
+          <div class="splash-studio-actions">
+            <button id="btn-splash-preview" class="btn btn-outline" type="button">Preview candidate</button>
+            <button id="btn-splash-apply" class="btn btn-primary" type="button" disabled>Apply guarded</button>
+            <button id="btn-splash-disable" class="btn btn-outline" type="button">Disable target binding</button>
+          </div>
+          <pre id="splash-preview-result" class="splash-studio-result mono" aria-live="polite"></pre>
         </section>
       </div>
     </section>

@@ -63,7 +63,7 @@ const STUDIO_TABS = [
   ["home", "Home"], ["waves", "Waves"], ["enemies", "Enemies"], ["towers", "Towers"],
   ["missions", "Missions"], ["worldmap", "World Map"], ["maps", "Maps"],
   ["playtest", "Playtest"], ["balance", "Balance"],
-  ["mechanics", "Mechanics"], ["hud", "HUD Studio"], ["replaylab", "Replay Lab"], ["distribution", "Distribution"], ["scripts", "Scripts"], ["assets", "Assets"], ["settings", "Settings"], ["buildtargets", "Build Targets"]
+  ["mechanics", "Mechanics"], ["hud", "HUD Studio"], ["splashes", "Splash Studio"], ["replaylab", "Replay Lab"], ["distribution", "Distribution"], ["scripts", "Scripts"], ["assets", "Assets"], ["settings", "Settings"], ["buildtargets", "Build Targets"]
 ];
 
 const APP_INFO = {
@@ -753,6 +753,7 @@ function renderActiveTab() {
   else if (t === "balance") renderBalanceTab();
   else if (t === "mechanics") renderMechanicsHub();
   else if (t === "hud") renderHudStudio();
+  else if (t === "splashes") renderSplashStudio();
   else if (t === "replaylab") renderReplayLab();
   else if (t === "distribution") renderDistributionHub();
   else if (t === "scripts") renderScriptsTab();
@@ -13028,6 +13029,423 @@ function renderHudAssetRoleEditor() {
     }
     catch (error) { toast(error.message, "err"); }
   };
+}
+
+const SplashStudioUI = {
+  loaded: false,
+  loading: false,
+  revision: null,
+  playlists: Object.create(null),
+  bindings: Object.create(null),
+  selectedPlaylistId: null,
+  selectedTargetId: null,
+  selectedItemId: null,
+  draft: null,
+  preview: null,
+  error: null,
+  needsHydrate: true,
+  playbackToken: 0
+};
+
+function splashStudioTargets() {
+  return Object.entries(S.project?.buildTargets?.targets ?? {})
+    .sort(([left], [right]) => left.localeCompare(right));
+}
+
+function splashStudioDefaultItem(id = "studio") {
+  return {
+    id,
+    spriteId: "",
+    accessibleLabel: "Studio logo",
+    backgroundColor: "#0b0f0d",
+    fit: "contain",
+    transition: "fade_scale",
+    displayMs: 1800,
+    minimumMs: 600,
+    transitionMs: 220
+  };
+}
+
+function splashStudioDefaultDraft() {
+  return {
+    schemaVersion: 1,
+    label: "Studio introduction",
+    items: [splashStudioDefaultItem()]
+  };
+}
+
+async function loadSplashStudio() {
+  if (SplashStudioUI.loading) return;
+  SplashStudioUI.loading = true;
+  renderSplashStudio();
+  try {
+    const current = await apiGet("/api/splashes/read");
+    await apiGet("/api/splashes/recipes");
+    SplashStudioUI.revision = current.revision;
+    SplashStudioUI.playlists = current.playlists ?? Object.create(null);
+    SplashStudioUI.bindings = current.bindings ?? Object.create(null);
+    const playlistIds = Object.keys(SplashStudioUI.playlists).sort();
+    if (!playlistIds.includes(SplashStudioUI.selectedPlaylistId)) {
+      SplashStudioUI.selectedPlaylistId = playlistIds[0] ?? null;
+    }
+    SplashStudioUI.loaded = true;
+    SplashStudioUI.error = null;
+    SplashStudioUI.needsHydrate = true;
+  } catch (error) {
+    SplashStudioUI.error = error;
+  } finally {
+    SplashStudioUI.loading = false;
+    renderSplashStudio();
+  }
+}
+
+function hydrateSplashStudio() {
+  SplashStudioUI.needsHydrate = false;
+  const playlistId = SplashStudioUI.selectedPlaylistId;
+  SplashStudioUI.draft = deep(playlistId ? ownDataValue(SplashStudioUI.playlists, playlistId) : null)
+    ?? splashStudioDefaultDraft();
+  SplashStudioUI.selectedItemId = SplashStudioUI.draft.items[0]?.id ?? null;
+  $("splash-playlist-id").value = playlistId ?? "studio-intro";
+  const targets = splashStudioTargets();
+  const boundTargetId = targets.find(([targetId]) => ownDataValue(SplashStudioUI.bindings, targetId) === playlistId)?.[0];
+  SplashStudioUI.selectedTargetId = boundTargetId ?? targets[0]?.[0] ?? null;
+}
+
+function splashStudioSprites() {
+  return Object.entries(S.project?.visuals?.sprites ?? {})
+    .filter(([, sprite]) => typeof sprite?.src === "string" && /\.(?:png|jpe?g|webp)$/iu.test(sprite.src))
+    .sort(([left], [right]) => left.localeCompare(right));
+}
+
+function splashStudioSelectedItem() {
+  return SplashStudioUI.draft?.items?.find((item) => item.id === SplashStudioUI.selectedItemId) ?? null;
+}
+
+function splashStudioBoundedNumber(id, label, minimum, maximum) {
+  const value = Number($(id)?.value);
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${label} must be an integer from ${minimum} through ${maximum}.`);
+  }
+  return value;
+}
+
+function splashStudioId(value, label) {
+  const id = String(value ?? "").trim();
+  if (!/^[A-Za-z][A-Za-z0-9_-]{0,127}$/u.test(id)) throw new Error(`${label} must be a bounded identifier.`);
+  return id;
+}
+
+function commitSplashStudioItemEditor() {
+  const selected = splashStudioSelectedItem();
+  if (!selected) return;
+  const nextId = splashStudioId($("splash-item-id").value, "Splash item ID");
+  if (SplashStudioUI.draft.items.some((item) => item !== selected && item.id === nextId)) {
+    throw new Error(`Splash item "${nextId}" already exists.`);
+  }
+  selected.id = nextId;
+  selected.spriteId = splashStudioId($("splash-sprite-id").value, "Splash sprite ID");
+  selected.accessibleLabel = $("splash-accessible-label").value.trim();
+  if (!selected.accessibleLabel) throw new Error("Accessible label is required.");
+  const caption = $("splash-caption").value.trim();
+  if (caption) selected.caption = caption;
+  else delete selected.caption;
+  selected.backgroundColor = $("splash-background-color").value;
+  selected.fit = $("splash-fit").value;
+  selected.transition = $("splash-transition").value;
+  selected.displayMs = splashStudioBoundedNumber("splash-display-ms", "Display duration", 700, 10000);
+  selected.minimumMs = splashStudioBoundedNumber("splash-minimum-ms", "Minimum duration", 300, 2000);
+  selected.transitionMs = splashStudioBoundedNumber("splash-transition-ms", "Transition duration", 0, 600);
+  SplashStudioUI.selectedItemId = nextId;
+}
+
+function syncSplashStudioItemEditor() {
+  const item = splashStudioSelectedItem();
+  const disabled = !item;
+  for (const id of [
+    "splash-item-id", "splash-sprite-id", "splash-accessible-label", "splash-caption",
+    "splash-background-color", "splash-fit", "splash-transition", "splash-display-ms",
+    "splash-minimum-ms", "splash-transition-ms"
+  ]) $(id).disabled = disabled;
+  if (!item) return;
+  $("splash-item-id").value = item.id;
+  $("splash-sprite-id").value = item.spriteId ?? "";
+  $("splash-accessible-label").value = item.accessibleLabel ?? "";
+  $("splash-caption").value = item.caption ?? "";
+  $("splash-background-color").value = item.backgroundColor ?? "#0b0f0d";
+  $("splash-fit").value = item.fit ?? "contain";
+  $("splash-transition").value = item.transition ?? "fade_scale";
+  $("splash-display-ms").value = String(item.displayMs ?? 1800);
+  $("splash-minimum-ms").value = String(item.minimumMs ?? 600);
+  $("splash-transition-ms").value = String(item.transitionMs ?? 220);
+}
+
+function splashStudioDraftChanged() {
+  SplashStudioUI.preview = null;
+  SplashStudioUI.playbackToken += 1;
+  $("btn-splash-apply").disabled = true;
+  $("splash-preview-skip").hidden = true;
+}
+
+function renderSplashStudioPickers() {
+  if (!SplashStudioUI.draft) return;
+  const playlistPicker = $("splash-playlist-picker");
+  const targetPicker = $("splash-target-picker");
+  const itemPicker = $("splash-item-picker");
+  const spritePicker = $("splash-sprite-id");
+  const timeline = $("splash-timeline");
+  const playlistIds = Object.keys(SplashStudioUI.playlists).sort();
+  playlistPicker.innerHTML = `<option value="">New playlist…</option>${playlistIds.map((id) => `<option value="${esc(id)}">${esc(id)}</option>`).join("")}`;
+  playlistPicker.value = SplashStudioUI.selectedPlaylistId ?? "";
+  targetPicker.innerHTML = splashStudioTargets().map(([id, target]) => `<option value="${esc(id)}">${esc(target?.label ?? id)}</option>`).join("");
+  targetPicker.value = SplashStudioUI.selectedTargetId ?? "";
+  const items = SplashStudioUI.draft.items ?? [];
+  itemPicker.innerHTML = items.map((item, index) => `<option value="${esc(item.id)}">${index + 2}. ${esc(item.accessibleLabel || item.id)}</option>`).join("");
+  if (!items.some((item) => item.id === SplashStudioUI.selectedItemId)) SplashStudioUI.selectedItemId = items[0]?.id ?? null;
+  itemPicker.value = SplashStudioUI.selectedItemId ?? "";
+  const selectedSpriteId = splashStudioSelectedItem()?.spriteId ?? "";
+  spritePicker.innerHTML = `<option value="">Select image…</option>${splashStudioSprites().map(([id]) => `<option value="${esc(id)}">${esc(id)}</option>`).join("")}`;
+  spritePicker.value = selectedSpriteId;
+  timeline.innerHTML = items.map((item, index) => `<button class="splash-item${item.id === SplashStudioUI.selectedItemId ? " selected" : ""}" type="button" role="listitem" draggable="true" data-splash-item-id="${esc(item.id)}"><span class="splash-order">${index + 2}</span><span><strong>${esc(item.accessibleLabel || item.id)}</strong><small>${esc(item.spriteId || "Select an image")}</small></span><span class="status-chip">${item.displayMs ?? 1800} ms</span></button>`).join("");
+  timeline.querySelectorAll("[data-splash-item-id]").forEach((card) => {
+    card.onclick = () => {
+      try { commitSplashStudioItemEditor(); }
+      catch (error) { return toast(error.message, "err"); }
+      SplashStudioUI.selectedItemId = card.dataset.splashItemId;
+      renderSplashStudio();
+    };
+    card.addEventListener("dragstart", (event) => event.dataTransfer?.setData("text/plain", card.dataset.splashItemId));
+    card.addEventListener("dragover", (event) => event.preventDefault());
+    card.addEventListener("drop", (event) => {
+      event.preventDefault();
+      try { commitSplashStudioItemEditor(); }
+      catch (error) { return toast(error.message, "err"); }
+      const sourceId = event.dataTransfer?.getData("text/plain");
+      const targetId = card.dataset.splashItemId;
+      if (!sourceId || sourceId === targetId) return;
+      const fromIndex = SplashStudioUI.draft.items.findIndex((item) => item.id === sourceId);
+      const toIndex = SplashStudioUI.draft.items.findIndex((item) => item.id === targetId);
+      if (fromIndex < 0 || toIndex < 0) return;
+      const [moved] = SplashStudioUI.draft.items.splice(fromIndex, 1);
+      SplashStudioUI.draft.items.splice(toIndex, 0, moved);
+      splashStudioDraftChanged();
+      renderSplashStudio();
+    });
+  });
+  syncSplashStudioItemEditor();
+}
+
+function splashStudioUniqueItemId(base = "splash") {
+  const used = new Set((SplashStudioUI.draft?.items ?? []).map((item) => item.id));
+  if (!used.has(base)) return base;
+  for (let index = 2; index <= 99; index += 1) {
+    if (!used.has(`${base}-${index}`)) return `${base}-${index}`;
+  }
+  throw new Error("Could not create another stable splash item ID.");
+}
+
+function addSplashStudioItem() {
+  if (SplashStudioUI.draft.items.length >= 8) throw new Error("A playlist can contain at most eight custom splashes.");
+  commitSplashStudioItemEditor();
+  const id = splashStudioUniqueItemId();
+  SplashStudioUI.draft.items.push(splashStudioDefaultItem(id));
+  SplashStudioUI.selectedItemId = id;
+  splashStudioDraftChanged();
+  renderSplashStudio();
+}
+
+function duplicateSplashStudioItem() {
+  const item = splashStudioSelectedItem();
+  if (!item) throw new Error("Select a splash item first.");
+  if (SplashStudioUI.draft.items.length >= 8) throw new Error("A playlist can contain at most eight custom splashes.");
+  commitSplashStudioItemEditor();
+  const clone = deep(item);
+  clone.id = splashStudioUniqueItemId(`${item.id}-copy`);
+  const index = SplashStudioUI.draft.items.indexOf(item);
+  SplashStudioUI.draft.items.splice(index + 1, 0, clone);
+  SplashStudioUI.selectedItemId = clone.id;
+  splashStudioDraftChanged();
+  renderSplashStudio();
+}
+
+function removeSplashStudioItem() {
+  const index = SplashStudioUI.draft.items.findIndex((item) => item.id === SplashStudioUI.selectedItemId);
+  if (index < 0) return;
+  SplashStudioUI.draft.items.splice(index, 1);
+  if (SplashStudioUI.draft.items.length === 0) SplashStudioUI.draft.items.push(splashStudioDefaultItem());
+  SplashStudioUI.selectedItemId = SplashStudioUI.draft.items[Math.min(index, SplashStudioUI.draft.items.length - 1)].id;
+  splashStudioDraftChanged();
+  renderSplashStudio();
+}
+
+function splashStudioCandidate(enabled = true) {
+  commitSplashStudioItemEditor();
+  const playlistId = splashStudioId($("splash-playlist-id").value, "Playlist ID");
+  const targetId = splashStudioId($("splash-target-picker").value, "Build target ID");
+  return {
+    playlistId,
+    playlist: deep(SplashStudioUI.draft),
+    binding: { targetId, enabled }
+  };
+}
+
+function renderSplashStudio() {
+  if (!$("splash-studio")) return;
+  if (!SplashStudioUI.loaded && !SplashStudioUI.loading && !SplashStudioUI.error) void loadSplashStudio();
+  $("splash-studio-state").textContent = SplashStudioUI.loading
+    ? "Loading…"
+    : SplashStudioUI.error
+      ? `Unavailable: ${SplashStudioUI.error.message}`
+      : `SplashCatalogV1 · revision ${SplashStudioUI.revision?.slice(0, 10) ?? "pending"}`;
+  if (!SplashStudioUI.loaded) return;
+  if (SplashStudioUI.needsHydrate) hydrateSplashStudio();
+  renderSplashStudioPickers();
+  $("splash-playlist-picker").onchange = () => {
+    SplashStudioUI.selectedPlaylistId = $("splash-playlist-picker").value || null;
+    SplashStudioUI.needsHydrate = true;
+    splashStudioDraftChanged();
+    renderSplashStudio();
+  };
+  $("splash-target-picker").onchange = () => { SplashStudioUI.selectedTargetId = $("splash-target-picker").value || null; splashStudioDraftChanged(); };
+  $("splash-item-picker").onchange = () => {
+    try { commitSplashStudioItemEditor(); }
+    catch (error) { return toast(error.message, "err"); }
+    SplashStudioUI.selectedItemId = $("splash-item-picker").value || null;
+    renderSplashStudio();
+  };
+  for (const id of [
+    "splash-playlist-id", "splash-item-id", "splash-sprite-id", "splash-accessible-label", "splash-caption",
+    "splash-background-color", "splash-fit", "splash-transition", "splash-display-ms", "splash-minimum-ms", "splash-transition-ms"
+  ]) $(id).oninput = splashStudioDraftChanged;
+  const guardedEdit = (operation) => () => {
+    try { operation(); }
+    catch (error) { toast(error.message, "err"); }
+  };
+  $("btn-splash-item-add").onclick = guardedEdit(addSplashStudioItem);
+  $("btn-splash-item-duplicate").onclick = guardedEdit(duplicateSplashStudioItem);
+  $("btn-splash-item-remove").onclick = guardedEdit(removeSplashStudioItem);
+  $("btn-splash-preview").onclick = () => void previewSplashStudio();
+  $("btn-splash-apply").disabled = SplashStudioUI.preview?.ok !== true;
+  $("btn-splash-apply").onclick = () => void applySplashStudio();
+  $("btn-splash-disable").onclick = () => void disableSplashStudioBinding();
+  $("btn-splash-import-asset").onclick = () => void importSplashStudioAsset();
+  $("splash-preview-skip").onclick = stopSplashStudioPreview;
+  $("splash-preview-viewport").onchange = updateSplashStudioPreviewViewport;
+  $("splash-preview-reduced-motion").onchange = () => {
+    splashStudioDraftChanged();
+    $("splash-preview-stage").textContent = "Preview the candidate to replay it with reduced motion.";
+  };
+  updateSplashStudioPreviewViewport();
+  $("splash-preview-result").textContent = JSON.stringify(SplashStudioUI.preview ?? { revision: SplashStudioUI.revision }, null, 2);
+}
+
+async function previewSplashStudio() {
+  try {
+    const candidate = splashStudioCandidate(true);
+    SplashStudioUI.preview = await apiPost("/api/splashes/preview", candidate);
+    SplashStudioUI.revision = SplashStudioUI.preview.revision ?? SplashStudioUI.revision;
+    if (SplashStudioUI.preview.ok) void playSplashStudioPreview(candidate.playlist);
+  } catch (error) {
+    SplashStudioUI.preview = null;
+    toast(`Splash preview failed: ${error.message}`, "err");
+  }
+  renderSplashStudio();
+}
+
+async function applySplashStudio() {
+  if (!SplashStudioUI.preview?.ok) return;
+  try {
+    const candidate = splashStudioCandidate(true);
+    const ifRevision = SplashStudioUI.preview.revision ?? SplashStudioUI.revision;
+    const result = await apiPost("/api/splashes/apply", { ...candidate, ifRevision });
+    if (result.newHash) S.contentHash = result.newHash;
+    SplashStudioUI.selectedPlaylistId = candidate.playlistId;
+    SplashStudioUI.loaded = false;
+    SplashStudioUI.preview = null;
+    await loadSplashStudio();
+    toast("Splash playlist applied with revision guard.", "ok");
+  } catch (error) {
+    if (error.conflict || error.code === "revision_conflict") SplashStudioUI.loaded = false;
+    toast(`Splash apply failed: ${error.message}`, error.conflict ? "warn" : "err");
+  }
+}
+
+async function disableSplashStudioBinding() {
+  const button = $("btn-splash-disable");
+  button.disabled = true;
+  try {
+    const candidate = splashStudioCandidate(false);
+    const disabled = { ...candidate, binding: { ...candidate.binding, enabled: false } };
+    const preview = await apiPost("/api/splashes/preview", disabled);
+    if (!preview.ok) throw new Error("Splash binding disable preview failed.");
+    const result = await apiPost("/api/splashes/apply", { ...disabled, ifRevision: preview.revision });
+    if (result.newHash) S.contentHash = result.newHash;
+    SplashStudioUI.loaded = false;
+    SplashStudioUI.preview = null;
+    await loadSplashStudio();
+    toast("Custom splashes disabled for this target; the catalog and assets were preserved.", "ok");
+  } catch (error) {
+    toast(`Splash disable failed: ${error.message}`, error.conflict ? "warn" : "err");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function importSplashStudioAsset() {
+  try {
+    const result = await apiPost("/api/assets/import", {
+      sourcePath: $("splash-import-source").value.trim(),
+      targetPath: $("splash-import-target").value.trim(),
+      id: splashStudioId($("splash-import-id").value, "Imported sprite ID"),
+      kind: "sprite",
+      usage: "splash"
+    });
+    if (result.visuals) S.project.visuals = result.visuals;
+    if (result.newHash) S.contentHash = result.newHash;
+    const item = splashStudioSelectedItem();
+    if (item && result.asset?.id) item.spriteId = result.asset.id;
+    splashStudioDraftChanged();
+    renderSplashStudio();
+    toast("Splash image imported through the guarded asset pipeline.", "ok");
+  } catch (error) {
+    toast(`Splash image import failed: ${error.message}`, "err");
+  }
+}
+
+function updateSplashStudioPreviewViewport() {
+  const stage = $("splash-preview-stage");
+  if (!stage) return;
+  const [width, height] = ($("splash-preview-viewport")?.value ?? "1440x900").split("x").map(Number);
+  stage.style.aspectRatio = `${width} / ${height}`;
+}
+
+function stopSplashStudioPreview() {
+  SplashStudioUI.playbackToken += 1;
+  $("splash-preview-skip").hidden = true;
+  $("splash-preview-stage").innerHTML = `<p>Preview complete. The game menu follows after runtime readiness.</p>`;
+}
+
+function waitSplashStudioPreview(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, milliseconds)));
+}
+
+async function playSplashStudioPreview(playlist) {
+  const stage = $("splash-preview-stage");
+  const skip = $("splash-preview-skip");
+  const reducedMotion = $("splash-preview-reduced-motion").checked;
+  const token = ++SplashStudioUI.playbackToken;
+  skip.hidden = false;
+  for (const item of playlist.items) {
+    if (token !== SplashStudioUI.playbackToken) return;
+    const sprite = ownDataValue(S.project?.visuals?.sprites, item.spriteId);
+    if (!sprite?.src) continue;
+    const transitionMs = reducedMotion ? 0 : item.transitionMs;
+    stage.style.backgroundColor = item.backgroundColor;
+    stage.innerHTML = `<figure class="splash-preview-frame ${reducedMotion ? "reduced" : esc(item.transition)}" style="--splash-transition-ms:${transitionMs}ms"><img src="${esc(projectFileUrl(sprite.src))}" alt="${esc(item.accessibleLabel)}" style="object-fit:${esc(item.fit)}">${item.caption ? `<figcaption>${esc(item.caption)}</figcaption>` : ""}</figure>`;
+    await waitSplashStudioPreview(Math.max(item.minimumMs, item.displayMs));
+    if (token !== SplashStudioUI.playbackToken) return;
+    await waitSplashStudioPreview(transitionMs);
+  }
+  if (token === SplashStudioUI.playbackToken) stopSplashStudioPreview();
 }
 
 const CameraStudioUI = { loaded: false, loading: false, revision: null, recipes: [], cameraProfiles: null, selectedProfileId: null, needsHydrate: false, skipHydrateOnce: false, preview: null, viewVariantPreview: null, error: null, previewTimer: null };

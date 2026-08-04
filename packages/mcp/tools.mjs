@@ -121,10 +121,22 @@ import {
   renderHudPreview
 } from "../cli/lib/hud-authoring.mjs";
 import {
+  SPLASH_AUTHORING_SCHEMA_V1,
+  SPLASH_PLAYLIST_RECIPE_IDS,
+  applySplashPlaylist,
+  getSplashPlaylistRecipe,
+  getSplashPlaylists,
+  previewSplashPlaylist
+} from "../cli/lib/splash-authoring.mjs";
+import {
   HUD_CATALOG_LIMITS,
   HUD_COMPONENT_TYPES,
   HUD_SCREEN_EVENTS
 } from "../player-runtime/src/hud-catalog.mjs";
+import {
+  SPLASH_CATALOG_LIMITS,
+  SPLASH_ITEM_DEFAULTS
+} from "../player-runtime/src/splash-catalog.mjs";
 import { createDefaultPlayerActionDescriptors } from "../player-runtime/src/player-actions.mjs";
 import { projectProceduralJuicePresentation } from "../renderer/src/procedural-juice-presentation.mjs";
 import { TOWERFORGE_AGENT_GUIDE_VERSION } from "./agent-instructions.mjs";
@@ -133,7 +145,7 @@ const BALANCE_PATCH_KEYS = [
   "enemies", "towers", "waveSets", "missions", "abilities", "constants", "currencies", "defaultMissionId",
   "defaultDifficultyId", "difficulties", "metaProgression", "terrainTypes"
 ];
-const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "arsenal", "macroEconomy", "heroes", "logistics", "director", "quests", "enemyBehaviors", "personaQa", "multiplayer", "replayLab", "distribution", "playerTargets", "camera", "hud", "proceduralJuice", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
+const SCHEMA_DOMAINS = Object.freeze(["all", "combat", "reactions", "navigation", "elevation", "physics", "ballistics", "weather", "terraforming", "roguelite", "arsenal", "macroEconomy", "heroes", "logistics", "director", "quests", "enemyBehaviors", "personaQa", "multiplayer", "replayLab", "distribution", "playerTargets", "camera", "hud", "splashes", "proceduralJuice", "missions", "progression", "scripts", "assets", "maps", "terrain", "tiles", "mechanics"]);
 
 // Maps an upsert_entity/delete_entity `collection` to (a) the balance.json key, (b) the shape
 // (a map keyed by id, or an array of {id,...} items — currencies only), and (c) the
@@ -730,6 +742,25 @@ const HUD_VIEWPORT_INPUT_SCHEMA = Object.freeze({
   required: Object.freeze(["width", "height"]),
   additionalProperties: false
 });
+const SPLASH_PLAYLIST_INPUT_SCHEMA = Object.freeze({
+  type: "object",
+  description: "Closed SplashPlaylistV1 own-data candidate; canonical validation is performed by the shared player runtime."
+});
+const SPLASH_BINDING_INPUT_SCHEMA = Object.freeze({
+  type: "object",
+  properties: Object.freeze({
+    targetId: Object.freeze({ type: "string", minLength: 1, maxLength: 128 }),
+    enabled: Object.freeze({ type: "boolean" })
+  }),
+  required: Object.freeze(["targetId", "enabled"]),
+  additionalProperties: false
+});
+const SPLASH_PLAYLIST_PROPERTIES = Object.freeze({
+  projectDir: Object.freeze({ type: "string" }),
+  playlistId: Object.freeze({ type: "string", minLength: 1, maxLength: 128 }),
+  playlist: SPLASH_PLAYLIST_INPUT_SCHEMA,
+  binding: SPLASH_BINDING_INPUT_SCHEMA
+});
 /** Tool definitions advertised over `tools/list`. */
 export const TOOLS = [
   {
@@ -859,6 +890,53 @@ export const TOOLS = [
         mockState: { type: "string", enum: HUD_MOCK_STATE_IDS }
       },
       required: ["projectDir", "targetId", "profileId", "screenId", "viewport", "mockState"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "get_splash_playlists",
+    description: "Read the exact optional SplashCatalogV1 playlists, target bindings, and four-source revision without writing project files.",
+    inputSchema: {
+      type: "object",
+      properties: { projectDir: { type: "string" } },
+      additionalProperties: false
+    }
+  },
+  {
+    name: "get_splash_playlist_recipe",
+    description: "Return one detached static SplashPlaylistV1 brand recipe without reading or writing project files.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectDir: { type: "string" },
+        recipeId: { type: "string", enum: SPLASH_PLAYLIST_RECIPE_IDS },
+        playlistId: { type: "string", minLength: 1, maxLength: 128 },
+        spriteId: { type: "string", minLength: 1, maxLength: 128 },
+        accessibleLabel: { type: "string", minLength: 1, maxLength: 512 },
+        caption: { type: "string", minLength: 1, maxLength: 2048 },
+        backgroundColor: { type: "string", pattern: "^#[0-9A-Fa-f]{6}$" }
+      },
+      required: ["recipeId", "playlistId", "spriteId", "accessibleLabel"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "preview_splash_playlist",
+    description: "Validate one exact splash playlist and build-target binding, including local image signatures, without writing project files.",
+    inputSchema: {
+      type: "object",
+      properties: SPLASH_PLAYLIST_PROPERTIES,
+      required: ["projectDir", "playlistId", "playlist", "binding"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "apply_splash_playlist",
+    description: "Revision-guarded splash playlist/binding upsert with canonical validation, four-source backup, and rollback.",
+    inputSchema: {
+      type: "object",
+      properties: Object.freeze({ ...SPLASH_PLAYLIST_PROPERTIES, ifRevision: IF_REVISION_PROPERTY }),
+      required: ["projectDir", "playlistId", "playlist", "binding", "ifRevision"],
       additionalProperties: false
     }
   },
@@ -2441,6 +2519,10 @@ const TOOL_RISK = {
   preview_hud_profile: { riskClass: "compute_only", sideEffect: "writes no project files" },
   apply_hud_profile: { riskClass: "write_local", sideEffect: "writes project.json, build-targets.json, content/hud.json, and content/visuals.json with revision guard, validation, backup, and rollback" },
   render_hud_preview: { riskClass: "compute_only", sideEffect: "writes no project files" },
+  get_splash_playlists: { riskClass: "read_only", sideEffect: "none" },
+  get_splash_playlist_recipe: { riskClass: "read_only", sideEffect: "none" },
+  preview_splash_playlist: { riskClass: "compute_only", sideEffect: "validates a detached timeline and writes no project files" },
+  apply_splash_playlist: { riskClass: "write_local", sideEffect: "writes project.json, build-targets.json, and content/splashes.json with revision guard, validation, backup, and rollback while preserving content/visuals.json bytes" },
   get_procedural_juice: { riskClass: "read_only", sideEffect: "none" },
   get_procedural_juice_recipe: { riskClass: "read_only", sideEffect: "none" },
   preview_procedural_juice: { riskClass: "compute_only", sideEffect: "validates an in-memory candidate and writes no project files" },
@@ -3016,6 +3098,13 @@ export async function callTool(name, args = {}, ctx = {}) {
         revisionGuard: "ifRevision"
       }
     };
+    const splashes = {
+      ...SPLASH_AUTHORING_SCHEMA_V1,
+      imageMimeTypes: [...SPLASH_AUTHORING_SCHEMA_V1.imageMimeTypes],
+      constraints: { ...SPLASH_CATALOG_LIMITS },
+      defaults: { ...SPLASH_ITEM_DEFAULTS },
+      recipes: [...SPLASH_PLAYLIST_RECIPE_IDS]
+    };
     const multiplayer = {
       entrypoint: "@towerforge/engine/multiplayer",
       authoring: engine.MULTIPLAYER_MECHANICS_SCHEMA,
@@ -3180,6 +3269,7 @@ export async function callTool(name, args = {}, ctx = {}) {
       ...(includes("playerTargets") ? { playerTargets } : {}),
       ...(includes("camera") ? { camera } : {}),
       ...(includes("hud") ? { hud } : {}),
+      ...(includes("splashes") ? { splashes } : {}),
       ...(includes("missions") ? {
         currencyRules: engine.CURRENCY_RULES,
         missionEconomy: engine.MISSION_ECONOMY_SCHEMA,
@@ -3293,6 +3383,19 @@ export async function callTool(name, args = {}, ctx = {}) {
     );
   }
 
+  if (name === "get_splash_playlist_recipe") {
+    return getSplashPlaylistRecipe(
+      ownDataValue(args, "recipeId"),
+      ownDataValue(args, "playlistId"),
+      {
+        spriteId: ownDataValue(args, "spriteId"),
+        accessibleLabel: ownDataValue(args, "accessibleLabel"),
+        ...(ownDataValue(args, "caption") === undefined ? {} : { caption: ownDataValue(args, "caption") }),
+        ...(ownDataValue(args, "backgroundColor") === undefined ? {} : { backgroundColor: ownDataValue(args, "backgroundColor") })
+      }
+    );
+  }
+
   if (name === "explain_validation") {
     if (args.code !== undefined && typeof args.code !== "string") {
       throw new Error("explain_validation: `code` must be a string.");
@@ -3374,6 +3477,21 @@ export async function callTool(name, args = {}, ctx = {}) {
         screenId: ownDataValue(args, "screenId"),
         viewport: ownDataValue(args, "viewport"),
         mockState: ownDataValue(args, "mockState")
+      });
+    case "get_splash_playlists":
+      return getSplashPlaylists(projectDir);
+    case "preview_splash_playlist":
+      return previewSplashPlaylist(projectDir, {
+        playlistId: ownDataValue(args, "playlistId"),
+        playlist: ownDataValue(args, "playlist"),
+        binding: ownDataValue(args, "binding")
+      });
+    case "apply_splash_playlist":
+      return applySplashPlaylist(projectDir, {
+        playlistId: ownDataValue(args, "playlistId"),
+        playlist: ownDataValue(args, "playlist"),
+        binding: ownDataValue(args, "binding"),
+        ifRevision: ownDataValue(args, "ifRevision")
       });
     case "get_procedural_juice":
       return inspectProceduralJuiceAuthoring(projectDir);

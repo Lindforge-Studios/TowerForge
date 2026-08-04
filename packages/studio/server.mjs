@@ -51,6 +51,13 @@ import {
   HUD_SELECTOR_DESCRIPTORS_V1,
   previewHudProfile
 } from "../cli/lib/hud-authoring.mjs";
+import {
+  getSplashPlaylists,
+  getSplashPlaylistRecipe,
+  previewSplashPlaylist,
+  applySplashPlaylist,
+  SPLASH_PLAYLIST_RECIPE_IDS
+} from "../cli/lib/splash-authoring.mjs";
 import { compileHudLayoutV1 } from "../player-runtime/src/hud-layout.mjs";
 import {
   HUD_COMPONENT_STATES,
@@ -1807,6 +1814,75 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // Splash Studio mirrors the narrow AI authoring transaction and never writes
+  // project sections directly: read -> recipe -> preview -> revision-guarded apply.
+  if (req.method === "GET" && pathname === "/api/splashes/read") {
+    try {
+      return jsonResp(res, 200, sanitizeMechanicsResponse(getSplashPlaylists(PROJECT_DIR)));
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status, failure.response);
+    }
+  }
+
+  if (req.method === "GET" && pathname === "/api/splashes/recipes") {
+    try {
+      const files = loadProjectFiles(PROJECT_DIR);
+      const spriteId = Object.keys(files.visuals?.sprites ?? {})
+        .sort()
+        .find((id) => typeof files.visuals.sprites[id]?.src === "string" && /\.(?:png|jpe?g|webp)$/iu.test(files.visuals.sprites[id].src));
+      const recipes = spriteId
+        ? SPLASH_PLAYLIST_RECIPE_IDS.map((recipeId) => getSplashPlaylistRecipe(recipeId, "studio-intro", {
+            spriteId,
+            accessibleLabel: "Studio logo"
+          }))
+        : [];
+      return jsonResp(res, 200, {
+        schemaVersion: 1,
+        recipeIds: [...SPLASH_PLAYLIST_RECIPE_IDS],
+        recipes: sanitizeMechanicsResponse(recipes)
+      });
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
+    }
+  }
+
+  if (req.method === "POST" && ["/api/splashes/preview", "/api/splashes/apply"].includes(pathname)) {
+    let body;
+    try { body = await readBody(req); }
+    catch { return jsonResp(res, 400, { code: "malformed_request", error: "Invalid JSON body" }); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return jsonResp(res, 400, { code: "invalid_request", error: "Splash authoring request must be a JSON object." });
+    }
+    const applying = pathname.endsWith("/apply");
+    if (applying && (typeof body.ifRevision !== "string" || !body.ifRevision)) {
+      return jsonResp(res, 428, { code: "revision_required", error: "Splash apply requires ifRevision returned by preview." });
+    }
+    try {
+      const request = {
+        playlistId: body.playlistId,
+        playlist: body.playlist,
+        binding: body.binding,
+        ...(applying ? { ifRevision: body.ifRevision } : {})
+      };
+      const result = applying
+        ? applySplashPlaylist(PROJECT_DIR, request)
+        : previewSplashPlaylist(PROJECT_DIR, request);
+      if (applying && result?.written) {
+        writeRunTrace(PROJECT_DIR, { source: "studio", action: "splashes:apply", status: "ok" });
+      }
+      const status = result?.conflict ? 409 : result?.ok === false ? 422 : 200;
+      return jsonResp(res, status, {
+        ...sanitizeMechanicsResponse(result),
+        ...(applying && result?.written ? { newHash: projectHash() } : {})
+      });
+    } catch (error) {
+      const failure = mechanicsErrorResponse(error);
+      return jsonResp(res, failure.status === 500 ? 422 : failure.status, failure.response);
+    }
+  }
+
   if (req.method === "GET" && pathname === "/api/procedural-juice/recipes") {
     try {
       const recipeIds = ["impact_feedback", "boss_finisher"];
@@ -2706,9 +2782,28 @@ const server = http.createServer(async (req, res) => {
     try { body = await readBody(req); }
     catch { return jsonResp(res, 400, { error: "Invalid JSON body" }); }
     try {
+      if (body?.usage === "splash") {
+        const requestedTarget = body.targetPath || path.basename(body.sourcePath || "");
+        if (!/\.(?:png|jpe?g|webp)$/iu.test(requestedTarget)) {
+          throw new Error("Splash images must use PNG, JPEG or WebP.");
+        }
+      }
       const files = loadProjectFiles(PROJECT_DIR);
       const result = importProjectAsset(PROJECT_DIR, files.visuals, body);
       const visualsPath = path.join(CONTENT_DIR, "visuals.json");
+      if (body?.usage === "splash" && result.asset?.kind === "sprite") {
+        const sprite = result.visuals?.sprites?.[result.asset.id];
+        const extension = path.extname(sprite?.src ?? "").toLowerCase();
+        const mimeType = extension === ".png"
+          ? "image/png"
+          : [".jpg", ".jpeg"].includes(extension)
+            ? "image/jpeg"
+            : extension === ".webp"
+              ? "image/webp"
+              : null;
+        if (!mimeType) throw new Error("Splash images must use PNG, JPEG or WebP.");
+        sprite.mimeType = mimeType;
+      }
       backupFile(visualsPath);
       writeJsonAtomic(visualsPath, normalizeVisuals(result.visuals));
       const response = { ok: true, ...result, newHash: projectHash() };
