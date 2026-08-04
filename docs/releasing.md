@@ -75,6 +75,11 @@ npm --workspace @towerforge/desktop run verify:macos-bundle
 shasum -a 256 packages/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/TowerForge_<version>_aarch64.dmg
 ```
 
+The DMG uses the checked-in `packages/desktop/src-tauri/dmg-background.png` presentation with a
+fixed compact Finder layout. Regenerate it after an intentional design-system change with
+`npm --workspace @towerforge/desktop run build:dmg-background`; the presentation contract checks
+the exact canvas size and the TowerForge/Applications drop positions before release.
+
 Write `SHA256SUMS` using the installer basename, not an absolute path:
 
 ```text

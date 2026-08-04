@@ -24,17 +24,19 @@ TowerForge — точный и спокойный инструмент для с
 
 ## 2. Границы дизайн-системы
 
-В TowerForge существуют три независимых визуальных слоя.
+В TowerForge существуют четыре независимых визуальных слоя.
 
 | Слой | Кто задаёт | Что допускается |
 | --- | --- | --- |
 | Product chrome | Команда TowerForge | Studio, системные диалоги, validation, project tree, desktop lifecycle и recovery UI |
+| Engine boot identity | TowerForge | Обязательный inline splash `Made with TowerForge` во всех официально сгенерированных играх |
 | Built-in player shell | TowerForge | Безопасный запасной HUD для desktop/responsive target без выбранного HUD profile |
 | Project presentation | Автор игры | Theme assets, camera profiles, Procedural Juice и `HudCatalogV1` через валидируемые data-only contracts |
 
 Правила:
 
 - тема проекта не перекрашивает Studio и системный recovery overlay;
+- project presentation и HUD не заменяют, не перекрывают и не отключают engine boot identity;
 - renderer рисует игровой мир, DOM player shell — экранный HUD;
 - HUD не владеет gameplay-правилами, world projection или доступом к native bridge;
 - пользовательские HTML, CSS, JavaScript, произвольные шрифты и URL не являются частью HUD-контракта;
@@ -171,6 +173,22 @@ Animation используется для объяснения изменени�
 
 Camera projection (`top_down`, `isometric_2_1`, `dimetric_oblique`) меняет только представление мира. HUD остаётся screen-space DOM.
 
+### 6.3 Generated-game boot splash
+
+Официальный player начинается с системной поверхности `Made with TowerForge`: canonical mark,
+короткая подпись и спокойный индикатор загрузки. Splash встроен inline, не зависит от сети,
+занимает весь viewport до готовности runtime и уступает место recovery overlay при ошибке. Минимум
+показа предотвращает визуальный flash, а `prefers-reduced-motion` отключает декоративное движение.
+Проект может показывать собственный studio/game logo следующим экраном, но не получает настройку
+для удаления, замены или имитации engine credit.
+
+R22 оформляет следующий экран как opt-in playlist выбранной цели сборки: от одного до восьми
+статичных локальных PNG/JPEG/WebP. Первый системный слот всегда заблокирован, а пользовательские
+слоты используют спокойные `cut`, `fade` или `fade_scale`, доступную подпись и необязательный
+короткий caption. По умолчанию создаётся только несохранённый второй слот; пустой слот нельзя
+сохранить. Центр экрана остаётся свободным от навигации, кроме неброской кнопки «Пропустить
+заставки»; `prefers-reduced-motion` убирает переходы, но не обязательное время показа.
+
 ## 7. Components
 
 ### 7.1 Buttons
@@ -251,6 +269,13 @@ Radial menu содержит не больше 12 одновременно ви�
 - Логотип, название, legal copy и размеры экспорта никогда не генерируются моделью изображения.
 
 Gameplay feedback (particles, shake, hit stop, audio cues) остаётся событием presentation layer. Оно не скрывает target, route, resource state или actionable HUD больше необходимого и отключается/ослабляется quality и reduced-motion settings.
+
+### 9.1 macOS disk image
+
+DMG — короткая install surface, а не пустое Finder-окно. Он использует компактный фиксированный
+viewport, app слева, Applications справа и одну явную стрелку между ними. Фон следует product
+tokens, не конкурирует с системными icon labels и содержит только короткую install-инструкцию;
+runtime, signing и trust-state из оформления не имитируются.
 
 ## 10. Accessibility and input
 

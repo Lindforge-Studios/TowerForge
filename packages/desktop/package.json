@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build:dmg-background": "node scripts/build-dmg-background.mjs",
     "prepare-runtime": "node scripts/prepare-runtime.mjs",
     "tauri": "tauri",
     "dev": "npm run prepare-runtime && tauri dev",

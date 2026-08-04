@@ -60,6 +60,7 @@ export function readRawProjectFiles(projectDir, options = {}) {
     mechanics: readJsonOr(path.join(contentDir, "mechanics.json"), undefined),
     distribution: readJsonOr(path.join(contentDir, "distribution.json"), undefined),
     hud: options.readHud === false ? undefined : readJsonOr(path.join(contentDir, "hud.json"), undefined),
+    splashes: options.readSplashes === false ? undefined : readJsonOr(path.join(contentDir, "splashes.json"), undefined),
     visuals: readJsonOr(path.join(contentDir, "visuals.json"), defaultVisuals()),
     storyComics: readJsonOr(path.join(contentDir, "story-comics.json"), { seenStoragePrefix: "story_seen_", comics: {} }),
     battleBackgrounds: readJsonOr(path.join(contentDir, "battle-backgrounds.json"), {
@@ -87,6 +88,7 @@ export function normalizeProjectFiles(rawFiles) {
   const mechanicsAuthored = migrated.files.mechanics !== undefined;
   const distributionAuthored = migrated.files.distribution !== undefined;
   const hudAuthored = migrated.files.hudAuthored ?? migrated.files.hud !== undefined;
+  const splashesAuthored = migrated.files.splashesAuthored ?? migrated.files.splashes !== undefined;
 
   return {
     projectDir: rawFiles.projectDir,
@@ -101,6 +103,8 @@ export function normalizeProjectFiles(rawFiles) {
     distributionAuthored,
     hud: hudAuthored ? migrated.files.hud : undefined,
     hudAuthored,
+    splashes: splashesAuthored ? migrated.files.splashes : undefined,
+    splashesAuthored,
     visuals: normalizeVisuals(migrated.files.visuals),
     storyComics: normalizeStoryComics(migrated.files.storyComics),
     battleBackgrounds: normalizeBattleBackgrounds(migrated.files.battleBackgrounds),
@@ -120,6 +124,13 @@ export function loadProjectFiles(projectDir, options = {}) {
     // Strip only the in-memory references; authored build-targets.json remains byte-identical.
     for (const target of Object.values(files.buildTargets?.targets ?? {})) {
       if (target && typeof target === "object") delete target.hudProfileId;
+    }
+  }
+  if (options.readSplashes === false) {
+    // The selected target has no project splash binding. Keep the optional catalog out of this
+    // active build path and remove only its in-memory selector; authored bytes remain untouched.
+    for (const target of Object.values(files.buildTargets?.targets ?? {})) {
+      if (target && typeof target === "object") delete target.splashPlaylistId;
     }
   }
   return files;
@@ -146,6 +157,8 @@ export function projectSummary(files) {
     distributionAuthored: files.distributionAuthored ?? false,
     hud: files.hud,
     hudAuthored: files.hudAuthored ?? false,
+    splashes: files.splashes,
+    splashesAuthored: files.splashesAuthored ?? false,
     maps: Object.fromEntries(Object.entries(files.maps).map(([id, map]) => [id, {
       id,
       grid: map.grid,
@@ -168,6 +181,7 @@ export function projectSummary(files) {
       visuals: files.visuals.schemaVersion ?? 1,
       mechanics: files.mechanics.schemaVersion ?? 1,
       ...(files.hudAuthored ? { hud: files.hud?.schemaVersion } : {}),
+      ...(files.splashesAuthored ? { splashes: files.splashes?.schemaVersion } : {}),
       ...(files.distributionAuthored ? { distribution: files.distribution?.schemaVersion } : {})
     },
     appliedMigrations: files.appliedMigrations ?? [],

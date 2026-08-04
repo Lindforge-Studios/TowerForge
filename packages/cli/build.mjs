@@ -78,7 +78,9 @@ try {
   const shouldReadHud = authoredBuildTargets.schemaVersion === 2
     && (authoredTarget.formFactor === "desktop" || authoredTarget.formFactor === "responsive")
     && typeof authoredTarget.hudProfileId === "string";
-  const { result } = await validateProjectDir(PROJECT_DIR, { readHud: shouldReadHud });
+  const shouldReadSplashes = authoredBuildTargets.schemaVersion === 2
+    && typeof authoredTarget.splashPlaylistId === "string";
+  const { result } = await validateProjectDir(PROJECT_DIR, { readHud: shouldReadHud, readSplashes: shouldReadSplashes });
   if (!result.ok) {
     if (!args.json) {
       for (const issue of result.issues) {
@@ -93,7 +95,7 @@ try {
   }
 
   await loadEngine();
-  const files = loadProjectFiles(PROJECT_DIR, { readHud: shouldReadHud });
+  const files = loadProjectFiles(PROJECT_DIR, { readHud: shouldReadHud, readSplashes: shouldReadSplashes });
   const initialGridKind = resolveInitialGridKind(files);
   const tileCoverage = projectTileCoverage(files);
   if (!tileCoverage.ok) {
@@ -124,6 +126,14 @@ try {
     && files.hudAuthored === true
     && files.hud?.schemaVersion === 1
     && Object.hasOwn(files.hud.profiles ?? {}, target.hudProfileId);
+  const splashRuntimeActive = files.buildTargets.schemaVersion === 2
+    && typeof target.splashPlaylistId === "string"
+    && files.splashesAuthored === true
+    && files.splashes?.schemaVersion === 1
+    && Object.hasOwn(files.splashes.playlists ?? {}, target.splashPlaylistId);
+  const splashPlaylist = splashRuntimeActive
+    ? compileSplashPlaylist(target.splashPlaylistId, files.splashes.playlists[target.splashPlaylistId], files.visuals)
+    : null;
   const cameraProfiles = files.visuals?.schemaVersion === 4
     && files.visuals?.cameraProfiles?.schemaVersion === 1
     ? files.visuals.cameraProfiles
@@ -159,6 +169,13 @@ try {
     : [];
   for (const fileName of ["index.mjs", "player-profile-store.mjs", ...largeScreenRuntimeFiles, ...hudRuntimeFiles, ...(nativeDesktopPlayer ? ["native-storage-bridge.mjs"] : []), ...(hostMonetizationActive ? ["host-monetization.mjs"] : [])]) {
     fs.copyFileSync(path.join(playerRuntimeSource, fileName), path.join(playerRuntimeOutput, fileName));
+  }
+  {
+    // SplashCatalog validation is an authoring/build concern. The selected playlist is compiled
+    // into boot.js, so generated players never ship the validator or its broad input surface.
+    const runtimeIndex = path.join(playerRuntimeOutput, "index.mjs");
+    const runtimeSource = pruneSingleModuleExport(fs.readFileSync(runtimeIndex, "utf8"), "./splash-catalog.mjs");
+    fs.writeFileSync(runtimeIndex, runtimeSource, "utf8");
   }
   if (!largeScreenPlayer) {
     const runtimeIndex = path.join(playerRuntimeOutput, "index.mjs");
@@ -236,11 +253,12 @@ try {
     battleBackgrounds: files.battleBackgrounds,
     ...(hostMonetizationActive ? { hostMonetization } : {}),
     ...(hudRuntimeActive ? { hud: files.hud } : {}),
+    ...(splashRuntimeActive ? { splashes: files.splashes } : {}),
     buildTarget: target
   });
-  fs.writeFileSync(path.join(outDir, "index.html"), htmlTemplate(files.manifest, target, renderer, initialGridKind, macroEconomyActive, hostMonetization, remixEnabled, hudRuntimeActive), "utf8");
-  fs.writeFileSync(path.join(outDir, "styles.css"), cssTemplate(target, hostMonetization, remixEnabled), "utf8");
-  fs.writeFileSync(path.join(outDir, "boot.js"), bootRecoveryTemplate(files.manifest, target, files.storyComics), "utf8");
+  fs.writeFileSync(path.join(outDir, "index.html"), htmlTemplate(files.manifest, target, renderer, initialGridKind, macroEconomyActive, hostMonetization, remixEnabled, hudRuntimeActive, splashPlaylist), "utf8");
+  fs.writeFileSync(path.join(outDir, "styles.css"), cssTemplate(target, hostMonetization, splashPlaylist), "utf8");
+  fs.writeFileSync(path.join(outDir, "boot.js"), bootRecoveryTemplate(files.manifest, target, files.storyComics, splashPlaylist), "utf8");
   fs.writeFileSync(
     path.join(outDir, "player.mjs"),
     renderer === "phaser"
@@ -280,9 +298,13 @@ try {
       battleBackgrounds: files.battleBackgrounds,
       ...(hostMonetizationActive ? { hostMonetization } : {}),
       ...(hudRuntimeActive ? { hud: files.hud } : {}),
+      ...(splashRuntimeActive ? { splashes: files.splashes } : {}),
       buildTarget: target
     };
-    fs.writeFileSync(singleFilePath, singleFileHtml(outDir, files.manifest, target, renderer, embeddedProject, initialGridKind, macroEconomyActive, hostMonetization, remixEnabled, hudRuntimeActive), "utf8");
+    const embeddedSplashPlaylist = splashRuntimeActive
+      ? compileSplashPlaylist(target.splashPlaylistId, files.splashes.playlists[target.splashPlaylistId], embeddedProject.visuals)
+      : null;
+    fs.writeFileSync(singleFilePath, singleFileHtml(outDir, files.manifest, target, renderer, embeddedProject, initialGridKind, macroEconomyActive, hostMonetization, remixEnabled, hudRuntimeActive, embeddedSplashPlaylist), "utf8");
   }
 
   if (remixEnabled) {
@@ -520,23 +542,23 @@ function mimeType(filePath) {
   })[ext] ?? "application/octet-stream";
 }
 
-function singleFileHtml(outDir, manifest, target, renderer, projectData, initialGridKind, includeMacroEconomy = false, hostMonetization = null, remixEnabled = false, hudRuntimeActive = false) {
+function singleFileHtml(outDir, manifest, target, renderer, projectData, initialGridKind, includeMacroEconomy = false, hostMonetization = null, remixEnabled = false, hudRuntimeActive = false, splashPlaylist = null) {
   const virtual = new Map([
     [path.resolve(outDir, "project-data.js"), `export default ${JSON.stringify(projectData)};\n`]
   ]);
   const entryPath = path.resolve(outDir, "player.mjs");
   const entry = singleFileModuleBootstrap(entryPath, outDir, virtual);
-  let html = htmlTemplate(manifest, target, renderer, initialGridKind, includeMacroEconomy, hostMonetization, remixEnabled, hudRuntimeActive);
+  let html = htmlTemplate(manifest, target, renderer, initialGridKind, includeMacroEconomy, hostMonetization, remixEnabled, hudRuntimeActive, splashPlaylist);
   if (hudRuntimeActive) {
     html = html.replace("</head>", "  <!-- TowerForge HudCatalogV1 createHudDomRuntimeV1 createHudScreenGraphSessionV1 -->\n</head>");
   }
   html = html.replace(/\s*<link rel="manifest"[^>]*>/, "");
-  html = html.replace('  <link rel="stylesheet" href="./styles.css">', `  <style>${escapeInlineStyle(cssTemplate(target, hostMonetization))}</style>`);
+  html = html.replace('  <link rel="stylesheet" href="./styles.css">', `  <style>${escapeInlineStyle(cssTemplate(target, hostMonetization, splashPlaylist))}</style>`);
   if (renderer === "phaser") {
     const phaser = fs.readFileSync(path.join(outDir, "vendor", "phaser.min.js"), "utf8");
     html = html.replace('  <script src="./vendor/phaser.min.js"></script>', `  <script>${escapeInlineScript(phaser)}</script>`);
   }
-  html = html.replace('  <script src="./boot.js"></script>', `  <script>${escapeInlineScript(bootRecoveryTemplate(manifest, target, projectData.storyComics))}</script>`);
+  html = html.replace('  <script src="./boot.js"></script>', `  <script>${escapeInlineScript(bootRecoveryTemplate(manifest, target, projectData.storyComics, splashPlaylist))}</script>`);
   html = html.replace('  <script type="module" src="./player.mjs"></script>', `  <script>${escapeInlineScript(entry)}</script>`);
   const embeddedImageMimes = [...new Set(JSON.stringify(projectData.visuals ?? {}).match(/data:image\/(?:png|jpeg|webp);base64,/g) ?? [])].sort();
   if (embeddedImageMimes.length) html = html.replace("</head>", `  <!-- embedded image MIME markers: ${embeddedImageMimes.join(" ")} -->\n</head>`);
@@ -641,7 +663,54 @@ function hostMonetizationMarkup(hook) {
   return { top: section("top"), bottom: section("bottom"), menu: section("menu"), betweenWaves: section("between_waves") };
 }
 
-function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "hex", includeMacroEconomy = false, hostMonetization = null, remixEnabled = false, hudRuntimeActive = false) {
+function compileSplashPlaylist(id, playlist, visuals) {
+  return {
+    id,
+    label: playlist.label,
+    items: playlist.items.map((item) => ({
+      id: item.id,
+      spriteId: item.spriteId,
+      src: visuals.sprites[item.spriteId].src,
+      accessibleLabel: item.accessibleLabel,
+      ...(item.caption === undefined ? {} : { caption: item.caption }),
+      backgroundColor: item.backgroundColor,
+      fit: item.fit ?? "contain",
+      transition: item.transition ?? "fade_scale",
+      displayMs: item.displayMs ?? 1800,
+      minimumMs: item.minimumMs ?? 600,
+      transitionMs: item.transitionMs ?? 220
+    }))
+  };
+}
+
+function engineSplashMarkup() {
+  return `<section id="towerforge-engine-splash" class="towerforge-engine-splash" data-towerforge-system-surface="engine-splash" role="status" aria-live="polite" aria-label="Made with TowerForge">
+    <div class="towerforge-engine-splash-inner">
+      <svg class="towerforge-engine-splash-mark" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+        <path fill="#151a16" stroke="#7eb87e" stroke-width="3" stroke-linejoin="round" d="M32 4 56 18v28L32 60 8 46V18L32 4Z"/>
+        <path fill="none" stroke="#6ea8d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity=".72" d="m8 18 24 14 24-14M32 32v28"/>
+        <path fill="#e8e8e8" d="M19 18h7v5h4v-5h4v5h4v-5h7v11h-4v16.5L32 51l-9-5.5V29h-4V18Z"/>
+        <path fill="#7eb87e" d="M28 31h8v13l-4 2.5-4-2.5V31Z"/>
+        <path fill="#e8a44a" d="m47.5 8 1.5 3.5 3.5 1.5-3.5 1.5-1.5 3.5-1.5-3.5-3.5-1.5 3.5-1.5L47.5 8Z"/>
+      </svg>
+      <div class="towerforge-engine-credit">Made with TowerForge</div>
+      <div class="towerforge-engine-splash-progress" aria-hidden="true"><span></span></div>
+    </div>
+  </section>`;
+}
+
+function projectSplashMarkup(playlist) {
+  return `<section id="towerforge-project-splash" class="towerforge-project-splash" data-towerforge-project-splash="${esc(playlist.id)}" data-state="idle" role="status" aria-live="polite" aria-label="${esc(playlist.label)}" hidden>
+    <div class="towerforge-project-splash-frame">
+      <img id="towerforge-project-splash-image" class="towerforge-project-splash-image" alt="" hidden>
+      <p id="towerforge-project-splash-caption" class="towerforge-project-splash-caption" hidden></p>
+      <div id="towerforge-project-splash-progress" class="towerforge-project-splash-progress" aria-label="Loading game" hidden><span></span></div>
+    </div>
+    <button id="towerforge-project-splash-skip" class="towerforge-project-splash-skip" type="button">Skip intros</button>
+  </section>`;
+}
+
+function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "hex", includeMacroEconomy = false, hostMonetization = null, remixEnabled = false, hudRuntimeActive = false, splashPlaylist = null) {
   const title = esc(target.appTitle ?? manifest.name ?? "TowerForge TD");
   const battlefieldKind = initialGridKind === "square" ? "Square" : "Hex";
   const playfield = renderer === "phaser"
@@ -665,6 +734,7 @@ function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body${largeScreenPlayer ? ' data-towerforge-player-shell="desktop"' : ""}${hudRuntimeActive ? ` data-towerforge-hud-profile="${esc(target.hudProfileId)}"` : ""}>
+  ${engineSplashMarkup()}${splashPlaylist ? `\n  ${projectSplashMarkup(splashPlaylist)}` : ""}
   ${remixEnabled ? '<a class="towerforge-remix" data-towerforge-remix href="./source.tdpack" download>Remix this project</a>' : ""}
   ${monetizationMarkup.top}
   <main id="app">
@@ -765,7 +835,8 @@ function htmlTemplate(manifest, target, renderer = "canvas", initialGridKind = "
 `;
 }
 
-function bootRecoveryTemplate(manifest = {}, target = {}, storyComics = {}) {
+function bootRecoveryTemplate(manifest = {}, target = {}, storyComics = {}, splashPlaylist = null) {
+  if (splashPlaylist) return projectSplashBootRecoveryTemplate(manifest, target, storyComics, splashPlaylist);
   const scope = target.appId || manifest.name || "game";
   const profileKey = `towerforge:progress:${scope}`;
   const storyNamespace = `${storyComics.seenStoragePrefix || "story_seen_"}${scope}:`;
@@ -783,9 +854,40 @@ function bootRecoveryTemplate(manifest = {}, target = {}, storyComics = {}) {
       } catch {}
       location.reload();`;
   return `(() => {
+  const splash = document.getElementById("towerforge-engine-splash");
+  const splashStartedAt = Date.now();
+  let splashTimer = 0;
+  let runtimeReady = false;
+  window.__towerforgeSplashDismissed = false;
+  const finishSplash = () => {
+    if (splash) {
+      splash.hidden = true;
+      splash.dataset.state = "done";
+    }
+    window.__towerforgeSplashDismissed = true;
+    if (runtimeReady) window.__towerforgeBootOk = true;
+  };
+  const dismissSplash = (immediate = false) => {
+    if (window.__towerforgeSplashDismissed) return;
+    if (!splash) { finishSplash(); return; }
+    if (splashTimer) clearTimeout(splashTimer);
+    const minimumVisibleMs = immediate ? 0 : 700;
+    const delay = Math.max(0, minimumVisibleMs - (Date.now() - splashStartedAt));
+    splashTimer = setTimeout(() => {
+      splash.dataset.state = "leaving";
+      const reducedMotion = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+      setTimeout(finishSplash, immediate || reducedMotion ? 0 : 220);
+    }, delay);
+  };
+  window.__towerforgeCompleteBoot = () => {
+    runtimeReady = true;
+    dismissSplash(false);
+    return true;
+  };
   const reveal = (reason) => {
     const overlay = document.getElementById("boot-error");
-    if (!overlay || window.__towerforgeBootOk) return;
+    if (!overlay || runtimeReady || window.__towerforgeBootOk) return;
+    dismissSplash(true);
     const message = document.getElementById("boot-error-message");
     if (message && reason) message.textContent = String(reason);
     overlay.hidden = false;
@@ -801,7 +903,265 @@ function bootRecoveryTemplate(manifest = {}, target = {}, storyComics = {}) {
 })();\n`;
 }
 
-function cssTemplate(target, hostMonetization = null) {
+function projectSplashBootRecoveryTemplate(manifest = {}, target = {}, storyComics = {}, playlist) {
+  const scope = target.appId || manifest.name || "game";
+  const profileKey = `towerforge:progress:${scope}`;
+  const storyNamespace = `${storyComics.seenStoragePrefix || "story_seen_"}${scope}:`;
+  const largeScreenPlayer = target.formFactor === "desktop" || target.formFactor === "responsive";
+  const resetPersistence = largeScreenPlayer
+    ? `try {
+        const request = indexedDB.deleteDatabase(${JSON.stringify(`towerforge-player-${scope}`)});
+        request.onsuccess = request.onerror = request.onblocked = () => location.reload();
+      } catch { location.reload(); }`
+    : `try {
+        for (let i = localStorage.length - 1; i >= 0; i -= 1) {
+          const key = localStorage.key(i) || "";
+          if (key === ${JSON.stringify(profileKey)} || key.startsWith(${JSON.stringify(storyNamespace)})) localStorage.removeItem(key);
+        }
+      } catch {}
+      location.reload();`;
+  return `(() => {
+  const playlist = ${JSON.stringify(playlist)};
+  const splash = document.getElementById("towerforge-engine-splash");
+  const projectSplash = document.getElementById("towerforge-project-splash");
+  const projectImage = document.getElementById("towerforge-project-splash-image");
+  const projectCaption = document.getElementById("towerforge-project-splash-caption");
+  const projectProgress = document.getElementById("towerforge-project-splash-progress");
+  const projectSkip = document.getElementById("towerforge-project-splash-skip");
+  const SPLASH_IMAGE_PRELOAD_TIMEOUT_MS = 2500;
+  const splashStartedAt = Date.now();
+  let splashTimer = 0;
+  let projectTimer = 0;
+  let runtimeReady = false;
+  let playbackFinished = false;
+  let authoredSkipped = false;
+  let bootFailed = false;
+  let advancing = false;
+  let currentIndex = -1;
+  let currentStartedAt = 0;
+  let currentItem = null;
+  window.__towerforgeSplashDismissed = false;
+  window.__towerforgeProjectSplashDismissed = false;
+
+  const reducedMotion = () => globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+  const maybeCompleteBoot = () => {
+    if (!bootFailed && runtimeReady && window.__towerforgeSplashDismissed && window.__towerforgeProjectSplashDismissed) {
+      window.__towerforgeBootOk = true;
+    }
+  };
+  const finishEngineSplash = () => {
+    if (splash) {
+      splash.hidden = true;
+      splash.dataset.state = "done";
+    }
+    window.__towerforgeSplashDismissed = true;
+    maybeCompleteBoot();
+  };
+  const dismissEngineSplash = (immediate = false, after = null) => {
+    if (window.__towerforgeSplashDismissed) {
+      after?.();
+      return;
+    }
+    if (!splash) {
+      finishEngineSplash();
+      after?.();
+      return;
+    }
+    if (splashTimer) clearTimeout(splashTimer);
+    const minimumVisibleMs = immediate ? 0 : 700;
+    const delay = Math.max(0, minimumVisibleMs - (Date.now() - splashStartedAt));
+    splashTimer = setTimeout(() => {
+      splash.dataset.state = "leaving";
+      setTimeout(() => {
+        finishEngineSplash();
+        after?.();
+      }, immediate || reducedMotion() ? 0 : 220);
+    }, delay);
+  };
+  const finishProjectSplash = () => {
+    if (projectTimer) clearTimeout(projectTimer);
+    if (projectSplash) {
+      projectSplash.hidden = true;
+      projectSplash.dataset.state = "done";
+    }
+    window.__towerforgeProjectSplashDismissed = true;
+    maybeCompleteBoot();
+  };
+  const transitionCurrent = (after, immediate = false) => {
+    if (!projectSplash || projectSplash.hidden || !currentItem) {
+      after();
+      return;
+    }
+    projectSplash.dataset.state = "leaving";
+    const duration = immediate || reducedMotion() || currentItem.transition === "cut" ? 0 : currentItem.transitionMs;
+    setTimeout(after, duration);
+  };
+  const completeProjectSplash = (immediate = false) => {
+    playbackFinished = true;
+    advancing = false;
+    if (projectTimer) clearTimeout(projectTimer);
+    if (!runtimeReady && !immediate) {
+      if (projectSplash) projectSplash.dataset.state = "waiting-runtime";
+      if (projectProgress) projectProgress.hidden = false;
+      return;
+    }
+    transitionCurrent(finishProjectSplash, immediate);
+  };
+  const preload = (item) => new Promise((resolve) => {
+    const image = new Image();
+    let settled = false;
+    let timeoutId = 0;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      image.onload = null;
+      image.onerror = null;
+      resolve(ok);
+    };
+    image.onload = async () => {
+      try {
+        if (typeof image.decode === "function") await image.decode();
+        finish(true);
+      } catch {
+        finish(false);
+      }
+    };
+    image.onerror = () => finish(false);
+    image.decoding = "async";
+    timeoutId = setTimeout(() => finish(false), SPLASH_IMAGE_PRELOAD_TIMEOUT_MS);
+    image.src = item.src;
+  });
+  const loaded = playlist.items.map((item) => preload(item));
+  const firstAvailable = async (startIndex) => {
+    for (let index = startIndex; index < playlist.items.length; index += 1) {
+      if (await loaded[index]) return { index, item: playlist.items[index] };
+    }
+    return null;
+  };
+  const showItem = ({ index, item }) => {
+    if (authoredSkipped) {
+      completeProjectSplash(true);
+      return;
+    }
+    currentIndex = index;
+    currentItem = item;
+    currentStartedAt = Date.now();
+    advancing = false;
+    projectSplash.hidden = false;
+    projectSplash.dataset.state = "playing";
+    projectSplash.dataset.itemId = item.id;
+    projectSplash.dataset.transition = item.transition;
+    projectSplash.style.backgroundColor = item.backgroundColor;
+    projectSplash.style.setProperty("--towerforge-project-transition-ms", (item.transition === "cut" ? 0 : item.transitionMs) + "ms");
+    projectImage.src = item.src;
+    projectImage.alt = item.accessibleLabel;
+    projectImage.style.objectFit = item.fit;
+    projectImage.hidden = false;
+    if (item.caption) {
+      projectCaption.textContent = item.caption;
+      projectCaption.hidden = false;
+    } else {
+      projectCaption.textContent = "";
+      projectCaption.hidden = true;
+    }
+    projectProgress.hidden = true;
+    if (projectTimer) clearTimeout(projectTimer);
+    projectTimer = setTimeout(() => void advance(true), item.displayMs);
+  };
+  const advance = async (force = false) => {
+    if (advancing || playbackFinished || !currentItem) return;
+    if (!force && Date.now() - currentStartedAt < currentItem.minimumMs) return;
+    advancing = true;
+    if (projectTimer) clearTimeout(projectTimer);
+    const next = await firstAvailable(currentIndex + 1);
+    if (!next) {
+      completeProjectSplash(false);
+      return;
+    }
+    transitionCurrent(() => showItem(next), false);
+  };
+  const skipAll = () => {
+    authoredSkipped = true;
+    if (!window.__towerforgeSplashDismissed) {
+      window.__towerforgeProjectSplashDismissed = true;
+      if (runtimeReady) dismissEngineSplash(false);
+      return;
+    }
+    completeProjectSplash(true);
+  };
+  projectSplash.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (event.target === projectSkip || projectSkip.contains(event.target)) skipAll();
+    else void advance(false);
+  }, true);
+  const stopSplashPointerInput = (event) => {
+    if (window.__towerforgeProjectSplashDismissed || projectSplash.hidden) return;
+    event.stopImmediatePropagation();
+  };
+  window.addEventListener("pointerdown", stopSplashPointerInput, true);
+  window.addEventListener("touchstart", stopSplashPointerInput, true);
+  window.addEventListener("keydown", (event) => {
+    if (window.__towerforgeProjectSplashDismissed) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      skipAll();
+    } else if (event.code === "Space" || event.key === "Enter") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void advance(false);
+    }
+  }, true);
+
+  window.__towerforgeCompleteBoot = () => {
+    runtimeReady = true;
+    if (playbackFinished && !window.__towerforgeProjectSplashDismissed) {
+      completeProjectSplash(false);
+    } else if (window.__towerforgeProjectSplashDismissed) {
+      dismissEngineSplash(false);
+    }
+    maybeCompleteBoot();
+    return true;
+  };
+
+  const beginProjectPlaylist = async () => {
+    const first = await firstAvailable(0);
+    if (authoredSkipped || !first) {
+      window.__towerforgeProjectSplashDismissed = true;
+      if (runtimeReady) dismissEngineSplash(false);
+      return;
+    }
+    dismissEngineSplash(false, () => showItem(first));
+  };
+  void beginProjectPlaylist();
+
+  const reveal = (reason) => {
+    const overlay = document.getElementById("boot-error");
+    if (!overlay || window.__towerforgeBootOk) return;
+    bootFailed = true;
+    authoredSkipped = true;
+    dismissEngineSplash(true);
+    finishProjectSplash();
+    const message = document.getElementById("boot-error-message");
+    if (message && reason) message.textContent = String(reason);
+    overlay.hidden = false;
+    document.getElementById("boot-reload").onclick = () => location.reload();
+    document.getElementById("boot-reset").onclick = () => {
+      ${resetPersistence}
+    };
+    document.getElementById("boot-reload").focus();
+  };
+  window.addEventListener("error", (event) => reveal(event.error?.message || event.message));
+  window.addEventListener("unhandledrejection", (event) => reveal(event.reason?.message || event.reason || "The game failed while starting."));
+  setTimeout(() => {
+    if (!runtimeReady) reveal("The game did not finish starting.");
+  }, 5000);
+})();\n`;
+}
+
+function cssTemplate(target, hostMonetization = null, splashPlaylist = null) {
   const bg = target.backgroundColor ?? "#111111";
   const monetizationStyles = hostMonetization ? `.host-monetization{position:relative;z-index:5;min-height:0}.host-monetization[data-surface="top"],.host-monetization[data-surface="bottom"]{display:grid;gap:6px;padding:6px 16px;background:var(--surface);border-color:var(--border)}.host-monetization[data-surface="top"]{border-bottom:1px solid var(--border)}.host-monetization[data-surface="bottom"]{border-top:1px solid var(--border)}.host-monetization[data-surface="menu"]{display:grid;gap:6px}.host-monetization[data-surface="between_waves"]{position:fixed;inset:0;z-index:30;pointer-events:none}.host-monetization-placement:empty{display:none}` : "";
   const desktopStyles = target.formFactor === "desktop" || target.formFactor === "responsive" ? `
@@ -830,8 +1190,12 @@ body[data-towerforge-player-shell="desktop"] input[type="checkbox"]{width:var(--
 #desktop-key-bindings legend{color:var(--muted)}#desktop-key-bindings input{width:100%;background:#111611;color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px}
 body[data-motion="reduced"] *{animation-duration:.001ms!important;transition-duration:.001ms!important}
 ` : "";
+  const projectSplashStyles = splashPlaylist ? `
+.towerforge-project-splash{position:fixed;inset:0;z-index:999;display:grid;place-items:center;overflow:hidden;padding:clamp(20px,5vw,64px);background:#0b0e0b;color:#f4f6f3;opacity:1;transition:opacity var(--towerforge-project-transition-ms,220ms) ease;pointer-events:auto}.towerforge-project-splash[hidden]{display:none}.towerforge-project-splash[data-state="leaving"]{opacity:0}.towerforge-project-splash-frame{width:min(78vw,920px);height:min(68vh,620px);display:grid;place-items:center;align-content:center;gap:22px;transition:transform var(--towerforge-project-transition-ms,220ms) ease,opacity var(--towerforge-project-transition-ms,220ms) ease}.towerforge-project-splash[data-transition="fade_scale"][data-state="leaving"] .towerforge-project-splash-frame{transform:scale(.975);opacity:0}.towerforge-project-splash[data-transition="fade"][data-state="leaving"] .towerforge-project-splash-frame{opacity:0}.towerforge-project-splash-image{display:block;width:100%;height:100%;min-height:0;object-position:center}.towerforge-project-splash-image[hidden]{display:none}.towerforge-project-splash-caption{max-width:720px;margin:0;color:#eef2ed;font-size:clamp(16px,2.2vw,24px);font-weight:620;line-height:1.35;text-align:center}.towerforge-project-splash-caption[hidden]{display:none}.towerforge-project-splash-skip{position:absolute;right:max(18px,env(safe-area-inset-right));bottom:max(18px,env(safe-area-inset-bottom));min-width:44px;min-height:44px;padding:10px 14px;border:1px solid #ffffff42;border-radius:8px;background:#0b0e0bbd;color:#fff}.towerforge-project-splash-progress{width:152px;height:2px;overflow:hidden;border-radius:2px;background:#ffffff35}.towerforge-project-splash-progress[hidden]{display:none}.towerforge-project-splash-progress span{display:block;width:42%;height:100%;border-radius:inherit;background:#fff;animation:towerforge-engine-progress 1.1s ease-in-out infinite}@media(prefers-reduced-motion:reduce){.towerforge-project-splash,.towerforge-project-splash-frame{transition-duration:0s!important}}
+` : "";
   return `:root{--bg:${bg};--surface:#191b19;--panel:#222620;--border:#364036;--text:#eff3ea;--muted:#9ca895;--accent:#8ac783;--path:#6b5540;--danger:#df6a59;--water:#427b88;--player-action-min-size:44px;--font:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
 *{box-sizing:border-box}html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:var(--font)}
+.towerforge-engine-splash{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;overflow:hidden;background:radial-gradient(circle at 50% 44%,#213025 0%,#121612 38%,#0b0e0b 100%);color:#e8e8e8;opacity:1;transition:opacity 220ms ease;pointer-events:auto}.towerforge-engine-splash::before{content:"";position:absolute;inset:0;background-image:linear-gradient(#7eb87e0a 1px,transparent 1px),linear-gradient(90deg,#7eb87e0a 1px,transparent 1px);background-size:32px 32px;mask-image:linear-gradient(to bottom,#0009,transparent 92%)}.towerforge-engine-splash[hidden]{display:none}.towerforge-engine-splash[data-state="leaving"]{opacity:0}.towerforge-engine-splash-inner{position:relative;display:grid;justify-items:center;gap:18px;padding:32px}.towerforge-engine-splash-mark{width:92px;height:92px;filter:drop-shadow(0 12px 28px #0009);animation:towerforge-engine-mark-pulse 1.8s ease-in-out infinite}.towerforge-engine-credit{font-size:16px;font-weight:620;letter-spacing:.2px;color:#dfe6df}.towerforge-engine-splash-progress{width:152px;height:2px;overflow:hidden;border-radius:2px;background:#354038}.towerforge-engine-splash-progress span{display:block;width:42%;height:100%;border-radius:inherit;background:linear-gradient(90deg,#6ea8d8,#7eb87e);animation:towerforge-engine-progress 1.1s ease-in-out infinite}@keyframes towerforge-engine-mark-pulse{0%,100%{transform:translateY(0);filter:drop-shadow(0 12px 28px #0009)}50%{transform:translateY(-3px);filter:drop-shadow(0 14px 34px #7eb87e2e)}}@keyframes towerforge-engine-progress{0%{transform:translateX(-115%)}100%{transform:translateX(355%)}}${projectSplashStyles}
 .towerforge-hud-root{position:fixed;inset:0;z-index:15;pointer-events:none}.towerforge-hud-root button,.towerforge-hud-root input,.towerforge-hud-root select,.towerforge-hud-root [role="button"]{pointer-events:auto;min-width:44px;min-height:44px}
 body[data-towerforge-hud-profile]>.towerforge-hud-root,body[data-towerforge-hud-profile] #towerforge-hud-root{display:block}
 body[data-towerforge-hud-profile] .desktop-action-bar,body[data-towerforge-hud-profile] header.hud,body[data-towerforge-hud-profile] .play-shell>aside.panel{display:none}
@@ -2040,7 +2404,7 @@ window.__towerforgeEnemyPoint = (enemyId) => {
   return { x: rect.left + point.x * rect.width / canvas.width, y: rect.top + point.y * rect.height / canvas.height };
 };
 window.__towerforgePickPoint = (point) => renderer.pickTile({ clientX: point.x, clientY: point.y }, game.getRenderSnapshot().tiles);
-window.__towerforgeBootOk = true;
+if (window.__towerforgeCompleteBoot?.() !== true) window.__towerforgeBootOk = true;
 const bootError = document.getElementById("boot-error");
 if (bootError) bootError.hidden = true;
 canvas.addEventListener("focus", () => syncKeyboardCursor(ensureKeyboardCoord()));
@@ -4729,7 +5093,7 @@ window.__towerforgePickPoint = (point) => {
   const rect = phaserGame.canvas.getBoundingClientRect();
   return scene.pickTile((point.x - rect.left) * scene.scale.width / rect.width, (point.y - rect.top) * scene.scale.height / rect.height);
 };
-window.__towerforgeBootOk = true;
+if (window.__towerforgeCompleteBoot?.() !== true) window.__towerforgeBootOk = true;
 const bootError = document.getElementById("boot-error");
 if (bootError) bootError.hidden = true;
 

@@ -931,6 +931,43 @@ python3 -m http.server 5175 --bind 127.0.0.1 --directory examples/starter.tdproj
 
 Open `http://127.0.0.1:5175`.
 
+Every player emitted by the official compiler starts with the system-owned **Made with
+TowerForge** splash. It is inline, works offline, remains visible until Canvas/Phaser boot
+completes, and gives way to the recovery overlay if boot fails. It is not part of `visuals.json`,
+`hud.json` or BuildTargets and cannot be disabled by Studio or MCP. A project may opt a
+BuildTargets-v2 target into one additional sequence through `splashPlaylistId`; its
+`content/splashes.json` playlist always runs after the engine splash and before the menu. The rule
+applies equally to web, single-file, PWA, mobile and generated desktop carriers. MIT forks may
+change their own compiler source.
+
+### Author a project splash playlist
+
+Use **Splash Studio** for the normal workflow:
+
+1. select the web, mobile or desktop build target;
+2. keep the locked TowerForge slot №1 unchanged;
+3. add slot №2, then choose an existing standalone sprite or import a PNG/JPEG/WebP;
+4. set an accessible label, optional caption, fit, transition and bounded timings;
+5. run Preview, then Save with the revision returned by preview;
+6. build the exact target and verify the sequence offline.
+
+The first enable promotes project metadata to schema v5 and BuildTargets v2. It creates no splash
+for starter/legacy projects until a valid image is selected. Disable removes only the target's
+`splashPlaylistId`; `content/splashes.json` and its assets remain reusable. One playlist contains
+1–8 items; authored display time is limited to 30 seconds. Runtime loading occurs in parallel. A
+finished playlist holds its last valid frame while runtime is still loading, whereas a corrupt or
+stalled image is skipped after a bounded preload. Pointer/touch, Space or Enter advances only after
+the current minimum; Escape or **Skip splashes** skips the remaining project frames.
+
+Agents use the same narrow flow:
+
+`describe_schema(splashes) → get_splash_playlists → get_splash_playlist_recipe →`
+`preview_splash_playlist → apply_splash_playlist(ifRevision) → validate_project`.
+
+Ask/Plan may read, obtain a recipe and preview. Only Act may apply. Import or generation must first
+use the existing staged asset workflow; external URLs, video, audio, SVG and authored HTML/CSS/JS
+are invalid.
+
 For a no-server handoff, run `npm run build -- --single-file` and open `dist/index.single.html`. For a distributable web ZIP with its own loopback launcher, use `npm run package:web`.
 
 Player progress is stored under the exact app-scoped key `towerforge:progress:<appId-or-project-name>`. Loading legacy, v1, or v2 progress migrates it only in memory; the next explicit difficulty/meta/mission action writes canonical v3. A newer-version profile is left byte-identical, including opaque data beyond current collection/byte budgets, and the player shows a warning. Corrupt progress falls back to a playable empty session and may be replaced by an explicit profile action. Reset remains the only operation that intentionally removes the protected exact key.

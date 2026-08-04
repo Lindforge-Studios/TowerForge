@@ -68,6 +68,7 @@ service. Нет соответствующего выбора или локал�
 | R19 — Native Desktop Distribution | Завершён и слит; exact-commit gates и два независимых sign-off; ADR Accepted | PR #35: first-class desktop target, native storage/lifecycle, cross-platform installers и optional signed updater |
 | R20 — Camera Projection Studio | Завершён и слит; exact-commit gates и два независимых sign-off; ADR Accepted | PR #36: visuals v4/CameraProfileV1, renderer-owned top-down/isometric/dimetric projection, shared hit testing/depth и guarded view assets |
 | R21 — Player Shell & HUD Constructor | Завершён и слит; full gates, CI и два sign-off; ADR Accepted | PR #37: opt-in `HudCatalogV1`, one DOM shell, responsive layouts/screen graph, action registry, семь presets, guarded Studio/MCP и conditional package parity |
+| R22 — Project Splash Playlists | Release candidate: R22.1–R22.4 GREEN; ADR Candidate, exact-commit gates и независимые sign-off завершаются | Build-target opt-in `SplashCatalogV1`: обязательный TowerForge splash → 1–8 локальных заставок автора → меню, active-only packaging и guarded Studio/MCP |
 
 ### Delivery snapshot на 2026-08-04
 

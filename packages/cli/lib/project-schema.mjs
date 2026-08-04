@@ -6,6 +6,7 @@ import {
 import { validateDistributionConfigV1 } from "../../distribution/src/index.mjs";
 import { validateCameraProfileCatalogV1 } from "../../renderer/src/camera-projector.mjs";
 import { validateHudCatalogV1 } from "../../player-runtime/src/hud-catalog.mjs";
+import { validateSplashCatalogV1 } from "../../player-runtime/src/splash-catalog.mjs";
 
 export const PROJECT_SCHEMA_VERSION = 5;
 export const MECHANICS_PROJECT_SCHEMA_VERSION = 3;
@@ -171,7 +172,9 @@ export function validateProjectSchemas(files) {
   validateNarrative(files, err, warn);
   const hudCatalog = validateHud(files, err);
   validateHudAssets(hudCatalog, files.visuals, err);
-  validateBuildTargets(files.buildTargets, err, files.visuals, hudCatalog);
+  const splashCatalog = validateSplashes(files, err);
+  validateSplashAssets(splashCatalog, files.visuals, err);
+  validateBuildTargets(files.buildTargets, err, files.visuals, hudCatalog, splashCatalog);
   if ((files.buildTargets?.schemaVersion ?? 1) === 2 && files.manifest?.schemaVersion !== PROJECT_SCHEMA_VERSION) {
     err(
       "project",
@@ -220,6 +223,61 @@ function validateHudAssets(hudCatalog, visuals, err) {
       const spriteId = profile.assetRoles?.[authoredAssetId] ?? authoredAssetId;
       if (spriteId !== undefined && !Object.hasOwn(sprites, spriteId)) {
         err("hud", profileId, `profiles.${profileId}.commonNodes.${node.id}.properties.assetId`, `HUD node references missing sprite or asset role "${authoredAssetId}".`);
+      }
+    }
+  }
+}
+
+function validateSplashes(files, err) {
+  const authored = files.splashesAuthored ?? files.splashes !== undefined;
+  if (!authored) return undefined;
+  if (files.manifest?.schemaVersion !== PROJECT_SCHEMA_VERSION) {
+    err("project", "project.json", "schemaVersion", `Projects that author splash playlists must use project schema v${PROJECT_SCHEMA_VERSION}.`);
+  }
+  const result = validateSplashCatalogV1(files.splashes);
+  if (!result.ok) {
+    err(
+      "splashes",
+      "content/splashes.json",
+      result.error?.fieldPath ?? "root",
+      result.error?.message ?? "content/splashes.json is invalid."
+    );
+    return undefined;
+  }
+  return result.catalog;
+}
+
+function validateSplashAssets(splashCatalog, visuals, err) {
+  if (!splashCatalog) return;
+  const sprites = visuals?.sprites ?? {};
+  for (const [playlistId, playlist] of Object.entries(splashCatalog.playlists)) {
+    for (let index = 0; index < playlist.items.length; index += 1) {
+      const item = playlist.items[index];
+      const fieldPath = `playlists.${playlistId}.items.${index}.spriteId`;
+      if (!Object.hasOwn(sprites, item.spriteId)) {
+        err("splashes", playlistId, fieldPath, `Splash item references missing sprite "${item.spriteId}".`);
+        continue;
+      }
+      const sprite = sprites[item.spriteId];
+      if (!isRecord(sprite) || typeof sprite.src !== "string" || sprite.atlas !== undefined || sprite.frame !== undefined) {
+        err("splashes", playlistId, fieldPath, `Splash sprite "${item.spriteId}" must be a standalone image, not an atlas frame.`);
+        continue;
+      }
+      const safeIssue = validateSafeAssetPath(sprite.src, `sprites.${item.spriteId}.src`);
+      if (safeIssue) {
+        err("splashes", playlistId, fieldPath, `Splash sprite must use a safe project-relative path: ${safeIssue}`);
+        continue;
+      }
+      const extension = /\.([A-Za-z0-9]+)$/u.exec(sprite.src)?.[1]?.toLowerCase();
+      const mimeByExtension = extension === "png"
+        ? "image/png"
+        : extension === "jpg" || extension === "jpeg"
+          ? "image/jpeg"
+          : extension === "webp"
+            ? "image/webp"
+            : undefined;
+      if (!mimeByExtension || (sprite.mimeType !== undefined && sprite.mimeType !== mimeByExtension)) {
+        err("splashes", playlistId, fieldPath, `Splash sprite "${item.spriteId}" must use matching PNG, JPEG, or WebP source and MIME type.`);
       }
     }
   }
@@ -1326,7 +1384,7 @@ function validateProceduralJuice(visuals, err, balance) {
   }
 }
 
-function validateBuildTargets(buildTargets, err, visuals = {}, hudCatalog = undefined) {
+function validateBuildTargets(buildTargets, err, visuals = {}, hudCatalog = undefined, splashCatalog = undefined) {
   if (!buildTargets || typeof buildTargets !== "object") {
     err("buildTargets", "build-targets.json", "root", "build-targets.json must be an object.");
     return;
@@ -1346,7 +1404,7 @@ function validateBuildTargets(buildTargets, err, visuals = {}, hudCatalog = unde
     const targetKeys = new Set([
       "id", "type", "platform", "renderer", "webDir", "outputDir", "market", "storeChannel",
       "appId", "appName", "label", "title", "appTitle", "backgroundColor", "appVersion", "manifest",
-      "formFactor", "viewport", "quality", "locale", "inputProfile", "cameraProfileId", "hudProfileId", "window", "bundle", "updater"
+      "formFactor", "viewport", "quality", "locale", "inputProfile", "cameraProfileId", "hudProfileId", "splashPlaylistId", "window", "bundle", "updater"
     ]);
     const targets = isRecord(buildTargets.targets) ? buildTargets.targets : {};
     if (!isRecord(buildTargets.defaults)) {
@@ -1428,6 +1486,17 @@ function validateBuildTargets(buildTargets, err, visuals = {}, hudCatalog = unde
           err("buildTargets", targetId, fieldPath, "Custom HUD profiles require desktop or responsive formFactor.");
         }
       }
+      if (target.splashPlaylistId !== undefined) {
+        const fieldPath = `targets.${targetId}.splashPlaylistId`;
+        if (typeof target.splashPlaylistId !== "string"
+          || target.splashPlaylistId.length === 0
+          || target.splashPlaylistId.length > 128
+          || /[\u0000-\u001f\u007f]/u.test(target.splashPlaylistId)) {
+          err("buildTargets", targetId, fieldPath, "splashPlaylistId must be a non-empty bounded splash playlist ID.");
+        } else if (!splashCatalog || !Object.hasOwn(splashCatalog.playlists, target.splashPlaylistId)) {
+          err("buildTargets", targetId, fieldPath, `Build target references missing splash playlist "${target.splashPlaylistId}".`);
+        }
+      }
       const viewportPath = `targets.${targetId}.viewport`;
       if (!isRecord(target.viewport)) {
         err("buildTargets", targetId, viewportPath, "viewport must be an object.");
@@ -1463,6 +1532,13 @@ function validateBuildTargets(buildTargets, err, visuals = {}, hudCatalog = unde
         if (target.updater !== undefined) {
           err("buildTargets", targetId, `targets.${targetId}.updater`, "updater is available only for desktop targets.");
         }
+      }
+    }
+  }
+  if (schemaVersion !== 2) {
+    for (const [targetId, target] of Object.entries(buildTargets.targets ?? {})) {
+      if (isRecord(target) && target.splashPlaylistId !== undefined) {
+        err("buildTargets", targetId, `targets.${targetId}.splashPlaylistId`, "splashPlaylistId requires build-targets.json schemaVersion 2.");
       }
     }
   }

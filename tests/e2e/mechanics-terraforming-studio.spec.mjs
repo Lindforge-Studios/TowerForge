@@ -393,7 +393,13 @@ async function materializeRecipe(page, {
   await page.locator("#mechanics-terraforming-recipe-source-tag").selectOption(sourceTag);
   await page.locator("#mechanics-terraforming-recipe-destination").selectOption(destinationId);
   await page.locator("#mechanics-terraforming-recipe-transition-id").fill(transitionId);
+  const responsePromise = page.waitForResponse((response) => (
+    response.request().method() === "POST"
+      && new URL(response.url()).pathname === "/api/mechanics/recipe"
+  ), { timeout: 45_000 });
   await page.locator("#btn-mechanics-new-profile").click();
+  const response = await responsePromise;
+  expect(response.ok()).toBe(true);
   await expect(page.locator("#mechanics-profile-id")).toHaveValue(recipeId);
   await expect(page.locator(`[data-transition-key="${transitionId}"]`)).toBeVisible();
 }

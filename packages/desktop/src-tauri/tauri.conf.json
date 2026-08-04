@@ -47,7 +47,14 @@
       "frameworks": [],
       "signingIdentity": "-",
       "entitlements": "Entitlements.plist",
-      "minimumSystemVersion": "10.13"
+      "minimumSystemVersion": "10.13",
+      "dmg": {
+        "background": "dmg-background.png",
+        "windowPosition": { "x": 200, "y": 120 },
+        "windowSize": { "width": 660, "height": 420 },
+        "appPosition": { "x": 180, "y": 255 },
+        "applicationFolderPosition": { "x": 480, "y": 255 }
+      }
     },
     "linux": {
       "deb": {

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const SKILL_PATH = path.resolve("plugins/towerforge/skills/towerforge-authoring/SKILL.md");
 
-describe("public TowerForge authoring skill parity through R21", () => {
+describe("public TowerForge authoring skill parity through R22", () => {
   it("routes every post-R11 domain through its narrow discovery and guarded workflow", () => {
     const skill = fs.readFileSync(SKILL_PATH, "utf8");
     const workflows = [
@@ -17,7 +17,8 @@ describe("public TowerForge authoring skill parity through R21", () => {
       ["Distribution", "read_distribution_config", "preview_distribution_config", "apply_distribution_config", "preview_publish_candidate"],
       ["player targets", "read_player_targets", "desktop_large_screen", "native_desktop_game", "apply_player_target"],
       ["Camera", "get_camera_profiles", "preview_camera_profile", "apply_camera_profile"],
-      ["HUD", "get_hud_profiles", "preview_hud_profile", "apply_hud_profile", "render_hud_preview"]
+      ["HUD", "get_hud_profiles", "preview_hud_profile", "apply_hud_profile", "render_hud_preview"],
+      ["Project splash", "get_splash_playlists", "get_splash_playlist_recipe", "preview_splash_playlist", "apply_splash_playlist"]
     ];
     for (const terms of workflows) {
       for (const term of terms) expect(skill, `missing ${term}`).toContain(term);
