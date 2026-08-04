@@ -5071,3 +5071,21 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   Splash Studio browser acceptance passed 7/7 in one serial run; `typecheck`, `build:engine` and
   source-to-plugin regeneration were GREEN. This is a new pre-freeze candidate and invalidates all
   earlier exact-commit gates and sign-offs.
+
+## 2026-08-04 — R22 accepted and merged
+
+- Exact candidate `5136d991e32176e46d7b782e0fdfd465a9b896d3` passed 466/466 unit files,
+  4,444/4,444 tests, 171/171 E2E, validation/simulation/build, plugin parity, mobile/desktop
+  packaging and Cargo 9/9.
+- Independent Code Verifier signed off with no blockers; independent Constructor Integration
+  Verifier signed off with no P0–P3 findings.
+- PR #40 merged to `main` as `aeadab0975512a5e5d032c171d3a0b8e64174eec`.
+
+## 2026-08-05 — v0.9.0 release candidate preparation
+
+- Release version domains advance together from 0.8.0 to 0.9.0: root npm package/lockfile,
+  desktop npm package, Tauri config, Cargo package/lockfile, MCP server protocol metadata and the
+  public Codex plugin manifest. Gameplay/project schema domains remain unchanged.
+- `v0.8.0` remains the current public unsigned pre-release while this branch is under review.
+  `v0.9.0` may be tagged only from the exact merged release commit after full gates, local macOS
+  bundle verification and the private six-platform candidate workflow succeed.

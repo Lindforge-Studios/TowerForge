@@ -1156,7 +1156,7 @@ CI is configured in `.github/workflows/ci.yml` for local-alpha quality gates. `.
 
 Public desktop releases follow [the desktop release policy](releasing.md). Until signing is configured, they remain GitHub pre-releases with `Unsigned build` in the title. To inspect a cross-platform candidate without publishing, run **Actions > Unsigned Desktop Builds > Run workflow** against the intended commit. To publish, merge the release commit, then create and push an annotated tag whose version matches all desktop manifests:
 
-The v0.8.0 public line includes accepted R0–R21. Never describe `main` or an open PR as released merely because local installers or Actions artifacts exist; the GitHub tag and published installer assets remain authoritative.
+The v0.8.0 public line includes accepted R0–R21. Accepted R22 is merged and prepared as the v0.9.0 source candidate. Never describe `main`, a release PR or a private Actions candidate as released merely because local installers or workflow artifacts exist; the exact GitHub tag, published installer assets and verified `SHA256SUMS` remain authoritative.
 
 ```bash
 git tag -a vX.Y.Z -m "TowerForge vX.Y.Z"
