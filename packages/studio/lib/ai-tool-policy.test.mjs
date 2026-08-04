@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { AI_TOOL_NAMES, aiWriteToolNames, isAiToolName, selectAiTools, selectAiToolsForMode } from "./ai-tool-policy.mjs";
+import {
+  AI_GUARDED_EXTENSION_TOOL_NAMES,
+  AI_SAFE_EXTENSION_TOOL_NAMES,
+  AI_TOOL_NAMES,
+  aiWriteToolNames,
+  isAiToolName,
+  selectAiTools,
+  selectAiToolsForMode
+} from "./ai-tool-policy.mjs";
+import { TOOLS } from "../../mcp/tools.mjs";
 
 describe("Studio AI tool policy", () => {
   const tools = [
@@ -103,5 +112,32 @@ describe("Studio AI tool policy", () => {
       "get_capabilities", "analyze_line_of_sight", "preview_map_elevations", "apply_map_elevations",
       "preview_mechanics_module", "apply_mechanics_module"
     ]);
+  });
+
+  it("exposes the complete safe extension set in Ask and Plan", () => {
+    const safeTools = TOOLS.filter((tool) => AI_SAFE_EXTENSION_TOOL_NAMES.includes(tool.name));
+    expect(safeTools).toHaveLength(AI_SAFE_EXTENSION_TOOL_NAMES.length);
+    expect(safeTools.every((tool) => ["read_only", "compute_only"].includes(tool.riskClass))).toBe(true);
+    expect(selectAiToolsForMode(safeTools, "ask").map((tool) => tool.name).sort())
+      .toEqual([...AI_SAFE_EXTENSION_TOOL_NAMES].sort());
+    expect(selectAiToolsForMode(safeTools, "plan").map((tool) => tool.name).sort())
+      .toEqual([...AI_SAFE_EXTENSION_TOOL_NAMES].sort());
+  });
+
+  it("exposes guarded extension writes only in Act mode", () => {
+    const guardedTools = TOOLS.filter((tool) => AI_GUARDED_EXTENSION_TOOL_NAMES.includes(tool.name));
+    expect(guardedTools).toHaveLength(AI_GUARDED_EXTENSION_TOOL_NAMES.length);
+    expect(guardedTools.every((tool) => tool.riskClass === "write_local")).toBe(true);
+    expect(selectAiToolsForMode(guardedTools, "ask")).toEqual([]);
+    expect(selectAiToolsForMode(guardedTools, "plan")).toEqual([]);
+    expect(selectAiToolsForMode(guardedTools, "act").map((tool) => tool.name).sort())
+      .toEqual([...AI_GUARDED_EXTENSION_TOOL_NAMES].sort());
+  });
+
+  it("keeps build, package, export and the superseded broad balance writer outside chat", () => {
+    for (const name of [
+      "apply_balance_patch", "build_project", "export_project_pack",
+      "package_desktop", "package_mobile", "package_web"
+    ]) expect(AI_TOOL_NAMES).not.toContain(name);
   });
 });

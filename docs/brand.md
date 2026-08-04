@@ -2,6 +2,8 @@
 
 TowerForge uses a compact product identity designed for editor chrome, desktop installers, repositories, and game-development documentation.
 
+Product UI, player-shell, HUD, accessibility, and component rules live in the root [`DESIGN.md`](../DESIGN.md). This document remains the source of truth for the name, mark, brand assets, and deterministic exports.
+
 ## Brand idea
 
 The mark combines three product ideas in one readable silhouette:

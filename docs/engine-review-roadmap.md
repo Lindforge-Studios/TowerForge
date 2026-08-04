@@ -41,13 +41,15 @@ The extension boundary is typed, versioned data plus engine descriptors. New gam
 that boundary; arbitrary JavaScript/Lua, host imports, renderer-owned rules, or broad filesystem
 tools remain out of scope.
 
-## Immediate Gate
+## Published Baseline
 
-R0–R21 are accepted and merged. [`v0.6.1`](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.6.1)
-remains the verified public R0–R17 baseline from exact commit `db1dd07`; `v0.8.0` is the active
-release candidate for R18–R21. Its remaining gate is distribution-only: exact merged release commit,
-manual native cross-platform candidate, annotated tag, six-installer assembly, published checksum
-verification and downloaded DMG verification.
+R0–R21 are accepted, merged and published in the unsigned
+[`v0.8.0` pre-release](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.8.0).
+Manual candidate workflow `30839934975` and tagged workflow `30846092399` built exact source commit
+`7e4cba99bb23b43f0118fb97b756e388001fd7d1`. All six public installers match `SHA256SUMS`, the
+release-note hashes match the downloaded checksum file, and the downloaded macOS app/DMG passed
+signature and container verification. No roadmap delivery gate remains open; the items below are
+post-roadmap product hardening rather than unfinished R18–R21 acceptance.
 
 ## Post-Roadmap Hardening
 

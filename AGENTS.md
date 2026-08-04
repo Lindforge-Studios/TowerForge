@@ -80,6 +80,7 @@ Run the relevant checks before declaring work complete:
 
 ## Canonical Documentation
 
+- `DESIGN.md` for product UI, player-shell, HUD, accessibility, and visual-system rules.
 - `ARCHITECTURE.md`
 - `docs/td-constructor-architecture.md`
 - `docs/ROADMAP.md`

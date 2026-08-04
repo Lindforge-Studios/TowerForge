@@ -18,15 +18,16 @@ Last reviewed: 2026-08-04
 - Tauri tests cover desktop state/menu/close behavior. Unsigned installers are built on native
   runners and require checksum plus platform bundle verification before publication.
 
-## Active Integration Gap
+## Release And Integration Status
 
 - R0–R21 are merged. R18–R21 each passed independent RED/GREEN increments, exact-commit gates,
   remote CI and fresh Code Verifier plus Constructor Integration Verifier sign-offs.
 - The immutable `v0.6.0` tag exposed a Windows-only CRLF pruning defect before publication, so no
-  public release was created for that tag. Cross-platform `v0.6.1` is published from exact commit
-  `db1dd07`; all six installers, `SHA256SUMS`, release-note hashes, source links and downloaded DMG
-  verification passed. The remaining delivery gap is publishing and independently verifying the
-  `v0.8.0` six-installer candidate containing R18–R21.
+  public release was created for that tag. Cross-platform `v0.6.1` remains the previous verified
+  R0–R17 baseline. The current public R0–R21 baseline is the unsigned
+  [`v0.8.0` pre-release](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.8.0), built
+  from exact commit `7e4cba9`; all six public installers, `SHA256SUMS`, release-note hashes, source
+  links, plugin mirror and downloaded DMG verification passed.
 
 ## Known Product Gaps
 
@@ -36,7 +37,7 @@ Last reviewed: 2026-08-04
 | P2 | Asset breadth | Theme packs and guarded generation/import hooks exist, but bundled tower/enemy sprite families and batch binding remain incomplete. | Separate content milestone |
 | P2 | Profiles | `PlayerProfileV3` persists one app-scoped profile; named save slots/loadouts and user-facing export/import/migration controls remain open. | Unscheduled |
 | P2 | Tiled coverage | Core terrain/path/object contracts are supported, but full arbitrary Tiled multi-layer/object-layer round-trip is intentionally absent. | Unscheduled |
-| P3 | Signed distribution | v0.8.0 remains an unsigned pre-release candidate. Developer ID notarization, Windows signing, store submission, hosted auth/matchmaking, and TowerForge Cloud need external deployment decisions and credentials. | Deployment milestone |
+| P3 | Signed distribution | v0.8.0 is a verified unsigned pre-release. Developer ID notarization, Windows signing, store submission, hosted auth/matchmaking, and TowerForge Cloud need external deployment decisions and credentials. | Deployment milestone |
 
 R14 and R15 are independent opt-in gameplay capabilities. R16 is an isolated replay/runtime surface;
 R17 is an isolated constructor distribution capability. Neither is included in ordinary legacy

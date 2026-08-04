@@ -578,7 +578,7 @@ To disable the feature, remove the mission's `enemyBehaviors` profile selection 
 module through the same preview/guarded-apply transaction. Confirm that the snapshot/checkpoint
 section and component UI disappear and ordinary root targeting returns. An absent catalog, a future
 module version, or an unselected profile must remain read-only/no-op and must not be normalized into
-an active v1 profile. See `docs/examples/opt-in-targetable-boss-components/` and Proposed
+an active v1 profile. See `docs/examples/opt-in-targetable-boss-components/` and
 [ADR 0053](adr/0053-r12-advanced-enemy-behaviors.md).
 
 ### Component-driven boss phases
@@ -626,7 +626,7 @@ live enemy ID to `{cohortId, role}`; renderers display those labels and never de
 steering. The same optional section is checkpointed, so continuous, restore, and journal replay
 must converge on one digest. Disable/unselect either required capability and verify that formation
 snapshot/UI cues disappear and ordinary shared-field movement returns. See
-`docs/examples/opt-in-formation-steering/` and Proposed
+`docs/examples/opt-in-formation-steering/` and
 [ADR 0053](adr/0053-r12-advanced-enemy-behaviors.md).
 
 ### Vanguard protection
@@ -654,7 +654,7 @@ TowerScript or Visual Graph event and must not be added to a script binding. Can
 display the authoritative event but may not select an interceptor. Continuous, checkpoint restore,
 and journal replay must converge on the same digest. Disable or unselect any prerequisite and
 confirm that the protection snapshot/checkpoint/UI disappears while ordinary dynamic-flow combat
-returns. See `docs/examples/opt-in-vanguard-protection/` and Proposed
+returns. See `docs/examples/opt-in-vanguard-protection/` and
 [ADR 0053](adr/0053-r12-advanced-enemy-behaviors.md).
 
 ## Projectile Ballistics
@@ -956,6 +956,15 @@ Configure AI under `Settings > AI Connections`; provider, model, and reasoning d
 
 Both paths send the user prompt and the tool results needed for the task to the selected provider. Account isolation protects credentials; it does not make inference offline. TowerForge disables local account-runtime transcript persistence, uses an empty private working directory, restricts Codex filesystem reads to that workspace, disables Claude built-in tools, exposes only validated TowerForge tools, and does not inherit API/cloud/proxy credentials into the runtime process. Linux runtimes also use a private `HOME`; macOS preserves the login `HOME` strictly because the official runtimes require it to discover the login Keychain. Never put provider credentials in `.tdproj` files, committed docs, traces, or support logs. Signing out can remove the provider-owned Keychain credential used by other Codex or Claude Code clients on the same macOS account; direct API keys are unaffected.
 
+Ask and Plan expose the explicitly allowlisted read/compute MCP surface, including navigation and
+multiplayer diagnostics, Persona QA, quest/map/balance/publish previews, Replay Lab, Distribution,
+Procedural Juice and player-target discovery. Act adds only the registered guarded or validated
+staging writes for destructibles, generated maps/assets, Procedural Juice, Distribution and player
+targets. `build_project`, all `package_*` tools, project-pack export, external upload, relay startup,
+signing/notarization and secret handling remain explicit human workflows outside AI Chat. Tool risk
+metadata is checked when each call is dispatched; changing the mode does not widen schemas or grant
+filesystem/shell access.
+
 AI Chat accepts up to eight JPEG/PNG/GIF/WebP images per turn, at most 4 MB each and 10 MB total. For a selected video up to 200 MB, the WebView decodes it locally and samples up to four JPEG frames. Only those frames are sent; the filename, original video, and audio are not sent. Codex attachment files use generated names inside its isolated turn directory and are deleted after the turn.
 
 ## Debugging
@@ -1035,7 +1044,7 @@ AI Chat accepts up to eight JPEG/PNG/GIF/WebP images per turn, at most 4 MB each
   before guarded Apply. A reusable profile may also be selected by a BuildTargets-v2 desktop or
   responsive target. Resolution is strictly mission -> map -> build target -> built-in top-down.
   Disable removes only the selected binding and preserves the profile for re-enable. Agents use
-  `describe_schema(camera) -> read_camera_profiles -> get_camera_recipe -> preview_camera_profile ->
+  `describe_schema(camera) -> get_camera_profiles -> get_camera_profile_recipe -> preview_camera_profile ->
   apply_camera_profile(ifRevision) -> validate_project`; there is no broad camera replace tool.
 - Camera projection issues: first inspect Preview clipping/depth/coverage diagnostics. Missing
   optional sprite variants use their base billboard and warn; a missing mandatory tileset material
@@ -1043,7 +1052,7 @@ AI Chat accepts up to eight JPEG/PNG/GIF/WebP images per turn, at most 4 MB each
   staged asset workflow. A target without `cameraProfileId` and without matching mission/map
   binding intentionally excludes the camera runtime and stays on the literal legacy top-down path.
   Canvas and Phaser must not add their own projection, depth or inverse-picking math.
-- HUD authoring (R21 implemented candidate): open **HUD Studio**, select a project-v5
+- HUD authoring: open **HUD Studio**, select a project-v5
   BuildTargets-v2 `desktop | responsive` target, then choose or create its `hudProfileId`. Use the
   device/variant/screen selectors, safe areas, rulers, snapping, layers, constraints, component
   states and mock snapshots before Preview and guarded Apply. The component inspector uses the
@@ -1069,7 +1078,7 @@ AI Chat accepts up to eight JPEG/PNG/GIF/WebP images per turn, at most 4 MB each
   PWA, single-file, portable web, native desktop and source `.tdpack`. The mandatory recovery
   overlay is built in and cannot be removed by a custom screen graph.
 
-Focused R21 checks, matching the implemented-candidate evidence in `progress.md`:
+Focused R21 checks, matching the accepted evidence in `progress.md`:
 
 ```bash
 npx vitest run packages/player-runtime/src/r21-hud-catalog.contract.test.mjs packages/cli/lib/r21-hud-project-schema.contract.test.mjs --reporter=verbose --maxWorkers=1
@@ -1084,9 +1093,9 @@ npx vitest run packages/cli/build.r21-hud-package-parity.contract.test.mjs --rep
 npx playwright test tests/e2e/r21-hud-generated.spec.mjs --workers=1
 ```
 
-These focused commands diagnose the candidate; they do not accept R21. Acceptance still requires
-the full exact-commit gates from `AGENTS.md` and independent Code Verifier plus Constructor
-Integration Verifier sign-offs. Any source change invalidates that evidence.
+These focused commands diagnose the R21 surfaces. The accepted R21 commit also passed the complete
+exact-commit gates from `AGENTS.md` and independent Code Verifier plus Constructor Integration
+Verifier sign-offs; future roadmap changes must establish their own fresh evidence.
 
 ## Deploy
 

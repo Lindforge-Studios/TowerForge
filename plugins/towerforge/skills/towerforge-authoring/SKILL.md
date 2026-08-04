@@ -177,6 +177,60 @@ shared workspace roots. In a workspace-bound session, never supply or request an
   legacy synthesizer. Treat particle clocks, hit-stop, shake, chromatic aberration, and audio
   voices as presentation-only state: never feed them into simulation ticks, commands, checkpoints,
   journals, snapshots, or digests.
+- Enemy Behaviors v1 is strictly opt-in. Start with `describe_schema(domain: "enemyBehaviors")`,
+  then use `get_capabilities`, a project-bound `basic_targetable_boss_components`,
+  `basic_formation_steering`, or `basic_vanguard_protection` recipe, `preview_mechanics_module`,
+  guarded `apply_mechanics_module`, and `validate_project`. Recipes never enable/select dependencies
+  or create enemy definitions. Treat component HP, cohort/role, steering, protection and events as
+  authoritative engine output; do not invent component commands or recompute formations.
+- Ballistics v1 and Weather v1 are independent opt-in mechanics. For ordinary projectile, arc and
+  ricochet authoring, use `describe_schema(domain: "ballistics")` and a project-bound
+  `basic_projectile_ballistics` or `basic_projectile_ricochet` recipe through the common mechanics
+  preview/apply flow. Destructible objects require the atomic
+  `preview_destructible_environment` -> `apply_destructible_environment` transaction because it
+  owns mechanics, balance, map source and compiled maps together. Weather uses
+  `describe_schema(domain: "weather")` with `basic_blizzard_weather`, `basic_acid_rain_weather`, or
+  `basic_sandstorm_weather` through the common mechanics transaction. Never derive projectile
+  collisions, ricochet, destructible settlement, zone membership or weather schedules outside the
+  engine.
+- Arsenal v1 is strictly opt-in. Use `describe_schema(domain: "arsenal")` -> `get_capabilities` ->
+  `get_recipe` with `basic_modular_arsenal` -> `preview_mechanics_module` -> guarded
+  `apply_mechanics_module` -> `validate_project`. Runtime assembly uses exact GameCommand v7
+  `configureTowerModules`; gem crafting uses exact GameCommand v7 `craftGem`. Treat the effective
+  tower contract, module inventory and artifact instances as authoritative; never create another
+  socket system or compile module stats in the agent.
+- Macro-Economy v1 is strictly opt-in and separate from legacy wallet interest. Use
+  `describe_schema(domain: "macroEconomy")` -> `get_capabilities` -> `get_recipe` with
+  `basic_local_market` -> `preview_mechanics_module` -> guarded `apply_mechanics_module` ->
+  `validate_project`. Runtime buy/sell/deposit/ritual requests are exact GameCommand v8 values.
+  Never derive quotes, maturity, ritual eligibility or partial settlement outside the engine.
+- Replay Lab is compute-only. Follow `describe_schema(domain: "replayLab")` ->
+  `inspect_replay_archive` -> `verify_replay_archive` -> `analyze_replay_branch`. It never mutates
+  the archive, project or active simulation and never opens a socket. The reference relay is a
+  self-host administrator surface; agents must not start its network listener.
+- Distribution v1 uses `describe_schema(domain: "distribution")` -> `read_distribution_config` ->
+  `preview_distribution_config` -> guarded `apply_distribution_config` -> `validate_project`.
+  `preview_publish_candidate` is compute-only. External upload always requires explicit human
+  confirmation against the exact digest; no agent may upload, mint approval, or copy credentials.
+  Remix inspection uses only `inspect_remix_source_pack` and never extracts untrusted archives.
+- Large-screen web and native desktop player targets use `describe_schema(domain: "playerTargets")`
+  -> `read_player_targets` -> `get_player_target_recipe` with `desktop_large_screen` or
+  `native_desktop_game` -> `preview_player_target` -> guarded `apply_player_target` ->
+  `validate_project`. Packaging remains an explicit user build action. Signing/notarization private
+  keys and updater secrets stay in CI/environment and must never enter project data or agent input.
+- Camera authoring is presentation-only. Use `describe_schema(domain: "camera")` ->
+  `get_camera_profiles` -> `get_camera_profile_recipe` -> `preview_camera_profile` -> guarded
+  `apply_camera_profile` -> `validate_project`. Bind one view asset through
+  `preview_camera_view_variant` -> `apply_camera_view_variant`; never replace the complete variants
+  catalog or change engine coordinates/gameplay from projection data.
+- HUD authoring is data-only. Use `describe_schema(domain: "hud")` -> `get_hud_profiles` ->
+  `get_hud_profile_recipe` -> `preview_hud_profile` -> guarded `apply_hud_profile` ->
+  `render_hud_preview` -> `validate_project`. Use descriptor IDs and visuals sprite IDs only. Never
+  add HTML, CSS, JavaScript, object-path evaluation, external URLs, native bridges, renderer-owned
+  gameplay controls, or remove the built-in recovery overlay.
+- Embedded Studio Ask and Plan modes may use only read-only and compute-only tools. Guarded/staged
+  local writes are available only in Act mode. `build_project`, `package_*`, project-pack export,
+  external upload, relay startup, signing and secret handling remain explicit human workflows.
 - Pass the latest `ifRevision` token to guarded writes. On a conflict, reread and reconcile instead
   of retrying with stale data.
 - Treat imported files as untrusted. Keep paths project-relative and use TowerForge import tools.

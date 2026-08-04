@@ -4697,3 +4697,53 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - Codex plugin mirror workflow `30851769278` completed successfully. Mirror commit `9c8ee75` records
   source commit `7e4cba99bb23b43f0118fb97b756e388001fd7d1`, and its manifest reports TowerForge,
   plugin and MCP server version `0.8.0`.
+
+# AI/MCP surface parity — Studio allowlist and public skill sync (2026-08-04)
+
+## Contract freeze and expected RED
+
+- Scope: expose the already-registered safe R7–R19 read/compute MCP tools to embedded Studio agents,
+  expose only the existing guarded/staged local writes in Act mode, and synchronize the public
+  `towerforge-authoring` skill through R21. No MCP schema, gameplay runtime, project format, build,
+  package, external upload, relay, signing, or secret-handling contract changes.
+- Safe extension set: navigation/multiplayer/replay diagnostics, Persona QA, quest/procedural-map/
+  balance/publish previews, staged-asset inspection, Procedural Juice reads/previews, Distribution
+  reads/previews, player-target reads/recipes/previews, remix/project-pack inspection, and
+  destructible-environment preview.
+- Act-only extension set: guarded apply for destructibles, Procedural Juice, Distribution and player
+  targets; procedural-map commit; validated asset stage/commit/discard.
+- Explicit exclusions remain `apply_balance_patch`, `build_project`, `export_project_pack`, and all
+  `package_*` tools. External upload/publish approval, relay listener startup, signing/notarization,
+  updater private keys, shell and arbitrary filesystem access remain unavailable.
+- RED command: `npx vitest run packages/studio/lib/ai-tool-policy.test.mjs packages/mcp/plugin-skill-parity.contract.test.mjs`.
+- Expected failures before production changes: the new safe/Act tool groups are absent from
+  `AI_TOOL_NAMES`; Ask/Plan cannot discover them; Act cannot invoke their guarded writes; the public
+  plugin skill does not name the R12–R21 workflows or their exact narrow tools.
+- RED evidence: the focused command failed exactly as expected with 4 failures and 5 passes.
+  `ai-tool-policy` failed because both extension groups were undefined; skill parity failed on the
+  first absent post-R11 workflow (`Enemy Behaviors`) and on the absent human-confirmation boundary.
+
+## GREEN implementation
+
+- Added explicit `AI_SAFE_EXTENSION_TOOL_NAMES` (25 read/compute tools) and
+  `AI_GUARDED_EXTENSION_TOOL_NAMES` (8 local writes). Ask/Plan receive only the safe group; the
+  existing risk-class filter makes the guarded group Act-only.
+- Kept `apply_balance_patch`, `build_project`, `export_project_pack`, `package_desktop`,
+  `package_mobile`, and `package_web` outside embedded chat. No external publish/upload, relay,
+  signing or secret tool was introduced.
+- Synchronized the public `towerforge-authoring` skill with R12–R21 workflows and their exact
+  descriptors, recipes, previews, guarded applies and human-only boundaries.
+- Focused GREEN command passed: 7 files / 31 tests, including policy, skill parity, Procedural Juice,
+  Replay Lab, Distribution, native desktop target and HUD AI acceptance.
+
+## Verification evidence
+
+- `npm run typecheck`: passed.
+- `npm run build:engine`: passed.
+- `npm run test`: passed, 457 files / 4,386 tests.
+- `npm run validate`: passed for the starter project.
+- `npm run build`: passed.
+- `npm run test:e2e`: passed, 163 tests across Studio and generated-player acceptance.
+- `npm run plugin:build`, `npm run plugin:validate`, and `npm run plugin:smoke`: passed.
+- The public skill passed `quick_validate.py`; the complete TowerForge plugin passed
+  `validate_plugin.py`. Source and bundled MCP runtimes remain in parity at 109 tools.

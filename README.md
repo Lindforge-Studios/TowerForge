@@ -13,7 +13,7 @@
 [![Desktop: Tauri 2](https://img.shields.io/badge/desktop-Tauri%202-E8A44A.svg)](packages/desktop)
 [![Локальные данные](https://img.shields.io/badge/данные-local--first-7EB87E.svg)](ARCHITECTURE.md)
 
-TowerForge — открытый и независимый от конкретного контента конструктор 2D tower-defense игр с гексагональными и квадратными картами. В него входят детерминированный движок симуляции на TypeScript, локальный браузерный редактор проектов `.tdproj`, Wang/autotile pipeline, безопасные пользовательские TowerScript-сценарии, CLI для проверки, headless-симуляции и анализа баланса, а также статическая веб-сборка с Canvas- или Phaser-рендерером.
+TowerForge — открытый и независимый от конкретного контента конструктор 2D tower-defense игр с гексагональными и квадратными картами. В него входят детерминированный движок симуляции на TypeScript, локальный редактор проектов `.tdproj`, Wang/autotile pipeline, безопасные TowerScript-сценарии, CLI, headless-симуляции и анализ баланса, а также mobile, large-screen web и native desktop player targets с Canvas- или Phaser-рендерером, presentation-only ракурсами камеры и data-only HUD.
 
 ## Загрузки
 
@@ -98,13 +98,15 @@ python3 -m http.server 5175 --bind 127.0.0.1 --directory examples/starter.tdproj
 - `content/balance.json` — константы, типизированный terrain registry, сложности, метапрогрессия, награды, способности, враги, башни, волны и миссии.
 - `content/mechanics.json` — необязательный versioned-каталог opt-in механик; без него проект сохраняет штатное legacy-поведение.
 - `content/world-map.json` — регионы и узлы миссий.
-- `content/visuals.json` — визуальный каталог v2; schema v3 опционально добавляет декларативный `proceduralJuice` v1 для частиц, синтезируемого аудио и camera cues без влияния на gameplay digest.
+- `content/visuals.json` — визуальный каталог v2; schema v3 опционально добавляет декларативный `proceduralJuice` v1, а schema v4 — presentation-only camera profiles и view variants.
+- `content/distribution.json` — optional Distribution v1 для воспроизводимой публикации, Remix policy и host-only monetization hooks.
+- `content/hud.json` — optional data-only `HudCatalogV1` для responsive HUD, экранов и меню строительства.
 - `content/story-comics.json` — сюжетные панели, связанные с миссиями.
 - `content/battle-backgrounds.json` — цвета миссий и необязательные фоновые спрайты.
 - `maps/src/*.tmj` — редактируемые исходные карты.
 - `maps/compiled/maps.json` — runtime-описания карт, созданные компилятором.
 - `scripts/**/*.tower.json` — детерминированная пользовательская логика; TowerScript v7 опционально добавляет Behavior Trees и HFSM, а v1–v6 сохраняют прежний путь.
-- `build-targets.json` — цели сборки.
+- `build-targets.json` — цели сборки; v2 добавляет opt-in `desktop | responsive` form factors, first-class native desktop target и ссылки на camera/HUD profiles.
 - `.towerforge/` — локальное состояние редактора и резервные копии; каталог нельзя добавлять в git.
 
 Миссия выбирает профили каталога через `mission.mechanics`; само наличие профиля не включает механику. Реализованные независимые профили охватывают combat/reactions, navigation/elevation/physics/terraforming, roguelite, heroes, logistics, director, quests, multiplayer, enemy behaviors, ballistics и weather. Mechanics Hub и AI/MCP показывают prerequisites для recipes, но никогда не включают зависимые профили и не патчат terrain, map, tower или ability автоматически. Обычные starter-проекты не содержат `content/mechanics.json` и сохраняют legacy path. Точные версии, зависимости и checkpoint/snapshot contracts находятся в [ARCHITECTURE.md](ARCHITECTURE.md), а пользовательские последовательности — в [runbook](docs/runbook.md) и [reference examples](docs/examples/README.md).
@@ -113,7 +115,7 @@ python3 -m http.server 5175 --bind 127.0.0.1 --directory examples/starter.tdproj
 
 Канонические границы модулей и инварианты описаны в [ARCHITECTURE.md](ARCHITECTURE.md). Продуктовая архитектура и roadmap находятся в [docs/td-constructor-architecture.md](docs/td-constructor-architecture.md).
 
-Бренд-ресурсы, палитра, правила нейминга и экспорта описаны в [docs/brand.md](docs/brand.md). Русский [social preview](assets/brand/towerforge-social-preview.png) подготовлен для настроек GitHub; рядом находится [английская версия](assets/brand/towerforge-social-preview-en.png).
+Единый стильгайд Studio, player shell и HUD находится в [DESIGN.md](DESIGN.md). Бренд-ресурсы, палитра, правила нейминга и экспорта описаны в [docs/brand.md](docs/brand.md). Русский [social preview](assets/brand/towerforge-social-preview.png) подготовлен для настроек GitHub; рядом находится [английская версия](assets/brand/towerforge-social-preview-en.png).
 
 ## Отчёты симуляции и баланса
 

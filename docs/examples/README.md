@@ -49,16 +49,23 @@ Reference examples show expected project and code patterns.
 | Projectile ricochet | `docs/examples/opt-in-projectile-ricochet/` | R13.3 bounded terrain/armor-surface recipe using topology-owned reflection and common damage resolution. |
 | Destructible environment | `docs/examples/opt-in-destructible-environment/` | R13.4 five-file reference for object durability plus route-safe atomic terrain/elevation mutation. |
 | Deterministic Weather | `docs/examples/opt-in-weather/` | R13.5 independent seeded Weather profile and mission selection; Blizzard, Acid Rain, and Sandstorm remain inert recipes until explicitly applied. |
+| Modular Arsenal and gem crafting | `docs/examples/opt-in-modular-arsenal/` | R14 Arsenal v1 plus the minimal Roguelite artifact catalog used by its exact deterministic crafting recipe. |
+| Deterministic Macro-Economy | `docs/examples/opt-in-macro-economy/` | R15 mission-selected market, fixed-term deposit and atomic ritual reference with independent legacy-economy behavior. |
 | Replay Lab contracts | `packages/engine/src/replay-lab/`, `tests/e2e/r16-replay-lab.spec.mjs` | R16 checksummed archive, detached Ghost, immutable What-If branch and read-only Studio acceptance. This is an explicit inspection workflow, not project content or a mechanics fixture. |
 | Self-host reference relay | `packages/reference-relay/` | R16.4 gameplay-free invite-code relay over the existing R8 capability handshake; network server/socket ports are injected by the deployer and the package is excluded from players. |
 | Web publish provider contracts | `packages/cli/lib/distribution/` | R17 explicit-confirm pipeline for filesystem/self-host, GitHub Pages and Cloudflare-compatible adapters; credentials remain provider-owned and every remote result must match the prepared candidate digest. |
 | Deterministic Remix source pack | `packages/cli/lib/distribution/remix-pack.mjs` | Public `.tdpack` v2 with bounded checksummed entries, private-state/path exclusion, pre-extraction validation, new project identity and exact RemixProvenanceV1. Ordinary project `.tdpack` v1 remains unchanged. |
 | Distribution Hub and AI safety | `tests/e2e/r17-distribution-studio.spec.mjs`, `packages/mcp/r17-distribution-authoring.contract.test.mjs` | Studio preview/save/reload/publish-confirm lifecycle plus MCP describe/read/preview/guarded-apply/validate; MCP intentionally exposes no approval-minting or upload tool. |
+| Distribution project fixture | `docs/examples/opt-in-web-distribution/` | Distribution v1/project-v4 metadata reference; it does not select mission mechanics or carry provider credentials. |
+| Large-screen web player | `packages/renderer/src/viewport-transform.mjs`, `tests/e2e/r18-large-screen-player.spec.mjs` | Shared bounded viewport/inverse-hit-test runtime plus the accepted six-viewport Canvas/Phaser matrix. |
+| First-class native desktop game | `packages/cli/lib/r19-native-desktop-target.contract.test.mjs`, `.github/workflows/r19-generated-game-acceptance.yml` | BuildTargets-v2 desktop carrier, native persistence/lifecycle, optional updater and six-installer workflow boundary. |
+| Camera Projection Studio | `packages/renderer/src/r20-camera-projector.contract.test.mjs`, `tests/e2e/r20-camera-studio.spec.mjs` | Shared top-down/isometric/dimetric projection, inverse picking, stable depth, guarded view assets and Studio authoring. |
+| HUD constructor and shared shell | `packages/player-runtime/src/r21-hud-catalog.contract.test.mjs`, `packages/player-shell/src/r21-hud-dom-runtime.regression.test.mjs`, `tests/e2e/r21-hud-generated.spec.mjs` | Data-only catalog/layout/screen graph, seven menu presets and one semantic DOM shell across Canvas/Phaser packages. |
 | Headless smoke sim | `packages/cli/sim.mjs` | CLI wrapper for engine-backed mission smoke runs. |
 | Static web build | `packages/cli/build.mjs` | Generates the playable web bundle from project data, compiled engine modules, renderer, and safe assets. |
 | Native packaging | `packages/cli/lib/packaging.mjs` | Canonical Capacitor/Tauri scaffold generation around a built web bundle. |
 | MCP tool registry | `packages/mcp/tools.mjs` | Canonical agent tool contracts, risk metadata, dry-run/validated writes, and rollback paths. |
-| Mechanics authoring surfaces | `packages/mcp/mechanics.test.mjs`, `packages/studio/public/mechanics-surface.test.mjs`, `packages/cli/build.mechanics.test.mjs` | Capability discovery, unavailable-module no-write behavior, planned Hub cards, and optional build embedding. |
+| Mechanics authoring surfaces | `packages/mcp/mechanics.test.mjs`, `packages/studio/public/mechanics-surface.test.mjs`, `packages/cli/build.mechanics.test.mjs` | Capability discovery, unavailable-module no-write behavior, module Hub cards, and optional build embedding. |
 | Codex plugin source | `plugins/towerforge` | Canonical marketplace manifest, authoring skill, assets, and generated local runtime source. |
 | Codex plugin release verifier | `distribution/codex-plugin/scripts/verify-release.mjs` | Mirror-owned verification of the source commit manifest and SHA-256 hashes before sync. |
 | Grid topology | `packages/engine/src/simulation/topology.ts` | Canonical odd-r hex and cardinal square neighbors, distance, lines, directions, and footprints. |
@@ -78,6 +85,3 @@ Reference examples show expected project and code patterns.
 - MCP fixtures for malformed input, invalid-write rollback, stale revisions, concurrent writers, permission denial, provider protocol drift, and agent-authored maps/scripts.
 - Renderer fixtures that prove sprite/atlas parity and enforce swarm-scale performance budgets.
 - A focused R13/R4.4B browser regression fixture proving expected guarded 400/409 responses do not become uncaught application errors.
-- `opt-in-modular-arsenal/` — R14 Arsenal v1 plus the minimal Roguelite gem catalog needed by its exact crafting recipe.
-- `opt-in-macro-economy/` — R15 local seeded market, fixed-term deposit and atomic ritual authoring.
-- `opt-in-web-distribution/` is the dedicated Distribution v1/project-v4 authoring reference. It remains constructor metadata and does not select mission mechanics.

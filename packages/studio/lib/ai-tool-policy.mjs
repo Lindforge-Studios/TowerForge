@@ -1,3 +1,42 @@
+export const AI_SAFE_EXTENSION_TOOL_NAMES = Object.freeze([
+  "analyze_multiplayer_handshake",
+  "analyze_navigation",
+  "analyze_replay_branch",
+  "diagnose_multiplayer_desync",
+  "get_player_target_recipe",
+  "get_procedural_juice",
+  "get_procedural_juice_recipe",
+  "inspect_project_pack",
+  "inspect_remix_source_pack",
+  "inspect_replay_archive",
+  "inspect_staged_asset",
+  "preview_destructible_environment",
+  "preview_distribution_config",
+  "preview_player_target",
+  "preview_procedural_juice",
+  "preview_procedural_juice_event",
+  "preview_procedural_map",
+  "preview_publish_candidate",
+  "preview_quest_generation",
+  "propose_balance_patches",
+  "read_distribution_config",
+  "read_player_targets",
+  "run_persona_qa",
+  "verify_multiplayer_replay",
+  "verify_replay_archive"
+]);
+
+export const AI_GUARDED_EXTENSION_TOOL_NAMES = Object.freeze([
+  "apply_destructible_environment",
+  "apply_distribution_config",
+  "apply_player_target",
+  "apply_procedural_juice",
+  "commit_procedural_map",
+  "commit_staged_asset",
+  "discard_staged_asset",
+  "stage_generated_asset"
+]);
+
 export const AI_TOOL_NAMES = Object.freeze([
   "describe_schema",
   "get_camera_profiles",
@@ -68,7 +107,9 @@ export const AI_TOOL_NAMES = Object.freeze([
   "apply_theme_pack",
   "set_battle_background",
   "write_map",
-  "compile_maps"
+  "compile_maps",
+  ...AI_SAFE_EXTENSION_TOOL_NAMES,
+  ...AI_GUARDED_EXTENSION_TOOL_NAMES
 ]);
 export const AI_MODES = Object.freeze(["ask", "plan", "act"]);
 

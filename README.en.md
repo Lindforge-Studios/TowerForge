@@ -13,7 +13,7 @@
 [![Desktop: Tauri 2](https://img.shields.io/badge/desktop-Tauri%202-E8A44A.svg)](packages/desktop)
 [![Local first](https://img.shields.io/badge/data-local--first-7EB87E.svg)](ARCHITECTURE.md)
 
-TowerForge is an open-source, content-agnostic constructor for 2D tower-defense games with per-map hex and square grids. It provides a deterministic TypeScript simulation engine, a local browser editor for `.tdproj` projects, a Wang/autotile pipeline, safe project-authored TowerScripts, a CLI for validation, headless simulation, and balance analysis, and a static web build target that produces a playable browser bundle (Canvas or Phaser).
+TowerForge is an open-source, content-agnostic constructor for 2D tower-defense games with per-map hex and square grids. It provides a deterministic TypeScript simulation engine, a local `.tdproj` editor, a Wang/autotile pipeline, safe project-authored TowerScripts, validation/headless/balance tooling, and mobile, large-screen web, and native desktop player targets with Canvas or Phaser, presentation-only camera projections, and a data-only HUD.
 
 ## Downloads
 
@@ -21,7 +21,7 @@ Desktop builds are published on [GitHub Releases](https://github.com/Lindforge-S
 
 ## Current status
 
-The source tree is preparing the unsigned `v0.8.0` desktop line. It adds the Large-Screen Web Player, first-class native desktop distribution, isometric/dimetric camera profiles, and the data-only HUD Studio to the published R0–R17 baseline. Presentation and gameplay extensions remain opt-in, and legacy targets are unchanged. Until the tagged workflow completes, the current public version remains [v0.6.1](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.6.1). The exact delivery status and boundaries live in the [roadmap](docs/ROADMAP.md).
+The current public version is the unsigned [v0.8.0 pre-release](https://github.com/Lindforge-Studios/TowerForge/releases/tag/v0.8.0). It adds the Large-Screen Web Player, first-class native desktop distribution, isometric/dimetric camera profiles, and the data-only HUD Studio to R0–R17. Presentation and gameplay extensions remain opt-in, and legacy targets are unchanged. The exact delivery status and boundaries live in the [roadmap](docs/ROADMAP.md).
 
 ## Product surface
 
@@ -98,13 +98,15 @@ A `.tdproj` directory is the source of a game:
 - `content/balance.json` stores constants, the typed terrain registry, difficulties, meta progression/rewards, abilities, enemies, towers, waves, and missions.
 - `content/mechanics.json` is an optional versioned catalog of opt-in mechanics; without it the project retains legacy behavior.
 - `content/world-map.json` stores regions and mission nodes.
-- `content/visuals.json` stores the v2 visual catalog; schema v3 optionally adds declarative `proceduralJuice` v1 particles, synthesized audio, and camera cues without changing gameplay digests.
+- `content/visuals.json` stores the v2 visual catalog; schema v3 optionally adds declarative `proceduralJuice` v1, while schema v4 adds presentation-only camera profiles and view variants.
+- `content/distribution.json` optionally stores Distribution v1 reproducible-publish, Remix-policy, and host-only monetization metadata.
+- `content/hud.json` optionally stores the data-only `HudCatalogV1` for responsive HUD, screens, and build menus.
 - `content/story-comics.json` stores mission-linked narrative panels.
 - `content/battle-backgrounds.json` stores mission colors and optional sprite backdrops.
 - `maps/src/*.tmj` stores editable hex/odd-r or square/cardinal map sources.
 - `maps/compiled/maps.json` stores runtime map definitions generated from source maps.
 - `scripts/**/*.tower.json` stores deterministic custom gameplay; TowerScript v7 optionally adds Behavior Trees and HFSM while v1–v6 keep their previous path.
-- `build-targets.json` stores output targets.
+- `build-targets.json` stores output targets; v2 adds opt-in `desktop | responsive` form factors, a first-class native desktop target, and camera/HUD profile bindings.
 - `.towerforge/` stores local editor state and backups and MUST NOT be committed.
 
 A mission selects catalog profiles through `mission.mechanics`; defining a profile does not activate it. Implemented independent profiles cover combat/reactions, navigation/elevation/physics/terraforming, roguelite, heroes, logistics, director, quests, multiplayer, enemy behaviors, ballistics, and weather. Mechanics Hub and AI/MCP expose recipe prerequisites but never activate dependencies or auto-patch terrain, map, tower, or ability data. Ordinary starter projects do not contain `content/mechanics.json` and retain the legacy path. Exact versions, dependencies, and checkpoint/snapshot contracts live in [ARCHITECTURE.md](ARCHITECTURE.md); authoring workflows live in the [runbook](docs/runbook.md) and [reference examples](docs/examples/README.md).
@@ -113,7 +115,7 @@ A mission selects catalog profiles through `mission.mechanics`; defining a profi
 
 Canonical module boundaries and invariants live in [ARCHITECTURE.md](ARCHITECTURE.md). Product architecture and roadmap details live in [docs/td-constructor-architecture.md](docs/td-constructor-architecture.md).
 
-Brand assets, palette, naming, and export instructions live in [docs/brand.md](docs/brand.md). The checked-in [English social preview](assets/brand/towerforge-social-preview-en.png) is ready for GitHub repository settings; a [Russian version](assets/brand/towerforge-social-preview.png) is included alongside it.
+The shared Studio, player-shell, and HUD style guide lives in [DESIGN.md](DESIGN.md). Brand assets, palette, naming, and export instructions live in [docs/brand.md](docs/brand.md). The checked-in [English social preview](assets/brand/towerforge-social-preview-en.png) is ready for GitHub repository settings; a [Russian version](assets/brand/towerforge-social-preview.png) is included alongside it.
 
 ## Simulation And Balance Reports
 
