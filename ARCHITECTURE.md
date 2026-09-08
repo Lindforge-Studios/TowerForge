@@ -435,3 +435,16 @@ Studio's Tileset Workbench imports PNG spritesheets plus TSJ/TSX Wang metadata, 
 - TowerScript v1-v6 is a structured JSON language rather than arbitrary JavaScript/Lua. R6 provides descriptor-driven JSON/Graph authoring and explicit session-local trace/step/rewind debugging, but no general language server, persistent breakpoints, or resumable partial ticks. Mechanics outside the current action library still require a typed engine action/event extension.
 - R8 provides deterministic local/self-hosted protocol primitives and an injected WebSocket adapter, not hosted accounts, authentication, lobby discovery, matchmaking, NAT traversal, or a managed relay service.
 - Account-runtime integrations depend on pinned official Codex/Claude protocols. Codex dynamic tools are currently an experimental App Server field; protocol drift must fail closed and be covered by adapter tests before dependency upgrades.
+
+## R23 browser/mobile readiness
+
+The explicit `responsive_web_mobile` player-target recipe reuses project v5/BuildTargets v2
+with `formFactor: responsive` and `inputProfile: hybrid`. Preview returns a timing notice;
+apply leaves legacy targets and defaults untouched. Studio Playtest selects its target and
+reuses the player-runtime 60 Hz clock for desktop/responsive targets. Headless durations now
+subdivide within the engine tick limit and reject invalid numbers before mutation.
+`TowerDefenseGame.clearPresentationEvents()` clears presentation events and their cursor
+atomically, preserving valid checkpoint state after drawing. Fixed-timing players use the
+existing rotating session store for action/periodic/background saves and paused Continue.
+The compact responsive browser adapter relocates existing controls only; custom HUD targets
+retain the R21 shell and legacy targets receive no new imports. See [ADR 0064](docs/adr/0064-r23-web-mobile-readiness.md).

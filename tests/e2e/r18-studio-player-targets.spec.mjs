@@ -85,6 +85,32 @@ test.describe("R18 Studio large-screen target allocation (RED)", () => {
       }
     });
   });
+  test("R23 explicitly adds a responsive target and selects fixed timing in Playtest", async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("towerforge:welcomed", "1");
+      localStorage.setItem("towerforge:language", "en");
+    });
+    await page.goto(studioUrl);
+    await page.locator('[data-tab="buildtargets"]').click();
+    const before = readPlayerTargets(projectDir);
+    await page.locator("#btn-add-responsive-target").click();
+    await expect(page.locator("#confirm-body")).toContainText("FPS");
+    expect(readPlayerTargets(projectDir)).toEqual(before);
+    const response = page.waitForResponse(r => r.url().endsWith("/api/player-targets/apply") && r.ok());
+    await page.locator("#confirm-ok").click();
+    await response;
+    await expect.poll(() => readPlayerTargets(projectDir).targets.responsive?.formFactor).toBe("responsive");
+    await page.locator('[data-tab="playtest"]').click();
+    await expect(page.locator("#pt-target")).toHaveValue("responsive");
+    await expect(page.locator("#pt-target option:checked")).toContainText("Fixed timing");
+    await page.locator("#pt-target").selectOption(Object.keys(before.targets).find(id => !before.targets[id].formFactor));
+    await expect(page.locator("#pt-target option:checked")).toContainText("Legacy timing");
+    await page.locator("#pt-target").selectOption("responsive");
+    await page.locator("#pt-start").click();
+    await expect(page.locator("#pt-wave")).not.toHaveText("0 / 0");
+    expect(readPlayerTargets(projectDir).defaults).toEqual(before.defaults);
+  });
+
 });
 
 async function waitForHttp(url, child, childOutput) {

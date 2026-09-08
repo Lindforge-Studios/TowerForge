@@ -26,7 +26,7 @@ describe("R19.1 MCP first-class native desktop target surface", () => {
             targets: ["dmg", "nsis", "msi", "appimage", "deb", "rpm"]
           }
         },
-        recipes: ["desktop_large_screen", "native_desktop_game"],
+        recipes: ["desktop_large_screen", "native_desktop_game", "responsive_web_mobile"],
         packaging: { tool: "package_desktop", targetSpecific: true, legacyWebAdapter: true }
       }
     });
@@ -34,7 +34,7 @@ describe("R19.1 MCP first-class native desktop target surface", () => {
 
   it("publishes a closed AI schema for the native target and exact recipe selection", () => {
     const recipe = tool("get_player_target_recipe");
-    expect(recipe.inputSchema.properties.recipeId.enum).toEqual(["desktop_large_screen", "native_desktop_game"]);
+    expect(recipe.inputSchema.properties.recipeId.enum).toEqual(["desktop_large_screen", "native_desktop_game", "responsive_web_mobile"]);
 
     const target = tool("preview_player_target").inputSchema.properties.target;
     expect(target.properties.platform.enum).toEqual(["web", "android", "ios", "desktop"]);

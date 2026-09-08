@@ -2926,6 +2926,9 @@ const server = http.createServer(async (req, res) => {
       }
       return serveStatic(res, path.join(PUBLIC_DIR, "index.html"));
     }
+    if (pathname === "/player-runtime/fixed-simulation-clock.mjs") {
+      return serveStatic(res, path.join(repoRoot, "packages", "player-runtime", "src", "fixed-simulation-clock.mjs"));
+    }
     if (pathname.startsWith("/renderer/")) {
       const rendererPath = path.join(repoRoot, "packages", "renderer", "src", path.normalize(pathname.slice("/renderer/".length)).replace(/^(\.\.[/\\])+/, ""));
       if (rendererPath.startsWith(path.join(repoRoot, "packages", "renderer", "src")) && fs.existsSync(rendererPath)) {

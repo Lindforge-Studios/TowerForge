@@ -49,6 +49,22 @@ describe("R18 fixed simulation clock", () => {
     );
   });
 
+  it.each([1, 2, 4])("keeps the same battle at 20/30/60/120 FPS at speed %s", async (speed) => {
+    const { engine, content } = await loadContentRegistry(projectDir);
+    const digests = [];
+    for (const fps of [20, 30, 60, 120]) {
+      const game = new engine.TowerDefenseGame({ content, missionId: content.defaultMissionId, seed: "r23" });
+      game.placeTower("arrow_tower", { q: 5, r: 1 });
+      game.placeTower("cannon_tower", { q: 9, r: 1 });
+      game.startNextWave();
+      const clock = createFixedSimulationClockV1({ timeUnitSeconds: content.constants.timeUnitSeconds });
+      for (const elapsed of frameSchedule(2_000, fps)) clock.advance(elapsed, speed, units => game.tick(units));
+      expect(game.getSnapshot().missionElapsed).toBeCloseTo(2 / content.constants.timeUnitSeconds * speed, 8);
+      digests.push(game.getStateDigest());
+    }
+    expect(new Set(digests).size).toBe(1);
+  });
+
   it("bounds frame catch-up and engine tick units without leaking paused or malformed time", () => {
     const units = [];
     const clock = createFixedSimulationClockV1({ timeUnitSeconds: 0.1 });

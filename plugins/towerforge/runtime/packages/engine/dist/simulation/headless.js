@@ -16,7 +16,12 @@ export function applySimulationAction(game, action) {
     return dispatchGameCommand(game, payload);
 }
 export function tickHeadless(game, units, step = 0.1) {
-    const safeStep = Math.max(0.01, step);
+    if (!Number.isFinite(units) || units < 0)
+        throw new RangeError("Headless duration must be finite and non-negative.");
+    if (!Number.isFinite(step) || step <= 0)
+        throw new RangeError("Headless step must be finite and positive.");
+    // The public engine tick caps each call at 0.2 units. Never count discarded time.
+    const safeStep = Math.min(0.2, Math.max(0.01, step));
     for (let elapsed = 0; elapsed < units; elapsed += safeStep) {
         game.tick(Math.min(safeStep, units - elapsed));
     }

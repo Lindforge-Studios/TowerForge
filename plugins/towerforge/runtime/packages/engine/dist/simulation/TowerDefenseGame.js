@@ -2565,6 +2565,11 @@ export class TowerDefenseGame {
     getSnapshot() {
         return this.buildSnapshot(true);
     }
+    /** Acknowledge already presented events without leaving an unrestorable event cursor. */
+    clearPresentationEvents() {
+        this.lastEvents = [];
+        this.scriptEventCursor = 0;
+    }
     getRenderSnapshot() {
         return this.buildSnapshot(false);
     }

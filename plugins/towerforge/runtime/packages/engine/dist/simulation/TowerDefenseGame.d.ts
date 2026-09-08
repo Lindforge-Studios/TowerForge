@@ -302,6 +302,8 @@ export declare class TowerDefenseGame {
     unlockHeroSkill(heroId: string, skillId: string): ActionResult;
     tick(deltaUnits: number): void;
     getSnapshot(): GameSnapshot;
+    /** Acknowledge already presented events without leaving an unrestorable event cursor. */
+    clearPresentationEvents(): void;
     getRenderSnapshot(): GameSnapshot;
     /** Export only the portable run-owned result; sockets and other battle state never cross missions. */
     exportCampaignBattleSettlement(): CampaignBattleSettlementV1 | undefined;

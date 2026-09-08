@@ -357,3 +357,12 @@ Studio имеет русский первичным документируемы
 | Architecture boundaries | `ARCHITECTURE.md` и `docs/adr/` |
 
 Если реализация и этот документ расходятся, исправление должно явно выбрать источник истины: багфикс приводит код к гайду; сознательное изменение дизайн-системы сначала обновляет `DESIGN.md`, затем tokens/components и проверки.
+
+## Responsive built-in battle shell (R23)
+
+For an explicitly selected responsive target without an authored HUD, widths up to 900 CSS px
+use a persistent HP/resources/wave/pause/menu strip and bottom construction/sell/upgrade bar.
+Landscape reduces the bottom bar to one row. Secondary controls live in a keyboard-contained
+menu; all touch controls have a 44×44 CSS px minimum and respect safe-area insets. The playfield
+occupies the remaining viewport with no document scrolling. Wider layouts restore the original
+R18 controls. Custom HUD screen graphs continue to own their presentation.

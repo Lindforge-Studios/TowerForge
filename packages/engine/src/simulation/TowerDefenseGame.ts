@@ -3444,6 +3444,12 @@ export class TowerDefenseGame {
     return this.buildSnapshot(true);
   }
 
+  /** Acknowledge already presented events without leaving an unrestorable event cursor. */
+  clearPresentationEvents(): void {
+    this.lastEvents = [];
+    this.scriptEventCursor = 0;
+  }
+
   getRenderSnapshot(): GameSnapshot {
     return this.buildSnapshot(false);
   }

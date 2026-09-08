@@ -1,3 +1,4 @@
+import { createFixedSimulationClockV1 } from "/player-runtime/fixed-simulation-clock.mjs";
 import { createCanvasRenderer, projectElevationCues } from "/renderer/index.mjs";
 import { AUDIO_EVENTS } from "/renderer/audio.mjs";
 import { LANGUAGES, getLanguage, initI18n, setLanguage } from "/i18n.js";
@@ -14850,6 +14851,31 @@ function renderBuildTargetsTab() {
 
   wireLegacyBuildTargetAdd(bt);
 
+  const addResponsiveBtn = $("btn-add-responsive-target");
+  if (addResponsiveBtn) addResponsiveBtn.onclick = async () => {
+    if (S.dirty) { toast("Save changes before adding a target.", "warn"); return; }
+    try {
+      const read = await apiGet("/api/player-targets");
+      const targetId = allocatePlayerTargetId(read.targets, "responsive");
+      const recipe = await apiPost("/api/player-targets/recipe", { recipeId: "responsive_web_mobile", targetId });
+      const target = recipe.target;
+      const preview = await apiPost("/api/player-targets/preview", { targetId, target });
+      if (!preview.ok) throw new Error("Responsive target does not pass validation.");
+      if (!(await confirmDialog({ title: "Add browser and mobile target?", message: preview.timingNotice, confirmLabel: "Add target", danger: false }))) return;
+      const applied = await apiPost("/api/player-targets/apply", { targetId, target, ifRevision: preview.revision });
+      if (!applied.ok) throw new Error(applied.conflict ? "Project changed; preview the target again." : "Target could not be saved.");
+      S.project.manifest.schemaVersion = 5;
+      S.project.buildTargets = { ...bt, schemaVersion: 2, defaults: applied.defaults, targets: { ...bt.targets, [targetId]: target } };
+      S.contentHash = applied.newHash;
+      S.serverSnapshot = deep(S.project);
+      PT.targetId = targetId;
+      PT.dirty = true;
+      markDirty(false);
+      renderBuildTargetsTab();
+      toast("Browser and mobile target added. Select it when building.", "ok");
+    } catch (error) { toast("Could not add responsive target: " + error.message, "err"); }
+  };
+
   const addDesktopBtn = $("btn-add-desktop-target");
   if (addDesktopBtn) {
     addDesktopBtn.onclick = async () => {
@@ -15337,6 +15363,7 @@ function svgCurve(waveStats, key, unit) {
 // ═════════════════════════════════════════════════════════════════════════════
 const PT = {
   mod: null, rmod: null, content: null, game: null, renderer: null, raf: null,
+  targetId: null, simulationClock: null,
   towerId: null, missionId: null, difficultyId: null, keyboardCoord: null, dirty: true, lastFrame: 0, error: null,
   events: [], selectedDebug: null, resumeSpeed: 1, lastDebugRender: 0,
   navigationOverlayKey: null, navigationOverlayRequest: 0, artifactUiDirty: true,
@@ -15494,6 +15521,14 @@ function resetPlaytestPresentation() {
   PT.audio?.disposeProceduralVoices?.();
 }
 
+function configurePlaytestClock() {
+  const targets = S.project?.buildTargets?.targets ?? {};
+  if (!PT.targetId || !Object.hasOwn(targets, PT.targetId)) PT.targetId = S.project?.buildTargets?.defaults?.web ?? Object.keys(targets)[0] ?? null;
+  const target = targets[PT.targetId];
+  PT.simulationClock = S.project?.buildTargets?.schemaVersion === 2 && ["desktop", "responsive"].includes(target?.formFactor)
+    ? createFixedSimulationClockV1({ timeUnitSeconds: PT.content.constants.timeUnitSeconds || 1 }) : null;
+}
+
 function newPlaytestGame() {
   resetPlaytestPresentation();
   clearNavigationOverlay("Loading mission navigation");
@@ -15523,6 +15558,7 @@ function newPlaytestGame() {
     PT.debugCursor = null;
   }
   catch (e) { PT.error = "Cannot start mission: " + e.message; PT.game = null; return null; }
+  configurePlaytestClock();
   const m = PT.content.missions[PT.missionId];
   const tids = (m.buildTowerIds?.length ? m.buildTowerIds : Object.keys(PT.content.towers));
   PT.towerId = tids[0] ?? null;
@@ -15695,6 +15731,11 @@ async function renderPlaytestTab() {
     else PT.audio.setCatalog(PT.content.visuals?.audio, "/project-file/");
   }
   PT.renderer.resize();
+  const targetSelect = $("pt-target");
+  if (targetSelect) {
+    targetSelect.innerHTML = Object.entries(S.project.buildTargets?.targets ?? {}).map(([id, target]) => `<option value="${esc(id)}">${esc(id)} · ${["desktop", "responsive"].includes(target.formFactor) ? "Fixed timing" : "Legacy timing"}</option>`).join("");
+    targetSelect.value = PT.targetId ?? "";
+  }
   const sel = $("pt-mission");
   if (sel) { sel.innerHTML = Object.keys(PT.content.missions).map(id => `<option value="${esc(id)}"${id === PT.missionId ? " selected" : ""}>${esc(PT.content.missions[id]?.label || id)}</option>`).join(""); sel.value = PT.missionId; }
   const difficulty = $("pt-difficulty");
@@ -16267,6 +16308,7 @@ function presentPlaytestSnapshot(snapshot, events) {
 
 function syncPlaytestPauseButton() {
   const paused = Number($("pt-speed")?.value) === 0;
+  if (paused) PT.simulationClock?.reset();
   const button = $("pt-pause");
   button?.setAttribute("aria-pressed", String(paused));
   button?.setAttribute("aria-label", paused ? "Resume" : "Pause");
@@ -16293,16 +16335,29 @@ function startPlaytestLoop() {
     const pending = PT.debugSession ? PT.debugPendingEvents.splice(0) : rsnap.lastEvents;
     const ticked = speed > 0 && rsnap.outcome === "playing";
     if (ticked) {
-      const tu = PT.content.constants.timeUnitSeconds || 1;
-      const units = (dt / tu) * speed;
-      const command = { schemaVersion: 1, type: "tick", units };
-      dispatchPlaytestCommand(command, () => PT.game.tick(units));
-      rsnap = PT.game.getRenderSnapshot();
+      if (PT.simulationClock) {
+        const events = [];
+        PT.simulationClock.advance(dt * 1000, speed, (units) => {
+          dispatchPlaytestCommand({ schemaVersion: 1, type: "tick", units }, () => PT.game.tick(units));
+          events.push(...(PT.debugSession ? PT.debugPendingEvents.splice(0) : PT.game.getRenderSnapshot().lastEvents));
+        });
+        rsnap = PT.game.getRenderSnapshot();
+        if (PT.debugSession) PT.debugPendingEvents = events;
+        else rsnap.lastEvents = events;
+      } else {
+        const tu = PT.content.constants.timeUnitSeconds || 1;
+        const units = (dt / tu) * speed;
+        dispatchPlaytestCommand({ schemaVersion: 1, type: "tick", units }, () => PT.game.tick(units));
+        rsnap = PT.game.getRenderSnapshot();
+      }
     }
     const current = PT.debugSession ? PT.debugPendingEvents.splice(0) : rsnap.lastEvents;
     const events = ticked ? pending.concat(current) : pending;
     // Debug sessions are journal-authoritative: presentation never mutates game.lastEvents.
-    if (!PT.debugSession) PT.game.lastEvents = [];
+    if (!PT.debugSession) {
+      if (PT.simulationClock) PT.game.clearPresentationEvents();
+      else PT.game.lastEvents = [];
+    }
     rsnap.lastEvents = events;
     presentPlaytestSnapshot(rsnap, events);
     PT.raf = requestAnimationFrame(loop);
@@ -16378,6 +16433,20 @@ function renderPlaytestBallistics(snapshot) {
   }
 }
 function ptMsg(result, success = "Action completed.") { const el = $("pt-msg"); if (el) el.textContent = result.ok ? success : (result.reason || "Action rejected."); }
+$("pt-target")?.addEventListener("change", () => {
+  PT.targetId = $("pt-target").value;
+  newPlaytestGame();
+  renderPlaytestPalette();
+  void refreshNavigationOverlay();
+});
+document.addEventListener("visibilitychange", () => {
+  if (PT.simulationClock) {
+    if (document.hidden && $("pt-speed")) $("pt-speed").value = "0";
+    PT.simulationClock.reset();
+    PT.lastFrame = performance.now();
+    syncPlaytestPauseButton();
+  }
+});
 $("pt-mission")?.addEventListener("change", () => { PT.missionId = $("pt-mission").value; clearNavigationOverlay("Mission changed"); newPlaytestGame(); renderPlaytestPalette(); void refreshNavigationOverlay(); const el = $("pt-msg"); if (el) el.textContent = "Mission loaded — place towers and start a wave."; });
 $("pt-difficulty")?.addEventListener("change", () => { PT.difficultyId = $("pt-difficulty").value; clearNavigationOverlay("Difficulty changed"); newPlaytestGame(); renderPlaytestPalette(); void refreshNavigationOverlay(); const el = $("pt-msg"); if (el) el.textContent = `Difficulty: ${PT.game?.getSnapshot().difficultyLabel ?? PT.difficultyId}.`; });
 $("pt-start")?.addEventListener("click", () => {

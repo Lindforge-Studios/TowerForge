@@ -426,7 +426,7 @@ describe("legacy SimulationAction compatibility", () => {
     expect(game.getSnapshot().towers).toHaveLength(1);
   });
 
-  it("keeps runHeadlessMission tickStep subdivision semantics unchanged", () => {
+  it("accounts for the complete headless duration even when tickStep exceeds the engine limit", () => {
     const tickSpy = vi.spyOn(TowerDefenseGame.prototype, "tick");
     runHeadlessMission({
       content: createGameContentRegistry(COMMAND_FIXTURE),
@@ -435,6 +435,18 @@ describe("legacy SimulationAction compatibility", () => {
       tickStep: 0.25
     });
 
-    expect(tickSpy.mock.calls.map(([units]) => units)).toEqual([0.25, 0.25, 0.25, 0.25]);
+    expect(tickSpy.mock.calls.every(([units]) => units > 0 && units <= 0.2)).toBe(true);
+    expect(tickSpy.mock.calls.reduce((sum, [units]) => sum + units, 0)).toBeCloseTo(1, 12);
   });
+  it("restores a checkpoint after the player acknowledges processed events", () => {
+    const content = createGameContentRegistry(COMMAND_FIXTURE);
+    const game = new TowerDefenseGame({ content, missionId: "commands" });
+    game.startNextWave();
+    game.tick(0.1);
+    game.clearPresentationEvents();
+    expect(game.getSnapshot().lastEvents).toEqual([]);
+    const restored = TowerDefenseGame.fromCheckpoint({ content, checkpoint: game.createCheckpoint() });
+    expect(restored.getStateDigest()).toBe(game.getStateDigest());
+  });
+
 });

@@ -1067,7 +1067,7 @@ AI Chat accepts up to eight JPEG/PNG/GIF/WebP images per turn, at most 4 MB each
 - Desktop Studio packaging issues: run `npm run desktop:dev` first to verify the sidecar starts, then inspect `packages/desktop/src-tauri/runtime` for Studio files and production agent-runtime dependencies, and `packages/desktop/src-tauri/binaries` for the Node sidecar binary. If `/api/health` works but the app UI does not load, check the desktop session token/cookie handshake in the Tauri console.
 - Linux AppImage agent runtime issues: the bundled Claude executable is stored with a masked ELF header plus a SHA-256 manifest so `linuxdeploy` does not rewrite or inspect the standalone runtime. On first use Studio verifies it, restores a `0700` copy under the private desktop app-data `agent-runtimes/bin` directory, verifies it again, and only then executes it. Do not unpack or patch this file manually.
 - Desktop menu/bridge issues: confirm `packages/desktop/src-tauri/build.rs` registers every command in the Rust `generate_handler!` list and `packages/desktop/src-tauri/capabilities/main.json` grants the matching `allow-desktop-*` permissions only to the main `http://127.0.0.1:*` WebView. Then inspect the WebView console for `Desktop bridge setup failed`. Delete only `<app-data>/desktop-state.json` to reset last/recent projects without touching project data.
-- E2E browser issues: install Playwright browsers with `npx playwright install chromium` if the local browser binary is missing.
+- E2E browser issues: install Playwright browsers with `npx playwright install chromium webkit` if the local browser binary is missing.
 - Large-screen player issues: confirm the selected target is BuildTargets v2 with
   `formFactor: "desktop"` or `"responsive"`. Use Studio's **Large-screen desktop** preset or the
   guarded AI flow `describe_schema(playerTargets) -> read_player_targets ->
@@ -1190,3 +1190,22 @@ For a public desktop release with a wrong asset, checksum, or source link, remov
 2. Run `npm run validate`, `npm run typecheck`, and `npm run sim tutorial_01 60` when applicable.
 3. Reproduce in Studio or the built player.
 4. Add a focused validation guard, test, or runbook note so the same failure is cheaper to diagnose next time.
+
+## Browser and mobile readiness (R23)
+
+1. Save current Studio edits. In **Build targets**, choose **Browser and mobile**.
+2. Review the timing notice: the fixed clock corrects FPS-dependent slowdowns, so old balance
+   may need adjustment. Confirm **Add target** to create a separate responsive target.
+3. Select that target in **Playtest → Build target**. Switching target restarts the local battle.
+4. Build the target explicitly: `npm run build -- --project <project.tdproj> --target responsive`.
+   If the ID was already occupied, Studio allocates a suffixed ID; use that exact ID.
+5. On a phone, HP/resources/wave/pause stay above the battlefield and build/sell/upgrade below it.
+   **Menu** contains Continue, mission/difficulty, reset, settings and additional mechanics.
+6. Continue restores the last compatible battle paused. Backgrounding pauses and flushes a save.
+   Autosaves occur after actions/results/waves and every five seconds of active play. An untouched
+   new page never overwrites an earlier session. Corrupt latest saves fall back to the older slot.
+   Exported legacy targets still use their old timing and profile-only persistence.
+
+Validation: `npm run test:e2e -- tests/e2e/r23-responsive-player.spec.mjs` runs both Chromium and
+WebKit; `--project=chromium` restricts diagnosis to Chromium. Real iOS/Android device testing
+remains a separate release activity. Reference opt-in/legacy fixture: `docs/examples/opt-in-responsive-player/`.

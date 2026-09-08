@@ -1,0 +1,18 @@
+{
+  "id": "responsive",
+  "platform": "web",
+  "renderer": "canvas",
+  "webDir": "dist-responsive",
+  "market": "pwa",
+  "storeChannel": "pwa",
+  "appId": "com.example.game",
+  "appName": "My Game",
+  "appTitle": "My Game",
+  "backgroundColor": "#111111",
+  "appVersion": "0.1.0",
+  "formFactor": "responsive",
+  "viewport": { "fit": "contain", "padding": 32, "minZoom": 0.5, "maxZoom": 3, "initialZoom": 1 },
+  "quality": "balanced",
+  "locale": "auto",
+  "inputProfile": "hybrid"
+}

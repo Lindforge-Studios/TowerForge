@@ -2,6 +2,8 @@ export const PLAYER_STRING_CATALOG_SCHEMA_VERSION = 1;
 
 const CATALOGS = Object.freeze({
   en: Object.freeze({
+    victory: "Victory", defeat: "Defeat",
+    moreActions: "Menu", battleStatus: "Battle status", battleActions: "Battle actions",
     resetView: "Reset view", settings: "Settings", fullscreen: "Fullscreen", continue: "Continue",
     upgrade: "Upgrade", sell: "Sell", startWave: "Start wave", pause: "Pause", resume: "Resume",
     mission: "Mission", difficulty: "Difficulty", tower: "Tower", reset: "Reset", resetProgress: "Reset progress",
@@ -15,6 +17,8 @@ const CATALOGS = Object.freeze({
     sessionRestored: "Session restored", confirmResetSession: "Delete the current saved session?"
   }),
   ru: Object.freeze({
+    victory: "Победа", defeat: "Поражение",
+    moreActions: "Меню", battleStatus: "Состояние боя", battleActions: "Действия в бою",
     resetView: "Сбросить вид", settings: "Настройки", fullscreen: "Полный экран", continue: "Продолжить",
     upgrade: "Улучшить", sell: "Продать", startWave: "Начать волну", pause: "Пауза", resume: "Продолжить",
     mission: "Миссия", difficulty: "Сложность", tower: "Башня", reset: "Сбросить", resetProgress: "Сбросить прогресс",

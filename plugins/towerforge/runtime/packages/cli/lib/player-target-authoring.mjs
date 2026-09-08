@@ -6,6 +6,9 @@ import { normalizeProjectFiles, readRawProjectFiles } from "./project-loader.mjs
 import { validateProjectSchemas } from "./project-schema.mjs";
 
 export const DESKTOP_LARGE_SCREEN_RECIPE_ID = "desktop_large_screen";
+export const RESPONSIVE_WEB_MOBILE_RECIPE_ID = "responsive_web_mobile";
+export const RESPONSIVE_TIMING_NOTICE = "Fixed simulation timing is independent of FPS. The game may run faster than legacy builds, especially at increased speed; review balance before switching. Existing targets and replays are preserved.";
+
 export const NATIVE_DESKTOP_GAME_RECIPE_ID = "native_desktop_game";
 
 export function readPlayerTargets(projectDir) {
@@ -20,7 +23,7 @@ export function readPlayerTargets(projectDir) {
 }
 
 export function getPlayerTargetRecipe(projectDir, recipeId, targetId) {
-  if (![DESKTOP_LARGE_SCREEN_RECIPE_ID, NATIVE_DESKTOP_GAME_RECIPE_ID].includes(recipeId)) {
+  if (![DESKTOP_LARGE_SCREEN_RECIPE_ID, NATIVE_DESKTOP_GAME_RECIPE_ID, RESPONSIVE_WEB_MOBILE_RECIPE_ID].includes(recipeId)) {
     const error = new Error(`Unknown player target recipe "${recipeId}".`);
     error.code = "unknown_player_target_recipe";
     throw error;
@@ -57,13 +60,15 @@ export function getPlayerTargetRecipe(projectDir, recipeId, targetId) {
       })
     });
   }
-  const webDir = allocateDesktopWebDir(read.targets, targetId);
+  const responsive = recipeId === RESPONSIVE_WEB_MOBILE_RECIPE_ID;
+  const webDir = allocateDesktopWebDir(read.targets, targetId, responsive ? "dist-responsive" : "dist-desktop");
   return Object.freeze({
     recipeId,
     targetId,
     detached: true,
     written: false,
     revision: read.revision,
+    ...(responsive ? { timingNotice: RESPONSIVE_TIMING_NOTICE } : {}),
     target: Object.freeze({
       id: targetId,
       platform: "web",
@@ -76,19 +81,19 @@ export function getPlayerTargetRecipe(projectDir, recipeId, targetId) {
       appTitle: "My Game",
       backgroundColor: "#111111",
       appVersion: "0.1.0",
-      formFactor: "desktop",
+      formFactor: responsive ? "responsive" : "desktop",
       viewport: Object.freeze({ fit: "contain", padding: 32, minZoom: 0.5, maxZoom: 3, initialZoom: 1 }),
       quality: "balanced",
       locale: "auto",
-      inputProfile: "keyboard_mouse"
+      inputProfile: responsive ? "hybrid" : "keyboard_mouse"
     })
   });
 }
 
-function allocateDesktopWebDir(targets, targetId) {
+function allocateDesktopWebDir(targets, targetId, base = "dist-desktop") {
   const occupied = collectOccupiedOutputDirectories(targets, targetId);
   for (let suffix = 1; suffix <= 256; suffix += 1) {
-    const candidate = suffix === 1 ? "dist-desktop" : `dist-desktop-${suffix}`;
+    const candidate = suffix === 1 ? base : `${base}-${suffix}`;
     if (isOutputDirectoryIsolated(candidate, occupied)) return candidate;
   }
   const error = new Error("No free desktop output directory remains in the bounded allocation range.");
@@ -153,6 +158,7 @@ export function previewPlayerTarget(projectDir, targetId, target) {
     revision: playerTargetsRevision(raw),
     projectSchemaVersion: 5,
     buildTargetsSchemaVersion: 2,
+    ...(detachedTarget.formFactor === "responsive" ? { timingNotice: RESPONSIVE_TIMING_NOTICE } : {}),
     validation,
     candidate: validation.ok ? Object.freeze({
       targetId,

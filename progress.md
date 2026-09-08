@@ -5071,3 +5071,53 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
   Splash Studio browser acceptance passed 7/7 in one serial run; `typecheck`, `build:engine` and
   source-to-plugin regeneration were GREEN. This is a new pre-freeze candidate and invalidates all
   earlier exact-commit gates and sign-offs.
+
+## R23 — Web/mobile readiness: expected RED
+
+- Branch: `codex/r23-web-mobile-readiness`, based on R22 merge `aeadab0`.
+- Expected RED before production changes: `tickHeadless(game, 10, 1)` advances only two
+  simulation units; invalid numeric inputs are not rejected before ticking. Add bounded-step
+  and invalid-input contracts, plus a 20/30/60/120 FPS × 1/2/4 fixed-clock equivalence matrix.
+- Expected authoring RED: no detached `responsive_web_mobile` recipe or explicit Studio
+  transition with timing disclosure exists; Playtest has no selected-target fixed clock.
+- Expected browser RED: responsive session restore resumes a running clock; no periodic
+  battle autosave; compact HP/resources/wave/actions do not fit 390×844 and 844×390.
+- Acceptance uses existing BuildTargets v2/project v5 and explicit responsive opt-in. Legacy
+  projects/targets/replays retain their previous path. No gameplay command/checkpoint wire change.
+- R22 is merged, but its local evidence ends before final acceptance. R23 full gates must include
+  R22 regressions; neither R22 nor R23 receives invented historical verifier sign-offs.
+
+- Observed headless RED: 11 failed / 4 passed in `headless-time.contract.test.ts`;
+  large steps lose time and all invalid-number contracts fail before the repair.
+
+- Browser RED during R23 integration: Canvas intrinsic height caused 66 px vertical overflow;
+  fixed with explicit available viewport height. WebKit native selects ignored the minimum
+  touch height. Most importantly, a generated player checkpoint at elapsed 1.5 retained
+  `scriptEventCursor: 1` after presentation directly emptied `lastEvents`; repeated autosaves
+  could rotate two unrestorable slots. Add an engine-owned presentation-event acknowledgement
+  that clears the cursor with the events, used only on opted-in fixed-timing player paths.
+
+- Authoring RED reproduced unknown responsive recipe; guarded target/headless contracts then
+  passed 16/16. Fixed-clock/headless/command/authoring focused matrix passed 31/31 before the
+  additional presentation-acknowledgement regression; that regression then reproduced the
+  missing API and is included in the final suite.
+- Focused browser GREEN after cursor and WebKit repairs: 10/10 across Studio and Chromium/WebKit
+  phones, Canvas/Phaser and hex/square, including real tap, portrait/landscape fit, paused
+  Continue and corrupt-slot fallback. Full gameplay result coverage is being added before freeze.
+- R22 evidence reconciliation: `gh pr view 40` reports exact head `5136d991e32176e46d7b782e0fdfd465a9b896d3`,
+  merge `aeadab0975512a5e5d032c171d3a0b8e64174eec`, CI `30916220443` SUCCESS and generated-game acceptance
+  `30916214453` SUCCESS. GitHub reviews array is empty; independent historical sign-offs are not inferred.
+
+- Pre-freeze checks: typecheck, build:engine, plugin build/validate/smoke, project validation,
+  simulation, Persona QA and web build passed. Persona QA's 20-unit smoke window reports no
+  completed mission, as expected for this short diagnostic; this is not balance acceptance.
+- The first full unit diagnostic found stale generated-plugin parity, the intentional recipe
+  enum expansion and two existing 5-second load-sensitive tests. Runtime was regenerated and
+  recipe expectations updated; the exact-candidate gate will run without concurrent browser
+  load. No test assertion was removed or timeout widened to hide these failures.
+- Expanded phone acceptance exercises periodic saving with durable slow enemies, restores
+  resources/HP/live enemies, and completes victory → reload profile → defeat → reset on each
+  grid/renderer/browser. Phaser rotation waits for the next rendered layout before hit testing.
+- Candidate freeze: implementation, fixture and documentation are ready for exact-commit gates
+  and separate Code Verifier / Constructor Integration Verifier reviews. Evidence will identify
+  the reviewed commit in the PR; R23 remains Candidate until those gates and reviews succeed.

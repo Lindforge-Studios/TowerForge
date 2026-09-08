@@ -1320,12 +1320,12 @@ export const TOOLS = [
   },
   {
     name: "get_player_target_recipe",
-    description: "Return an inert detached large-screen web or first-class native desktop player target recipe without changing project files.",
+    description: "Return an inert detached responsive web/mobile, large-screen web or first-class native desktop player target recipe without changing project files.",
     inputSchema: {
       type: "object",
       properties: {
         projectDir: { type: "string", description: "Path to the .tdproj directory. Defaults to the server project." },
-        recipeId: { type: "string", enum: ["desktop_large_screen", "native_desktop_game"] },
+        recipeId: { type: "string", enum: ["desktop_large_screen", "native_desktop_game", "responsive_web_mobile"] },
         targetId: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }
       },
       required: ["recipeId", "targetId"],
@@ -3225,13 +3225,14 @@ export async function callTool(name, args = {}, ctx = {}) {
           updater: "optional HTTPS endpoints plus public verification key; private material forbidden"
         }
       },
+      responsive: { formFactor: "responsive", inputProfile: "hybrid", timing: "fixed 60 Hz", previewNotice: "timingNotice", legacyTransition: "explicit target selection" },
       nativeDesktop: {
         platform: "desktop",
         defaultSelector: "defaults.desktop",
         window: { width: 1440, height: 900, minWidth: 1024, minHeight: 720, fullscreen: false, resizable: true },
         bundle: { iconSource: "project-relative 1024x1024 PNG", targets: ["dmg", "nsis", "msi", "appimage", "deb", "rpm"] }
       },
-      recipes: ["desktop_large_screen", "native_desktop_game"],
+      recipes: ["desktop_large_screen", "native_desktop_game", "responsive_web_mobile"],
       authoringTransaction: {
         read: "read_player_targets",
         recipe: "get_player_target_recipe",
