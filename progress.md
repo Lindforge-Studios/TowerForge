@@ -5121,3 +5121,15 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - Candidate freeze: implementation, fixture and documentation are ready for exact-commit gates
   and separate Code Verifier / Constructor Integration Verifier reviews. Evidence will identify
   the reviewed commit in the PR; R23 remains Candidate until those gates and reviews succeed.
+
+- Independent review of `484f66a` withheld both sign-offs: the responsive Studio transition
+  could pair stale in-memory content with a new disk hash; adapter parity was not directly
+  exercised; mobile Settings restored focus to its hidden launcher. The transition now reloads
+  canonical project data, manual fixed-mode stepping acknowledges presentation events, and
+  Settings falls back to the visible Menu button. A browser regression preserves an external
+  tower edit through transition and subsequent Save (GREEN). Test-only response hooks run the
+  actual Studio/Canvas loops with identical commands at 20/30/60/120 FPS and ×1/×2/×4, comparing
+  elapsed time, enemies, resources, HP and wave state (GREEN). Phone tests assert focus return.
+- All eight Chromium/WebKit × Canvas/Phaser × hex/square full battle/session scenarios passed
+  before the review fixes. Source changes invalidate the previous candidate; full gates and
+  both independent reviews must identify the replacement commit.

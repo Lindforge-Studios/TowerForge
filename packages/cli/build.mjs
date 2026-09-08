@@ -1941,7 +1941,8 @@ function openDesktopSettings() {
 }
 function closeDesktopSettings() {
   desktopSettingsDialog.hidden = true;
-  desktopSettingsPreviousFocus.current?.focus?.();
+  const previousFocus = desktopSettingsPreviousFocus.current;
+  (previousFocus?.getClientRects().length ? previousFocus : $("responsive-more"))?.focus?.();
 }
 
 let desktopResultGame = null;

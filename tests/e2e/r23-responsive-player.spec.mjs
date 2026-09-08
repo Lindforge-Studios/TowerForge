@@ -55,6 +55,10 @@ test.describe("R23 phones", () => {
     await boot(page);
     await expect(page).toHaveTitle(/Game/);
     await fit(page);
+    await page.locator("#responsive-more").click();
+    await page.locator("#desktop-settings").click();
+    await page.locator("#desktop-settings-close").click();
+    await expect(page.locator("#responsive-more")).toBeFocused();
     const tile = await page.evaluate(() => {
       const rect = document.getElementById("playfield").getBoundingClientRect();
       return window.__towerforgeInspect().tiles.filter(tile => tile.terrain === "buildable" && !tile.occupiedBy)

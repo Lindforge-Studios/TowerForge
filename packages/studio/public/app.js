@@ -14864,14 +14864,10 @@ function renderBuildTargetsTab() {
       if (!(await confirmDialog({ title: "Add browser and mobile target?", message: preview.timingNotice, confirmLabel: "Add target", danger: false }))) return;
       const applied = await apiPost("/api/player-targets/apply", { targetId, target, ifRevision: preview.revision });
       if (!applied.ok) throw new Error(applied.conflict ? "Project changed; preview the target again." : "Target could not be saved.");
-      S.project.manifest.schemaVersion = 5;
-      S.project.buildTargets = { ...bt, schemaVersion: 2, defaults: applied.defaults, targets: { ...bt.targets, [targetId]: target } };
-      S.contentHash = applied.newHash;
-      S.serverSnapshot = deep(S.project);
       PT.targetId = targetId;
-      PT.dirty = true;
-      markDirty(false);
-      renderBuildTargetsTab();
+      // The target revision does not cover content edited by another author. Reload the
+      // canonical project before accepting its new global hash as our save baseline.
+      await load();
       toast("Browser and mobile target added. Select it when building.", "ok");
     } catch (error) { toast("Could not add responsive target: " + error.message, "err"); }
   };
@@ -16476,7 +16472,10 @@ $("pt-step")?.addEventListener("click", () => {
   const snapshot = PT.game.getRenderSnapshot();
   const current = PT.debugSession ? PT.debugPendingEvents.splice(0) : snapshot.lastEvents;
   const events = pending.concat(current);
-  if (!PT.debugSession) PT.game.lastEvents = [];
+  if (!PT.debugSession) {
+    if (PT.simulationClock) PT.game.clearPresentationEvents();
+    else PT.game.lastEvents = [];
+  }
   presentPlaytestSnapshot(snapshot, events);
 });
 $("script-debug-enabled")?.addEventListener("change", () => {
