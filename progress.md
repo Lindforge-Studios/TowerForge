@@ -5133,3 +5133,10 @@ Original prompt: Continue the opt-in TDD implementation of the TowerForge R0–R
 - All eight Chromium/WebKit × Canvas/Phaser × hex/square full battle/session scenarios passed
   before the review fixes. Source changes invalidate the previous candidate; full gates and
   both independent reviews must identify the replacement commit.
+
+- Exact candidate `62b679b`: all 4464 unit tests / 468 files passed on the isolated repeat
+  (the first attempt hit one existing navigation-load 5-second timeout). Full E2E: 177 passed,
+  four WebKit phone cases RED at Settings focus return. WebKit can leave focus on the body,
+  which has a client rect and incorrectly wins the previous-focus fallback. Expected GREEN:
+  prefer the visible responsive Menu button whenever the compact shell is active. No test
+  timeout or assertion is relaxed. This repair requires a new exact candidate and sign-offs.
